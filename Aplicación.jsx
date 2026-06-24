@@ -340,8 +340,19 @@ const SYSTEM_MODULES = [
     label: '12. MÓDULO Bancos & Tesorería',
     icon: '🏦',
     submodules: [
-      { id: 'banco_movimientos', label: 'Movimientos Bancarios' },
-      { id: 'banco_conciliacion', label: 'Conciliación Bancaria' },
+      { id: 'banco_movimientos',   label: 'Movimientos Bancarios' },
+      { id: 'banco_conciliacion',  label: 'Conciliación Bancaria' },
+    ]
+  },
+  {
+    id: 'vendedores',
+    label: '13. MÓDULO Portal de Vendedores',
+    icon: '🤝',
+    submodules: [
+      { id: 'vend_cotizaciones',  label: 'Cotizaciones (vista propia)' },
+      { id: 'vend_clientes',      label: 'Clientes asignados' },
+      { id: 'vend_rendimiento',   label: 'Mi Rendimiento / KPIs' },
+      { id: 'vend_actas',         label: 'Actas de Reclamo' },
     ]
   },
 ];
@@ -353,6 +364,7 @@ const SYSTEM_PORTALS = [
   { id:'finanzas',       title:'FINANZAS',       desc:'Costos, reportes financieros y KPI gerencial',   color:'#22c55e' },
   { id:'contabilidad',   title:'CONTABILIDAD',   desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4' },
   { id:'resena_portal',  title:'RESEÑA',          desc:'Reseña institucional, brochure y catálogo digital', color:'#E8541A' },
+  { id:'vendedores_portal', title:'VENDEDORES',   desc:'Gestión de cotizaciones, clientes y actas de reclamo', color:'#E8541A' },
   { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b' },
 ];
 
@@ -704,7 +716,7 @@ function App() {
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
 
   // Formularios de Configuración
-  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', vendedorNombre: '', permissions: generateDefaultPermissions(), portales: { produccion:true, administracion:true, finanzas:true, contabilidad:true, configuracion_portal:true } };
+  const initialUserForm = { username: '', password: '', name: '', role: 'Usuario', vendedorNombre: '', permissions: generateDefaultPermissions(), portales: { produccion:true, administracion:true, finanzas:true, contabilidad:true, resena_portal:true, vendedores_portal:true, configuracion_portal:true } };
   const [newUserForm, setNewUserForm] = useState(initialUserForm);
   const [editingUserId, setEditingUserId] = useState(null);
   const [originalUsername, setOriginalUsername] = useState(null);
@@ -1417,7 +1429,7 @@ function App() {
       foundUser = {
         id: 'Administrador', username: 'Administrador', password: MASTER_PASS,
         name: 'Administrador General', role: 'Master',
-        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true,resena:true,resena_catalogo:true,banco:true,banco_movimientos:true,banco_conciliacion:true }
+        permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true,resena:true,resena_catalogo:true,banco:true,banco_movimientos:true,banco_conciliacion:true,vendedores:true,vend_cotizaciones:true,vend_clientes:true,vend_rendimiento:true,vend_actas:true }
       };
       // Recreate in Firestore — sin await para no bloquear login
       setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}).catch(()=>{});
@@ -1510,7 +1522,7 @@ function App() {
         setDoc(getDocRef('users', 'Administrador'), {
           username: 'Administrador', password: 'Supply2026.Admin',
           name: 'Administrador General', role: 'Master',
-          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true,resena:true,resena_catalogo:true,banco:true,banco_movimientos:true,banco_conciliacion:true },
+          permissions: { ventas:true, ventas_ops:true, ventas_facturacion:true, ventas_directorio:true, produccion:true, produccion_proyeccion:true, produccion_ordenes:true, produccion_activa:true, produccion_historial:true, formulas:true, inventario:true, inventario_solicitudes:true, inventario_catalogo:true, inventario_movimientos:true, inventario_kardex:true, inv_almacen:true, inv_terminados:true, inv_operaciones:true, simulador:true, costos:true, costos_operativos:true, costos_reportes:true, kpi:true, configuracion:true, auditoria:true,ventas_dashboard:true,ventas_ne:true,ventas_cotizaciones:true,ventas_reporte:true,ventas_transacciones:true,ventas_libro:true,ventas_retenciones:true,ventas_nc_nd:true,ventas_comisiones:true,ventas_vendedores:true,inv_general:true,inv_osa:true,inv_almacenes:true,inv_movimientos:true,resena:true,resena_catalogo:true,banco:true,banco_movimientos:true,banco_conciliacion:true,vendedores:true,vend_cotizaciones:true,vend_clientes:true,vend_rendimiento:true,vend_actas:true },
           _seeded: true, timestamp: Date.now()
         });
       }
@@ -1885,7 +1897,7 @@ function App() {
     const defaultPerms = generateDefaultPermissions();
     // Fusionar permisos por defecto con los del usuario (asegura que módulos nuevos aparezcan en false)
     const mergedPerms = { ...defaultPerms, ...(u.permissions || {}) };
-    const mergedPortales = { produccion:true, administracion:true, finanzas:true, contabilidad:true, configuracion_portal:true, ...(u.portales || {}) };
+    const mergedPortales = { produccion:true, administracion:true, finanzas:true, contabilidad:true, resena_portal:true, vendedores_portal:true, configuracion_portal:true, ...(u.portales || {}) };
     setEditingUserId(u.username);
     setOriginalUsername(u.username);
     setNewUserForm({ ...u, permissions: mergedPerms, portales: mergedPortales });
@@ -4323,6 +4335,7 @@ function App() {
     finanzas:            [],
     contabilidad:        [],
     resena_portal:       ['resena'],
+    vendedores_portal:   [],
     configuracion_portal:['configuracion','auditoria'],
   };
   const navInPortal = (tab) => {
@@ -4513,6 +4526,7 @@ function App() {
       finanzas:            [],
       contabilidad:        [],
       resena_portal:       ['resena'],
+      vendedores_portal:   [],
       configuracion_portal:['configuracion','auditoria'],
     };
     const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
@@ -4522,8 +4536,8 @@ function App() {
 
     // ── PLACEHOLDER: portales sin tarjetas visibles ───────────────────────────
     if (selectedPortal && visibleCards.length === 0) {
-      const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',resena_portal:'RESEÑA',configuracion_portal:'CONFIGURACIÓN'};
-      const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',resena_portal:'#E8541A',configuracion_portal:'#64748b'};
+      const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',resena_portal:'RESEÑA',vendedores_portal:'VENDEDORES',configuracion_portal:'CONFIGURACIÓN'};
+      const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',resena_portal:'#E8541A',vendedores_portal:'#E8541A',configuracion_portal:'#64748b'};
       const color = colorMap[selectedPortal]||'#6b7280';
       const isInDev = ['finanzas','contabilidad'].includes(selectedPortal);
       return (
@@ -26100,6 +26114,8 @@ ${resumenHtml}
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="8" width="44" height="48" rx="4" fill="#0e7490" opacity="0.15" stroke="#0e7490" strokeWidth="1.5"/><rect x="10" y="8" width="44" height="10" rx="4" fill="#06b6d4" opacity="0.9"/><rect x="16" y="24" width="14" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="30" width="20" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="36" width="12" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="42" width="18" height="2.5" rx="1.2" fill="#0e7490"/><rect x="36" y="24" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="38" y="30" width="10" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="40" y="36" width="8" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="36" y="42" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="10" y="48" width="44" height="2.5" rx="1.2" fill="#0e7490"/><text x="32" y="17" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">LIBRO MAYOR</text></svg> },
       { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
+      { id:'vendedores_portal', title:'VENDEDORES', desc:'Gestión de cotizaciones, clientes y actas de reclamo', color:'#E8541A',
+        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="22" cy="18" r="9" fill="#E8541A" opacity="0.85"/><circle cx="42" cy="18" r="7" fill="#E8541A" opacity="0.5"/><path d="M6 46 v-4 a16 16 0 0 1 32 0 v4 z" fill="#E8541A" opacity="0.85"/><path d="M38 46 v-3 a14 14 0 0 1 20 0 v3 z" fill="#E8541A" opacity="0.5"/><rect x="34" y="34" width="22" height="3" rx="1.5" fill="#c2410c"/><rect x="34" y="40" width="18" height="3" rx="1.5" fill="#c2410c" opacity="0.6"/><circle cx="54" cy="54" r="8" fill="#E8541A"/><text x="54" y="58" textAnchor="middle" fontSize="11" fontWeight="900" fill="white" fontFamily="Arial">$</text></svg> },
       { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
@@ -26165,7 +26181,7 @@ ${resumenHtml}
               {PORTALES.map(p => {
                 const allowed = hasPortal(p.id);
                 return (
-                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
+                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else if(p.id==='vendedores_portal') { setActiveTab('home'); setVentasView('cotizaciones'); } else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
                   style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
                     border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
                     cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
@@ -26652,6 +26668,93 @@ ${resumenHtml}
            {activeTab === 'simulador' && renderSimuladorModule()}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
+           {/* ── PORTAL VENDEDORES (vista admin) ── */}
+           {activeTab === 'home' && selectedPortal==='vendedores_portal' && (()=>{
+             const vendedoresList=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+             const OR='#E8541A';
+             return(
+             <div className="p-6 space-y-6 animate-in fade-in">
+               <div className="flex justify-between items-center">
+                 <div>
+                   <div className="font-black text-xl text-gray-900">Portal de Vendedores</div>
+                   <div className="text-sm text-gray-400 mt-1">Supervisión de cotizaciones, clientes y actas por vendedor</div>
+                 </div>
+                 <button onClick={()=>{setVentasView('cotizaciones');setActiveTab('ventas');}}
+                   className="flex items-center gap-2 px-4 py-2 text-white rounded-xl text-xs font-black uppercase" style={{background:OR}}>
+                   <FileText size={13}/> Ver todas las cotizaciones
+                 </button>
+               </div>
+               {/* KPI global */}
+               <div className="grid grid-cols-4 gap-4">
+                 {[
+                   {l:'Cotizaciones totales',v:(cotizaciones||[]).length,c:OR},
+                   {l:'Vigentes',v:(cotizaciones||[]).filter(c=>c.status==='VIGENTE').length,c:'#f59e0b'},
+                   {l:'Aprobadas / Facturadas',v:(cotizaciones||[]).filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length,c:'#16a34a'},
+                   {l:'Actas de reclamo',v:(actasReclamo||[]).length,c:'#6366f1'},
+                 ].map((k,i)=>(
+                   <div key={i} className="bg-white border border-gray-100 rounded-2xl p-4">
+                     <div className="text-[9px] text-gray-400 uppercase font-black tracking-wider mb-2">{k.l}</div>
+                     <div className="text-3xl font-black" style={{color:k.c}}>{k.v}</div>
+                   </div>
+                 ))}
+               </div>
+               {/* Por vendedor */}
+               <div className="grid grid-cols-1 gap-4">
+                 {vendedoresList.map(vend=>{
+                   const vCotiz=(cotizaciones||[]).filter(c=>(c.vendedor||'').toUpperCase()===vend.toUpperCase());
+                   const vActas=(actasReclamo||[]).filter(a=>(a.vendedor||'').toUpperCase()===vend.toUpperCase());
+                   const aprobadas=vCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA').length;
+                   const conv=vCotiz.length>0?Math.round((aprobadas/vCotiz.length)*100):0;
+                   const totalCot=vCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
+                   return(
+                   <div key={vend} className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
+                     <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                       <div className="flex items-center gap-3">
+                         <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-black text-sm" style={{background:OR}}>
+                           {vend.split(' ').map(w=>w[0]).join('').substring(0,2)}
+                         </div>
+                         <div>
+                           <div className="font-black text-sm text-gray-900">{vend}</div>
+                           <div className="text-[10px] text-gray-400">{vCotiz.length} cotizaciones · {vActas.length} actas</div>
+                         </div>
+                       </div>
+                       <div className="flex items-center gap-6 text-right">
+                         <div><div className="text-[9px] text-gray-400 uppercase font-black">Total cotizado</div><div className="font-black text-sm" style={{color:OR}}>${formatNum(totalCot)}</div></div>
+                         <div><div className="text-[9px] text-gray-400 uppercase font-black">Conversión</div><div className="font-black text-sm text-gray-700">{conv}%</div></div>
+                       </div>
+                     </div>
+                     {/* Últimas cotizaciones */}
+                     {vCotiz.length>0&&(
+                       <table className="w-full text-[10px]">
+                         <thead><tr className="bg-gray-50">
+                           <th className="py-2 px-4 text-left text-gray-400 font-black uppercase">Cotización</th>
+                           <th className="py-2 px-4 text-left text-gray-400 font-black uppercase">Cliente</th>
+                           <th className="py-2 px-4 text-left text-gray-400 font-black uppercase">Fecha</th>
+                           <th className="py-2 px-4 text-left text-gray-400 font-black uppercase">Estado</th>
+                           <th className="py-2 px-4 text-right text-gray-400 font-black uppercase">Monto</th>
+                         </tr></thead>
+                         <tbody>
+                           {vCotiz.slice(0,4).map((c,i)=>(
+                             <tr key={c.id} className="border-t border-gray-50 hover:bg-gray-50">
+                               <td className="py-2 px-4 font-black" style={{color:OR}}>{c.id}</td>
+                               <td className="py-2 px-4 text-gray-700 font-bold">{c.clientName||c.client||'—'}</td>
+                               <td className="py-2 px-4 text-gray-400">{c.fecha||'—'}</td>
+                               <td className="py-2 px-4">
+                                 <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${c.status==='VIGENTE'?'bg-amber-100 text-amber-800':c.status==='APROBADA'?'bg-green-100 text-green-800':c.status==='FACTURADA'?'bg-blue-100 text-blue-800':'bg-gray-100 text-gray-600'}`}>{c.status||'VIGENTE'}</span>
+                               </td>
+                               <td className="py-2 px-4 text-right font-black text-gray-700">${formatNum(parseNum(c.total||0))}</td>
+                             </tr>
+                           ))}
+                         </tbody>
+                       </table>
+                     )}
+                     {vCotiz.length===0&&<div className="py-6 text-center text-gray-400 text-xs">Sin cotizaciones registradas</div>}
+                   </div>);
+                 })}
+                 {vendedoresList.length===0&&<div className="bg-white border border-gray-100 rounded-2xl p-8 text-center text-gray-400 text-sm">Configura los vendedores en Configuración → Vendedores</div>}
+               </div>
+             </div>);
+           })()}
            {/* ── RESEÑA INSTITUCIONAL ── */}
            {activeTab === 'resena' && hasPerm('resena') && (()=>{
              const ORG='#E8541A'; const DARK='#1C1C2E'; const CARD='#2A2A3E'; const CARD2='#232336';
