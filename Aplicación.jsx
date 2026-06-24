@@ -26040,20 +26040,148 @@ ${resumenHtml}
               // Si el panel de nueva cotización está abierto, redirigir al módulo real
               // pero manteniendo el contexto del portal vendedor
               if(showNewCotizPanel) {
-                // Mostrar formulario de cotización DENTRO del portal usando el módulo ERP
-                // Activar el tab de ventas temporalmente para que el form se renderice
-                if(activeTab !== 'ventas') {
-                  setTimeout(()=>{ setVentasView('cotizaciones'); setActiveTab('ventas'); }, 0);
-                }
+                const generateCotizIdPV = () => `COT-${((cotizaciones||[]).reduce((m,r)=>Math.max(m,parseInt(String(r.id).replace(/\D/g,'')||'0')),0)+1).toString().padStart(4,'0')}`;
+                const handleSaveCotizPV = async () => {
+                  try {
+                    const id = editingCotizId || newCotizForm.documento || generateCotizIdPV();
+                    const base = cotizItems.reduce((s,it)=>s+(it.cantidad||0)*(it.precioUnit||0),0);
+                    const ivaAmt = newCotizForm.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
+                    await setDoc(getDocRef('cotizaciones',id),{
+                      ...newCotizForm, id, documento:id, vendedor:vendNombre,
+                      tasa:parseNum(newCotizForm.tasa||settings?.tasaBCV||0),
+                      montoBase:base, iva:ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)),
+                      items:cotizItems, condicionPago:newCotizForm.condicionPago||'CONTADO',
+                      diasCredito:newCotizForm.diasCredito||'',
+                      porcentajeAnticipo:newCotizForm.porcentajeAnticipo||'',
+                      tiempoEntrega:newCotizForm.tiempoEntrega||'',
+                      formaPago:newCotizForm.formaPago||'BS A TASA BCV',
+                      timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
+                      user:appUser?.name, status:'VIGENTE'
+                    });
+                    setShowNewCotizPanel(false); setEditingCotizId(null);
+                    setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});
+                    setCotizItems([]);
+                    setDialog({title:'\u2705 Cotización guardada',text:`${id} guardada.`,type:'alert'});
+                  } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                };
+                const tasaBCVpv = parseNum(settings?.tasaBCV||0)||1;
+                const baseTotal = cotizItems.reduce((s,it)=>s+(it.cantidad||0)*(it.precioUnit||0),0);
+                const ivaTotal = newCotizForm.aplicaIva==='SI'?baseTotal*0.16:0;
+                const grandTotal = baseTotal+ivaTotal;
+                const tasa = parseNum(newCotizForm.tasa||settings?.tasaBCV||1);
                 return (
-                  <div>
-                    <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0 16px',borderBottom:'1px solid #f0f0f0',marginBottom:16}}>
-                      <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);setActiveTab('home');setSelectedPortal('vendedores_portal');window._pvAdminVendSel=''}}
-                        style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:12,cursor:'pointer',color:'#374151'}}>
-                        ← Mis cotizaciones
-                      </button>
-                      <span style={{fontSize:13,fontWeight:700,color:'#111'}}>{editingCotizId?`Editando ${editingCotizId}`:'Nueva Cotización'}</span>
-                      <div style={{marginLeft:'auto',fontSize:10,color:'#9ca3af'}}>Se abre el módulo de cotizaciones</div>
+                  <div style={{background:'#fff',borderRadius:16,border:'1px solid #f0f0f0',overflow:'hidden'}}>
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:'1px solid #f0f0f0',background:'#fafafa'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:10}}>
+                        <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);}}
+                          style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',border:'1px solid #e5e7eb',background:'#fff',borderRadius:8,fontSize:11,cursor:'pointer',color:'#374151',fontWeight:700}}>
+                          \u2190 Mis cotizaciones
+                        </button>
+                        <span style={{fontSize:13,fontWeight:900,color:'#111'}}>{editingCotizId?`Editando: ${editingCotizId}`:'Nueva Cotización'}</span>
+                        <span style={{background:'#fff7ed',color:OR,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:700,border:`1px solid ${OR}`}}>{editingCotizId||generateCotizIdPV()}</span>
+                      </div>
+                      <span style={{fontSize:11,fontWeight:900,color:OR}}>{vendNombre}</span>
+                    </div>
+                    <div style={{padding:20,display:'flex',flexDirection:'column',gap:14}}>
+                      <div style={{display:'grid',gridTemplateColumns:'160px 1fr 140px',gap:12}}>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Fecha</label>
+                          <input type="date" value={newCotizForm.fecha||getTodayDate()} onChange={e=>setNewCotizForm({...newCotizForm,fecha:e.target.value})}
+                            style={{width:'100%',border:'2px solid #fed7aa',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff7ed',fontWeight:700}}/>
+                        </div>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Cliente</label>
+                          <select value={newCotizForm.clientRif||''} onChange={e=>{const cl=(clients||[]).find(c=>c.rif===e.target.value||c.id===e.target.value);setNewCotizForm({...newCotizForm,clientRif:e.target.value,clientName:cl?.name||cl?.razonSocial||'',clientAddress:cl?.direccion||''});}}
+                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff'}}>
+                            <option value="">— Seleccionar cliente —</option>
+                            {(clients||[]).map(cl=><option key={cl.id} value={cl.rif||cl.id}>{cl.name||cl.razonSocial||cl.id}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Validez (días)</label>
+                          <input type="number" value={newCotizForm.validez||'15'} onChange={e=>setNewCotizForm({...newCotizForm,validez:e.target.value})} min="1"
+                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none'}}/>
+                        </div>
+                      </div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Tasa BCV (Bs/$)</label>
+                          <input type="number" step="0.01" value={newCotizForm.tasa||settings?.tasaBCV||''} onChange={e=>setNewCotizForm({...newCotizForm,tasa:e.target.value})}
+                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none'}} placeholder={String(tasaBCVpv)}/>
+                        </div>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>IVA</label>
+                          <select value={newCotizForm.aplicaIva||'SI'} onChange={e=>setNewCotizForm({...newCotizForm,aplicaIva:e.target.value})}
+                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff'}}>
+                            <option value="SI">Sí (16%)</option><option value="NO">No</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Condición de Pago</label>
+                          <select value={newCotizForm.condicionPago||'CONTADO'} onChange={e=>setNewCotizForm({...newCotizForm,condicionPago:e.target.value})}
+                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff'}}>
+                            <option>CONTADO</option><option>CRÉDITO 15 DÍAS</option><option>CRÉDITO 30 DÍAS</option><option>CRÉDITO 60 DÍAS</option><option>ANTICIPO 50%</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                          <label style={{fontSize:10,fontWeight:900,color:'#111',textTransform:'uppercase'}}>Ítems / Productos</label>
+                          <button onClick={()=>setCotizItems([...cotizItems,{desc:'',cantidad:1,precioUnit:0,unidad:'und',total:0}])}
+                            style={{display:'flex',alignItems:'center',gap:5,padding:'6px 14px',background:OR,color:'#fff',border:'none',borderRadius:8,fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                            + Agregar ítem
+                          </button>
+                        </div>
+                        {cotizItems.length===0
+                          ? <div style={{textAlign:'center',padding:'20px 0',color:'#9ca3af',border:'2px dashed #e5e7eb',borderRadius:10,fontSize:12}}>Sin ítems — presiona "Agregar ítem"</div>
+                          : <table style={{width:'100%',borderCollapse:'collapse',border:'1px solid #f0f0f0',borderRadius:10,overflow:'hidden',fontSize:12}}>
+                              <thead><tr style={{background:'#f9fafb'}}>
+                                {['Descripción','Cant.','U.M.','Precio Unit.','Total',''].map(h=>(
+                                  <th key={h} style={{padding:'8px 12px',textAlign:h==='Total'||h==='Precio Unit.'?'right':'left',fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',borderBottom:'1px solid #f0f0f0'}}>{h}</th>
+                                ))}
+                              </tr></thead>
+                              <tbody>
+                                {cotizItems.map((it,idx)=>(
+                                  <tr key={idx} style={{borderBottom:'1px solid #f9fafb'}}>
+                                    <td style={{padding:'6px 12px'}}><input value={it.desc||''} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,desc:e.target.value}:x))} style={{width:'100%',border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none'}} placeholder="Descripción"/></td>
+                                    <td style={{padding:'6px 8px'}}><input type="number" min="0" value={it.cantidad||''} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,cantidad:parseFloat(e.target.value)||0,total:(parseFloat(e.target.value)||0)*(x.precioUnit||0)}:x))} style={{width:70,border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none',textAlign:'right'}}/></td>
+                                    <td style={{padding:'6px 8px'}}><input value={it.unidad||'und'} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,unidad:e.target.value}:x))} style={{width:60,border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none'}}/></td>
+                                    <td style={{padding:'6px 8px',textAlign:'right'}}><input type="number" min="0" step="0.01" value={it.precioUnit||''} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,precioUnit:parseFloat(e.target.value)||0,total:(x.cantidad||0)*(parseFloat(e.target.value)||0)}:x))} style={{width:90,border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none',textAlign:'right'}}/></td>
+                                    <td style={{padding:'6px 12px',textAlign:'right',fontWeight:700}}>${formatNum((it.cantidad||0)*(it.precioUnit||0))}</td>
+                                    <td style={{padding:'6px 8px',textAlign:'center'}}><button onClick={()=>setCotizItems(prev=>prev.filter((_,i)=>i!==idx))} style={{border:'none',background:'none',color:'#ef4444',cursor:'pointer',fontSize:18,lineHeight:1}}>\u00d7</button></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                        }
+                      </div>
+                      {cotizItems.length>0&&(
+                        <div style={{display:'flex',justifyContent:'flex-end'}}>
+                          <div style={{background:'#f9fafb',border:'1px solid #f0f0f0',borderRadius:10,padding:'14px 20px',minWidth:260}}>
+                            {[['Base imponible','$'+formatNum(baseTotal),'#374151'],['IVA (16%)','$'+formatNum(ivaTotal),'#6b7280'],['TOTAL USD','$'+formatNum(grandTotal),'#111'],['Bs (\u2248)','Bs '+formatNum(grandTotal*tasa),'#E8541A']].map(([l,v,c])=>(
+                              <div key={l} style={{display:'flex',justifyContent:'space-between',marginBottom:4,fontSize:12}}>
+                                <span style={{color:'#9ca3af'}}>{l}</span>
+                                <span style={{fontWeight:l==='TOTAL USD'?900:700,color:c,fontSize:l==='TOTAL USD'?15:12}}>{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Observaciones</label>
+                        <textarea value={newCotizForm.observaciones||''} onChange={e=>setNewCotizForm({...newCotizForm,observaciones:e.target.value})} rows={2}
+                          style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'10px',fontSize:12,outline:'none',resize:'vertical',fontFamily:'inherit'}} placeholder="Condiciones adicionales..."/>
+                      </div>
+                      <div style={{display:'flex',justifyContent:'flex-end',gap:10,paddingTop:4}}>
+                        <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);}}
+                          style={{padding:'10px 20px',border:'1px solid #e5e7eb',background:'#fff',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer',color:'#374151'}}>
+                          Cancelar
+                        </button>
+                        <button onClick={handleSaveCotizPV}
+                          style={{padding:'10px 28px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:900,cursor:'pointer',textTransform:'uppercase',letterSpacing:0.5}}>
+                          Guardar Cotización
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
