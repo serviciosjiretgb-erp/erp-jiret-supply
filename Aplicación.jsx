@@ -14436,7 +14436,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
-                const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr';
+                const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr';
                 let clTotal=0;
                 const neRows=cl.nes.map(ne=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
@@ -14473,8 +14473,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;color:#16a34a">$${formatNum(cobradoNE)}</span>
                     <span style="text-align:right;color:#3b82f6">${ncNE>0?'-$'+formatNum(ncNE):'—'}</span>
                     <span style="text-align:right;color:#b45309">${retNE>0?'$'+formatNum(retNE)+(retCompPDF?' ('+retCompPDF+')':''):'—'}</span>
-                    <span style="text-align:right;font-weight:bold;color:${bc2}">$${formatNum(saldo)}</span>
-                    <span style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</span>
+                    <span style="text-align:right;font-weight:bold;color:${bc2};border-right:1px solid #e2e8f0;padding-right:8px">$${formatNum(saldo)}</span>
+                    <span style="font-size:8px;color:#64748b;font-style:italic;padding-left:8px">${ne.observacionCxC||''}</span>
                   </div>${detalles}`;
                 }).join('');
                 return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
@@ -14483,18 +14483,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="font-size:9px;color:#94a3b8;padding-right:16px">${cl.clientRif}</span>
                     <span style="color:#fbbf24">${estado}</span>
                   </div>
-                  <div style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
+                  <div style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr;gap:0 8px;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
                     <span>Documento</span><span>Emisión</span><span>Vence</span>
                     <span style="text-align:center;color:#7c3aed">Días Cred.</span>
                     <span style="text-align:center;color:#4338ca">Doc. Fiscal</span>
                     <span style="text-align:right">Total USD</span><span style="text-align:right">Cobrado</span>
                     <span style="text-align:right;color:#3b82f6">NC/ND</span>
                     <span style="text-align:right;color:#b45309">Ret.IVA</span>
-                    <span style="text-align:right">Saldo USD</span>
-                    <span>Observación</span>
+                    <span style="text-align:right;border-right:1px solid #cbd5e1;padding-right:8px">Saldo USD</span>
+                    <span style="padding-left:8px">Observación</span>
                   </div>
                   ${neRows}
-                  <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr">
+                  <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr">
                     <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}</span><span></span><span></span><span></span><span></span>
                     <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
@@ -14505,7 +14505,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                 </div>`; 
               }).join('');
-              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .7fr 1.2fr;margin-top:8px;border-radius:6px;gap:0">
+              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr;margin-top:8px;border-radius:6px;gap:0">
                 <span style="grid-column:span 5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</span>
                 <span style="text-align:right">$${formatNum(gTotTotal)}</span>
                 <span style="text-align:right;color:#16a34a">$${formatNum(gTotCob)}</span>
@@ -15140,10 +15140,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   <button onClick={()=>setCxcExpandAll(v=>!v)} className="flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">
                     {cxcExpandAll?'▲ Contraer todo':'▼ Expandir todo'}
                   </button>
-                  <button onClick={()=>exportarPDF('cxc')} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100"><FileText size={12}/>CxC PDF</button>
-                  <button onClick={()=>exportarExcel('cxc')} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100"><Download size={12}/>CxC XLS</button>
-                  <button onClick={()=>exportarPDF('aging')} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100"><FileText size={12}/>Aging PDF</button>
-                  <button onClick={()=>exportarExcel('aging')} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-100"><Download size={12}/>Aging XLS</button>
+                  <button onClick={()=>exportarPDF('cxc')} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 transition-all shadow-sm"><FileText size={12}/>PDF</button>
+                  <button onClick={()=>exportarExcel('cxc')} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 transition-all shadow-sm"><Download size={12}/>Excel</button>
+                  <button onClick={()=>exportarPDF('aging')} className="flex items-center gap-1.5 px-4 py-2 bg-red-50 text-red-700 border border-red-300 rounded-xl text-[10px] font-black uppercase hover:bg-red-100 transition-all"><FileText size={12}/>Vencimiento PDF</button>
+                  <button onClick={()=>exportarExcel('aging')} className="flex items-center gap-1.5 px-4 py-2 bg-green-50 text-green-700 border border-green-300 rounded-xl text-[10px] font-black uppercase hover:bg-green-100 transition-all"><Download size={12}/>Vencimiento Excel</button>
                 </div>
                 {cxcModo==='fecha'&&<p className="text-[9px] text-orange-600 font-bold mt-2">★ Mostrando cartera al {cxcFechaRef}</p>}
               </div>
