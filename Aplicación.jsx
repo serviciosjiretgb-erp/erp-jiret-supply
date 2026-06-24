@@ -14668,32 +14668,62 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
           // ── REVERSAR COBRO ─────────────────────────────────────────────
           const reversarCobro=async(cobro)=>{
-            setDialog({title:'¿Reversar cobro?',text:`Se devolverá $${formatNum(cobro.monto)} al saldo de ${cobro.neDocumento} y se eliminará el movimiento bancario correspondiente.`,type:'confirm',onConfirm:async()=>{
+            setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento bancario también será eliminado. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
               try{
-                const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
                 const batch=writeBatch(db);
-                // Reversar NE
-                if(ne){
-                  const cobradoActual=getCobradoNEAtFecha(ne,null)||0;
-                  const nuevoCobrado=Math.max(0,cobradoActual-parseNum(cobro.monto));
-                  const nuevoSaldo=parseNum(ne.total||0)-nuevoCobrado;
-                  const nuevoStatus=nuevoCobrado<0.01?'PENDIENTE':'COBRADA_PARCIAL';
-                  batch.update(getDocRef('notasEntrega',ne.id),{statusCxC:nuevoStatus,montoCobrado:nuevoCobrado,saldoPendiente:nuevoSaldo,updatedAt:Date.now()});
-                }
-                // Reversar movimiento bancario
-                const mvAReversar=(await getDocs(getColRef('banco_movimientos'))).docs.map(d=>d.data()).find(mv=>mv.referencia===cobro.referencia&&mv.cuentaId===cobro.cuentaBancariaId&&Math.abs(parseNum(mv.montoUSD||mv.monto||0)-parseNum(cobro.monto))<0.01);
-                if(mvAReversar){
-                  batch.delete(getDocRef('banco_movimientos',mvAReversar.id));
-                  const cta=(cuentasBanco||[]).find(c=>c.id===cobro.cuentaBancariaId);
-                  if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)-parseNum(cobro.monto)});
-                }
-                // Movimiento de reverso
-                const revId=`REV-${Date.now().toString(36).toUpperCase()}`;
-                batch.set(getDocRef('banco_movimientos',revId),{id:revId,fecha:getTodayDate(),tipo:'Egreso',origenIngreso:'Reverso Cobro',concepto:`REVERSO — ${cobro.neDocumento} · ${cobro.clientName}`,referencia:`REV-${cobro.referencia}`,cuentaId:cobro.cuentaBancariaId||'',montoUSD:parseNum(cobro.monto),montoBs:parseNum(cobro.monto)*(cobro.tasa||tasaBCV),tasa:cobro.tasa||tasaBCV,estatus:'No Conciliado',timestamp:Date.now()});
-                // Eliminar cobro
+                const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
+
+                // 1. Eliminar el cobro de cobros_cxc
                 batch.delete(getDocRef('cobros_cxc',cobro.id));
+
+                // 2. Recalcular NE — saldo = total NE − NC/ND − retenciones − cobros restantes
+                if(ne){
+                  const cobrosRestantes=(cobrosCxc||[]).filter(c=>c.neId===cobro.neId && c.id!==cobro.id);
+                  const totalCobradoRestante=cobrosRestantes.reduce((s,c)=>s+parseNum(c.monto||0),0);
+                  // Saldo = lo que dice getSaldoNEAtFecha ANTES de quitar este cobro
+                  // = getSaldoNEAtFecha ya tiene cobro aplicado, así que el nuevo saldo = saldoActual + monto del cobro eliminado
+                  // Pero mejor recalcular desde el total bruto:
+                  const totalNE=parseNum(ne.total||ne.totalUSD||0);
+                  const totalNCs=(notasVentaCD||[]).filter(n=>{
+                    const ni=n.neId||'',no=n.neOrigen||'';
+                    return ni===ne.id||no===ne.id||ni===(ne.documento||'')||no===(ne.documento||'');
+                  }).reduce((s,n)=>s+parseNum(n.montoUSD||0),0);
+                  const totalRets=(retenciones||[]).filter(r=>r.neId===ne.id||r.facturaId===ne.facturaId).reduce((s,r)=>s+parseNum(r.montoRetenidoUSD||r.montoRetenido||0)/Math.max(parseNum(r.tasa||1),1),0);
+                  const nuevoSaldo=Math.max(0, totalNE - totalNCs - totalRets - totalCobradoRestante);
+                  const nuevoStatus=totalCobradoRestante<0.01?'PENDIENTE':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
+                  batch.update(getDocRef('notasEntrega',ne.id),{
+                    statusCxC:nuevoStatus,
+                    montoCobrado:totalCobradoRestante,
+                    saldoPendiente:nuevoSaldo,
+                    updatedAt:Date.now()
+                  });
+                }
+
+                // 3. Buscar y ELIMINAR movimiento bancario — intentar por múltiples criterios
+                const todosMovsSnap=await getDocs(getColRef('banco_movimientos'));
+                const todosMovs=todosMovsSnap.docs.map(d=>({...d.data(),_docId:d.id}));
+                const mvBanco=todosMovs.find(mv=>
+                  // Por referencia + cuenta + monto
+                  (mv.referencia===cobro.referencia && mv.cuentaId===cobro.cuentaBancariaId && Math.abs(parseNum(mv.montoUSD||mv.monto||0)-parseNum(cobro.monto))<0.05) ||
+                  // Por ID del cobro en el concepto
+                  (mv.concepto||'').includes(cobro.id) ||
+                  // Por referencia + neId en concepto
+                  (mv.referencia===cobro.referencia && (mv.concepto||'').includes(cobro.neId)) ||
+                  // Por referencia + clientName
+                  (mv.referencia===cobro.referencia && mv.terceroNombre===cobro.clientName && Math.abs(parseNum(mv.montoUSD||0)-parseNum(cobro.monto))<0.05)
+                );
+
+                if(mvBanco){
+                  batch.delete(getDocRef('banco_movimientos', mvBanco._docId||mvBanco.id));
+                  const cta=(cuentasBanco||[]).find(c=>c.id===cobro.cuentaBancariaId||c.id===mvBanco.cuentaId);
+                  if(cta){
+                    const nuevoSaldoCta=parseNum(cta.saldo||0)-parseNum(cobro.monto);
+                    batch.update(getDocRef('banco_cuentas',cta.id),{saldo:nuevoSaldoCta});
+                  }
+                }
+
                 await batch.commit();
-                setDialog({title:'✅ Reverso aplicado',text:`Cobro de $${formatNum(cobro.monto)} revertido correctamente.`,type:'alert'});
+                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvBanco?'\nMovimiento bancario también eliminado.':'\n⚠ No se encontró el movimiento bancario asociado.'}`,type:'alert'});
               }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
             }});
           };
@@ -14954,7 +14984,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                   <div className="text-white text-xs font-bold truncate">{ct.banco}</div>
                                   <div className="text-gray-500 text-[9px]">{ct.numeroCuenta} · {ct.moneda}</div>
                                 </div>
-                                <div className="text-[9px] text-gray-400 flex-shrink-0">${formatNum(ct.saldo||0)}</div>
+
                               </button>
                             ))}
                           </div>
@@ -14972,7 +15002,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                   <div className="text-white text-xs font-bold truncate">{ct.banco}</div>
                                   <div className="text-gray-500 text-[9px]">{ct.numeroCuenta} · {ct.moneda}</div>
                                 </div>
-                                <div className="text-[9px] text-gray-400 flex-shrink-0">${formatNum(ct.saldo||0)}</div>
+
                               </button>
                             ))}
                           </div>
@@ -15282,16 +15312,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                                   />
                                                 </td>
                                               </tr>
-                                              {cobrosNE.map(cb=>(
-                                                <tr key={cb.id} className="bg-green-50 text-[8px]">
-                                                  <td colSpan={2} className="py-1 px-4 text-green-700 font-bold">✓ Abono · {cb.fecha}</td>
-                                                  <td className="py-1 px-2 text-center text-gray-400 font-mono">{cb.referencia}</td>
-                                                  <td></td><td className="py-1 px-2 text-right text-green-700 font-black" colSpan={2}>$${formatNum(parseNum(cb.monto))}</td>
-                                                  <td></td><td className="py-1 px-2 text-right text-green-700 font-black">${formatNum(parseNum(cb.monto))}</td>
-                                                  <td className="py-1 px-2 text-right text-gray-400">{formatNum(parseNum(cb.monto)*tasa)}</td>
-                                                  <td className="py-1 px-2 text-center text-gray-400">{cb.metodo}</td><td></td>
-                                                </tr>
-                                              ))}
                                               {ncsNE.map(nc=>{
                                                 const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
                                                 const baseBs=parseNum(nc.monto||0);
@@ -15306,31 +15326,35 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                                   <td colSpan={6}></td>
                                                 </tr>);
                                               })}
-                                              {/* Detalle: Doc Fiscal + Retenciones con comprobante */}
-                                              {(()=>{
-                                                
-                                                if(!invVinc&&retsNE.length===0) return null;
-                                                return(
-                                                  <tr className="bg-indigo-50 text-[8px] border-b border-indigo-100">
-                                                    <td colSpan={12} className="py-1.5 px-4">
-                                                      <div className="flex flex-wrap gap-4">
-                                                        {invVinc&&<span className="text-indigo-700 font-bold">
-                                                          📋 NE: <b>{ne.documento||ne.id}</b> &nbsp;·&nbsp;
-                                                          Fac. Fiscal: <b className="text-orange-600">{invVinc.nroFiscal||invVinc.documento||'—'}</b>
-                                                          {invVinc.nroControl&&<> &nbsp;·&nbsp; Control: <b>{invVinc.nroControl}</b></>}
-                                                        </span>}
-                                                        {retsNE.map((r,ri)=>(
-                                                          <span key={ri} className="text-amber-700 font-bold">
-                                                            🧾 RET N°{ri+1}: Comprobante <b className="text-amber-800">{r.nroRetencion||r.nroComprobante||'—'}</b>
-                                                            {(r.fechaComprobante||r.fecha)&&<> &nbsp;·&nbsp; Fecha: <b>{r.fechaComprobante||r.fecha}</b></>}
-                                                            {parseNum(r.montoRetenido||0)>0&&<> &nbsp;·&nbsp; <b className="text-amber-600">Bs. {formatNum(parseNum(r.montoRetenido))}</b></>}
-                                                          </span>
-                                                        ))}
-                                                      </div>
-                                                    </td>
-                                                  </tr>
-                                                );
-                                              })()}
+                                              {/* Fila de info fiscal + retenciones — más limpia */}
+                                              {(invVinc||retsNE.length>0||cobrosNE.length>0)&&(
+                                                <tr className="bg-slate-50 border-b border-slate-200 text-[8px]">
+                                                  <td colSpan={11} className="px-4 py-1.5">
+                                                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                                                      {invVinc&&<span className="flex items-center gap-1 text-slate-500">
+                                                        <span className="text-slate-400">📋</span>
+                                                        <span>Fac. <b className="text-indigo-600">{invVinc.nroFiscal||invVinc.documento||'—'}</b></span>
+                                                        {invVinc.nroControl&&<span className="text-slate-400">· Ctrl. <b>{invVinc.nroControl}</b></span>}
+                                                      </span>}
+                                                      {cobrosNE.map((cb,ci)=>(
+                                                        <span key={ci} className="flex items-center gap-1 text-green-700 font-bold">
+                                                          <span>💰 Cobro {ci+1}: <b>${formatNum(parseNum(cb.monto))}</b></span>
+                                                          {cb.fecha&&<span className="text-slate-400 font-normal">{cb.fecha}</span>}
+                                                          {cb.referencia&&<span className="text-slate-400 font-normal">· {cb.referencia}</span>}
+                                                          {cb.concepto&&<span className="text-slate-400 font-normal italic">· {cb.concepto}</span>}
+                                                        </span>
+                                                      ))}
+                                                      {retsNE.map((r,ri)=>(
+                                                        <span key={ri} className="flex items-center gap-1 text-amber-700 font-bold">
+                                                          <span>🧾 Ret.{ri+1}: <b>{r.nroRetencion||r.nroComprobante||'—'}</b></span>
+                                                          {(r.fechaComprobante||r.fecha)&&<span className="text-slate-400 font-normal">{r.fechaComprobante||r.fecha}</span>}
+                                                          {parseNum(r.montoRetenido||0)>0&&<span className="text-amber-600">Bs.{formatNum(parseNum(r.montoRetenido))}</span>}
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  </td>
+                                                </tr>
+                                              )}
                                             </React.Fragment>
                                           );
                                         })}
