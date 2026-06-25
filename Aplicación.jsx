@@ -22727,15 +22727,25 @@ ${resumenHtml}
                         {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(efaData.totalIngresos)}</td>}
                       </tr>
                       {erExpanded.ingresos && (()=>{
-                        // Usar cogsRows directamente — ya tiene cantVendida y subIngreso
-                        // calculados con warehouseQtys, misma fuente que totalIngresos
                         const _getCatER = (cod,tp) => {
                           const c=(cod||'').toUpperCase(),t=(tp||'').toUpperCase();
                           if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
                           return 'Bolsas Plásticas';
                         };
-                        const byCategoria = {};
+                        // Consolidar cogsRows por NE+producto (fusionar entradas por almacén)
+                        const consolidado = {};
                         (efaData.cogsRows||[]).forEach(row=>{
+                          const key = `${row.factura}__${row.itemCode||row.producto}`;
+                          if(!consolidado[key]){
+                            consolidado[key]={...row, cantVendida:0, subIngreso:0, costoTotal:0};
+                          }
+                          consolidado[key].cantVendida += parseNum(row.cantVendida||0);
+                          consolidado[key].subIngreso  += parseNum(row.subIngreso||0);
+                          consolidado[key].costoTotal  += parseNum(row.costoTotal||0);
+                        });
+                        const rowsConsolidados = Object.values(consolidado);
+                        const byCategoria = {};
+                        rowsConsolidados.forEach(row=>{
                           const cat=_getCatER(row.itemCode||'', row.esTermo?'TERMOENCOGIBLE':'BOLSAS');
                           if(!byCategoria[cat]) byCategoria[cat]={items:[],total:0};
                           byCategoria[cat].items.push(row);
@@ -23354,71 +23364,40 @@ ${resumenHtml}
         const precioUnit = parseNum(it.precioUnit||it.precio||0);
         let costoU = parseNum(it.costoUnit||0);
 
-        // ── Misma lógica de cantidad que Productos Vendidos ──
+        // ── Cantidad: sumar TODOS los almacenes de warehouseQtys como UNA cantidad total ──
+        // NO iterar por almacén (eso genera entradas duplicadas y diferencias de redondeo)
         const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length>0 ? it.warehouseQtys : null;
-        if(wqty) {
-          // Una entrada por almacén (igual que Productos Vendidos)
-          Object.entries(wqty).forEach(([alm, q]) => {
-            const cant = parseNum(q||0);
-            if(cant<=0) return;
-            const sub = precioUnit>0 ? precioUnit*cant : 0;
-            totalIngresosItems += sub;
-            nesConIngreso.add(ne.id);
+        const cant = wqty
+          ? Object.values(wqty).reduce((s,q)=>s+parseNum(q||0),0)
+          : parseNum(it.cantidad||it.qty||0);
+        if(cant<=0) return;
 
-            // Costo
-            const fgIdLimpio = it.fgId||(it.invCode||'').split('___')[0]||code.split('___')[0];
-            const fgRec = fgIdLimpio?(finishedGoodsInventory||[]).find(f=>f.id===fgIdLimpio):null;
-            let cu = costoU;
-            if(cu<=0&&fgRec){const esTermo2=it.esTermo??(fgRec.tipoProducto==='TERMOENCOGIBLE');cu=esTermo2?parseNum(fgRec.costoUnitario||0):parseNum(fgRec.costoUnitarioMillar||0);}
-            if(cu<=0&&fgIdLimpio){const km=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&(m.docRef||'').includes(ne.documento||ne.id||'')&&parseNum(m.unitCost||0)>0);if(km)cu=parseNum(km.unitCost||0);}
-            if(cu<=0&&fgIdLimpio){const km2=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);if(km2)cu=parseNum(km2.unitCost||0);}
-            if(cu<=0&&fgRec)cu=parseNum(fgRec.costoUnitario||fgRec.costoUnitarioMillar||0);
-            const ct=cu*cant;
-            totalCostoProd+=ct;
-            cogsRows.push({
-              opId:ne.opRelacionada||ne.opId||ne.opAsignada||'—',
-              opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
-              producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
-              cantVendida:cant, unidad:it.unidad||it.unit||'und',
-              precioUnit:precioUnit, subIngreso:sub,
-              costoUnit:cu, costoTotal:ct,
-              esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
-              factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
-              fecha:ne.fecha||'', invId:ne.id, itemCode:code,
-              cuentaIngreso:'4.1.01.01.002',cuentaIngresoNombre:'Ingresos por Ventas (NEs)',
-              cuentaCosto:'5.1.01.01.002',cuentaCostoNombre:'Costos de Producción'
-            });
-          });
-        } else {
-          const cant = parseNum(it.cantidad||it.qty||0);
-          if(cant<=0) return;
-          const sub = precioUnit>0 ? precioUnit*cant : 0;
-          totalIngresosItems += sub;
-          nesConIngreso.add(ne.id);
+        const sub = precioUnit>0 ? precioUnit*cant : 0;
+        totalIngresosItems += sub;
+        nesConIngreso.add(ne.id);
 
-          const fgIdLimpio = it.fgId||(it.invCode||'').split('___')[0]||code.split('___')[0];
-          const fgRec = fgIdLimpio?(finishedGoodsInventory||[]).find(f=>f.id===fgIdLimpio):null;
-          let cu = costoU;
-          if(cu<=0&&fgRec){const esTermo2=it.esTermo??(fgRec.tipoProducto==='TERMOENCOGIBLE');cu=esTermo2?parseNum(fgRec.costoUnitario||0):parseNum(fgRec.costoUnitarioMillar||0);}
-          if(cu<=0&&fgIdLimpio){const km=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&(m.docRef||'').includes(ne.documento||ne.id||'')&&parseNum(m.unitCost||0)>0);if(km)cu=parseNum(km.unitCost||0);}
-          if(cu<=0&&fgIdLimpio){const km2=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);if(km2)cu=parseNum(km2.unitCost||0);}
-          if(cu<=0&&fgRec)cu=parseNum(fgRec.costoUnitario||fgRec.costoUnitarioMillar||0);
-          const ct=cu*cant;
-          totalCostoProd+=ct;
-          cogsRows.push({
-            opId:ne.opRelacionada||ne.opId||ne.opAsignada||'—',
-            opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
-            producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
-            cantVendida:cant, unidad:it.unidad||it.unit||'und',
-            precioUnit:precioUnit, subIngreso:sub,
-            costoUnit:cu, costoTotal:ct,
-            esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
-            factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
-            fecha:ne.fecha||'', invId:ne.id, itemCode:code,
-            cuentaIngreso:'4.1.01.01.002',cuentaIngresoNombre:'Ingresos por Ventas (NEs)',
-            cuentaCosto:'5.1.01.01.002',cuentaCostoNombre:'Costos de Producción'
-          });
-        }
+        const fgIdLimpio = it.fgId||(it.invCode||'').split('___')[0]||code.split('___')[0];
+        const fgRec = fgIdLimpio?(finishedGoodsInventory||[]).find(f=>f.id===fgIdLimpio):null;
+        let cu = costoU;
+        if(cu<=0&&fgRec){const esTermo2=it.esTermo??(fgRec.tipoProducto==='TERMOENCOGIBLE');cu=esTermo2?parseNum(fgRec.costoUnitario||0):parseNum(fgRec.costoUnitarioMillar||0);}
+        if(cu<=0&&fgIdLimpio){const km=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&(m.docRef||'').includes(ne.documento||ne.id||'')&&parseNum(m.unitCost||0)>0);if(km)cu=parseNum(km.unitCost||0);}
+        if(cu<=0&&fgIdLimpio){const km2=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);if(km2)cu=parseNum(km2.unitCost||0);}
+        if(cu<=0&&fgRec)cu=parseNum(fgRec.costoUnitario||fgRec.costoUnitarioMillar||0);
+        const ct=cu*cant;
+        totalCostoProd+=ct;
+        cogsRows.push({
+          opId:ne.opRelacionada||ne.opId||ne.opAsignada||'—',
+          opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
+          producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
+          cantVendida:cant, unidad:it.unidad||it.unit||'und',
+          precioUnit:precioUnit, subIngreso:sub,
+          costoUnit:cu, costoTotal:ct,
+          esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
+          factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
+          fecha:ne.fecha||'', invId:ne.id, itemCode:code,
+          cuentaIngreso:'4.1.01.01.002',cuentaIngresoNombre:'Ingresos por Ventas (NEs)',
+          cuentaCosto:'5.1.01.01.002',cuentaCostoNombre:'Costos de Producción'
+        });
       });
     });
 
