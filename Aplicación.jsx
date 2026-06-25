@@ -16972,23 +16972,23 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Ingresos: NEs de Bolsas Plásticas y Termoencogibles (no anuladas)
-                        const esBolsaOTermo = (it) => {
+                        // Ingresos: NEs de Bolsas Plásticas y Termoencogibles — lógica inline sin getCategoryFromCode
+                        const _isBT = (it) => {
                           const tp = (it.tipoProducto||'').toUpperCase();
-                          const cat = getCategoryFromCode(it.invCode||it.fgId||it.desc||'');
-                          return tp==='TERMOENCOGIBLE'||tp==='BOLSAS'||cat==='Bolsas Plásticas'||cat==='Termoencogibles';
+                          const cod = (it.invCode||it.fgId||it.desc||'').toUpperCase();
+                          return tp==='TERMOENCOGIBLE'||tp==='BOLSAS'||
+                            (/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/TERMO|STRETCH|CINTA|KRAFT/.test(cod))||
+                            /TERMO|THERMO|SHRINK|ENCOG/.test(cod);
                         };
                         const ingresosMes = (notasEntrega||[])
                           .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
                           .reduce((s,ne) => {
                             const items = ne.items||[];
-                            // Si tiene items, sumar solo los de bolsas/termos
                             if(items.length>0) {
-                              const subtotal = items.filter(esBolsaOTermo).reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
+                              const subtotal = items.filter(_isBT).reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
                               const iva = ne.aplicaIva==='SI'?subtotal*0.16:0;
                               return s + subtotal + iva;
                             }
-                            // Sin items, usar total NE completo
                             return s + parseNum(ne.total||0);
                           }, 0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
