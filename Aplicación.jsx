@@ -22710,21 +22710,57 @@ ${resumenHtml}
                         <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
                         {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(efaData.totalIngresos)}</td>}
                       </tr>
-                      {erExpanded.ingresos && (efaData.facturasperiodo.length>0 ? efaData.facturasperiodo.map((inv,i)=>(
-                        <tr key={i} className={`border-b hover:bg-orange-50/40 ${inv.isNota?(inv.tipoNota==='NC'?'bg-red-50/40':'bg-blue-50/40'):'border-orange-50'}`}>
-                          <td className="py-1.5 px-4 pl-20 text-[10px] font-bold text-gray-700">
-                            {inv.isNota&&<span className={`text-[8px] font-black px-1.5 py-0.5 rounded mr-1 ${inv.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{inv.tipoNota}</span>}
-                            <span className="text-orange-500 font-black mr-2">{inv.documento}</span>
-                            {inv.clientName} — <span className="italic text-gray-500">{inv.productoMaquilado||inv.opAsignada||''}</span>
-                            <span className="text-[9px] text-gray-400 ml-2">{inv.fecha}</span>
-                          </td>
-                          <td className="py-1.5 px-3 text-center text-[9px] text-gray-400">USD</td>
-                          <td className={`py-1.5 px-3 text-right font-black ${inv.montoBase<0?'text-red-600':'text-orange-600'}`}>{inv.montoBase<0?'-':''}{formatNum(Math.abs(parseNum(inv.montoBase)))}</td>
-                          <td className="py-1.5 px-3 text-center text-[9px]">{pctOf(parseNum(inv.montoBase),efaData.totalIngresos)}</td>
-                          {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px]">{bs(parseNum(inv.montoBase))}</td>}
-                        </tr>
-                      )) : <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-20 text-[10px] text-gray-400 italic">Sin registros en este período</td></tr>
-                      )}
+                      {erExpanded.ingresos && (()=>{
+                        // Agrupar ítems por categoría (Bolsas / Termos) desde cogsRows que ya están filtrados
+                        const _getCatER = (cod,desc,tp) => {
+                          const c=(cod||'').toUpperCase(),d=(desc||'').toUpperCase(),t=(tp||'').toUpperCase();
+                          if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
+                          return 'Bolsas Plásticas';
+                        };
+                        // Reconstruir detalle desde NEs del período
+                        const detalleItems = [];
+                        (efaData.facturasperiodo||[]).forEach(ne => {
+                          const items = ne.items||[];
+                          if(items.length>0){
+                            items.forEach(it=>{
+                              const cod=it.invCode||it.fgId||''; const desc=it.desc||''; const tp=it.tipoProducto||'';
+                              const cat=_getCatER(cod,desc,tp);
+                              const cant=parseNum(it.cantidad||0); const pu=parseNum(it.precioUnit||0);
+                              if(cant<=0) return;
+                              detalleItems.push({ ne:ne.documento||ne.id, cliente:ne.clientName||'—', fecha:ne.fecha||'', desc:desc||cod, cant, pu, sub:cant*pu, cat });
+                            });
+                          } else {
+                            detalleItems.push({ ne:ne.documento||ne.id, cliente:ne.clientName||'—', fecha:ne.fecha||'', desc:'—', cant:1, pu:parseNum(ne.montoBase||ne.total||0), sub:parseNum(ne.montoBase||ne.total||0), cat:'Bolsas Plásticas' });
+                          }
+                        });
+                        const byCategoria = {};
+                        detalleItems.forEach(it=>{ if(!byCategoria[it.cat])byCategoria[it.cat]={items:[],total:0}; byCategoria[it.cat].items.push(it); byCategoria[it.cat].total+=it.sub; });
+                        return Object.entries(byCategoria).map(([cat,grp])=>(
+                          <React.Fragment key={cat}>
+                            <tr className="bg-orange-100 border-b border-orange-200">
+                              <td className="py-1.5 px-4 pl-12 font-black text-[10px] text-orange-800 uppercase" colSpan={tasa>1?4:3}>
+                                📦 {cat} <span className="text-[9px] font-normal ml-2 text-orange-500">({grp.items.length} líneas)</span>
+                              </td>
+                              <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(grp.total)}</td>
+                              {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-orange-500">{bs(grp.total)}</td>}
+                            </tr>
+                            {grp.items.map((it,i)=>(
+                              <tr key={i} className="border-b border-orange-50 hover:bg-orange-50/30">
+                                <td className="py-1.5 px-4 pl-20 text-[10px] text-gray-700" colSpan={tasa>1?4:3}>
+                                  <span className="text-orange-500 font-black mr-2">{it.ne}</span>
+                                  <span className="font-bold">{it.cliente}</span>
+                                  <span className="text-gray-400 mx-1">—</span>
+                                  <span className="italic text-gray-500">{it.desc}</span>
+                                  <span className="text-[9px] text-gray-400 ml-2">{it.fecha}</span>
+                                  <span className="text-[9px] text-gray-400 ml-2">{formatNum(it.cant)} × ${formatNum(it.pu)}</span>
+                                </td>
+                                <td className="py-1.5 px-3 text-right font-black text-orange-600">{formatNum(it.sub)}</td>
+                                {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-gray-400">{bs(it.sub)}</td>}
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        ));
+                      })()}
                       <tr className="bg-orange-100">
                         <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                         <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
@@ -22748,34 +22784,56 @@ ${resumenHtml}
                         <td className="py-1.5 px-3 text-right font-black">${formatNum(efaData.totalCostoProd)}</td>
                         {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(efaData.totalCostoProd)}</td>}
                       </tr>
-                      {erExpanded.costo_ventas && (efaData.cogsRows||[]).length>0 && <>
-                        <tr className="bg-gray-100 text-gray-600 text-[9px] font-black uppercase">
-                          <td className="py-1 px-4 pl-14">OP / Producto / Cliente</td>
-                          <td className="py-1 px-3 text-center">Unid.</td>
-                          <td className="py-1 px-3 text-right">Cant. × Costo Unit.</td>
-                          <td className="py-1 px-3 text-right">Total $</td>
-                          {tasa>1&&<td className="py-1 px-3 text-right">Bs</td>}
-                        </tr>
-                        {(efaData.cogsRows||[]).filter(row=>row.nroFiscal&&row.nroFiscal!=='').map((row,i)=>(
-                          <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                            <td className="py-1.5 px-4 pl-14">
-                              <div className="font-black text-[10px] text-orange-600 flex items-center gap-2">
-                                <span>{row.fecha}</span>
-                                <span className="text-blue-700">{row.factura}</span>
-                                {row.nroFiscal&&<span className="bg-gray-100 px-1 rounded">{row.nroFiscal}</span>}
-                                <span className="text-gray-400">OP-{row.opNum}</span>
-                              </div>
-                              <div className="font-bold text-[10px] uppercase">{row.producto}</div>
-                              {row.cliente&&<div className="text-[9px] text-gray-400">{row.cliente}</div>}
-                            </td>
-                            <td className="py-1.5 px-3 text-center text-[9px] text-gray-500 font-bold">{row.unidad}</td>
-                            <td className="py-1.5 px-3 text-right font-bold text-blue-700 text-[10px]">{formatNum(row.cantVendida)}</td>
-                            <td className="py-1.5 px-3 text-right font-black">{formatNum(row.costoUnit)}</td>
-                            <td className="py-1.5 px-3 text-right font-black">{formatNum(row.costoTotal)}</td>
-                            {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-gray-600">{bs(row.costoTotal)}</td>}
+                      {erExpanded.costo_ventas && (efaData.cogsRows||[]).length>0 && (()=>{
+                        // Agrupar cogsRows por categoría
+                        const _getCatCost = (cod,desc,tp) => {
+                          const c=(cod||'').toUpperCase(),d=(desc||'').toUpperCase(),t=(tp||'').toUpperCase();
+                          if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
+                          return 'Bolsas Plásticas';
+                        };
+                        const byCat = {};
+                        (efaData.cogsRows||[]).forEach(row=>{
+                          const cat = _getCatCost(row.itemCode||'', row.producto||'', row.esTermo?'TERMOENCOGIBLE':'BOLSAS');
+                          if(!byCat[cat]) byCat[cat]={rows:[],total:0};
+                          byCat[cat].rows.push(row);
+                          byCat[cat].total += row.costoTotal;
+                        });
+                        return <>
+                          <tr className="bg-gray-100 text-gray-600 text-[9px] font-black uppercase">
+                            <td className="py-1 px-4 pl-14">Producto / Cliente / NE</td>
+                            <td className="py-1 px-3 text-center">Unid.</td>
+                            <td className="py-1 px-3 text-right">Cant.</td>
+                            <td className="py-1 px-3 text-right">Costo Unit. × Total</td>
+                            {tasa>1&&<td className="py-1 px-3 text-right">Bs</td>}
                           </tr>
-                        ))}
-                      </>}
+                          {Object.entries(byCat).map(([cat,grp])=>(
+                            <React.Fragment key={cat}>
+                              <tr className="bg-gray-200 border-b border-gray-300">
+                                <td className="py-1.5 px-4 pl-12 font-black text-[10px] text-gray-800 uppercase" colSpan={tasa>1?4:3}>
+                                  📦 {cat} <span className="text-[9px] font-normal ml-2 text-gray-500">({grp.rows.length} líneas)</span>
+                                </td>
+                                <td className="py-1.5 px-3 text-right font-black text-gray-800">{formatNum(grp.total)}</td>
+                                {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-gray-500">{bs(grp.total)}</td>}
+                              </tr>
+                              {grp.rows.map((row,i)=>(
+                                <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                                  <td className="py-1.5 px-4 pl-20" colSpan={tasa>1?4:3}>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-orange-500 font-black text-[10px]">{row.factura}</span>
+                                      <span className="text-[9px] text-gray-400">{row.fecha}</span>
+                                      {row.cliente&&<span className="font-bold text-[10px]">{row.cliente}</span>}
+                                      <span className="italic text-gray-500 text-[10px]">{row.producto}</span>
+                                      <span className="text-[9px] text-blue-600 font-bold">{formatNum(row.cantVendida)} {row.unidad} × ${formatNum(row.costoUnit)}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-1.5 px-3 text-right font-black text-[10px]">{formatNum(row.costoTotal)}</td>
+                                  {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-gray-500">{bs(row.costoTotal)}</td>}
+                                </tr>
+                              ))}
+                            </React.Fragment>
+                          ))}
+                        </>;
+                      })()}
                       {erExpanded.costo_ventas && (efaData.cogsRows||[]).length===0 &&
                         <tr><td colSpan={tasa>1?5:4} className="py-1.5 px-4 pl-14 text-[10px] text-gray-400 italic">Sin ventas de producción</td></tr>}
                       <tr className="bg-gray-100 border-b border-gray-300">
@@ -23349,14 +23407,7 @@ ${resumenHtml}
         });
       });
 
-      // Si NE tiene montoBase pero sin ítems desglosados con precio
-      if (!neTieneItemsValidos) {
-        const base = parseNum(ne.montoBase || ne.total || 0);
-        if (base > 0) {
-          totalIngresosItems += base;
-          facturasContadas.add(ne.id);
-        }
-      }
+      // Solo suma ítems válidos (Bolsas/Termos) — NEs sin estos productos no entran
     });
 
     const totalIngresosNE = totalIngresosItems;
@@ -23377,12 +23428,12 @@ ${resumenHtml}
 
     // Desglose de NEs para mostrar en INGRESOS colapsable
     const facturasperiodo = nesDelPeriodo
-      .filter(ne => (ne.items||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'')) || parseNum(ne.montoBase||ne.total||0)>0)
+      .filter(ne => (ne.items||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'', it.tipoProducto||'')))
       .map(ne => ({
         ...ne,
         documento: ne.documento || ne.id,
         clientName: ne.clientName || '',
-        montoBase: parseNum(ne.montoBase || ne.total || 0),
+        montoBase: (ne.items||[]).filter(it=>esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'',it.desc||'',it.tipoProducto||'')).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0),
         isNota: false
       }));
 
