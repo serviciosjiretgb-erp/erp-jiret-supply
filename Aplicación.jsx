@@ -9850,7 +9850,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     return (
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'productos_vendidos' && (() => {
-          // Build sold products from invoices - always read itemsFacturados (now always saved)
+          // Productos vendidos desde notasEntrega (Bolsas + Termos)
           const soldItems = [];
           (notasEntrega||[]).forEach(ne => {
             if(ne.status==='ANULADA') return;
@@ -9859,7 +9859,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const cantidad=parseNum(it.cantidad||0); if(cantidad<=0) return;
               const costoUnd=parseNum(it.costoUnit||0);
               const precioVenta=parseNum(it.precioUnit||0);
-              const totalVenta=cantidad*precioVenta;
+              // Almacén: del item primero, luego NE, nunca asumir default ciego
+              const almacen = (it.almacen||'').trim() || (ne.deposito||'').trim() || (ne.almacen||'').trim() || 'ALMACEN ZI';
               soldItems.push({
                 factura: ne.documento||ne.id,
                 nroFiscal: ne.nroFiscal||ne.facturaId||'—',
@@ -9868,23 +9869,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 cliente: ne.clientName||ne.clientRif||'—',
                 producto: it.desc||it.invCode||it.fgId||'—',
                 medida: it.unit||it.unidad||'und',
-                cantidad,
-                costoUnd,
+                cantidad, costoUnd,
                 totalCosto: cantidad*costoUnd,
                 precioVenta,
-                totalVenta,
+                totalVenta: cantidad*precioVenta,
                 opId: ne.opId||ne.opRelacionada||'—',
-                almacen: it.almacen||ne.deposito||ne.almacen||'ALMACEN ZI'
+                almacen,
               });
             });
           });
           const sorted = soldItems.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
-          // ── Unique lists for filters ──
-          const pvClientes = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.cliente))).sort()];
-          const pvProductos = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.producto))).sort()];
           const [pvFiltCliente, pvSetCliente] = [pvClienteFilter, setPvClienteFilter];
           const [pvFiltProducto, pvSetProducto] = [pvProductoFilter, setPvProductoFilter];
-          // Periodo filter helper: semestre, trimestre o mes
           const pvMatchPeriod=(fecha)=>{
             if(!pvFilter||pvFilter==='general') return true;
             const f=fecha||''; const y=f.substring(0,4); const m=parseInt(f.substring(5,7),10);
@@ -9894,9 +9890,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(pvFilter===`Q2_${y}`) return m>=4&&m<=6;
             if(pvFilter===`Q3_${y}`) return m>=7&&m<=9;
             if(pvFilter===`Q4_${y}`) return m>=10&&m<=12;
-            return f.startsWith(pvFilter); // mes exacto YYYY-MM
+            return f.startsWith(pvFilter);
           };
-          const pvAlmacenes = ['TODOS', ...Array.from(new Set(sorted.map(s=>s.almacen).filter(Boolean))).sort()];
+          // Almacenes únicos reales desde los items de las NEs
+          const pvAlmacenes = ['TODOS', ...Array.from(new Set(
+            (notasEntrega||[])
+              .filter(ne=>ne.status!=='ANULADA')
+              .flatMap(ne=>[
+                ...(ne.items||[]).map(it=>(it.almacen||'').trim()).filter(Boolean),
+                (ne.deposito||'').trim(),
+                (ne.almacen||'').trim(),
+              ])
+              .filter(Boolean)
+          )).sort()];
           const pvFiltered = sorted.filter(s =>
             (!pvFiltCliente||pvFiltCliente==='TODOS'||s.cliente.toUpperCase().includes(pvFiltCliente.toUpperCase())) &&
             (!pvFiltProducto||pvFiltProducto==='TODOS'||s.producto.toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
@@ -16923,14 +16929,17 @@ ${resumenHtml}
               </div>
                 <h3 className="text-sm font-black uppercase text-black mb-6 border-b border-gray-200 pb-2">Resumen por Categoría (Total acumulado)</h3>
                 <div className="space-y-3">
-                  {Object.entries(costsByCategory).filter(([,amount])=>amount>0).map(([cat, amount]) => {
+                  {Object.entries(costsByCategory).filter(([,amount])=>amount>0).sort(([,a],[,b])=>b-a).map(([cat, amount], idx) => {
                     const percentage = totalCosts > 0 ? (amount / totalCosts * 100) : 0;
                     const barWidth = amount > 0 ? (amount / maxCategoryAmount * 100) : 0;
                     return (
                       <div key={cat}>
                         <div className="flex justify-between items-center mb-1">
-                          <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
-                          <span className="text-xs font-bold text-gray-500">${formatNum(amount)} ({percentage.toFixed(1)}%)</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[9px] font-black w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${idx===0?'bg-green-600 text-white':idx===1?'bg-green-400 text-white':idx===2?'bg-green-200 text-green-800':'bg-gray-100 text-gray-500'}`}>{idx+1}</span>
+                            <span className="text-xs font-black text-gray-700 uppercase">{cat}</span>
+                          </div>
+                          <span className="text-xs font-bold text-gray-500">${formatNum(amount)} <span className="text-[10px] text-gray-400">({percentage.toFixed(1)}%)</span></span>
                         </div>
                         <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
                           <div className="bg-gradient-to-r from-green-500 to-green-600 h-full rounded-full transition-all duration-500" style={{width: `${barWidth}%`}} />
@@ -16963,21 +16972,25 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Solo ingresos de Bolsas Plásticas y Termoencogibles
-                        const esBolsaOTermo = (inv) => {
-                          const items = inv.itemsFacturados||[];
-                          if(items.length > 0) {
-                            return items.some(it => {
-                              const tp = (it.tipoProducto||'').toUpperCase();
-                              const cat = getCategoryFromCode(it.invCode||it.fgId||it.desc||'');
-                              return tp==='TERMOENCOGIBLE' || tp==='BOLSAS' || cat==='Bolsas Plásticas' || cat==='Termoencogibles';
-                            });
-                          }
-                          // Si no tiene items, revisar por descripción general
-                          const desc = (inv.descripcion||inv.producto||inv.clientName||'').toUpperCase();
-                          return /BOLSA|TERMO|BOL-|THERMO|SHRINK/.test(desc);
+                        // Ingresos: NEs de Bolsas Plásticas y Termoencogibles (no anuladas)
+                        const esBolsaOTermo = (it) => {
+                          const tp = (it.tipoProducto||'').toUpperCase();
+                          const cat = getCategoryFromCode(it.invCode||it.fgId||it.desc||'');
+                          return tp==='TERMOENCOGIBLE'||tp==='BOLSAS'||cat==='Bolsas Plásticas'||cat==='Termoencogibles';
                         };
-                        const ingresosMes = (invoices||[]).filter(i => (i?.fecha||'').startsWith(ym) && esBolsaOTermo(i)).reduce((s,i) => s + parseNum(i.total), 0);
+                        const ingresosMes = (notasEntrega||[])
+                          .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
+                          .reduce((s,ne) => {
+                            const items = ne.items||[];
+                            // Si tiene items, sumar solo los de bolsas/termos
+                            if(items.length>0) {
+                              const subtotal = items.filter(esBolsaOTermo).reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
+                              const iva = ne.aplicaIva==='SI'?subtotal*0.16:0;
+                              return s + subtotal + iva;
+                            }
+                            // Sin items, usar total NE completo
+                            return s + parseNum(ne.total||0);
+                          }, 0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
