@@ -16797,7 +16797,7 @@ ${resumenHtml}
       const uniqueMonths = [...new Set([
         ...(opCosts || []).map(c => c?.month || (c?.date ? String(c.date).substring(0, 7) : null)).filter(Boolean),
         ...(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>(ne.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7),
-      ])].sort().reverse();
+      ])].filter(ym=>ym>='2026-01').sort().reverse();
 
       // Nombres de mes para mostrar
       const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -17037,7 +17037,7 @@ ${resumenHtml}
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Mes</th>
-                        <th className="py-3 px-4 border-r text-right">Total Ingresos (Estado Financiero)</th>
+                        <th className="py-3 px-4 border-r text-right">Ingresos Bolsas & Termos</th>
                         <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
                         <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
                       </tr>
@@ -17047,16 +17047,28 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.filter(ym=>costFilterMonth==='TODOS'||ym===costFilterMonth).map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Ingresos desde Notas de Entrega (misma fuente que Estado Financiero)
+                        // Ingresos: solo Bolsas Plásticas + Termoencogibles (misma lógica que Estado Financiero)
+                        const _getCat = (cod,desc,tp) => {
+                          const c=(cod||'').toUpperCase(),d=(desc||'').toUpperCase(),t=(tp||'').toUpperCase();
+                          if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
+                          if(/STRETCH|STRECTH|STRECH/.test(c)||/STRETCH/.test(d)) return 'Stretch Film';
+                          if(/CINTA/.test(c)||/CINTA/.test(d)) return 'Cintas';
+                          if(/KRAFT/.test(c)||/KRAFT/.test(d)) return 'Papel Kraft';
+                          if(/DISPEN/.test(c)||/DISPENSADOR/.test(d)) return 'Dispensadores';
+                          if(/FLEJE/.test(c)||/FLEJE/.test(d)) return 'Fleje';
+                          if(t==='BOLSAS'||/BOL-|FG-[A-Z]/.test(c)||/BOLSA/.test(d)) return 'Bolsas Plásticas';
+                          return 'Otros';
+                        };
                         const ingresosMes = (notasEntrega||[])
                           .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
                           .reduce((s,ne) => {
                             const items = ne.items||[];
                             if(items.length>0){
-                              const sub=items.reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
-                              return s+(sub>0?sub:parseNum(ne.montoBase||ne.total||0));
+                              return s + items
+                                .filter(it=>{ const cat=_getCat(it.invCode||it.fgId||'',it.desc||'',it.tipoProducto||''); return cat==='Bolsas Plásticas'||cat==='Termoencogibles'; })
+                                .reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
                             }
-                            return s+parseNum(ne.montoBase||ne.total||0);
+                            return s + parseNum(ne.montoBase||ne.total||0);
                           },0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
@@ -17075,7 +17087,7 @@ ${resumenHtml}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: misma fuente que Estado Financiero (facturas INVO) &nbsp;|&nbsp; S/V = Sin ventas &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
+                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: suma de Bolsas Plásticas + Termoencogibles desde Productos Vendidos &nbsp;|&nbsp; S/V = Sin ventas &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
               </div>
 
               {/* Tabla de costos registrados */}
@@ -23239,18 +23251,27 @@ ${resumenHtml}
   // ── FIN renderLibroDiarioModule ──
   // ============================================================================
   const calcEstadoData = (ym) => {
-    // ── Detectar si un item es Bolsa o Termoencogible ──────────────────────────
-    const esBolsaOrTermo = (code, desc) => {
-      const c = (code||'').toUpperCase();
+    // ── Misma lógica de categorización que Productos Vendidos ─────────────────
+    const getCategoriaPV = (cod, desc, tp) => {
+      const c = (cod||'').toUpperCase();
       const d = (desc||'').toUpperCase();
-      return c.startsWith('BOL') || c.startsWith('TERMO') || c.startsWith('FG-') ||
-             d.includes('BOLSA') || d.includes('TERMO') || d.includes('PAÑAL') ||
-             d.includes('EMBUTIDO') || d.includes('CHUPETA') ||
-             d.includes('TERMO') || d.includes('TERMOENCOGIBLE');
+      const t = (tp||'').toUpperCase();
+      if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
+      if(/STRETCH|STRECTH|STRECH/.test(c)||/STRETCH/.test(d)) return 'Stretch Film';
+      if(/CINTA/.test(c)||/CINTA/.test(d)) return 'Cintas';
+      if(/KRAFT/.test(c)||/KRAFT/.test(d)) return 'Papel Kraft';
+      if(/DISPEN/.test(c)||/DISPENSADOR/.test(d)) return 'Dispensadores';
+      if(/FLEJE/.test(c)||/FLEJE/.test(d)) return 'Fleje';
+      if(t==='BOLSAS'||/BOL-|FG-[A-Z]/.test(c)||/BOLSA/.test(d)) return 'Bolsas Plásticas';
+      return 'Otros';
+    };
+    // Solo Bolsas Plásticas y Termoencogibles entran al Estado de Resultado
+    const esBolsaOrTermo = (code, desc, tp) => {
+      const cat = getCategoriaPV(code, desc, tp);
+      return cat === 'Bolsas Plásticas' || cat === 'Termoencogibles';
     };
 
     // ── INGRESOS y COSTOS: desde Notas de Entrega (fuente de verdad) ──────────
-    // La NE es la venta real — se usa su fecha y sus ítems
     const nesDelPeriodo = (notasEntrega||[]).filter(ne =>
       ne.status !== 'ANULADA' && (ne.fecha||'').startsWith(ym)
     );
@@ -23267,7 +23288,8 @@ ${resumenHtml}
       allItems.forEach(it => {
         const code = it.invCode || it.fgId || it.codigo || '';
         const desc = it.desc || it.descripcion || '';
-        if (!esBolsaOrTermo(code, desc)) return;
+        const tp   = it.tipoProducto || '';
+        if (!esBolsaOrTermo(code, desc, tp)) return;
         const cant = parseNum(it.cantidad || it.qty || 0);
         if (cant <= 0) return;
 
