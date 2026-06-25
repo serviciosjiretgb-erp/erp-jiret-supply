@@ -431,6 +431,7 @@ function App() {
   const [ventasView, setVentasView] = useState('facturacion');
   const [pvFilter, setPvFilter] = useState('general');
   const [pvAlmacenFilter, setPvAlmacenFilter] = useState('TODOS');
+  const [pvCategoriaFilter, setPvCategoriaFilter] = useState('TODAS');
   const [pvFiltCliente, setPvFiltCliente] = useState('');
   const [pvFiltDoc, setPvFiltDoc] = useState('');
   const [cotizaciones, setCotizaciones] = useState([]);
@@ -9862,11 +9863,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               if(!it.fgId&&!it.invCode&&!it.desc) return;
               const precioUnit = parseNum(it.precioUnit||0);
               const costoUnit  = parseNum(it.costoUnit||0);
+              // Detectar categoría del item
+              const cod = (it.invCode||it.fgId||'').toUpperCase();
+              const desc = (it.desc||'').toUpperCase();
+              const tp = (it.tipoProducto||'').toUpperCase();
+              const getCategoria = () => {
+                if(tp==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(cod)||/TERMO|THERMO|ENCOG/.test(desc)) return 'Termoencogibles';
+                if(tp==='BOLSAS'||/BOL-|FG-[A-Z]/.test(cod)||/BOLSA/.test(desc)||/BOL-/.test(cod)) return 'Bolsas Plásticas';
+                if(/MP-|MATERIA/.test(cod)||/MATERIA PRIMA/.test(desc)) return 'Materia Prima';
+                if(/CINTA|KRAFT|STRECH|STRETCH/.test(cod)||/CINTA|EMPAQUE/.test(desc)) return 'Empaque';
+                if(/SEM-|BOBINA/.test(cod)||/BOBINA|SEMIELABORADO/.test(desc)) return 'Semielaborados';
+                return 'Otros';
+              };
+              const categoria = getCategoria();
               const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length>0
                 ? it.warehouseQtys
                 : null;
               if(wqty) {
-                // Un row por almacén con su cantidad específica
                 Object.entries(wqty).forEach(([almacen, qty]) => {
                   const cantidad = parseNum(qty||0);
                   if(cantidad<=0) return;
@@ -9884,10 +9897,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     totalVenta: cantidad*precioUnit,
                     opId: ne.opId||ne.opRelacionada||'—',
                     almacen: almacen.trim()||'ALMACEN ZI',
+                    categoria,
                   });
                 });
               } else {
-                // Sin warehouseQtys: usar cantidad total
                 const cantidad = parseNum(it.cantidad||0);
                 if(cantidad<=0) return;
                 const almacen = (it.almacen||it.almacenDeduccion||ne.deposito||ne.almacen||'ALMACEN ZI').trim();
@@ -9905,6 +9918,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   totalVenta: cantidad*precioUnit,
                   opId: ne.opId||ne.opRelacionada||'—',
                   almacen,
+                  categoria,
                 });
               }
             });
@@ -9912,6 +9926,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const sorted = soldItems.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
           const [pvFiltCliente, pvSetCliente] = [pvClienteFilter, setPvClienteFilter];
           const [pvFiltProducto, pvSetProducto] = [pvProductoFilter, setPvProductoFilter];
+          // Categorías únicas para el filtro
+          const pvCategorias = ['TODAS', ...Array.from(new Set(soldItems.map(s=>s.categoria).filter(Boolean))).sort()];
           const pvMatchPeriod=(fecha)=>{
             if(!pvFilter||pvFilter==='general') return true;
             const f=fecha||''; const y=f.substring(0,4); const m=parseInt(f.substring(5,7),10);
@@ -9938,6 +9954,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!pvFiltCliente||pvFiltCliente==='TODOS'||s.cliente.toUpperCase().includes(pvFiltCliente.toUpperCase())) &&
             (!pvFiltProducto||pvFiltProducto==='TODOS'||s.producto.toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
             (pvAlmacenFilter==='TODOS'||s.almacen===pvAlmacenFilter) &&
+            (pvCategoriaFilter==='TODAS'||s.categoria===pvCategoriaFilter) &&
             pvMatchPeriod(s.fecha)
           );
           return (
@@ -9973,6 +9990,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div className="flex gap-3 items-center flex-wrap">
                   <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">📦 Categoría</label>
+                    <select value={pvCategoriaFilter} onChange={e=>setPvCategoriaFilter(e.target.value)}
+                      className="border-2 border-green-300 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-500 bg-green-50 w-44">
+                      {pvCategorias.map(c=><option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">🏭 Almacén</label>
                     <select value={pvAlmacenFilter} onChange={e=>setPvAlmacenFilter(e.target.value)}
                       className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44">
@@ -9989,8 +10013,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <input value={pvFiltProducto==='TODOS'?'':pvFiltProducto} onChange={e=>pvSetProducto(e.target.value||'TODOS')} placeholder="Buscar producto..."
                       className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44" />
                   </div>
-                  {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS' || pvAlmacenFilter !== 'TODOS') && (
-                    <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');setPvAlmacenFilter('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
+                  {(pvFiltCliente !== 'TODOS' || pvFiltProducto !== 'TODOS' || pvAlmacenFilter !== 'TODOS' || pvCategoriaFilter !== 'TODAS') && (
+                    <button onClick={()=>{pvSetCliente('TODOS');pvSetProducto('TODOS');setPvAlmacenFilter('TODOS');setPvCategoriaFilter('TODAS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline mt-4">✕ Limpiar</button>
                   )}
                   <button onClick={()=>{
                     const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
