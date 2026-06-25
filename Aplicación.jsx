@@ -22923,7 +22923,11 @@ ${resumenHtml}
             )}
 
             {/* ── VARIACIONES ── */}
-            {showReportType === 'variaciones' && (
+            {showReportType === 'variaciones' && (()=>{
+              // Calcular datos específicos para variaciones — independiente del selector del Estado Financiero
+              const dataVarA = calcEstadoData(varMesA);
+              const dataVarB = calcEstadoData(varMesB);
+              return (
               <div className="space-y-4">
                 <div className="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-2xl border border-gray-200">
                   <div>
@@ -22956,7 +22960,7 @@ ${resumenHtml}
                       <tr className="bg-orange-100"><td colSpan={9} className="py-2 px-4 font-black uppercase text-orange-800">INGRESOS POR PRODUCCIÓN</td></tr>
                       <tr className="bg-orange-50"><td colSpan={9} className="py-1.5 px-4 font-black text-[9px] uppercase pl-8 text-orange-700">VENTAS BRUTAS</td></tr>
                       {(()=>{
-                        const a=dataA.totalIngresos,b=dataB.totalIngresos,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
+                        const a=dataVarA.totalIngresos,b=dataVarB.totalIngresos,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
                         return(<tr className="border-b border-gray-100 hover:bg-gray-50">
                           <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>INGRESOS POR PRODUCCIÓN</td>
                           <td className="py-2 px-3 text-center text-[9px] text-gray-500 font-bold">USD</td><td className="py-2 px-3 text-right font-black text-green-600">{formatNum(a)}</td>
@@ -22967,7 +22971,7 @@ ${resumenHtml}
                         </tr>);
                       })()}
                       {(()=>{
-                        const a=dataA.totalIngresos,b=dataB.totalIngresos,v=a-b;
+                        const a=dataVarA.totalIngresos,b=dataVarB.totalIngresos,v=a-b;
                         return(<tr className="bg-orange-100">
                           <td className="py-2 px-4 font-black text-[10px] uppercase" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                           <td className="py-2 px-3 text-center text-[9px] font-black text-orange-700">USD</td><td className="py-2 px-3 text-right font-black text-orange-700">{formatNum(a)}</td>
@@ -22981,7 +22985,7 @@ ${resumenHtml}
                       <tr className="bg-gray-800 text-white"><td colSpan={9} className="py-2 px-4 font-black uppercase">COSTOS</td></tr>
                       <tr className="bg-gray-200"><td colSpan={9} className="py-1.5 px-4 font-black text-[10px] uppercase pl-8 text-gray-700">COSTO PRODUCCION</td></tr>
                       {(()=>{
-                        const a=dataA.totalCostoProd,b=dataB.totalCostoProd,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
+                        const a=dataVarA.totalCostoProd,b=dataVarB.totalCostoProd,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
                         return(<tr className="border-b border-gray-100 hover:bg-gray-50">
                           <td className="py-2 px-4 font-bold text-[10px] uppercase pl-14" colSpan={2}>COSTO DE PRODUCCION Y VENTAS</td>
                           <td className="py-2 px-3 text-center text-[9px] font-bold text-gray-500">USD</td><td className="py-2 px-3 text-right font-black">{formatNum(a)}</td>
@@ -22992,10 +22996,10 @@ ${resumenHtml}
                         </tr>);
                       })()}
                       {(()=>{
-                        const allK=new Set([...Object.keys(dataA.costosPorCuenta),...Object.keys(dataB.costosPorCuenta)]);
+                        const allK=new Set([...Object.keys(dataVarA.costosPorCuenta),...Object.keys(dataVarB.costosPorCuenta)]);
                         const allItems=[];
                         allK.forEach(k=>{
-                          const ca=dataA.costosPorCuenta[k],cb=dataB.costosPorCuenta[k];
+                          const ca=dataVarA.costosPorCuenta[k],cb=dataVarB.costosPorCuenta[k];
                           allItems.push({a:ca?.total||0,b:cb?.total||0,nombre:(ca||cb)?.nombre||k,codigo:(ca||cb)?.codigo||''});
                         });
                         const totOpA=allItems.reduce((s,i)=>s+i.a,0),totOpB=allItems.reduce((s,i)=>s+i.b,0);
@@ -23026,7 +23030,7 @@ ${resumenHtml}
                         </React.Fragment>);
                       })()}
                       {(()=>{
-                        const a=dataA.totalCostos,b=dataB.totalCostos,v=a-b;
+                        const a=dataVarA.totalCostos,b=dataVarB.totalCostos,v=a-b;
                         return(<tr className="bg-gray-800 text-white">
                           <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>Total COSTOS</td>
                           <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-lg">{formatNum(a)}</td>
@@ -23038,7 +23042,7 @@ ${resumenHtml}
                       })()}
                       <tr><td colSpan={9} className="py-2"></td></tr>
                       {(()=>{
-                        const a=dataA.resultado,b=dataB.resultado,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
+                        const a=dataVarA.resultado,b=dataVarB.resultado,v=a-b,vr=b!==0?((v/b)*100).toFixed(2)+'%':'—';
                         return(<tr className={a>=0?'bg-green-600 text-white':'bg-red-600 text-white'}>
                           <td className="py-3 px-4 font-black text-sm uppercase" colSpan={2}>RESULTADO DEL EJERCICIO</td>
                           <td className="py-3 px-3 text-center text-[9px] font-black">USD</td><td className="py-3 px-3 text-right font-black text-xl">{formatNum(a)}</td>
@@ -23052,7 +23056,8 @@ ${resumenHtml}
                   </table>
                 </div>
               </div>
-            )}
+            );
+            })()}
 
             {!showReportType && (
               <div className="text-center py-12 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Seleccione un tipo de reporte para comenzar</p></div>
