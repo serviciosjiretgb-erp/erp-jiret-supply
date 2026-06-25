@@ -25903,6 +25903,7 @@ ${resumenHtml}
       { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
+    return (
       <div style={{minHeight:'100vh',width:'100%',display:'flex',flexDirection:'column',background:'#0f0f0f',position:'relative',overflow:'hidden'}}>
         {/* Fondo */}
         <div style={{position:'absolute',inset:0,zIndex:0}}>
