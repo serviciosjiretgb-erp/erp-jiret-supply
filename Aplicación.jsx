@@ -22777,16 +22777,25 @@ ${resumenHtml}
                           </React.Fragment>
                         ));
                       })()}
+                      {/* NC/ND que ajustan los ingresos */}
+                      {(efaData.ncRows||[]).length>0 && (efaData.ncRows||[]).map((nc,i)=>(
+                        <tr key={i} className="border-b bg-red-50/40 hover:bg-red-50">
+                          <td className="py-1.5 px-4 pl-12 text-[10px]" colSpan={tasa>1?4:3}>
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded mr-2 ${nc.tipo==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{nc.tipo}</span>
+                            <span className="font-black text-red-500 mr-2">{nc.doc}</span>
+                            <span className="text-gray-600 font-bold">{nc.cliente}</span>
+                            <span className="text-[9px] text-gray-400 ml-2">{nc.fecha}</span>
+                          </td>
+                          <td className={`py-1.5 px-3 text-right font-black ${nc.monto<0?'text-red-600':'text-blue-600'}`}>{nc.monto<0?'-':''}{formatNum(Math.abs(nc.monto))}</td>
+                          {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-gray-400">{bs(Math.abs(nc.monto))}</td>}
+                        </tr>
+                      ))}
                       <tr className="bg-orange-100">
                         <td className="py-2.5 px-4 text-[10px] uppercase pl-8 text-orange-800 font-black" colSpan={2}>Total INGRESOS POR PRODUCCIÓN</td>
                         <td className="py-2.5 px-3 text-right font-black text-orange-700">{formatNum(efaData.totalIngresos)}</td>
                         <td className="py-2.5 px-3 text-center text-[9px] font-black">100.00%</td>
                         {tasa>1&&<td className="py-2.5 px-3 text-right font-black text-orange-700">{bs(efaData.totalIngresos)}</td>}
                       </tr>
-
-                      <tr><td colSpan={tasa>1?5:4} className="py-2"></td></tr>
-
-                      {/* ── COSTOS ── */}
                       <tr className="bg-gray-800 text-white"><td className="py-2.5 px-4 font-black text-sm uppercase" colSpan={tasa>1?5:4}>COSTOS DE PRODUCCIÓN</td></tr>
 
                       {/* Costo produccion — colapsable */}
@@ -23406,13 +23415,16 @@ ${resumenHtml}
 
     // NC/ND del período
     const notasPeriodo = (notasVentaCD||[]).filter(nc => (nc.fecha||'').startsWith(ym));
+    const ncRows = []; // para mostrar en el desglose
     const ajusteNotasUsd = notasPeriodo.reduce((s,nc) => {
       const ne = (notasEntrega||[]).find(e=>e.id===nc.neId);
       const inv = (invoices||[]).find(i=>i.id===nc.facturaId);
       const tasaNC = parseNum(nc.tasaFactura||ne?.tasa||inv?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
       const baseImpBs = parseNum(nc.monto||0);
       const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : baseImpBs;
-      return s + (nc.tipo==='NC' ? -baseUsd : baseUsd);
+      const ajuste = nc.tipo==='NC' ? -baseUsd : baseUsd;
+      ncRows.push({ tipo:nc.tipo||'NC', doc:nc.nroDocumento||nc.id, fecha:nc.fecha||'', cliente:ne?.clientName||inv?.clientName||'—', monto:ajuste });
+      return s + ajuste;
     }, 0);
 
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
@@ -23481,6 +23493,7 @@ ${resumenHtml}
       costosPorCuenta,
       facturasperiodo,
       movsProd,
+      ncRows,
     };
   };
 
@@ -23525,7 +23538,7 @@ ${resumenHtml}
         costosPorCuenta[k].movs.push(...v.movs);
       }));
       const totalCostos = totalCostoProd + totalCostosOp;
-      return { totalIngresos, totalCostoProd, totalCostosOp, totalCostos, resultado: totalIngresos-totalCostos, cogsRows: allCogsRows, costosPorCuenta, facturasperiodo: results.flatMap(r=>r.facturasperiodo||[]), costosPeriodo: results.flatMap(r=>r.costosPeriodo||[]), movsProd: results.flatMap(r=>r.movsProd||[]) };
+      return { totalIngresos, totalCostoProd, totalCostosOp, totalCostos, resultado: totalIngresos-totalCostos, cogsRows: allCogsRows, costosPorCuenta, facturasperiodo: results.flatMap(r=>r.facturasperiodo||[]), costosPeriodo: results.flatMap(r=>r.costosPeriodo||[]), movsProd: results.flatMap(r=>r.movsProd||[]), ncRows: results.flatMap(r=>r.ncRows||[]) };
     };
 
     const activeMYs = getAggregateYMs();
