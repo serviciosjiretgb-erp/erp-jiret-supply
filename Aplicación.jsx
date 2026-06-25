@@ -4340,6 +4340,7 @@ function App() {
     contabilidad:        [],
     resena_portal:       ['resena'],
     vendedores_portal:   [],
+    redes_portal:        [],
     configuracion_portal:['configuracion','auditoria'],
   };
   const navInPortal = (tab) => {
@@ -4531,6 +4532,7 @@ function App() {
       contabilidad:        [],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
+      redes_portal:        [],
       configuracion_portal:['configuracion','auditoria'],
     };
     const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
@@ -4719,7 +4721,7 @@ function App() {
       const labelMap = {produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',resena_portal:'RESEÑA',vendedores_portal:'VENDEDORES',configuracion_portal:'CONFIGURACIÓN'};
       const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',resena_portal:'#E8541A',vendedores_portal:'#E8541A',configuracion_portal:'#64748b'};
       const color = colorMap[selectedPortal]||'#6b7280';
-      const isInDev = ['finanzas','contabilidad'].includes(selectedPortal);
+      const isInDev = ['finanzas','contabilidad','redes_portal'].includes(selectedPortal);
       return (
         <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6 animate-in fade-in">
           <div className="text-center">
@@ -26993,7 +26995,7 @@ ${resumenHtml}
             </div>
           )}
           <div className="w-full" style={{maxWidth:1200}}>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,220px),1fr))', gap:20}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:20}}>
               {PORTALES.map(p => {
                 const allowed = hasPortal(p.id);
                 return (
