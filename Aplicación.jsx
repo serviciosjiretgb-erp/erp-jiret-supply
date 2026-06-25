@@ -17359,6 +17359,41 @@ ${resumenHtml}
                {calcInputs?.tipoProducto === 'BOLSAS' && (
                  <div className="mt-4 bg-orange-50 p-4 rounded-xl border border-orange-200">
                     <h4 className="text-[10px] font-black text-orange-800 uppercase mb-3">Dimensiones para cálculo de Millar</h4>
+
+                    {/* Selector de producto desde catálogo */}
+                    <div className="mb-3">
+                      <label className="text-[9px] font-black text-orange-700 uppercase block mb-1">📦 Cargar desde Catálogo (opcional)</label>
+                      <select
+                        onChange={(e) => {
+                          const fgId = e.target.value;
+                          if(!fgId) return;
+                          const fg = (finishedGoodsInventory||[]).find(f=>f.id===fgId);
+                          if(!fg) return;
+                          setCalcInputs(prev=>({
+                            ...prev,
+                            ancho:   parseNum(fg.ancho||fg.anchoTotal||0),
+                            largo:   parseNum(fg.largo||0),
+                            fuelles: parseNum(fg.fuelles||fg.fuellesTotal||fg.fuelle||0),
+                            micras:  fg.micras||fg.espesor||'',
+                          }));
+                        }}
+                        className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 bg-white text-gray-800">
+                        <option value="">— Seleccionar producto del catálogo —</option>
+                        {(finishedGoodsInventory||[])
+                          .filter(fg => (fg.tipoProducto||'').toUpperCase()==='BOLSAS' || /BOL|BOLSA/i.test(fg.producto||fg.categoria||''))
+                          .sort((a,b)=>(a.producto||a.categoria||'').localeCompare(b.producto||b.categoria||''))
+                          .map(fg=>(
+                            <option key={fg.id} value={fg.id}>
+                              {fg.producto||fg.categoria||fg.id}
+                              {fg.ancho?` · ${fg.ancho}×${fg.largo||0}cm`:''}
+                              {fg.micras?` · ${fg.micras}mic`:''}
+                              {fg.cliente?` · ${fg.cliente}`:''}
+                            </option>
+                          ))
+                        }
+                      </select>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
                        <div><label className="text-[9px] font-bold text-orange-700 uppercase">Ancho (cm)</label><input type="number" value={calcInputs?.ancho === 0 ? '' : calcInputs?.ancho} onChange={(e) => handleCalcChange('ancho', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-white rounded p-2 border border-orange-200 text-black" /></div>
                        <div><label className="text-[9px] font-bold text-orange-700 uppercase">Fuelles Totales (cm)</label><input type="number" value={calcInputs?.fuelles === 0 ? '' : calcInputs?.fuelles} onChange={(e) => handleCalcChange('fuelles', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-white rounded p-2 border border-orange-200 text-black" /></div>
@@ -24313,27 +24348,34 @@ ${resumenHtml}
     const maxIng = Math.max(...ingByMonth.map(m=>m.val), 1);
 
     // ── Top clientes ──
+    const nesParaCli = kpiPeriod === 1
+      ? (notasEntrega||[]).filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(activeMonth))
+      : (notasEntrega||[]).filter(ne => ne.status!=='ANULADA' && months.some(m=>(ne.fecha||'').startsWith(m.ym)));
     const cliMap={};
-    safeInvoicesRaw.filter(i=>months.some(m=>(i.fecha||'').startsWith(m.ym))).forEach(inv=>{
-      const n = inv.clientName||inv.client||inv.clienteName||'Sin nombre';
+    nesParaCli.forEach(ne=>{
+      const n = ne.clientName||ne.clienteName||'Sin nombre';
       if(!cliMap[n]) cliMap[n]={name:n,total:0,facturas:0};
-      cliMap[n].total+=parseNum(inv.montoBase||inv.total||0);
+      cliMap[n].total+=parseNum(ne.total||ne.montoBase||0);
       cliMap[n].facturas++;
     });
     const topClientes = Object.values(cliMap).sort((a,b)=>b.total-a.total).slice(0,6);
     const maxCli = topClientes[0]?.total||1;
 
-    // ── Top productos vendidos (SOLO Bolsas y Termoencogibles por descripción de item) ──
+    // ── Top productos vendidos (filtrado por mes/período activo) ──
+    const nesParaTop = kpiPeriod === 1
+      ? (notasEntrega||[]).filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(activeMonth))
+      : (notasEntrega||[]).filter(ne => ne.status!=='ANULADA');
     const prodMap={};
-    (notasEntrega||[]).filter(esProdPropia).forEach(ne=>{
+    nesParaTop.filter(esProdPropia).forEach(ne=>{
       (ne.items||[]).filter(it=>/BOLSA|TERMOENCOGIBLE|TERMOENC|TERMO/i.test(it.desc||'')).forEach(it=>{
         const k=(it.desc||'').trim();
         if(!k) return;
         if(!prodMap[k]) prodMap[k]={name:k,qty:0,ingresos:0};
-        const cant=parseNum(it.cantidad||0);
+        const wq=it.warehouseQtys&&Object.keys(it.warehouseQtys).length>0?it.warehouseQtys:null;
+        const cant=wq?Object.values(wq).reduce((s,q)=>s+parseNum(q||0),0):parseNum(it.cantidad||0);
         const precio=parseNum(it.precioUnit||0);
         prodMap[k].qty+=cant;
-        prodMap[k].ingresos+=precio>0?precio*cant:parseNum(ne.montoBase||0)/Math.max(1,(ne.items||[]).length);
+        prodMap[k].ingresos+=precio>0?precio*cant:0;
       });
     });
     const topProductos = Object.values(prodMap).filter(p=>p.ingresos>0).sort((a,b)=>b.ingresos-a.ingresos).slice(0,5);
