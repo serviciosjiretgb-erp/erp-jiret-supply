@@ -17063,8 +17063,8 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.filter(ym=>costFilterMonth==='TODOS'||ym===costFilterMonth).map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Ingresos: solo Bolsas Plásticas + Termoencogibles (misma lógica que Estado Financiero)
-                        const _getCat = (cod,desc,tp) => {
+                        // Ingresos netos = Bolsas+Termos brutos menos NC del período (igual que Estado Financiero)
+                        const _getCat2 = (cod,desc,tp) => {
                           const c=(cod||'').toUpperCase(),d=(desc||'').toUpperCase(),t=(tp||'').toUpperCase();
                           if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
                           if(/STRETCH|STRECTH|STRECH/.test(c)||/STRETCH/.test(d)) return 'Stretch Film';
@@ -17075,17 +17075,28 @@ ${resumenHtml}
                           if(t==='BOLSAS'||/BOL-|FG-[A-Z]/.test(c)||/BOLSA/.test(d)) return 'Bolsas Plásticas';
                           return 'Otros';
                         };
-                        const ingresosMes = (notasEntrega||[])
+                        const ingresosBruto = (notasEntrega||[])
                           .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
                           .reduce((s,ne) => {
                             const items = ne.items||[];
                             if(items.length>0){
                               return s + items
-                                .filter(it=>{ const cat=_getCat(it.invCode||it.fgId||'',it.desc||'',it.tipoProducto||''); return cat==='Bolsas Plásticas'||cat==='Termoencogibles'; })
-                                .reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
+                                .filter(it=>{ const cat=_getCat2(it.invCode||it.fgId||'',it.desc||'',it.tipoProducto||''); return cat==='Bolsas Plásticas'||cat==='Termoencogibles'; })
+                                .reduce((si,it)=>{
+                                  const wq=it.warehouseQtys&&Object.keys(it.warehouseQtys).length>0?it.warehouseQtys:null;
+                                  const cant=wq?Object.values(wq).reduce((a,q)=>a+parseNum(q||0),0):parseNum(it.cantidad||0);
+                                  return si+cant*parseNum(it.precioUnit||0);
+                                },0);
                             }
-                            return s + parseNum(ne.montoBase||ne.total||0);
+                            return s;
                           },0);
+                        // Ajuste NC del período
+                        const ajusteNC = (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ym)).reduce((s,nc)=>{
+                          const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+                          const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
+                          return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
+                        },0);
+                        const ingresosMes = ingresosBruto + ajusteNC;
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
@@ -23434,6 +23445,12 @@ ${resumenHtml}
 
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
 
+    // Ajustar costo de producción proporcionalmente a la NC
+    // Si NC reduce ingresos en X%, el costo se reduce en el mismo X%
+    // Ratio = totalIngresos / totalIngresosNE (siempre ≤ 1 si hay NC)
+    const ratioNC = totalIngresosNE > 0 ? totalIngresos / totalIngresosNE : 1;
+    const totalCostoProdAjustado = totalCostoProd * ratioNC;
+
     // Desglose: solo NEs que tuvieron ítems Bolsas/Termos
     const facturasperiodo = nesDelPeriodo
       .filter(ne => nesConIngreso.has(ne.id))
@@ -23479,14 +23496,15 @@ ${resumenHtml}
 
     const totalCostosOp = Object.values(costosPorCuenta).reduce((s,c) => s+c.total, 0);
 
-    const utilidadBruta = totalIngresos - totalCostoProd;
+    const utilidadBruta = totalIngresos - totalCostoProdAjustado;
     const utilidadNeta  = utilidadBruta - totalCostosOp;
     const margenBruto   = totalIngresos > 0 ? (utilidadBruta / totalIngresos * 100) : 0;
     const margenNeto    = totalIngresos > 0 ? (utilidadNeta  / totalIngresos * 100) : 0;
 
     return {
       totalIngresos,
-      totalCostoProd,
+      totalCostoProd: totalCostoProdAjustado,
+      totalCostoProdBruto: totalCostoProd, // para referencia si se necesita
       totalCostosOp,
       totalCostos: totalCostoProd + totalCostosOp,
       utilidadBruta,
