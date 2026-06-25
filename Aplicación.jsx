@@ -864,6 +864,7 @@ function App() {
   // Formularios Costos Operativos
   const initialOpCostForm = { date: getTodayDate(), category: 'Electricidad', description: '', amount: '', cuentaContable: '' };
   const [newOpCostForm, setNewOpCostForm] = useState(initialOpCostForm);
+  const [editingCostId, setEditingCostId] = useState(null);
   const [pdcSearch, setPdcSearch] = useState('');
   const [opCosts, setOpCosts] = useState([]);
   const [costFilterCategory, setCostFilterCategory] = useState('TODAS');
@@ -892,6 +893,7 @@ function App() {
   const [actasReclamo, setActasReclamo] = useState([]);
   const [pvActaFotos, setPvActaFotos] = useState({1:null,2:null,3:null});
   const [pvShowActaHist, setPvShowActaHist] = useState(false);
+  const [pvModoForm, setPvModoForm] = useState(false); // true = mostrar módulo cotiz ERP completo
   const [comHistVendFilt, setComHistVendFilt] = useState(''); // filtro vendedor en historial
   // ── Dashboard de ventas ──
   const [dashMes, setDashMes] = useState(new Date().getMonth()+1);
@@ -2927,7 +2929,8 @@ function App() {
       return setDialog({ title: 'Aviso', text: 'El monto debe ser mayor a cero.', type: 'alert' });
     }
     try {
-      const docId = `COST-${Date.now()}`;
+      // Si hay un editingCostId, actualizar el documento existente (sin duplicar)
+      const docId = editingCostId || `COST-${Date.now()}`;
       const month = newOpCostForm.date.substring(0, 7);
       const pdc = planDeCuentas.find(p => p.codigo === newOpCostForm.cuentaContable);
       const categoryFinal = pdc ? (pdc.nombre || pdc.subGrupo || pdc.grupo) : newOpCostForm.category;
@@ -2936,10 +2939,11 @@ function App() {
         category: categoryFinal,
         amount, month,
         user: appUser?.name || 'Sistema',
-        timestamp: Date.now()
+        timestamp: editingCostId ? (newOpCostForm.timestamp || Date.now()) : Date.now()
       });
       setNewOpCostForm(initialOpCostForm);
-      setDialog({ title: 'Exito!', text: 'Costo operativo registrado correctamente.', type: 'alert' });
+      setEditingCostId(null);
+      setDialog({ title: editingCostId ? '✅ Costo actualizado' : '✅ Éxito', text: editingCostId ? 'El costo fue actualizado correctamente.' : 'Costo operativo registrado correctamente.', type: 'alert' });
     } catch(err) {
       setDialog({ title: 'Error', text: err.message, type: 'alert' });
     }
@@ -16748,8 +16752,11 @@ ${resumenHtml}
 
             <div className="p-4 sm:p-6 space-y-6 w-full">
               {/* Formulario de registro */}
-              <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200">
-                <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Registrar Nuevo Costo</h3>
+              <div id="opCostForm" className={`p-6 rounded-2xl border-2 ${editingCostId?'border-blue-400 bg-blue-50':'border-gray-200 bg-gray-50'}`}>
+                <div className="flex items-center justify-between mb-4 border-b border-gray-200 pb-2">
+                  <h3 className="text-sm font-black uppercase text-black">{editingCostId?`✏ Editando costo — ${editingCostId}`:'Registrar Nuevo Costo'}</h3>
+                  {editingCostId&&<button type="button" onClick={()=>{setEditingCostId(null);setNewOpCostForm(initialOpCostForm);}} className="text-xs font-black text-gray-500 hover:text-red-500 border border-gray-300 rounded-lg px-3 py-1.5 transition-colors">✕ Cancelar edición</button>}
+                </div>
                 <form onSubmit={handleSaveOpCost} className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
@@ -16814,7 +16821,9 @@ ${resumenHtml}
                   </div>
                   <div>
                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">&nbsp;</label>
-                    <button type="submit" className="w-full bg-green-600 text-white px-4 py-3 rounded-xl font-black text-xs uppercase shadow-lg hover:bg-green-700 transition-all flex items-center justify-center gap-2"><PlusCircle size={16}/> Registrar</button>
+                    <button type="submit" className={`w-full text-white px-4 py-3 rounded-xl font-black text-xs uppercase shadow-lg transition-all flex items-center justify-center gap-2 ${editingCostId?'bg-blue-600 hover:bg-blue-700':'bg-green-600 hover:bg-green-700'}`}>
+                      {editingCostId?<><Edit size={16}/> Guardar Cambios</> : <><PlusCircle size={16}/> Registrar</>}
+                    </button>
                   </div>
                 </form>
               </div>
@@ -16977,13 +16986,51 @@ ${resumenHtml}
 
               {/* Tabla de costos registrados */}
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <div className="p-6 bg-gray-50 border-b border-gray-200"><h3 className="text-sm font-black uppercase text-black">Costos Registrados ({filteredCosts.length})</h3></div>
+
+                {/* Header con filtros */}
+                <div className="p-4 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-3">
+                  <div>
+                    <span className="text-sm font-black uppercase text-black">Costos Registrados</span>
+                    <span className="ml-2 bg-gray-200 text-gray-700 text-[10px] font-black px-2 py-0.5 rounded-full">{filteredCosts.length}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2 ml-auto items-center">
+                    {/* Filtro por Mes */}
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[8px] font-black text-gray-400 uppercase tracking-wider">Mes</label>
+                      <select value={costFilterMonth} onChange={e=>{setCostFilterMonth(e.target.value);setOpCostPage(0);}}
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-green-500 bg-white min-w-[130px]">
+                        <option value="TODOS">Todos los meses</option>
+                        {[...new Set((opCosts||[]).map(c=>c.month).filter(Boolean))].sort().reverse().map(m=>(
+                          <option key={m} value={m}>{formatMonth(m)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Filtro por Cuenta/Categoría */}
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[8px] font-black text-gray-400 uppercase tracking-wider">Cuenta / Categoría</label>
+                      <select value={costFilterCategory} onChange={e=>{setCostFilterCategory(e.target.value);setOpCostPage(0);}}
+                        className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-green-500 bg-white min-w-[180px]">
+                        <option value="TODAS">Todas las cuentas</option>
+                        {[...new Set((opCosts||[]).map(c=>c.cuentaContable||c.category).filter(Boolean))].sort().map(c=>(
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Botón limpiar filtros */}
+                    {(costFilterMonth!=='TODOS'||costFilterCategory!=='TODAS')&&(
+                      <button onClick={()=>{setCostFilterMonth('TODOS');setCostFilterCategory('TODAS');setOpCostPage(0);}}
+                        className="text-[10px] font-black text-gray-500 hover:text-red-500 border border-gray-200 rounded-lg px-3 py-1.5 mt-4 transition-colors">
+                        ✕ Limpiar
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-500">
-                        <th className="py-3 px-4">Fecha</th><th className="py-3 px-4">Cuenta Contable</th><th className="py-3 px-4">Categoría</th><th className="py-3 px-4">Descripción</th><th className="py-3 px-4 text-right">Monto</th><th className="py-3 px-4 text-center">Acciones</th>
-                      </tr>
+                        <th className="py-3 px-4">Fecha</th><th className="py-3 px-4">Cuenta Contable</th><th className="py-3 px-4">Categoría</th><th className="py-3 px-4">Descripción</th><th className="py-3 px-4 text-right">Monto</th><th className="py-3 px-4 text-center">Acciones</th>                      </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {filteredCosts.slice(opCostPage*15,(opCostPage+1)*15).map(cost => (
@@ -16993,13 +17040,62 @@ ${resumenHtml}
                            <td className="py-3 px-4"><span className="bg-green-100 text-green-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase">{cost.category}</span></td>
                           <td className="py-3 px-4 font-bold text-xs text-gray-700 uppercase">{cost.description || '—'}</td>
                           <td className="py-3 px-4 text-right font-black text-green-600">${formatNum(cost.amount)}</td>
-                          <td className="py-3 px-4 text-center"><button onClick={() => handleDeleteOpCost(cost.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button></td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={()=>{
+                                setEditingCostId(cost.id);
+                                setNewOpCostForm({
+                                  date: cost.date||getTodayDate(),
+                                  category: cost.category||'',
+                                  description: cost.description||'',
+                                  amount: String(cost.amount||''),
+                                  cuentaContable: cost.cuentaContable||'',
+                                  timestamp: cost.timestamp
+                                });
+                                setTimeout(()=>document.getElementById('opCostForm')?.scrollIntoView({behavior:'smooth',block:'start'}),100);
+                              }} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-100 transition-colors" title="Editar">
+                                <Edit size={14}/>
+                              </button>
+                              <button onClick={() => handleDeleteOpCost(cost.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors" title="Eliminar"><Trash2 size={14}/></button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
-                      {filteredCosts.length === 0 && (<tr><td colSpan="5" className="p-10 text-center text-xs text-gray-400 font-bold uppercase">No hay costos registrados para los filtros seleccionados</td></tr>)}
+                      {filteredCosts.length === 0 && (<tr><td colSpan="6" className="p-10 text-center text-xs text-gray-400 font-bold uppercase">No hay costos registrados para los filtros seleccionados</td></tr>)}
                     </tbody>
                   </table>
                 </div>
+
+                {/* Paginación */}
+                {filteredCosts.length > 15 && (()=>{
+                  const totalPages = Math.ceil(filteredCosts.length / 15);
+                  const pageFrom = opCostPage * 15 + 1;
+                  const pageTo = Math.min((opCostPage + 1) * 15, filteredCosts.length);
+                  return (
+                    <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50">
+                      <span className="text-[11px] text-gray-400 font-bold">
+                        Mostrando {pageFrom}–{pageTo} de {filteredCosts.length} registros
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={()=>setOpCostPage(0)} disabled={opCostPage===0}
+                          className="px-2.5 py-1.5 text-[10px] font-black rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-100 transition-colors">«</button>
+                        <button onClick={()=>setOpCostPage(p=>Math.max(0,p-1))} disabled={opCostPage===0}
+                          className="px-3 py-1.5 text-[10px] font-black rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-100 transition-colors">‹ Ant.</button>
+                        {Array.from({length:totalPages},(_,i)=>i).map(i=>(
+                          <button key={i} onClick={()=>setOpCostPage(i)}
+                            className={`px-3 py-1.5 text-[10px] font-black rounded-lg border transition-colors ${opCostPage===i?'bg-green-600 text-white border-green-600':'border-gray-200 hover:bg-gray-100 text-gray-600'}`}>
+                            {i+1}
+                          </button>
+                        ))}
+                        <button onClick={()=>setOpCostPage(p=>Math.min(totalPages-1,p+1))} disabled={opCostPage===totalPages-1}
+                          className="px-3 py-1.5 text-[10px] font-black rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-100 transition-colors">Sig. ›</button>
+                        <button onClick={()=>setOpCostPage(totalPages-1)} disabled={opCostPage===totalPages-1}
+                          className="px-2.5 py-1.5 text-[10px] font-black rounded-lg border border-gray-200 disabled:opacity-30 hover:bg-gray-100 transition-colors">»</button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
               </div>
             </div>
 
@@ -25959,6 +26055,219 @@ ${resumenHtml}
       r.readAsDataURL(file);
     };
 
+    // Si pvModoForm=true → mostrar el módulo de cotizaciones del ERP completo
+    // con clientes filtrados al vendedor. Mismo diseño exacto que el admin ve.
+    if(pvModoForm) {
+      // Filtrar clients para que el módulo solo muestre los del vendedor
+      // Lo hacemos sobreescribiendo temporalmente la lista via contexto
+      window._pvVendedorFilter = vendNombre; // el módulo de cotizaciones lo leerá
+      return (
+        <div className="min-h-screen flex flex-col" style={{background:'#f4f4f0'}}>
+          {/* Header del portal */}
+          <div style={{background:'#111',borderBottom:`2px solid #E8541A`,padding:'8px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <button onClick={()=>{setPvModoForm(false);setShowNewCotizPanel(false);setEditingCotizId(null);window._pvVendedorFilter='';}}
+                style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',background:'rgba(255,255,255,0.1)',border:'none',color:'#fff',borderRadius:8,fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                ← Mis cotizaciones
+              </button>
+              <span style={{color:'#fff',fontWeight:900,fontSize:13}}>Supply G&B <span style={{color:'#E8541A'}}>| {editingCotizId?`Editando ${editingCotizId}`:'Nueva Cotización'}</span></span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{color:'rgba(255,255,255,0.6)',fontSize:11}}>Vendedor:</span>
+              <span style={{color:'#E8541A',fontWeight:900,fontSize:11}}>{vendNombre}</span>
+            </div>
+          </div>
+          {/* Módulo cotizaciones del ERP completo */}
+          <div style={{flex:1,overflow:'auto'}}>
+            <div className="p-0">
+              {ventasView==='cotizaciones'&&(()=>{
+                const generateCotizId=()=>`COT-${((cotizaciones||[]).reduce((m,r)=>Math.max(m,parseInt(String(r.id).replace(/\D/g,'')||'0')),0)+1).toString().padStart(4,'0')}`;
+                const handleSaveCotiz=async()=>{
+                  try{
+                    const id=editingCotizId||newCotizForm.documento||generateCotizId();
+                    const base=parseNum(cotizItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||newCotizForm.montoBase||0);
+                    const ivaAmt=newCotizForm.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
+                    await setDoc(getDocRef('cotizaciones',id),{
+                      ...newCotizForm,id,documento:id,vendedor:vendNombre,
+                      tasa:parseNum(newCotizForm.tasa||settings?.tasaBCV||0),
+                      montoBase:base,iva:ivaAmt,total:parseFloat((base+ivaAmt).toFixed(2)),
+                      items:cotizItems,condicionPago:newCotizForm.condicionPago||'CONTADO',
+                      diasCredito:newCotizForm.diasCredito||'',porcentajeAnticipo:newCotizForm.porcentajeAnticipo||'',
+                      tiempoEntrega:newCotizForm.tiempoEntrega||'',formaPago:newCotizForm.formaPago||'BS A TASA BCV',
+                      timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
+                      user:appUser?.name,status:'VIGENTE'
+                    });
+                    setPvModoForm(false);setShowNewCotizPanel(false);setEditingCotizId(null);
+                    setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);
+                    window._pvVendedorFilter='';
+                    setDialog({title:'✅ Cotización guardada',text:`${id} guardada correctamente.`,type:'alert'});
+                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                };
+                const vendedoresList=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
+                const MOTIVOS_NO=['PRECIO ELEVADO','CLIENTE NO RESPONDIÓ','COMPRÓ A OTRO PROVEEDOR','FUERA DE PRESUPUESTO','TIEMPO DE ENTREGA','PRODUCTO NO DISPONIBLE','OTRO'];
+                const updateCotizItem=(idx,patch)=>setCotizItems(prev=>prev.map((it,i)=>{if(i!==idx)return it;const n={...it,...patch};n.total=parseNum(n.cantidad)*parseNum(n.precioUnit);return n;}));
+                const aplicarResultadoCotiz=async(mod)=>{
+                  try{await updateDoc(getDocRef('cotizaciones',mod.id),{status:mod.status,motivoNoConcretada:mod.status==='NO CONCRETADA'?(mod.motivo||''):'',statusUser:appUser?.name||'',statusDate:getTodayDate()});setCotizOutcomeModal(null);}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                };
+                // Filtrar clientes solo a los del vendedor
+                const clientsFiltradosPV=(clients||[]).filter(cl=>
+                  (cl.vendedor||cl.vendedorAsignado||'').trim().toUpperCase()===vendNombre.toUpperCase()
+                );
+                // Inyectar clients filtrados temporalmente para que el form los use
+                const _clientsOrig = clients;
+                // Renderizar el panel de cotización del ERP con clients filtrados
+                return showNewCotizPanel&&(
+                  <div className="p-8 bg-gray-50/50">
+                    <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-5">
+                      <div className="flex justify-between items-center border-b pb-4 flex-wrap gap-3">
+                        <h3 className="text-sm font-black uppercase">{editingCotizId?`Editando: ${editingCotizId}`:'Nueva Cotización'}</h3>
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                            <input type="date" value={newCotizForm.fecha} onChange={e=>setNewCotizForm({...newCotizForm,fecha:e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50"/>
+                          </div>
+                          <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black">{editingCotizId||generateCotizId()}</span>
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Validez (días)</label>
+                            <input type="number" value={newCotizForm.validez||'15'} onChange={e=>setNewCotizForm({...newCotizForm,validez:e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 text-xs font-bold w-20 outline-none focus:border-orange-400" min="1"/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Condición de Venta</label>
+                            <select value={newCotizForm.condicionId||''} onChange={e=>{const c=(settings?.condicionesPago||[]).find(x=>x.id===e.target.value);setNewCotizForm({...newCotizForm,condicionId:e.target.value,condicionPago:c?.titulo||'',formaPago:c?.formaPago||newCotizForm.formaPago||'',diasCredito:c?.diasCredito||'',porcentajeAnticipo:c?.anticipo||''});}} className="border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-400 min-w-[160px]">
+                              <option value="">— Sin condición —</option>
+                              {(settings?.condicionesPago||[]).map(c=><option key={c.id} value={c.id}>{c.titulo}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Cliente — solo del vendedor */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Cliente</label>
+                          <div className="relative">
+                            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                            <input type="text" value={newCotizForm.neClientSearch||''} onChange={e=>{setNewCotizForm({...newCotizForm,neClientSearch:e.target.value,neShowClientDrop:true});}}
+                              placeholder="Buscar por nombre o RIF..." className="w-full pl-9 border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
+                          </div>
+                          {newCotizForm.neShowClientDrop&&(newCotizForm.neClientSearch||'').length>0&&(
+                            <div className="border-2 border-gray-100 rounded-2xl mt-1 max-h-40 overflow-y-auto shadow-lg bg-white z-10 relative">
+                              {clientsFiltradosPV.filter(c=>(c.name||c.razonSocial||'').toUpperCase().includes((newCotizForm.neClientSearch||'').toUpperCase())||(c.rif||'').toUpperCase().includes((newCotizForm.neClientSearch||'').toUpperCase())).map(c=>(
+                                <button key={c.id} onClick={()=>setNewCotizForm({...newCotizForm,clientRif:c.rif||c.id,clientName:c.name||c.razonSocial||'',clientAddress:c.direccion||'',neClientSearch:c.name||c.razonSocial||'',neShowClientDrop:false})}
+                                  className="w-full text-left px-4 py-2.5 hover:bg-orange-50 border-b border-gray-50 text-xs">
+                                  <span className="font-black">{c.name||c.razonSocial}</span><span className="text-gray-400 ml-2">{c.rif}</span>
+                                </button>
+                              ))}
+                              {clientsFiltradosPV.length===0&&<div className="px-4 py-3 text-xs text-gray-400">Sin clientes asignados</div>}
+                            </div>
+                          )}
+                          {newCotizForm.clientName&&<div className="mt-2 text-xs font-black text-orange-600 bg-orange-50 px-3 py-1.5 rounded-xl inline-block">{newCotizForm.clientName} · {newCotizForm.clientRif}</div>}
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Vendedor</label>
+                          <div className="border-2 border-orange-200 bg-orange-50 rounded-2xl p-3 text-xs font-black text-orange-700">{vendNombre}</div>
+                        </div>
+                      </div>
+                      {/* Tiempo de entrega + descripción */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-2">⏱ Tiempo de Entrega</label>
+                          <input type="text" value={newCotizForm.tiempoEntrega||''} onChange={e=>setNewCotizForm({...newCotizForm,tiempoEntrega:e.target.value})} placeholder="Ej: De 3 a 5 días hábiles" className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Descripción / Concepto General</label>
+                          <input type="text" value={newCotizForm.descripcion||''} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value})} placeholder="Ej: Cotización Bolsas Plásticas" className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase"/>
+                        </div>
+                      </div>
+                      {/* Productos */}
+                      <div className="bg-orange-50 border-2 border-orange-200 rounded-3xl p-5">
+                        <div className="flex items-center justify-between mb-4">
+                          <h4 className="text-[10px] font-black text-orange-700 uppercase tracking-widest flex items-center gap-2"><Package size={14}/>Agregar Producto</h4>
+                          <span className="text-[9px] bg-orange-200 text-orange-800 px-2 py-1 rounded-full font-black">{cotizItems.length} ítems</span>
+                        </div>
+                        <div className="relative mb-3">
+                          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
+                          <input type="text" value={newCotizForm.cotizProdSearch||''} onChange={e=>setNewCotizForm({...newCotizForm,cotizProdSearch:e.target.value})} placeholder="Buscar por código o descripción..." className="w-full pl-9 border-2 border-orange-300 rounded-2xl p-3 text-xs outline-none focus:border-orange-500 bg-white"/>
+                        </div>
+                        <select size={5} className="w-full border-2 border-orange-200 rounded-xl text-xs bg-white" onChange={e=>{if(!e.target.value)return;const inv=(inventory||[]).find(i=>i.id===e.target.value||i.displayId===e.target.value);if(inv){const newIt={invCode:inv.displayId||inv.id,desc:inv.desc||'',cantidad:1,precioUnit:0,unidad:inv.unit||'und',total:0};setCotizItems([...cotizItems,newIt]);}}}>
+                          <option value="">— Seleccionar —</option>
+                          {Object.entries((inventory||[]).filter(i=>i.category!=='Productos Terminados'&&(!newCotizForm.cotizProdSearch||(i.desc||'').toUpperCase().includes((newCotizForm.cotizProdSearch||'').toUpperCase())||(i.displayId||i.id||'').toUpperCase().includes((newCotizForm.cotizProdSearch||'').toUpperCase()))).reduce((g,i)=>{const c=i.category||'Otros';if(!g[c])g[c]=[];g[c].push(i);return g;},{})).map(([cat,items])=>(
+                            <optgroup key={cat} label={`— ${cat.toUpperCase()} —`}>
+                              {items.map(i=><option key={i.id} value={i.displayId||i.id}>{i.displayId||i.id} — {i.desc}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                      {/* Tabla ítems */}
+                      {cotizItems.length>0&&(
+                        <div className="border border-gray-100 rounded-2xl overflow-hidden">
+                          <table className="w-full text-[11px]">
+                            <thead><tr style={{background:'#E8541A'}} className="text-white">
+                              <th className="py-3 px-4 text-left">Descripción</th>
+                              <th className="py-3 px-3 text-right">Cant.</th>
+                              <th className="py-3 px-3 text-center">U.M.</th>
+                              <th className="py-3 px-3 text-right font-black text-orange-200">Precio U. (USD)</th>
+                              <th className="py-3 px-3 text-right">Total</th>
+                              <th className="py-3 px-2"></th>
+                            </tr></thead>
+                            <tbody>
+                              {cotizItems.map((it,idx)=>(
+                                <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
+                                  <td className="py-2 px-4"><input value={it.desc||''} onChange={e=>updateCotizItem(idx,{desc:e.target.value})} className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] outline-none focus:border-orange-400"/></td>
+                                  <td className="py-2 px-3 text-right"><input type="number" min="0" value={it.cantidad||''} onChange={e=>updateCotizItem(idx,{cantidad:parseFloat(e.target.value)||0})} className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-right outline-none focus:border-orange-400"/></td>
+                                  <td className="py-2 px-3 text-center"><input value={it.unidad||'und'} onChange={e=>updateCotizItem(idx,{unidad:e.target.value})} className="w-14 border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-center outline-none"/></td>
+                                  <td className="py-2 px-3"><input type="number" min="0" step="0.01" value={it.precioUnit||''} onChange={e=>updateCotizItem(idx,{precioUnit:parseFloat(e.target.value)||0})} className="w-24 border-2 border-orange-200 bg-orange-50 rounded-lg px-2 py-1.5 text-[10px] text-right outline-none focus:border-orange-500 font-black ml-auto block"/></td>
+                                  <td className="py-2 px-3 text-right font-black text-gray-700">${formatNum((it.cantidad||0)*(it.precioUnit||0))}</td>
+                                  <td className="py-2 px-2 text-center"><button onClick={()=>setCotizItems(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600 text-base font-black">×</button></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                      {/* Subtotales */}
+                      <div className="flex justify-between items-start gap-4">
+                        <div className="flex-1">
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Observaciones / Condiciones de pago:</label>
+                          <textarea rows={2} value={newCotizForm.observaciones||''} onChange={e=>setNewCotizForm({...newCotizForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400 resize-none"/>
+                        </div>
+                        <div className="min-w-[220px] bg-gray-50 border border-gray-200 rounded-2xl p-4 text-right">
+                          {(()=>{
+                            const base=cotizItems.reduce((s,it)=>s+(it.cantidad||0)*(it.precioUnit||0),0);
+                            const iva=newCotizForm.aplicaIva==='SI'?base*0.16:0;
+                            const total=base+iva;
+                            const tasa=parseNum(newCotizForm.tasa||settings?.tasaBCV||1);
+                            return<>
+                              <div className="flex justify-between text-xs mb-1"><span className="text-gray-500">Subtotal</span><span className="font-black">${formatNum(base)}</span></div>
+                              <div className="flex justify-between text-xs mb-2 items-center gap-2">
+                                <span className="text-gray-500">IVA</span>
+                                <div className="flex items-center gap-1">
+                                  <select value={newCotizForm.aplicaIva||'SI'} onChange={e=>setNewCotizForm({...newCotizForm,aplicaIva:e.target.value})} className="border border-gray-200 rounded text-[9px] px-1 py-0.5 outline-none">
+                                    <option value="SI">16%</option><option value="NO">0%</option>
+                                  </select>
+                                  <span className="font-black">${formatNum(iva)}</span>
+                                </div>
+                              </div>
+                              <div className="border-t border-gray-200 pt-2 flex justify-between items-center">
+                                <span className="font-black text-sm uppercase">Total</span>
+                                <span className="font-black text-xl text-orange-600">${formatNum(total)}</span>
+                              </div>
+                            </>;
+                          })()}
+                        </div>
+                      </div>
+                      <div className="flex justify-end pt-2">
+                        <button onClick={handleSaveCotiz} className="bg-orange-500 text-white px-12 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600">Guardar Cotización</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex flex-col" style={{background:'#f4f4f0',fontFamily:'Arial,sans-serif'}}>
         {/* Mobile bottom nav for vendor portal */}
@@ -26193,8 +26502,7 @@ ${resumenHtml}
                       <div style={{fontSize:18,fontWeight:900,color:'#111'}}>Mis Cotizaciones</div>
                       <div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>Cotizaciones de {vendNombre||'todos los vendedores'}</div>
                     </div>
-                    <button onClick={()=>{setShowNewCotizPanel(true);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);}}
-                      style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                    <button onClick={()=>{setShowNewCotizPanel(true);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);setVentasView('cotizaciones');setPvModoForm(true);}}                      style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer'}}>
                       <Plus size={14}/> Nueva Cotización
                     </button>
                   </div>
@@ -26248,7 +26556,7 @@ ${resumenHtml}
                                 </td>
                                 <td style={{padding:'10px 14px',fontWeight:900,color:'#111',textAlign:'right'}}>${formatNum(parseNum(c.total||0))}</td>
                                 <td style={{padding:'10px 8px',textAlign:'center'}}>
-                                  <button onClick={()=>{setEditingCotizId(c.id);setNewCotizForm({...c,fecha:c.fecha||getTodayDate()});setCotizItems(c.items||[]);setShowNewCotizPanel(true);}}
+                                  <button onClick={()=>{setEditingCotizId(c.id);setNewCotizForm({...c,fecha:c.fecha||getTodayDate()});setCotizItems(c.items||[]);setShowNewCotizPanel(true);setVentasView('cotizaciones');setPvModoForm(true);}}
                                     style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'transparent',fontSize:10,color:'#6b7280',cursor:'pointer'}}>
                                     ✏ Editar
                                   </button>
