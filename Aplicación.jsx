@@ -16734,33 +16734,6 @@ ${resumenHtml}
       // ── Usar la variable de estado costCategories (incluye categorías personalizadas) ──
       const allCats = Array.isArray(costCategories) && costCategories.length > 0 ? costCategories : COSTO_CATEGORIES;
 
-      // ── CÁLCULO REAL DE VENTAS BOLSAS & TERMOS desde notasEntrega ──
-      const _isBT2 = (it) => {
-        const tp  = (it.tipoProducto||'').toUpperCase();
-        const cod = (it.invCode||it.fgId||it.desc||'').toUpperCase();
-        return tp==='TERMOENCOGIBLE'||tp==='BOLSAS'||
-          (/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/TERMO|STRETCH|CINTA|KRAFT/.test(cod))||
-          /TERMO|THERMO|SHRINK|ENCOG/.test(cod);
-      };
-      const ventasPorMes = {};
-      let vtBolsasTotal=0, vtTermosTotal=0, vtNeTotal=0;
-      (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').forEach(ne=>{
-        const mes=(ne.fecha||'').substring(0,7); if(!mes) return;
-        if(!ventasPorMes[mes]) ventasPorMes[mes]={bolsas:0,termos:0,ne:0};
-        ventasPorMes[mes].ne += parseNum(ne.total||0);
-        vtNeTotal += parseNum(ne.total||0);
-        (ne.items||[]).forEach(it=>{
-          const cant=parseNum(it.cantidad||0), pu=parseNum(it.precioUnit||0), sub=cant*pu;
-          const tp=(it.tipoProducto||'').toUpperCase();
-          const cod=(it.invCode||it.fgId||it.desc||'').toUpperCase();
-          const isTermo=tp==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(cod);
-          const isBolsa=!isTermo&&(tp==='BOLSAS'||(/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/STRETCH|CINTA|KRAFT/.test(cod)));
-          if(isBolsa){ventasPorMes[mes].bolsas+=sub;vtBolsasTotal+=sub;}
-          else if(isTermo){ventasPorMes[mes].termos+=sub;vtTermosTotal+=sub;}
-        });
-      });
-      const vtBTTotal = vtBolsasTotal+vtTermosTotal;
-
       // Usar valor memoizado del componente principal
       const filteredCosts = filteredCostsMemo;
 
@@ -16814,147 +16787,7 @@ ${resumenHtml}
 
             <div className="p-4 sm:p-6 space-y-6 w-full">
 
-              {/* ── PANEL VENTAS REALES BOLSAS & TERMOS ── */}
-              {(()=>{
-                const mesesDisp = Object.keys(ventasPorMes).sort((a,b)=>b.localeCompare(a));
-                const vtMesSel = costFilterMonth !== 'TODOS' ? costFilterMonth : '';
-                const vActivo = vtMesSel && ventasPorMes[vtMesSel] ? ventasPorMes[vtMesSel] : null;
-                const bolsasV  = vActivo ? vActivo.bolsas  : vtBolsasTotal;
-                const termosV  = vActivo ? vActivo.termos  : vtTermosTotal;
-                const btV      = bolsasV + termosV;
-                const neV      = vActivo ? vActivo.ne      : vtNeTotal;
-                const labelPer = vtMesSel ? formatMonth(vtMesSel) : 'Acumulado total';
-                return (
-                <div className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-700">
-                  {/* Header con selector de mes */}
-                  <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between flex-wrap gap-3">
-                    <div>
-                      <div className="text-sm font-black text-white uppercase tracking-wide">Ventas Reales — Bolsas & Termoencogibles</div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">Calculado desde Notas de Entrega no anuladas · <span style={{color:'#fb923c'}}>{labelPer}</span></div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div>
-                        <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">Filtrar por mes</label>
-                        <select value={costFilterMonth} onChange={e=>{setCostFilterMonth(e.target.value);setOpCostPage(0);}}
-                          className="border border-gray-600 bg-gray-800 text-white rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-500 min-w-[150px]">
-                          <option value="TODOS">📊 Acumulado total</option>
-                          {mesesDisp.map(m=><option key={m} value={m}>{formatMonth(m)}</option>)}
-                        </select>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[9px] text-gray-400 uppercase">Total NEs</div>
-                        <div className="text-sm font-black text-gray-300">${formatNum(neV)}</div>
-                      </div>
-                    </div>
-                  </div>
-                  {/* KPIs */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-0 divide-x divide-gray-700">
-                    {[
-                      {l:'Bolsas Plásticas',v:bolsasV,c:'#4ade80',sub:'Ventas USD'},
-                      {l:'Termoencogibles',v:termosV,c:'#60a5fa',sub:'Ventas USD'},
-                      {l:'Bolsas + Termos',v:btV,c:'#fb923c',sub:'Subtotal productos propios'},
-                      {l:'% del total NEs',v:(neV>0?(btV/neV*100):0).toFixed(1)+'%',c:'#f9fafb',sub:'Representación sobre ingresos',isStr:true},
-                    ].map((k,i)=>(
-                      <div key={i} className="px-5 py-4">
-                        <div className="text-[9px] text-gray-400 uppercase font-black tracking-wider mb-1">{k.l}</div>
-                        <div className="text-2xl font-black" style={{color:k.c}}>{k.isStr?k.v:'$'+formatNum(k.v)}</div>
-                        <div className="text-[9px] text-gray-500 mt-1">{k.sub}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {/* Tabla por mes — solo si está en acumulado */}
-                  {!vtMesSel && mesesDisp.length>0 && (
-                    <div className="border-t border-gray-700 overflow-x-auto">
-                      <table className="w-full text-[10px]">
-                        <thead><tr className="border-b border-gray-700">
-                          <th className="px-5 py-2 text-left text-gray-400 font-black uppercase">Mes</th>
-                          <th className="px-4 py-2 text-right text-green-400 font-black uppercase">Bolsas</th>
-                          <th className="px-4 py-2 text-right text-blue-400 font-black uppercase">Termos</th>
-                          <th className="px-4 py-2 text-right text-orange-400 font-black uppercase">B+T Total</th>
-                          <th className="px-4 py-2 text-right text-gray-400 font-black uppercase">Total NE</th>
-                          <th className="px-4 py-2 text-right text-gray-500 font-black uppercase">% B+T</th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-gray-800">
-                          {mesesDisp.map(m=>{
-                            const v=ventasPorMes[m];
-                            const bt=v.bolsas+v.termos;
-                            const pct=v.ne>0?(bt/v.ne*100).toFixed(1):'—';
-                            return(
-                            <tr key={m} className="hover:bg-gray-800 transition-colors cursor-pointer"
-                              onClick={()=>{setCostFilterMonth(m);setOpCostPage(0);}}>
-                              <td className="px-5 py-2.5 font-black text-white">{formatMonth(m)}</td>
-                              <td className="px-4 py-2.5 text-right font-black text-green-400">${formatNum(v.bolsas)}</td>
-                              <td className="px-4 py-2.5 text-right font-black text-blue-400">${formatNum(v.termos)}</td>
-                              <td className="px-4 py-2.5 text-right font-black text-orange-400">${formatNum(bt)}</td>
-                              <td className="px-4 py-2.5 text-right text-gray-400">${formatNum(v.ne)}</td>
-                              <td className="px-4 py-2.5 text-right">
-                                <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-full text-[9px] font-black">{pct}%</span>
-                              </td>
-                            </tr>);
-                          })}
-                        </tbody>
-                        <tfoot className="border-t border-gray-600">
-                          <tr>
-                            <td className="px-5 py-2.5 font-black text-orange-400 uppercase text-[10px]">TOTAL</td>
-                            <td className="px-4 py-2.5 text-right font-black text-green-400">${formatNum(vtBolsasTotal)}</td>
-                            <td className="px-4 py-2.5 text-right font-black text-blue-400">${formatNum(vtTermosTotal)}</td>
-                            <td className="px-4 py-2.5 text-right font-black text-orange-400">${formatNum(vtBTTotal)}</td>
-                            <td className="px-4 py-2.5 text-right text-gray-400">${formatNum(vtNeTotal)}</td>
-                            <td className="px-4 py-2.5 text-right">
-                              <span className="bg-orange-900 text-orange-300 px-2 py-0.5 rounded-full text-[9px] font-black">{vtNeTotal>0?(vtBTTotal/vtNeTotal*100).toFixed(1):0}%</span>
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  )}
-                  {/* Cuando hay mes seleccionado: detalle NEs de ese mes */}
-                  {vtMesSel && vActivo && (()=>{
-                    const nesDelMes = (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&(ne.fecha||'').startsWith(vtMesSel));
-                    return(
-                    <div className="border-t border-gray-700">
-                      <div className="px-5 py-2 border-b border-gray-800 flex justify-between items-center">
-                        <span className="text-[10px] font-black text-gray-400 uppercase">NEs de {formatMonth(vtMesSel)} ({nesDelMes.length})</span>
-                        <button onClick={()=>{setCostFilterMonth('TODOS');setOpCostPage(0);}} className="text-[9px] text-orange-400 hover:text-orange-300 font-black">← Ver todos los meses</button>
-                      </div>
-                      <table className="w-full text-[10px]">
-                        <thead><tr className="border-b border-gray-800">
-                          <th className="px-4 py-2 text-left text-gray-400 font-black">NE</th>
-                          <th className="px-4 py-2 text-left text-gray-400 font-black">Fecha</th>
-                          <th className="px-4 py-2 text-left text-gray-400 font-black">Cliente</th>
-                          <th className="px-4 py-2 text-right text-green-400 font-black">Bolsas</th>
-                          <th className="px-4 py-2 text-right text-blue-400 font-black">Termos</th>
-                          <th className="px-4 py-2 text-right text-orange-400 font-black">Total NE</th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-gray-800">
-                          {nesDelMes.map(ne=>{
-                            let neBolsas=0,neTermos=0;
-                            (ne.items||[]).forEach(it=>{
-                              const tp=(it.tipoProducto||'').toUpperCase();
-                              const cod=(it.invCode||it.fgId||it.desc||'').toUpperCase();
-                              const sub=parseNum(it.cantidad||0)*parseNum(it.precioUnit||0);
-                              const isTermo=tp==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(cod);
-                              const isBolsa=!isTermo&&(tp==='BOLSAS'||(/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/STRETCH|CINTA|KRAFT/.test(cod)));
-                              if(isBolsa)neBolsas+=sub; else if(isTermo)neTermos+=sub;
-                            });
-                            return(
-                            <tr key={ne.id} className="hover:bg-gray-800 transition-colors">
-                              <td className="px-4 py-2 font-black text-orange-400">{ne.id}</td>
-                              <td className="px-4 py-2 text-gray-400">{ne.fecha}</td>
-                              <td className="px-4 py-2 text-gray-300 font-bold">{ne.clientName||ne.clientRif||'—'}</td>
-                              <td className="px-4 py-2 text-right font-black text-green-400">{neBolsas>0?'$'+formatNum(neBolsas):'—'}</td>
-                              <td className="px-4 py-2 text-right font-black text-blue-400">{neTermos>0?'$'+formatNum(neTermos):'—'}</td>
-                              <td className="px-4 py-2 text-right font-black text-white">${formatNum(ne.total||0)}</td>
-                            </tr>);
-                          })}
-                        </tbody>
-                      </table>
-                    </div>);
-                  })()}
-                </div>
-                );
-              })()}
-              <div id="opCostForm" className={`p-6 rounded-2xl border-2 ${editingCostId?'border-blue-400 bg-blue-50':'border-gray-200 bg-gray-50'}`}>
+                            <div id="opCostForm" className={`p-6 rounded-2xl border-2 ${editingCostId?'border-blue-400 bg-blue-50':'border-gray-200 bg-gray-50'}`}>
                 <div className="flex items-center justify-between mb-4 border-b border-gray-200 pb-2">
                   <h3 className="text-sm font-black uppercase text-black">{editingCostId?`✏ Editando costo — ${editingCostId}`:'Registrar Nuevo Costo'}</h3>
                   {editingCostId&&<button type="button" onClick={()=>{setEditingCostId(null);setNewOpCostForm(initialOpCostForm);}} className="text-xs font-black text-gray-500 hover:text-red-500 border border-gray-300 rounded-lg px-3 py-1.5 transition-colors">✕ Cancelar edición</button>}
@@ -17152,13 +16985,20 @@ ${resumenHtml}
 
               {/* % Costos vs Ventas por mes */}
               <div className="bg-white p-6 rounded-2xl border border-gray-200">
-                <h3 className="text-sm font-black uppercase text-black mb-4 border-b border-gray-200 pb-2">Costos Operativos vs Ventas (% por Mes)</h3>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,borderBottom:'1px solid #e5e7eb',paddingBottom:12}}>
+                  <h3 className="text-sm font-black uppercase text-black">Costos Operativos vs Ventas (% por Mes)</h3>
+                  <select value={costFilterMonth} onChange={e=>{setCostFilterMonth(e.target.value);setOpCostPage(0);}}
+                    style={{border:'1px solid #e5e7eb',borderRadius:8,padding:'6px 12px',fontSize:11,fontWeight:700,outline:'none',background:'#fff',minWidth:150}}>
+                    <option value="TODOS">Todos los meses</option>
+                    {uniqueMonths.map(m=><option key={m} value={m}>{formatMonth(m)}</option>)}
+                  </select>
+                </div>
                 <div className="overflow-x-auto rounded-xl border border-gray-200">
                   <table className="w-full text-xs text-left">
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Mes</th>
-                        <th className="py-3 px-4 border-r text-right">Ingresos Reales (NEs)</th>
+                        <th className="py-3 px-4 border-r text-right">Total Ingresos (Estado Financiero)</th>
                         <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
                         <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
                       </tr>
@@ -17166,12 +17006,11 @@ ${resumenHtml}
                     <tbody className="divide-y divide-gray-100">
                       {uniqueMonths.length === 0 ? (
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
-                      ) : uniqueMonths.map(ym => {
+                      ) : uniqueMonths.filter(ym=>costFilterMonth==='TODOS'||ym===costFilterMonth).map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Ingresos: total real de NEs no anuladas del mes (campo total guardado en Firestore)
-                        const ingresosMes = (notasEntrega||[])
-                          .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
-                          .reduce((s,ne) => s + parseNum(ne.total||0), 0);
+                        // Usar calcEstadoData — misma fuente que Estado Financiero
+                        const efData = (() => { try { return calcEstadoData(ym); } catch(e) { return null; } })();
+                        const ingresosMes = efData ? efData.totalIngresos : 0;
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
@@ -17189,7 +17028,7 @@ ${resumenHtml}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: total real de Notas de Entrega no anuladas &nbsp;|&nbsp; S/V = Sin ventas ese mes &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
+                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos tomados del Estado Financiero (misma fuente que Reportes / Rentabilidad) &nbsp;|&nbsp; S/V = Sin ventas &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
               </div>
 
               {/* Tabla de costos registrados */}
@@ -27073,6 +26912,8 @@ ${resumenHtml}
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
       { id:'vendedores_portal', title:'VENDEDORES', desc:'Gestión de cotizaciones, clientes y actas de reclamo', color:'#E8541A',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="22" cy="18" r="9" fill="#E8541A" opacity="0.85"/><circle cx="42" cy="18" r="7" fill="#E8541A" opacity="0.5"/><path d="M6 46 v-4 a16 16 0 0 1 32 0 v4 z" fill="#E8541A" opacity="0.85"/><path d="M38 46 v-3 a14 14 0 0 1 20 0 v3 z" fill="#E8541A" opacity="0.5"/><rect x="34" y="34" width="22" height="3" rx="1.5" fill="#c2410c"/><rect x="34" y="40" width="18" height="3" rx="1.5" fill="#c2410c" opacity="0.6"/><circle cx="54" cy="54" r="8" fill="#E8541A"/><text x="54" y="58" textAnchor="middle" fontSize="11" fontWeight="900" fill="white" fontFamily="Arial">$</text></svg> },
+      { id:'redes_portal', title:'REDES SOCIALES', desc:'Gestión de contenido, publicaciones y presencia digital', color:'#8b5cf6',
+        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="14" cy="32" r="8" fill="#8b5cf6"/><circle cx="50" cy="14" r="7" fill="#7c3aed"/><circle cx="50" cy="50" r="7" fill="#7c3aed"/><line x1="21" y1="29" x2="43" y2="17" stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round"/><line x1="21" y1="35" x2="43" y2="47" stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round"/><circle cx="14" cy="32" r="4" fill="#ede9fe"/><circle cx="50" cy="14" r="3.5" fill="#ede9fe"/><circle cx="50" cy="50" r="3.5" fill="#ede9fe"/></svg> },
       { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
@@ -27133,8 +26974,8 @@ ${resumenHtml}
               <button onClick={()=>setPortalDenied('')} className="ml-auto text-red-200 hover:text-white"><X size={16}/></button>
             </div>
           )}
-          <div className="w-full" style={{maxWidth:1000}}>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:20}}>
+          <div className="w-full" style={{maxWidth:1200}}>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,220px),1fr))', gap:20}}>
               {PORTALES.map(p => {
                 const allowed = hasPortal(p.id);
                 return (
