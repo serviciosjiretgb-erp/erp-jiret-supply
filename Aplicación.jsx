@@ -9869,10 +9869,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const tp = (it.tipoProducto||'').toUpperCase();
               const getCategoria = () => {
                 if(tp==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(cod)||/TERMO|THERMO|ENCOG/.test(desc)) return 'Termoencogibles';
-                if(tp==='BOLSAS'||/BOL-|FG-[A-Z]/.test(cod)||/BOLSA/.test(desc)||/BOL-/.test(cod)) return 'Bolsas Plásticas';
-                if(/MP-|MATERIA/.test(cod)||/MATERIA PRIMA/.test(desc)) return 'Materia Prima';
-                if(/CINTA|KRAFT|STRECH|STRETCH/.test(cod)||/CINTA|EMPAQUE/.test(desc)) return 'Empaque';
-                if(/SEM-|BOBINA/.test(cod)||/BOBINA|SEMIELABORADO/.test(desc)) return 'Semielaborados';
+                if(/STRETCH|STRECTH|STRECH/.test(cod)||/STRETCH/.test(desc)) return 'Stretch Film';
+                if(/CINTA/.test(cod)||/CINTA/.test(desc)) return 'Cintas';
+                if(/KRAFT/.test(cod)||/KRAFT/.test(desc)) return 'Papel Kraft';
+                if(/DISPEN/.test(cod)||/DISPENSADOR/.test(desc)) return 'Dispensadores';
+                if(/FLEJE/.test(cod)||/FLEJE/.test(desc)) return 'Fleje';
+                if(tp==='BOLSAS'||/BOL-|FG-[A-Z]/.test(cod)||/BOLSA/.test(desc)) return 'Bolsas Plásticas';
                 return 'Otros';
               };
               const categoria = getCategoria();
@@ -9993,7 +9995,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">📦 Categoría</label>
                     <select value={pvCategoriaFilter} onChange={e=>setPvCategoriaFilter(e.target.value)}
                       className="border-2 border-green-300 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-500 bg-green-50 w-44">
-                      {pvCategorias.map(c=><option key={c} value={c}>{c}</option>)}
+                      <option value="TODAS">Todas las categorías</option>
+                      <option value="Bolsas Plásticas">Bolsas Plásticas</option>
+                      <option value="Termoencogibles">Termoencogibles</option>
+                      <option value="Stretch Film">Stretch Film</option>
+                      <option value="Cintas">Cintas</option>
+                      <option value="Papel Kraft">Papel Kraft</option>
+                      <option value="Dispensadores">Dispensadores</option>
+                      <option value="Fleje">Fleje</option>
+                      <option value="Otros">Otros</option>
                     </select>
                   </div>
                   <div>
