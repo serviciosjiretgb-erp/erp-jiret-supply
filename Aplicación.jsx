@@ -16953,7 +16953,7 @@ ${resumenHtml}
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Mes</th>
-                        <th className="py-3 px-4 border-r text-right">Ingresos (Ventas)</th>
+                        <th className="py-3 px-4 border-r text-right">Ingresos Bolsas & Termos</th>
                         <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
                         <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
                       </tr>
@@ -16963,7 +16963,21 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        const ingresosMes = (invoices||[]).filter(i => (i?.fecha||'').startsWith(ym)).reduce((s,i) => s + parseNum(i.total), 0);
+                        // Solo ingresos de Bolsas Plásticas y Termoencogibles
+                        const esBolsaOTermo = (inv) => {
+                          const items = inv.itemsFacturados||[];
+                          if(items.length > 0) {
+                            return items.some(it => {
+                              const tp = (it.tipoProducto||'').toUpperCase();
+                              const cat = getCategoryFromCode(it.invCode||it.fgId||it.desc||'');
+                              return tp==='TERMOENCOGIBLE' || tp==='BOLSAS' || cat==='Bolsas Plásticas' || cat==='Termoencogibles';
+                            });
+                          }
+                          // Si no tiene items, revisar por descripción general
+                          const desc = (inv.descripcion||inv.producto||inv.clientName||'').toUpperCase();
+                          return /BOLSA|TERMO|BOL-|THERMO|SHRINK/.test(desc);
+                        };
+                        const ingresosMes = (invoices||[]).filter(i => (i?.fecha||'').startsWith(ym) && esBolsaOTermo(i)).reduce((s,i) => s + parseNum(i.total), 0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
@@ -16981,7 +16995,7 @@ ${resumenHtml}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* S/V = Sin ventas ese mes | &lt;15% Eficiente | 15-30% Moderado | &gt;30% Alto</p>
+                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: solo facturas de Bolsas Plásticas y Termoencogibles &nbsp;|&nbsp; S/V = Sin ventas ese mes &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
               </div>
 
               {/* Tabla de costos registrados */}
