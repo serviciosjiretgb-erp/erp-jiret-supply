@@ -9850,32 +9850,61 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     return (
       <div className="space-y-6 animate-in fade-in">
         {ventasView === 'productos_vendidos' && (() => {
-          // Productos vendidos desde notasEntrega (Bolsas + Termos)
+          // Productos vendidos desde notasEntrega — un row por almacén por item
           const soldItems = [];
           (notasEntrega||[]).forEach(ne => {
             if(ne.status==='ANULADA') return;
+            const neTotal = parseNum(ne.total||0);
+            const neBase  = parseNum(ne.montoBase||ne.total||0);
             (ne.items||[]).forEach(it => {
               if(!it.fgId&&!it.invCode&&!it.desc) return;
-              const cantidad=parseNum(it.cantidad||0); if(cantidad<=0) return;
-              const costoUnd=parseNum(it.costoUnit||0);
-              const precioVenta=parseNum(it.precioUnit||0);
-              // Almacén: del item primero, luego NE, nunca asumir default ciego
-              const almacen = (it.almacen||'').trim() || (ne.deposito||'').trim() || (ne.almacen||'').trim() || 'ALMACEN ZI';
-              soldItems.push({
-                factura: ne.documento||ne.id,
-                nroFiscal: ne.nroFiscal||ne.facturaId||'—',
-                vendedor: ne.vendedor||'—',
-                fecha: ne.fecha||'',
-                cliente: ne.clientName||ne.clientRif||'—',
-                producto: it.desc||it.invCode||it.fgId||'—',
-                medida: it.unit||it.unidad||'und',
-                cantidad, costoUnd,
-                totalCosto: cantidad*costoUnd,
-                precioVenta,
-                totalVenta: cantidad*precioVenta,
-                opId: ne.opId||ne.opRelacionada||'—',
-                almacen,
-              });
+              const precioUnit = parseNum(it.precioUnit||0);
+              const costoUnit  = parseNum(it.costoUnit||0);
+              const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length>0
+                ? it.warehouseQtys
+                : null;
+              if(wqty) {
+                // Un row por almacén con su cantidad específica
+                Object.entries(wqty).forEach(([almacen, qty]) => {
+                  const cantidad = parseNum(qty||0);
+                  if(cantidad<=0) return;
+                  soldItems.push({
+                    factura: ne.documento||ne.id,
+                    nroFiscal: ne.nroFiscal||ne.facturaId||'—',
+                    vendedor: ne.vendedor||'—',
+                    fecha: ne.fecha||'',
+                    cliente: ne.clientName||ne.clientRif||'—',
+                    producto: it.desc||it.invCode||it.fgId||'—',
+                    medida: it.unit||it.unidad||'und',
+                    cantidad, costoUnd: costoUnit,
+                    totalCosto: cantidad*costoUnit,
+                    precioVenta: precioUnit,
+                    totalVenta: cantidad*precioUnit,
+                    opId: ne.opId||ne.opRelacionada||'—',
+                    almacen: almacen.trim()||'ALMACEN ZI',
+                  });
+                });
+              } else {
+                // Sin warehouseQtys: usar cantidad total
+                const cantidad = parseNum(it.cantidad||0);
+                if(cantidad<=0) return;
+                const almacen = (it.almacen||it.almacenDeduccion||ne.deposito||ne.almacen||'ALMACEN ZI').trim();
+                soldItems.push({
+                  factura: ne.documento||ne.id,
+                  nroFiscal: ne.nroFiscal||ne.facturaId||'—',
+                  vendedor: ne.vendedor||'—',
+                  fecha: ne.fecha||'',
+                  cliente: ne.clientName||ne.clientRif||'—',
+                  producto: it.desc||it.invCode||it.fgId||'—',
+                  medida: it.unit||it.unidad||'und',
+                  cantidad, costoUnd: costoUnit,
+                  totalCosto: cantidad*costoUnit,
+                  precioVenta: precioUnit,
+                  totalVenta: cantidad*precioUnit,
+                  opId: ne.opId||ne.opRelacionada||'—',
+                  almacen,
+                });
+              }
             });
           });
           const sorted = soldItems.sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||'')));
@@ -9892,16 +9921,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(pvFilter===`Q4_${y}`) return m>=10&&m<=12;
             return f.startsWith(pvFilter);
           };
-          // Almacenes únicos reales desde los items de las NEs
+          // Almacenes únicos reales desde warehouseQtys de los items
           const pvAlmacenes = ['TODOS', ...Array.from(new Set(
             (notasEntrega||[])
               .filter(ne=>ne.status!=='ANULADA')
-              .flatMap(ne=>[
-                ...(ne.items||[]).map(it=>(it.almacen||'').trim()).filter(Boolean),
-                (ne.deposito||'').trim(),
-                (ne.almacen||'').trim(),
-              ])
-              .filter(Boolean)
+              .flatMap(ne=>(ne.items||[]).flatMap(it=>{
+                const wq = it.warehouseQtys||{};
+                const wkeys = Object.keys(wq).filter(k=>parseNum(wq[k])>0).map(k=>k.trim()).filter(Boolean);
+                if(wkeys.length>0) return wkeys;
+                return [(it.almacen||it.almacenDeduccion||ne.deposito||ne.almacen||'').trim()].filter(Boolean);
+              }))
           )).sort()];
           const pvFiltered = sorted.filter(s =>
             (!pvFiltCliente||pvFiltCliente==='TODOS'||s.cliente.toUpperCase().includes(pvFiltCliente.toUpperCase())) &&
@@ -16705,6 +16734,33 @@ ${resumenHtml}
       // ── Usar la variable de estado costCategories (incluye categorías personalizadas) ──
       const allCats = Array.isArray(costCategories) && costCategories.length > 0 ? costCategories : COSTO_CATEGORIES;
 
+      // ── CÁLCULO REAL DE VENTAS BOLSAS & TERMOS desde notasEntrega ──
+      const _isBT2 = (it) => {
+        const tp  = (it.tipoProducto||'').toUpperCase();
+        const cod = (it.invCode||it.fgId||it.desc||'').toUpperCase();
+        return tp==='TERMOENCOGIBLE'||tp==='BOLSAS'||
+          (/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/TERMO|STRETCH|CINTA|KRAFT/.test(cod))||
+          /TERMO|THERMO|SHRINK|ENCOG/.test(cod);
+      };
+      const ventasPorMes = {};
+      let vtBolsasTotal=0, vtTermosTotal=0, vtNeTotal=0;
+      (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').forEach(ne=>{
+        const mes=(ne.fecha||'').substring(0,7); if(!mes) return;
+        if(!ventasPorMes[mes]) ventasPorMes[mes]={bolsas:0,termos:0,ne:0};
+        ventasPorMes[mes].ne += parseNum(ne.total||0);
+        vtNeTotal += parseNum(ne.total||0);
+        (ne.items||[]).forEach(it=>{
+          const cant=parseNum(it.cantidad||0), pu=parseNum(it.precioUnit||0), sub=cant*pu;
+          const tp=(it.tipoProducto||'').toUpperCase();
+          const cod=(it.invCode||it.fgId||it.desc||'').toUpperCase();
+          const isTermo=tp==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(cod);
+          const isBolsa=!isTermo&&(tp==='BOLSAS'||(/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/STRETCH|CINTA|KRAFT/.test(cod)));
+          if(isBolsa){ventasPorMes[mes].bolsas+=sub;vtBolsasTotal+=sub;}
+          else if(isTermo){ventasPorMes[mes].termos+=sub;vtTermosTotal+=sub;}
+        });
+      });
+      const vtBTTotal = vtBolsasTotal+vtTermosTotal;
+
       // Usar valor memoizado del componente principal
       const filteredCosts = filteredCostsMemo;
 
@@ -16757,7 +16813,147 @@ ${resumenHtml}
             </div>
 
             <div className="p-4 sm:p-6 space-y-6 w-full">
-              {/* Formulario de registro */}
+
+              {/* ── PANEL VENTAS REALES BOLSAS & TERMOS ── */}
+              {(()=>{
+                const mesesDisp = Object.keys(ventasPorMes).sort((a,b)=>b.localeCompare(a));
+                const vtMesSel = costFilterMonth !== 'TODOS' ? costFilterMonth : '';
+                const vActivo = vtMesSel && ventasPorMes[vtMesSel] ? ventasPorMes[vtMesSel] : null;
+                const bolsasV  = vActivo ? vActivo.bolsas  : vtBolsasTotal;
+                const termosV  = vActivo ? vActivo.termos  : vtTermosTotal;
+                const btV      = bolsasV + termosV;
+                const neV      = vActivo ? vActivo.ne      : vtNeTotal;
+                const labelPer = vtMesSel ? formatMonth(vtMesSel) : 'Acumulado total';
+                return (
+                <div className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-700">
+                  {/* Header con selector de mes */}
+                  <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                      <div className="text-sm font-black text-white uppercase tracking-wide">Ventas Reales — Bolsas & Termoencogibles</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">Calculado desde Notas de Entrega no anuladas · <span style={{color:'#fb923c'}}>{labelPer}</span></div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">Filtrar por mes</label>
+                        <select value={costFilterMonth} onChange={e=>{setCostFilterMonth(e.target.value);setOpCostPage(0);}}
+                          className="border border-gray-600 bg-gray-800 text-white rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-500 min-w-[150px]">
+                          <option value="TODOS">📊 Acumulado total</option>
+                          {mesesDisp.map(m=><option key={m} value={m}>{formatMonth(m)}</option>)}
+                        </select>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[9px] text-gray-400 uppercase">Total NEs</div>
+                        <div className="text-sm font-black text-gray-300">${formatNum(neV)}</div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* KPIs */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-0 divide-x divide-gray-700">
+                    {[
+                      {l:'Bolsas Plásticas',v:bolsasV,c:'#4ade80',sub:'Ventas USD'},
+                      {l:'Termoencogibles',v:termosV,c:'#60a5fa',sub:'Ventas USD'},
+                      {l:'Bolsas + Termos',v:btV,c:'#fb923c',sub:'Subtotal productos propios'},
+                      {l:'% del total NEs',v:(neV>0?(btV/neV*100):0).toFixed(1)+'%',c:'#f9fafb',sub:'Representación sobre ingresos',isStr:true},
+                    ].map((k,i)=>(
+                      <div key={i} className="px-5 py-4">
+                        <div className="text-[9px] text-gray-400 uppercase font-black tracking-wider mb-1">{k.l}</div>
+                        <div className="text-2xl font-black" style={{color:k.c}}>{k.isStr?k.v:'$'+formatNum(k.v)}</div>
+                        <div className="text-[9px] text-gray-500 mt-1">{k.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Tabla por mes — solo si está en acumulado */}
+                  {!vtMesSel && mesesDisp.length>0 && (
+                    <div className="border-t border-gray-700 overflow-x-auto">
+                      <table className="w-full text-[10px]">
+                        <thead><tr className="border-b border-gray-700">
+                          <th className="px-5 py-2 text-left text-gray-400 font-black uppercase">Mes</th>
+                          <th className="px-4 py-2 text-right text-green-400 font-black uppercase">Bolsas</th>
+                          <th className="px-4 py-2 text-right text-blue-400 font-black uppercase">Termos</th>
+                          <th className="px-4 py-2 text-right text-orange-400 font-black uppercase">B+T Total</th>
+                          <th className="px-4 py-2 text-right text-gray-400 font-black uppercase">Total NE</th>
+                          <th className="px-4 py-2 text-right text-gray-500 font-black uppercase">% B+T</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-gray-800">
+                          {mesesDisp.map(m=>{
+                            const v=ventasPorMes[m];
+                            const bt=v.bolsas+v.termos;
+                            const pct=v.ne>0?(bt/v.ne*100).toFixed(1):'—';
+                            return(
+                            <tr key={m} className="hover:bg-gray-800 transition-colors cursor-pointer"
+                              onClick={()=>{setCostFilterMonth(m);setOpCostPage(0);}}>
+                              <td className="px-5 py-2.5 font-black text-white">{formatMonth(m)}</td>
+                              <td className="px-4 py-2.5 text-right font-black text-green-400">${formatNum(v.bolsas)}</td>
+                              <td className="px-4 py-2.5 text-right font-black text-blue-400">${formatNum(v.termos)}</td>
+                              <td className="px-4 py-2.5 text-right font-black text-orange-400">${formatNum(bt)}</td>
+                              <td className="px-4 py-2.5 text-right text-gray-400">${formatNum(v.ne)}</td>
+                              <td className="px-4 py-2.5 text-right">
+                                <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded-full text-[9px] font-black">{pct}%</span>
+                              </td>
+                            </tr>);
+                          })}
+                        </tbody>
+                        <tfoot className="border-t border-gray-600">
+                          <tr>
+                            <td className="px-5 py-2.5 font-black text-orange-400 uppercase text-[10px]">TOTAL</td>
+                            <td className="px-4 py-2.5 text-right font-black text-green-400">${formatNum(vtBolsasTotal)}</td>
+                            <td className="px-4 py-2.5 text-right font-black text-blue-400">${formatNum(vtTermosTotal)}</td>
+                            <td className="px-4 py-2.5 text-right font-black text-orange-400">${formatNum(vtBTTotal)}</td>
+                            <td className="px-4 py-2.5 text-right text-gray-400">${formatNum(vtNeTotal)}</td>
+                            <td className="px-4 py-2.5 text-right">
+                              <span className="bg-orange-900 text-orange-300 px-2 py-0.5 rounded-full text-[9px] font-black">{vtNeTotal>0?(vtBTTotal/vtNeTotal*100).toFixed(1):0}%</span>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                  {/* Cuando hay mes seleccionado: detalle NEs de ese mes */}
+                  {vtMesSel && vActivo && (()=>{
+                    const nesDelMes = (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&(ne.fecha||'').startsWith(vtMesSel));
+                    return(
+                    <div className="border-t border-gray-700">
+                      <div className="px-5 py-2 border-b border-gray-800 flex justify-between items-center">
+                        <span className="text-[10px] font-black text-gray-400 uppercase">NEs de {formatMonth(vtMesSel)} ({nesDelMes.length})</span>
+                        <button onClick={()=>{setCostFilterMonth('TODOS');setOpCostPage(0);}} className="text-[9px] text-orange-400 hover:text-orange-300 font-black">← Ver todos los meses</button>
+                      </div>
+                      <table className="w-full text-[10px]">
+                        <thead><tr className="border-b border-gray-800">
+                          <th className="px-4 py-2 text-left text-gray-400 font-black">NE</th>
+                          <th className="px-4 py-2 text-left text-gray-400 font-black">Fecha</th>
+                          <th className="px-4 py-2 text-left text-gray-400 font-black">Cliente</th>
+                          <th className="px-4 py-2 text-right text-green-400 font-black">Bolsas</th>
+                          <th className="px-4 py-2 text-right text-blue-400 font-black">Termos</th>
+                          <th className="px-4 py-2 text-right text-orange-400 font-black">Total NE</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-gray-800">
+                          {nesDelMes.map(ne=>{
+                            let neBolsas=0,neTermos=0;
+                            (ne.items||[]).forEach(it=>{
+                              const tp=(it.tipoProducto||'').toUpperCase();
+                              const cod=(it.invCode||it.fgId||it.desc||'').toUpperCase();
+                              const sub=parseNum(it.cantidad||0)*parseNum(it.precioUnit||0);
+                              const isTermo=tp==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(cod);
+                              const isBolsa=!isTermo&&(tp==='BOLSAS'||(/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/STRETCH|CINTA|KRAFT/.test(cod)));
+                              if(isBolsa)neBolsas+=sub; else if(isTermo)neTermos+=sub;
+                            });
+                            return(
+                            <tr key={ne.id} className="hover:bg-gray-800 transition-colors">
+                              <td className="px-4 py-2 font-black text-orange-400">{ne.id}</td>
+                              <td className="px-4 py-2 text-gray-400">{ne.fecha}</td>
+                              <td className="px-4 py-2 text-gray-300 font-bold">{ne.clientName||ne.clientRif||'—'}</td>
+                              <td className="px-4 py-2 text-right font-black text-green-400">{neBolsas>0?'$'+formatNum(neBolsas):'—'}</td>
+                              <td className="px-4 py-2 text-right font-black text-blue-400">{neTermos>0?'$'+formatNum(neTermos):'—'}</td>
+                              <td className="px-4 py-2 text-right font-black text-white">${formatNum(ne.total||0)}</td>
+                            </tr>);
+                          })}
+                        </tbody>
+                      </table>
+                    </div>);
+                  })()}
+                </div>
+                );
+              })()}
               <div id="opCostForm" className={`p-6 rounded-2xl border-2 ${editingCostId?'border-blue-400 bg-blue-50':'border-gray-200 bg-gray-50'}`}>
                 <div className="flex items-center justify-between mb-4 border-b border-gray-200 pb-2">
                   <h3 className="text-sm font-black uppercase text-black">{editingCostId?`✏ Editando costo — ${editingCostId}`:'Registrar Nuevo Costo'}</h3>
@@ -16962,7 +17158,7 @@ ${resumenHtml}
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Mes</th>
-                        <th className="py-3 px-4 border-r text-right">Ingresos Bolsas & Termos</th>
+                        <th className="py-3 px-4 border-r text-right">Ingresos Reales (NEs)</th>
                         <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
                         <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
                       </tr>
@@ -16972,25 +17168,10 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Ingresos: NEs de Bolsas Plásticas y Termoencogibles — lógica inline sin getCategoryFromCode
-                        const _isBT = (it) => {
-                          const tp = (it.tipoProducto||'').toUpperCase();
-                          const cod = (it.invCode||it.fgId||it.desc||'').toUpperCase();
-                          return tp==='TERMOENCOGIBLE'||tp==='BOLSAS'||
-                            (/BOL-|BOLSA|FG-[A-Z]/.test(cod)&&!/TERMO|STRETCH|CINTA|KRAFT/.test(cod))||
-                            /TERMO|THERMO|SHRINK|ENCOG/.test(cod);
-                        };
+                        // Ingresos: total real de NEs no anuladas del mes (campo total guardado en Firestore)
                         const ingresosMes = (notasEntrega||[])
                           .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
-                          .reduce((s,ne) => {
-                            const items = ne.items||[];
-                            if(items.length>0) {
-                              const subtotal = items.filter(_isBT).reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
-                              const iva = ne.aplicaIva==='SI'?subtotal*0.16:0;
-                              return s + subtotal + iva;
-                            }
-                            return s + parseNum(ne.total||0);
-                          }, 0);
+                          .reduce((s,ne) => s + parseNum(ne.total||0), 0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
@@ -17008,7 +17189,7 @@ ${resumenHtml}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: solo facturas de Bolsas Plásticas y Termoencogibles &nbsp;|&nbsp; S/V = Sin ventas ese mes &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
+                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: total real de Notas de Entrega no anuladas &nbsp;|&nbsp; S/V = Sin ventas ese mes &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
               </div>
 
               {/* Tabla de costos registrados */}
@@ -21692,7 +21873,7 @@ ${resumenHtml}
   const renderReportesFinancierosModule = () => {
     const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
-    const getIngresosByMonth = (ym) => invoices.filter(i => (i.fecha||'').startsWith(ym) || (typeof i.timestamp === 'number' && new Date(i.timestamp).toISOString().startsWith(ym))).reduce((s,i) => s + parseNum(i.total), 0);
+    const getIngresosByMonth = (ym) => (notasEntrega||[]).filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym)).reduce((s,ne) => s + parseNum(ne.total||0), 0);
     const getCostosMPByMonth = (ym) => invMovements.filter(m => m.type === 'SALIDA' && (m.date||'').startsWith(ym)).reduce((s,m) => s + parseNum(m.totalValue), 0);
     const getCostosOPByMonth = (ym) => opCosts.filter(c => (c.month||c.date||'').startsWith(ym)).reduce((s,c) => s + parseNum(c.amount), 0);
 
