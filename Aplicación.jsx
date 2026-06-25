@@ -25877,10 +25877,62 @@ ${resumenHtml}
   };
   if (!appUser) {
     return (
-      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}>
-        <div style={{textAlign:'center',color:'#fff',padding:40}}>
-          <div style={{fontSize:28,fontWeight:900,marginBottom:8}}>Supply <span style={{color:'#f97316'}}>G&B</span></div>
-          <div style={{fontSize:13,color:'rgba(255,255,255,0.5)'}}>Cargando sistema...</div>
+      <div style={{minHeight:'100vh',width:'100%',position:'relative',overflow:'hidden',display:'flex',flexDirection:'column'}}>
+        {/* Fondo */}
+        <div style={{position:'absolute',inset:0,zIndex:0}}>
+          {settings?.loginBg
+            ? <img src={settings.loginBg} style={{width:'100%',height:'100%',objectFit:'cover',objectPosition:'center'}} alt="bg"/>
+            : <div style={{width:'100%',height:'100%',background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}/>
+          }
+          <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,rgba(0,0,0,0.55) 0%,rgba(0,0,0,0.78) 100%)'}}/>
+          <svg width="100%" height="100%" style={{position:'absolute',inset:0,opacity:0.5}} xmlns="http://www.w3.org/2000/svg">
+            <defs><pattern id="loginGrid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(249,115,22,0.06)" strokeWidth="0.8"/></pattern></defs>
+            <rect width="100%" height="100%" fill="url(#loginGrid)"/>
+          </svg>
+        </div>
+        {/* Contenido centrado */}
+        <div style={{position:'relative',zIndex:10,flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'20px'}}>
+          <div style={{width:'100%',maxWidth:400}}>
+            {/* Logo */}
+            <div style={{textAlign:'center',marginBottom:32}}>
+              <div style={{display:'inline-flex',alignItems:'center',gap:4,marginBottom:8}}>
+                <span style={{color:'#fff',fontWeight:900,fontSize:28}}>Supply </span>
+                <span style={{color:'#fff',fontWeight:900,fontSize:30}}>G</span>
+                <div style={{background:'#f97316',color:'#fff',borderRadius:'50%',width:26,height:26,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:900,margin:'0 2px'}}>&amp;</div>
+                <span style={{color:'#fff',fontWeight:900,fontSize:30}}>B</span>
+              </div>
+              <div style={{color:'rgba(255,255,255,0.5)',fontSize:11,letterSpacing:'0.25em',textTransform:'uppercase'}}>Sistema ERP — Servicios Jiret G&amp;B</div>
+            </div>
+            {/* Card login */}
+            <div style={{background:'rgba(255,255,255,0.97)',borderRadius:20,padding:'36px 32px',boxShadow:'0 20px 60px rgba(0,0,0,0.4)'}}>
+              <h2 style={{fontSize:18,fontWeight:900,color:'#111',margin:'0 0 6px',textAlign:'center'}}>Iniciar Sesión</h2>
+              <p style={{fontSize:12,color:'#9ca3af',textAlign:'center',margin:'0 0 24px'}}>Ingresa tus credenciales de acceso</p>
+              <form onSubmit={handleLogin} style={{display:'flex',flexDirection:'column',gap:16}}>
+                <div>
+                  <label style={{fontSize:10,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:6}}>Usuario</label>
+                  <input type="text" value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})}
+                    placeholder="Nombre de usuario" autoComplete="username"
+                    style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:12,padding:'12px 14px',fontSize:13,outline:'none',fontWeight:600,boxSizing:'border-box',transition:'border .15s'}}
+                    onFocus={e=>e.target.style.borderColor='#f97316'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                </div>
+                <div>
+                  <label style={{fontSize:10,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.05em',display:'block',marginBottom:6}}>Contraseña</label>
+                  <input type="password" value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})}
+                    placeholder="••••••••" autoComplete="current-password"
+                    style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:12,padding:'12px 14px',fontSize:13,outline:'none',fontWeight:600,boxSizing:'border-box',transition:'border .15s'}}
+                    onFocus={e=>e.target.style.borderColor='#f97316'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                </div>
+                {loginError&&<div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:10,padding:'10px 14px',fontSize:12,color:'#dc2626',fontWeight:600}}>{loginError}</div>}
+                <button type="submit"
+                  style={{width:'100%',background:'linear-gradient(135deg,#f97316,#ea580c)',color:'#fff',border:'none',borderRadius:12,padding:'14px',fontSize:13,fontWeight:900,cursor:'pointer',textTransform:'uppercase',letterSpacing:'0.06em',boxShadow:'0 4px 16px rgba(249,115,22,0.4)',marginTop:4}}>
+                  Entrar al Sistema
+                </button>
+              </form>
+            </div>
+            <div style={{textAlign:'center',marginTop:20}}>
+              <span style={{color:'rgba(255,255,255,0.25)',fontSize:10,letterSpacing:'0.2em',textTransform:'uppercase'}}>SUPPLY G&amp;B — SISTEMA ERP</span>
+            </div>
+          </div>
         </div>
       </div>
     );
