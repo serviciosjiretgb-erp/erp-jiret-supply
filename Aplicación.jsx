@@ -16759,8 +16759,8 @@ ${resumenHtml}
       const uniqueMonths = [...new Set([
         // Meses con costos operativos
         ...(opCosts || []).map(c => c?.month || (c?.date ? String(c.date).substring(0, 7) : null)).filter(Boolean),
-        // Meses con Notas de Entrega (fuente del Estado Financiero)
-        ...(notasEntrega || []).filter(ne => ne.status !== 'ANULADA').map(ne => (ne.fecha||'').substring(0,7)).filter(Boolean),
+        // Meses con facturas (invoices) — misma fuente que Estado Financiero
+        ...(invoices||[]).map(inv=>(inv.fecha||'').substring(0,7)).filter(ym=>ym && ym.length===7),
       ])].sort().reverse();
 
       // Nombres de mes para mostrar
@@ -17001,7 +17001,7 @@ ${resumenHtml}
                     <thead className="bg-gray-100 border-b-2 border-gray-200">
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Mes</th>
-                        <th className="py-3 px-4 border-r text-right">Ingresos por OP (Estado Financiero)</th>
+                        <th className="py-3 px-4 border-r text-right">Total Ingresos (Estado Financiero)</th>
                         <th className="py-3 px-4 border-r text-right">Costos Operativos</th>
                         <th className="py-3 px-4 text-center">% Costo Op. / Ventas</th>
                       </tr>
@@ -17011,26 +17011,17 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.filter(ym=>costFilterMonth==='TODOS'||ym===costFilterMonth).map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Solo NEs con OP asignada — igual que Estado Financiero (Ingresos por Producción)
-                        const ingresosMes = (() => {
-                          let total = 0;
-                          (notasEntrega||[])
-                            .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym) && (ne.opRelacionada||ne.opId||ne.opAsignada||''))
-                            .forEach(ne => {
-                              const items = ne.items||[];
-                              if(items.length > 0) {
-                                const hasPrecios = items.some(it=>parseNum(it.precioUnit||0)>0);
-                                if(hasPrecios) {
-                                  items.forEach(it => { total += parseNum(it.cantidad||0) * parseNum(it.precioUnit||0); });
-                                } else {
-                                  total += parseNum(ne.montoBase||ne.total||0);
-                                }
-                              } else {
-                                total += parseNum(ne.montoBase||ne.total||0);
-                              }
-                            });
-                          return total;
-                        })();
+                        // Misma fuente que Estado Financiero: invoices (maquilaInvoices INVO-XXXX)
+                        const ingresosMes = (invoices||[])
+                          .filter(inv => (inv.fecha||'').startsWith(ym))
+                          .reduce((s,inv) => {
+                            const items = inv.itemsFacturados||[];
+                            if(items.length > 0) {
+                              const sub = items.reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||it.precio||0),0);
+                              return s + (sub > 0 ? sub : parseNum(inv.montoBase||0));
+                            }
+                            return s + parseNum(inv.montoBase||inv.total||0);
+                          }, 0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
@@ -17048,7 +17039,7 @@ ${resumenHtml}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: solo NEs con OP asignada (igual que Estado Financiero / Ingresos por Producción) &nbsp;|&nbsp; S/V = Sin ventas &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
+                <p className="text-[9px] font-bold text-gray-400 mt-3 uppercase">* Ingresos: misma fuente que Estado Financiero (facturas INVO) &nbsp;|&nbsp; S/V = Sin ventas &nbsp;|&nbsp; &lt;15% Eficiente &nbsp;|&nbsp; 15-30% Moderado &nbsp;|&nbsp; &gt;30% Alto</p>
               </div>
 
               {/* Tabla de costos registrados */}
