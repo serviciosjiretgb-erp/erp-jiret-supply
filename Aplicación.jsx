@@ -25931,40 +25931,43 @@ ${resumenHtml}
             </div>
           )}
 
-          {/* Grilla de portales — 3 columnas fijas, Configuración centrada */}
-          {(()=>{
-            const allowed = PORTALES.map(p=>({...p,ok:hasPortal(p.id)}));
-            const main = allowed.filter(p=>p.id!=='configuracion_portal');
-            const config = allowed.find(p=>p.id==='configuracion_portal');
-            const Card = ({p}) => (
-              <button onClick={()=>{if(p.ok){setPortalDenied('');clearAllReports();setSelectedPortal(p.id);if(p.id==='resena_portal')setActiveTab('resena');else if(p.id==='brochure_portal'){setActiveTab('resena');setResenaTab('catalogo');}else if(p.id==='vendedores_portal'){setActiveTab('home');setVentasView('cotizaciones');}else setActiveTab('home');}else setPortalDenied(p.title);}}
-                style={{textAlign:'left',position:'relative',background:p.ok?'#ffffff':'rgba(255,255,255,0.55)',border:'none',borderLeft:`5px solid ${p.ok?p.color:'#9ca3af'}`,borderRadius:16,padding:'22px 20px',cursor:'pointer',color:p.ok?'#111':'#6b7280',opacity:p.ok?1:0.7,transition:'transform .18s,box-shadow .18s',boxShadow:'0 4px 24px rgba(0,0,0,0.28)',width:'100%'}}
-                onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-5px)';e.currentTarget.style.boxShadow=p.ok?`0 16px 40px ${p.color}55`:'0 8px 24px rgba(0,0,0,0.2)';}}
-                onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 24px rgba(0,0,0,0.28)';}}>
-                {!p.ok&&<div style={{position:'absolute',top:12,right:12,display:'flex',alignItems:'center',gap:3,background:'rgba(0,0,0,0.07)',borderRadius:8,padding:'3px 8px'}}><Lock size={10} style={{color:'#9ca3af'}}/><span style={{fontSize:'0.55rem',fontWeight:800,color:'#9ca3af',textTransform:'uppercase'}}>Sin acceso</span></div>}
-                <div style={{height:68,display:'flex',alignItems:'center',marginBottom:12,filter:p.ok?'none':'grayscale(0.5)',opacity:p.ok?1:0.65}}>{p.icon}</div>
-                <h3 style={{fontSize:'1.05rem',fontWeight:900,margin:0,letterSpacing:'0.04em',color:p.ok?'#111827':'#9ca3af'}}>{p.title}</h3>
-                <p style={{fontSize:'0.76rem',color:'#6b7280',margin:'6px 0 14px',lineHeight:1.5,minHeight:34}}>{p.desc}</p>
-                <div style={{display:'flex',alignItems:'center',gap:6,color:p.ok?p.color:'#9ca3af',fontWeight:900,fontSize:'0.75rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
-                  {p.ok?<>ENTRAR AL PORTAL <ArrowRight size={14}/></>:<><Lock size={12}/> ACCESO RESTRINGIDO</>}
-                </div>
-              </button>
-            );
-            return (
-              <div style={{width:'100%',maxWidth:980}}>
-                {/* Fila principal: hasta 3 por fila */}
-                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:18,marginBottom:18}}>
-                  {main.map(p=><Card key={p.id} p={p}/>)}
-                </div>
-                {/* Configuración centrada */}
-                {config&&(
-                  <div style={{display:'flex',justifyContent:'center'}}>
-                    <div style={{width:'calc(33.33% - 12px)'}}><Card p={config}/></div>
+          {/* Grilla de portales */}
+          <div style={{width:'100%',maxWidth:980}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:18,marginBottom:18}}>
+              {PORTALES.filter(p=>p.id!=='configuracion_portal').map(p=>{
+                const ok=hasPortal(p.id);
+                return(
+                <button key={p.id} onClick={()=>{if(ok){setPortalDenied('');clearAllReports();setSelectedPortal(p.id);if(p.id==='resena_portal')setActiveTab('resena');else if(p.id==='vendedores_portal'){setActiveTab('home');setVentasView('cotizaciones');}else setActiveTab('home');}else setPortalDenied(p.title);}}
+                  style={{textAlign:'left',position:'relative',background:ok?'#ffffff':'rgba(255,255,255,0.55)',border:'none',borderLeft:`5px solid ${ok?p.color:'#9ca3af'}`,borderRadius:16,padding:'22px 20px',cursor:'pointer',opacity:ok?1:0.7,transition:'transform .18s,box-shadow .18s',boxShadow:'0 4px 24px rgba(0,0,0,0.28)',width:'100%'}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-5px)';e.currentTarget.style.boxShadow=ok?`0 16px 40px ${p.color}55`:'0 8px 24px rgba(0,0,0,0.2)';}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 24px rgba(0,0,0,0.28)';}}>
+                  {!ok&&<div style={{position:'absolute',top:12,right:12,display:'flex',alignItems:'center',gap:3,background:'rgba(0,0,0,0.07)',borderRadius:8,padding:'3px 8px'}}><Lock size={10} style={{color:'#9ca3af'}}/><span style={{fontSize:'0.55rem',fontWeight:800,color:'#9ca3af',textTransform:'uppercase'}}>Sin acceso</span></div>}
+                  <div style={{height:68,display:'flex',alignItems:'center',marginBottom:12,filter:ok?'none':'grayscale(0.5)',opacity:ok?1:0.65}}>{p.icon}</div>
+                  <h3 style={{fontSize:'1.05rem',fontWeight:900,margin:0,letterSpacing:'0.04em',color:ok?'#111827':'#9ca3af'}}>{p.title}</h3>
+                  <p style={{fontSize:'0.76rem',color:'#6b7280',margin:'6px 0 14px',lineHeight:1.5,minHeight:34}}>{p.desc}</p>
+                  <div style={{display:'flex',alignItems:'center',gap:6,color:ok?p.color:'#9ca3af',fontWeight:900,fontSize:'0.75rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                    {ok?<>ENTRAR AL PORTAL <ArrowRight size={14}/></>:<><Lock size={12}/> ACCESO RESTRINGIDO</>}
                   </div>
-                )}
+                </button>);
+              })}
+            </div>
+            {/* Configuración centrada */}
+            {(()=>{const p=PORTALES.find(x=>x.id==='configuracion_portal');if(!p)return null;const ok=hasPortal(p.id);return(
+              <div style={{display:'flex',justifyContent:'center'}}>
+                <button onClick={()=>{if(ok){setPortalDenied('');clearAllReports();setSelectedPortal(p.id);setActiveTab('home');}else setPortalDenied(p.title);}}
+                  style={{textAlign:'left',position:'relative',background:ok?'#ffffff':'rgba(255,255,255,0.55)',border:'none',borderLeft:`5px solid ${ok?p.color:'#9ca3af'}`,borderRadius:16,padding:'22px 20px',cursor:'pointer',opacity:ok?1:0.7,transition:'transform .18s,box-shadow .18s',boxShadow:'0 4px 24px rgba(0,0,0,0.28)',width:'calc(33.33% - 12px)'}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-5px)';e.currentTarget.style.boxShadow=ok?`0 16px 40px ${p.color}55`:'0 8px 24px rgba(0,0,0,0.2)';}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 24px rgba(0,0,0,0.28)';}}>
+                  <div style={{height:68,display:'flex',alignItems:'center',marginBottom:12,filter:ok?'none':'grayscale(0.5)',opacity:ok?1:0.65}}>{p.icon}</div>
+                  <h3 style={{fontSize:'1.05rem',fontWeight:900,margin:0,letterSpacing:'0.04em',color:ok?'#111827':'#9ca3af'}}>{p.title}</h3>
+                  <p style={{fontSize:'0.76rem',color:'#6b7280',margin:'6px 0 14px',lineHeight:1.5,minHeight:34}}>{p.desc}</p>
+                  <div style={{display:'flex',alignItems:'center',gap:6,color:ok?p.color:'#9ca3af',fontWeight:900,fontSize:'0.75rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                    {ok?<>ENTRAR AL PORTAL <ArrowRight size={14}/></>:<><Lock size={12}/> ACCESO RESTRINGIDO</>}
+                  </div>
+                </button>
               </div>
-            );
-          })()}
+            );})()}
+          </div>
         </div>
 
         {/* FOOTER */}
