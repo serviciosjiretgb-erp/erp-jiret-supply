@@ -26003,7 +26003,6 @@ ${resumenHtml}
       </div>
     );
   }
-  }
 
   return (
     <ErrorBoundary>
