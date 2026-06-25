@@ -14796,12 +14796,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <span></span>
               </div>`;
             }
+            const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
+            const vendedorBanner = cxcVendedorFilter!=='TODOS' ? `<div style="background:#f97316;color:#fff;padding:6px 20px;font-weight:900;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">👤 VENDEDOR: ${cxcVendedorFilter}</div>` : '';
             const html=`<html><head><meta charset="utf-8"><title>${titulo}</title><style>${ESTILOS}</style></head><body>
               <div style="background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                 <div><p style="color:#f97316;font-size:18px;font-weight:900;margin:0">Supply G&B</p><p style="color:#94a3b8;font-size:10px;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p></div>
                 <div style="text-align:right"><p style="color:#fff;font-weight:900;font-size:13px;margin:0;text-transform:uppercase">${titulo}</p>
-                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · ${nesAbiertas.length} documentos · Total: $${formatNum(totalCartera)}</p></div>
+                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · ${nesAbiertas.length} documentos · Total: $${formatNum(totalCartera)}${vendedorLabel}</p></div>
               </div>
+              ${vendedorBanner}
               <div style="padding:12px 0">${body}</div>
               <div style="text-align:center;font-size:8px;color:#94a3b8;margin-top:12px;border-top:1px solid #e2e8f0;padding-top:8px">
                 Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}
@@ -22724,30 +22727,20 @@ ${resumenHtml}
                         {tasa>1&&<td className="py-1.5 px-3 text-right font-bold text-orange-600">{bs(efaData.totalIngresos)}</td>}
                       </tr>
                       {erExpanded.ingresos && (()=>{
-                        // Agrupar ítems por categoría (Bolsas / Termos) desde cogsRows que ya están filtrados
-                        const _getCatER = (cod,desc,tp) => {
-                          const c=(cod||'').toUpperCase(),d=(desc||'').toUpperCase(),t=(tp||'').toUpperCase();
-                          if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
+                        // Usar cogsRows directamente — ya tiene cantVendida y subIngreso
+                        // calculados con warehouseQtys, misma fuente que totalIngresos
+                        const _getCatER = (cod,tp) => {
+                          const c=(cod||'').toUpperCase(),t=(tp||'').toUpperCase();
+                          if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
                           return 'Bolsas Plásticas';
                         };
-                        // Reconstruir detalle desde NEs del período
-                        const detalleItems = [];
-                        (efaData.facturasperiodo||[]).forEach(ne => {
-                          const items = ne.items||[];
-                          if(items.length>0){
-                            items.forEach(it=>{
-                              const cod=it.invCode||it.fgId||''; const desc=it.desc||''; const tp=it.tipoProducto||'';
-                              const cat=_getCatER(cod,desc,tp);
-                              const cant=parseNum(it.cantidad||0); const pu=parseNum(it.precioUnit||0);
-                              if(cant<=0) return;
-                              detalleItems.push({ ne:ne.documento||ne.id, cliente:ne.clientName||'—', fecha:ne.fecha||'', desc:desc||cod, cant, pu, sub:cant*pu, cat });
-                            });
-                          } else {
-                            detalleItems.push({ ne:ne.documento||ne.id, cliente:ne.clientName||'—', fecha:ne.fecha||'', desc:'—', cant:1, pu:parseNum(ne.montoBase||ne.total||0), sub:parseNum(ne.montoBase||ne.total||0), cat:'Bolsas Plásticas' });
-                          }
-                        });
                         const byCategoria = {};
-                        detalleItems.forEach(it=>{ if(!byCategoria[it.cat])byCategoria[it.cat]={items:[],total:0}; byCategoria[it.cat].items.push(it); byCategoria[it.cat].total+=it.sub; });
+                        (efaData.cogsRows||[]).forEach(row=>{
+                          const cat=_getCatER(row.itemCode||'', row.esTermo?'TERMOENCOGIBLE':'BOLSAS');
+                          if(!byCategoria[cat]) byCategoria[cat]={items:[],total:0};
+                          byCategoria[cat].items.push(row);
+                          byCategoria[cat].total += parseNum(row.subIngreso||0);
+                        });
                         return Object.entries(byCategoria).map(([cat,grp])=>(
                           <React.Fragment key={cat}>
                             <tr className="bg-orange-100 border-b border-orange-200">
@@ -22757,18 +22750,18 @@ ${resumenHtml}
                               <td className="py-1.5 px-3 text-right font-black text-orange-700">{formatNum(grp.total)}</td>
                               {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-orange-500">{bs(grp.total)}</td>}
                             </tr>
-                            {grp.items.map((it,i)=>(
+                            {grp.items.map((row,i)=>(
                               <tr key={i} className="border-b border-orange-50 hover:bg-orange-50/30">
                                 <td className="py-1.5 px-4 pl-20 text-[10px] text-gray-700" colSpan={tasa>1?4:3}>
-                                  <span className="text-orange-500 font-black mr-2">{it.ne}</span>
-                                  <span className="font-bold">{it.cliente}</span>
+                                  <span className="text-orange-500 font-black mr-2">{row.factura}</span>
+                                  <span className="font-bold">{row.cliente}</span>
                                   <span className="text-gray-400 mx-1">—</span>
-                                  <span className="italic text-gray-500">{it.desc}</span>
-                                  <span className="text-[9px] text-gray-400 ml-2">{it.fecha}</span>
-                                  <span className="text-[9px] text-gray-400 ml-2">{formatNum(it.cant)} × ${formatNum(it.pu)}</span>
+                                  <span className="italic text-gray-500">{row.producto}</span>
+                                  <span className="text-[9px] text-gray-400 ml-2">{row.fecha}</span>
+                                  <span className="text-[9px] text-blue-600 font-bold ml-2">{formatNum(row.cantVendida)} {row.unidad} × ${formatNum(row.precioUnit||0)}</span>
                                 </td>
-                                <td className="py-1.5 px-3 text-right font-black text-orange-600">{formatNum(it.sub)}</td>
-                                {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-gray-400">{bs(it.sub)}</td>}
+                                <td className="py-1.5 px-3 text-right font-black text-orange-600">{formatNum(row.subIngreso||0)}</td>
+                                {tasa>1&&<td className="py-1.5 px-3 text-right text-[9px] text-gray-400">{bs(row.subIngreso||0)}</td>}
                               </tr>
                             ))}
                           </React.Fragment>
@@ -23387,6 +23380,7 @@ ${resumenHtml}
               opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
               producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
               cantVendida:cant, unidad:it.unidad||it.unit||'und',
+              precioUnit:precioUnit, subIngreso:sub,
               costoUnit:cu, costoTotal:ct,
               esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
               factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
@@ -23396,7 +23390,6 @@ ${resumenHtml}
             });
           });
         } else {
-          // Sin warehouseQtys: usar it.cantidad directamente
           const cant = parseNum(it.cantidad||it.qty||0);
           if(cant<=0) return;
           const sub = precioUnit>0 ? precioUnit*cant : 0;
@@ -23417,6 +23410,7 @@ ${resumenHtml}
             opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
             producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
             cantVendida:cant, unidad:it.unidad||it.unit||'und',
+            precioUnit:precioUnit, subIngreso:sub,
             costoUnit:cu, costoTotal:ct,
             esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
             factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
