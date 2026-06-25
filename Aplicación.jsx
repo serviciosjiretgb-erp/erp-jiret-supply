@@ -441,6 +441,7 @@ function App() {
   const [cxcExpandAll, setCxcExpandAll] = useState(false);
   const [cxcCobroModal, setCxcCobroModal] = useState(null);
   const [cxcSearch, setCxcSearch] = useState('');
+  const [cxcVendedorFilter, setCxcVendedorFilter] = useState('TODOS');
   const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
@@ -14608,9 +14609,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(fechaRef&&(ne.fecha||'')>fechaRef) return false;
             return true;
           });
-          const nesAbiertas=cxcSearch.trim()
-            ?nesBase.filter(ne=>(ne.documento||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientRif||'').toUpperCase().includes(cxcSearch.toUpperCase()))
-            :nesBase;
+          // Lista de vendedores únicos en cartera
+          const cxcVendedores = ['TODOS', ...Array.from(new Set(nesBase.map(ne=>(ne.vendedor||'').trim()).filter(Boolean))).sort()];
+          const nesAbiertas=(cxcVendedorFilter!=='TODOS'
+            ? nesBase.filter(ne=>(ne.vendedor||'').trim().toUpperCase()===cxcVendedorFilter.toUpperCase())
+            : nesBase
+          ).filter(ne=>!cxcSearch.trim()||(ne.documento||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(cxcSearch.toUpperCase())||(ne.clientRif||'').toUpperCase().includes(cxcSearch.toUpperCase()));
 
           // Métricas — totalBruto usa nesTotal para coincidir con Transacciones y NE view
           const totalBrutoNEs=nesTotal.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
@@ -14810,7 +14814,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const exportarExcel=(tipo)=>{
             const corte=fechaRef||getTodayDate();
             const XH=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:10pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt;text-align:right}th.left{text-align:left}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt;text-align:right}.left{text-align:left}.hdr{background:#1e293b;color:#fff;font-weight:bold;font-size:9pt}.tot{background:#0f172a;color:#f97316;font-weight:bold}.g{color:#16a34a}.r{color:#dc2626}.a{color:#b45309}.o{color:#c2410c}.b{color:#3b82f6}.alt{background:#f8fafc}.sub{background:#f0fdf4;font-size:9pt}.nc{background:#eff6ff;font-size:9pt}.ret{background:#fef3c7;font-size:9pt}</style></head><body>`;
-            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Total cartera: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos · Corte: ${corte}</p>`;
+            const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
+            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}${vendedorLabel}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Total cartera: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos · Corte: ${corte}${vendedorLabel}</p>`;
             let rows='';
             if(tipo==='aging'){
               // Resumen por cliente
@@ -15362,6 +15367,14 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   <div className="relative flex-1 min-w-[180px]">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14}/>
                     <input type="text" placeholder="Buscar cliente, RIF o documento..." value={cxcSearch} onChange={e=>setCxcSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400 uppercase"/>
+                  </div>
+                  {/* Filtro Vendedor */}
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[8px] font-black text-gray-400 uppercase tracking-wider">Vendedor</label>
+                    <select value={cxcVendedorFilter} onChange={e=>setCxcVendedorFilter(e.target.value)}
+                      className="border-2 border-orange-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50 min-w-[160px]">
+                      {cxcVendedores.map(v=><option key={v} value={v}>{v==='TODOS'?'👥 Todos los vendedores':v}</option>)}
+                    </select>
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Vista:</label>
@@ -23309,11 +23322,9 @@ ${resumenHtml}
   // ── FIN renderLibroDiarioModule ──
   // ============================================================================
   const calcEstadoData = (ym) => {
-    // ── Misma lógica de categorización que Productos Vendidos ─────────────────
+    // ── Categorización idéntica a Productos Vendidos ──────────────────────────
     const getCategoriaPV = (cod, desc, tp) => {
-      const c = (cod||'').toUpperCase();
-      const d = (desc||'').toUpperCase();
-      const t = (tp||'').toUpperCase();
+      const c=(cod||'').toUpperCase(), d=(desc||'').toUpperCase(), t=(tp||'').toUpperCase();
       if(t==='TERMOENCOGIBLE'||/TERMO|THERMO|SHRINK|ENCOG/.test(c)||/TERMO|THERMO|ENCOG/.test(d)) return 'Termoencogibles';
       if(/STRETCH|STRECTH|STRECH/.test(c)||/STRETCH/.test(d)) return 'Stretch Film';
       if(/CINTA/.test(c)||/CINTA/.test(d)) return 'Cintas';
@@ -23323,13 +23334,14 @@ ${resumenHtml}
       if(t==='BOLSAS'||/BOL-|FG-[A-Z]/.test(c)||/BOLSA/.test(d)) return 'Bolsas Plásticas';
       return 'Otros';
     };
-    // Solo Bolsas Plásticas y Termoencogibles entran al Estado de Resultado
     const esBolsaOrTermo = (code, desc, tp) => {
       const cat = getCategoriaPV(code, desc, tp);
       return cat === 'Bolsas Plásticas' || cat === 'Termoencogibles';
     };
 
-    // ── INGRESOS y COSTOS: desde Notas de Entrega (fuente de verdad) ──────────
+    // ── INGRESOS y COSTOS desde NEs — misma lógica EXACTA que Productos Vendidos ──
+    // Productos Vendidos itera warehouseQtys → una fila por almacén.
+    // Aquí hacemos lo mismo para que los totales sean idénticos.
     const nesDelPeriodo = (notasEntrega||[]).filter(ne =>
       ne.status !== 'ANULADA' && (ne.fecha||'').startsWith(ym)
     );
@@ -23337,85 +23349,83 @@ ${resumenHtml}
     const cogsRows = [];
     let totalCostoProd = 0;
     let totalIngresosItems = 0;
-    const facturasContadas = new Set();
+    const nesConIngreso = new Set(); // NEs que tienen al menos un ítem Bolsa/Termo
 
     nesDelPeriodo.forEach(ne => {
-      const allItems = (ne.items||[]).length > 0 ? ne.items : [];
-      let neTieneItemsValidos = false;
+      (ne.items||[]).forEach(it => {
+        const code = it.invCode||it.fgId||it.codigo||'';
+        const desc = it.desc||it.descripcion||'';
+        const tp   = it.tipoProducto||'';
+        if(!esBolsaOrTermo(code, desc, tp)) return;
 
-      allItems.forEach(it => {
-        const code = it.invCode || it.fgId || it.codigo || '';
-        const desc = it.desc || it.descripcion || '';
-        const tp   = it.tipoProducto || '';
-        if (!esBolsaOrTermo(code, desc, tp)) return;
+        const precioUnit = parseNum(it.precioUnit||it.precio||0);
+        let costoU = parseNum(it.costoUnit||0);
 
-        const precioUnit = parseNum(it.precioUnit || it.precio || 0);
-        const costoUnit0 = parseNum(it.costoUnit || 0);
+        // ── Misma lógica de cantidad que Productos Vendidos ──
+        const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length>0 ? it.warehouseQtys : null;
+        if(wqty) {
+          // Una entrada por almacén (igual que Productos Vendidos)
+          Object.entries(wqty).forEach(([alm, q]) => {
+            const cant = parseNum(q||0);
+            if(cant<=0) return;
+            const sub = precioUnit>0 ? precioUnit*cant : 0;
+            totalIngresosItems += sub;
+            nesConIngreso.add(ne.id);
 
-        // Usar warehouseQtys igual que Productos Vendidos — captura cantidad real por almacén
-        const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length > 0
-          ? it.warehouseQtys : null;
-        const cantTotal = wqty
-          ? Object.values(wqty).reduce((s,q)=>s+parseNum(q||0),0)
-          : parseNum(it.cantidad || it.qty || 0);
+            // Costo
+            const fgIdLimpio = it.fgId||(it.invCode||'').split('___')[0]||code.split('___')[0];
+            const fgRec = fgIdLimpio?(finishedGoodsInventory||[]).find(f=>f.id===fgIdLimpio):null;
+            let cu = costoU;
+            if(cu<=0&&fgRec){const esTermo2=it.esTermo??(fgRec.tipoProducto==='TERMOENCOGIBLE');cu=esTermo2?parseNum(fgRec.costoUnitario||0):parseNum(fgRec.costoUnitarioMillar||0);}
+            if(cu<=0&&fgIdLimpio){const km=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&(m.docRef||'').includes(ne.documento||ne.id||'')&&parseNum(m.unitCost||0)>0);if(km)cu=parseNum(km.unitCost||0);}
+            if(cu<=0&&fgIdLimpio){const km2=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);if(km2)cu=parseNum(km2.unitCost||0);}
+            if(cu<=0&&fgRec)cu=parseNum(fgRec.costoUnitario||fgRec.costoUnitarioMillar||0);
+            const ct=cu*cant;
+            totalCostoProd+=ct;
+            cogsRows.push({
+              opId:ne.opRelacionada||ne.opId||ne.opAsignada||'—',
+              opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
+              producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
+              cantVendida:cant, unidad:it.unidad||it.unit||'und',
+              costoUnit:cu, costoTotal:ct,
+              esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
+              factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
+              fecha:ne.fecha||'', invId:ne.id, itemCode:code,
+              cuentaIngreso:'4.1.01.01.002',cuentaIngresoNombre:'Ingresos por Ventas (NEs)',
+              cuentaCosto:'5.1.01.01.002',cuentaCostoNombre:'Costos de Producción'
+            });
+          });
+        } else {
+          // Sin warehouseQtys: usar it.cantidad directamente
+          const cant = parseNum(it.cantidad||it.qty||0);
+          if(cant<=0) return;
+          const sub = precioUnit>0 ? precioUnit*cant : 0;
+          totalIngresosItems += sub;
+          nesConIngreso.add(ne.id);
 
-        if (cantTotal <= 0) return;
-
-        const subTotal = precioUnit > 0 ? precioUnit * cantTotal : 0;
-        totalIngresosItems += subTotal;
-        neTieneItemsValidos = true;
-
-        // Costo del ítem
-        let costoU = costoUnit0;
-        const fgIdLimpio = it.fgId || (it.invCode||'').split('___')[0] || code.split('___')[0];
-        const fgRec = fgIdLimpio ? (finishedGoodsInventory||[]).find(f => f.id === fgIdLimpio) : null;
-        if (costoU <= 0 && fgRec) {
-          const esTermo2 = it.esTermo ?? (fgRec.tipoProducto === 'TERMOENCOGIBLE');
-          costoU = esTermo2 ? parseNum(fgRec.costoUnitario||0) : parseNum(fgRec.costoUnitarioMillar||0);
+          const fgIdLimpio = it.fgId||(it.invCode||'').split('___')[0]||code.split('___')[0];
+          const fgRec = fgIdLimpio?(finishedGoodsInventory||[]).find(f=>f.id===fgIdLimpio):null;
+          let cu = costoU;
+          if(cu<=0&&fgRec){const esTermo2=it.esTermo??(fgRec.tipoProducto==='TERMOENCOGIBLE');cu=esTermo2?parseNum(fgRec.costoUnitario||0):parseNum(fgRec.costoUnitarioMillar||0);}
+          if(cu<=0&&fgIdLimpio){const km=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&(m.docRef||'').includes(ne.documento||ne.id||'')&&parseNum(m.unitCost||0)>0);if(km)cu=parseNum(km.unitCost||0);}
+          if(cu<=0&&fgIdLimpio){const km2=(invMovements||[]).find(m=>m.itemId===`FG::${fgIdLimpio}`&&m.type==='SALIDA'&&parseNum(m.unitCost||0)>0);if(km2)cu=parseNum(km2.unitCost||0);}
+          if(cu<=0&&fgRec)cu=parseNum(fgRec.costoUnitario||fgRec.costoUnitarioMillar||0);
+          const ct=cu*cant;
+          totalCostoProd+=ct;
+          cogsRows.push({
+            opId:ne.opRelacionada||ne.opId||ne.opAsignada||'—',
+            opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
+            producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
+            cantVendida:cant, unidad:it.unidad||it.unit||'und',
+            costoUnit:cu, costoTotal:ct,
+            esTermo:it.esTermo||(tp==='TERMOENCOGIBLE')||false,
+            factura:ne.documento||ne.id, nroFiscal:ne.nroFiscal||ne.facturaId||'',
+            fecha:ne.fecha||'', invId:ne.id, itemCode:code,
+            cuentaIngreso:'4.1.01.01.002',cuentaIngresoNombre:'Ingresos por Ventas (NEs)',
+            cuentaCosto:'5.1.01.01.002',cuentaCostoNombre:'Costos de Producción'
+          });
         }
-        if (costoU <= 0 && fgIdLimpio) {
-          const km = (invMovements||[]).find(m =>
-            m.itemId === `FG::${fgIdLimpio}` && m.type === 'SALIDA' &&
-            (m.docRef||'').includes(ne.documento||ne.id||'') && parseNum(m.unitCost||0) > 0
-          );
-          if (km) costoU = parseNum(km.unitCost||0);
-        }
-        if (costoU <= 0 && fgIdLimpio) {
-          const km2 = (invMovements||[]).find(m =>
-            m.itemId === `FG::${fgIdLimpio}` && m.type === 'SALIDA' && parseNum(m.unitCost||0) > 0
-          );
-          if (km2) costoU = parseNum(km2.unitCost||0);
-        }
-        if (costoU <= 0 && fgRec) {
-          costoU = parseNum(fgRec.costoUnitario || fgRec.costoUnitarioMillar || 0);
-        }
-
-        const costoTotal2 = costoU * cantTotal;
-        totalCostoProd += costoTotal2;
-
-        cogsRows.push({
-          opId: ne.opRelacionada || ne.opId || ne.opAsignada || '—',
-          opNum: String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
-          producto: desc || code,
-          cliente: ne.clientName || ne.clientRif || '',
-          cantVendida: cantTotal,
-          unidad: it.unidad || it.unit || 'und',
-          costoUnit: costoU,
-          costoTotal: costoTotal2,
-          esTermo: it.esTermo || (tp==='TERMOENCOGIBLE') || false,
-          factura: ne.documento || ne.id,
-          nroFiscal: ne.nroFiscal || ne.facturaId || '',
-          fecha: ne.fecha || '',
-          invId: ne.id,
-          itemCode: code,
-          cuentaIngreso: '4.1.01.01.002',
-          cuentaIngresoNombre: 'Ingresos por Ventas (Notas de Entrega)',
-          cuentaCosto: '5.1.01.01.002',
-          cuentaCostoNombre: 'Costos de Producción'
-        });
       });
-
-      // Solo suma ítems válidos (Bolsas/Termos) — NEs sin estos productos no entran
     });
 
     const totalIngresosNE = totalIngresosItems;
@@ -23434,22 +23444,26 @@ ${resumenHtml}
 
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
 
-    // Desglose de NEs para mostrar en INGRESOS colapsable
+    // Desglose: solo NEs que tuvieron ítems Bolsas/Termos
     const facturasperiodo = nesDelPeriodo
-      .filter(ne => (ne.items||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'', it.tipoProducto||'')))
-      .map(ne => ({
-        ...ne,
-        documento: ne.documento || ne.id,
-        clientName: ne.clientName || '',
-        montoBase: (ne.items||[]).filter(it=>esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'',it.desc||'',it.tipoProducto||'')).reduce((s,it)=>{
+      .filter(ne => nesConIngreso.has(ne.id))
+      .map(ne => {
+        // Calcular montoBase solo de ítems Bolsas/Termos con warehouseQtys
+        let montoBase = 0;
+        (ne.items||[]).forEach(it => {
+          const code=it.invCode||it.fgId||it.codigo||'';
+          const desc=it.desc||it.descripcion||'';
+          const tp=it.tipoProducto||'';
+          if(!esBolsaOrTermo(code,desc,tp)) return;
+          const pu=parseNum(it.precioUnit||it.precio||0);
           const wq=it.warehouseQtys&&Object.keys(it.warehouseQtys).length>0?it.warehouseQtys:null;
-          const cant=wq?Object.values(wq).reduce((a,q)=>a+parseNum(q||0),0):parseNum(it.cantidad||0);
-          return s+cant*parseNum(it.precioUnit||0);
-        },0),
-        isNota: false
-      }));
+          const cant=wq?Object.values(wq).reduce((s,q)=>s+parseNum(q||0),0):parseNum(it.cantidad||0);
+          montoBase+=cant*pu;
+        });
+        return { ...ne, documento:ne.documento||ne.id, clientName:ne.clientName||'', montoBase, isNota:false };
+      });
 
-        // Costos operativos del periodo, agrupados por cuenta contable
+            // Costos operativos del periodo, agrupados por cuenta contable
     const costosPeriodo = (opCosts || []).filter(c => (c.month || (c.date||'').substring(0,7) || '').startsWith(ym));
 
     const movsProd = (invMovements || []).filter(m =>
