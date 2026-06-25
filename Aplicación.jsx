@@ -16781,11 +16781,10 @@ ${resumenHtml}
       const maxCategoryAmount = Math.max(...Object.values(costsByCategory).filter(v => v > 0), 1);
 
       // Meses únicos — protegido contra valores undefined/null
-      const uniqueMonths = [...new Set(
-        (opCosts || [])
-          .map(c => c?.month || (c?.date ? String(c.date).substring(0, 7) : null))
-          .filter(Boolean)
-      )].sort().reverse();
+      const uniqueMonths = [...new Set([
+        ...(opCosts || []).map(c => c?.month || (c?.date ? String(c.date).substring(0, 7) : null)).filter(Boolean),
+        ...(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>(ne.fecha||'').substring(0,7)).filter(Boolean),
+      ])].sort().reverse();
 
       // Nombres de mes para mostrar
       const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -22816,8 +22815,8 @@ ${resumenHtml}
                         <tr key={i} className={`border-b hover:bg-orange-50/40 ${inv.isNota?(inv.tipoNota==='NC'?'bg-red-50/40':'bg-blue-50/40'):'border-orange-50'}`}>
                           <td className="py-1.5 px-4 pl-20 text-[10px] font-bold text-gray-700">
                             {inv.isNota&&<span className={`text-[8px] font-black px-1.5 py-0.5 rounded mr-1 ${inv.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{inv.tipoNota}</span>}
-                            <span className="text-orange-500 font-black mr-2">{inv.documento}</span>
-                            {inv.clientName} — <span className="italic text-gray-500">{inv.productoMaquilado||inv.opAsignada||''}</span>
+                            <span className="text-orange-500 font-black mr-2">{inv.documento||inv.id}</span>
+                            {inv.clientName} — <span className="italic text-gray-500">{(inv.items||[]).map(it=>it.desc||it.invCode||'').filter(Boolean).join(', ').substring(0,60)||(inv.productoMaquilado||inv.descripcion||inv.opRelacionada||'')}</span>
                             <span className="text-[9px] text-gray-400 ml-2">{inv.fecha}</span>
                           </td>
                           <td className="py-1.5 px-3 text-center text-[9px] text-gray-400">USD</td>
@@ -23363,12 +23362,10 @@ ${resumenHtml}
              d.includes('TERMO') || d.includes('TERMOENCOGIBLE');
     };
 
-    // ── INGRESOS y COSTOS: misma lógica que "Productos Vendidos" ──────────────
-    // Lee TODAS las facturas del período con itemsFacturados de bolsas/termoencogibles
-    const facturasDelPeriodo = (invoices||[]).filter(inv => {
-      const d = inv.fecha || '';
-      return d.startsWith(ym);
-    });
+    // ── INGRESOS y COSTOS: desde Notas de Entrega (fuente de verdad) ──────────
+    const facturasDelPeriodo = (notasEntrega||[]).filter(ne =>
+      ne.status !== 'ANULADA' && (ne.fecha||'').startsWith(ym)
+    );
 
     const cogsRows = [];
     let totalCostoProd = 0;
@@ -23376,8 +23373,8 @@ ${resumenHtml}
     const facturasContadas = new Set();
 
     facturasDelPeriodo.forEach(inv => {
-      const allItems = (inv.itemsFacturados||[]).length > 0
-        ? inv.itemsFacturados
+      const allItems = (inv.items||[]).length > 0
+        ? inv.items
         : (inv.fgId ? [{ fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0), desc: '', costoUnit: 0, precio: parseNum(inv.precioUnit||0) }] : []);
 
       let invTieneItemsValidos = false;
@@ -23477,12 +23474,12 @@ ${resumenHtml}
 
     // Facturasperiodo para el desglose del PDF (mostrar en INGRESOS colapsable)
     const facturasperiodo = facturasDelPeriodo
-      .filter(inv => (inv.itemsFacturados||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'')))
+      .filter(inv => (inv.items||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'')))
       .map(inv => ({
         ...inv,
         documento: inv.documento || inv.id,
         clientName: inv.clientName || '',
-        montoBase: parseNum(inv.montoBase || 0),
+        montoBase: parseNum(inv.montoBase || inv.total || 0),
         isNota: false
       }));
 
@@ -25880,1289 +25877,99 @@ ${resumenHtml}
   };
   if (!appUser) {
     return (
-      <div className="min-h-screen w-full relative overflow-hidden" style={{background:'#111'}}>
-        {/* ── FONDO FULL con video/imagen ── */}
-        <div className="absolute inset-0">
-          {settings?.loginVideo ? (
-            <video ref={async el=>{
-                if(!el||!settings.loginVideo) return;
-                if(settings.loginVideo.startsWith('indexeddb://')) {
-                  try { const db2=await new Promise((res,rej)=>{const r=indexedDB.open('erp_video_db',1);r.onsuccess=e=>res(e.target.result);r.onerror=rej;}); const tx=db2.transaction('videos','readonly'); const blob=await new Promise((res,rej)=>{const r=tx.objectStore('videos').get('loginVideo');r.onsuccess=e=>res(e.target.result);r.onerror=rej;}); if(blob) el.src=URL.createObjectURL(blob); } catch(e){ el.style.display='none'; }
-                } else { el.src=settings.loginVideo; }
-              }}
-              autoPlay loop playsInline muted={loginVideoMuted}
-              className="w-full h-full object-cover" onError={e=>e.target.style.display='none'}/>
-          ) : settings?.loginBg ? (
-            <img src={settings.loginBg} className="w-full h-full object-cover object-center" alt="bg"/>
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center" style={{background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}>
-              <div className="text-orange-500/20"><Factory size={200}/></div>
-            </div>
-          )}
-          {/* Overlay gradiente suave: izquierda visible, derecha más oscura */}
-          <div className="absolute inset-0" style={{background:'linear-gradient(to right, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.6) 100%)'}}/>
-        </div>
-
-        {/* ── HEADER ── */}
-        <header className="absolute top-0 left-0 w-full z-20 flex justify-between items-center px-8 py-3" style={{background:'rgba(18,18,18,0.92)',borderBottom:'2px solid #f97316'}}>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center">
-              <span className="text-white font-black text-xl">Supply </span>
-              <span className="text-white font-black text-2xl">G</span>
-              <div className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-sm font-black mx-0.5">&amp;</div>
-              <span className="text-white font-black text-2xl">B</span>
-            </div>
-            <div className="w-px h-6 bg-white/20 mx-2"/>
-            <div className="flex items-center gap-2 opacity-60">
-              <div className="w-5 h-5 rounded-full border-2 border-orange-500 flex items-center justify-center"><span className="text-orange-500 text-[8px] font-black">J</span></div>
-              <span className="text-white/60 text-xs font-bold">Jireh</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-5">
-            <div className="text-right">
-              <div className="text-white text-xs font-bold">{new Date().toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
-              <div className="text-white/40 text-[9px]">{new Date().toLocaleDateString('es-VE',{weekday:'short',day:'numeric',month:'short',year:'numeric'})}</div>
-            </div>
-            <div className="flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2">
-              <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center"><User size={14} className="text-white"/></div>
-              <span className="text-white text-xs font-bold">Administrador General</span>
-              <Lock size={12} className="text-white/40"/>
-            </div>
-          </div>
-        </header>
-
-        {/* ── FOOTER ── */}
-        <footer className="absolute bottom-0 left-0 w-full z-20 flex justify-between items-center px-8 py-2" style={{background:'rgba(18,18,18,0.85)',borderTop:'1px solid rgba(255,255,255,0.1)'}}>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1">
-              <span className="text-white font-black text-sm">SUPPLY G&amp;B</span>
-            </div>
-            <span className="text-white/30 text-[9px] uppercase tracking-widest">Sistema ERP — Servicios Jiret</span>
-          </div>
-          <div className="text-white/20 text-[9px] uppercase tracking-widest">SUPPLY G&amp;B — SISTEMA ERP — SERVICIOS JIRET</div>
-        </footer>
-
-        {/* ── PANEL LOGIN (glassmorphism) — centered on mobile, right on desktop ── */}
-        <div className="absolute z-30 inset-0 flex items-center justify-center sm:items-center sm:justify-end sm:pr-[8%] px-4 sm:px-0"
-          style={{pointerEvents:'none'}}>
-        <div
-          style={{width:'100%', maxWidth:440, background:'rgba(30,30,36,0.92)', backdropFilter:'blur(16px)', WebkitBackdropFilter:'blur(16px)',
-            border:'1px solid rgba(255,255,255,0.1)', borderLeft:'4px solid #f97316', borderRadius:14, padding:'32px 28px', color:'white', pointerEvents:'all'}}>
-          
-          <h2 style={{fontSize:'1.1rem',marginBottom:4,color:'#ccc',fontWeight:600}}>INICIO DE SESIÓN DE SISTEMA ERP</h2>
-          <div style={{marginBottom:24}}>
-            <h1 style={{fontSize:'2rem',fontWeight:900,color:'white',margin:0,letterSpacing:2}}>SISTEMA ERP</h1>
-            <h3 style={{fontSize:'0.85rem',color:'#888',letterSpacing:'0.1em',fontWeight:400,marginTop:2}}>SERVICIOS JIREH</h3>
-          </div>
-
-          <form onSubmit={handleLogin}>
-            <div style={{marginBottom:16}}>
-              <label style={{display:'block',fontSize:'0.7rem',color:'#aaa',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.1em'}}>USUARIO DE ACCESO</label>
-              <div style={{display:'flex',alignItems:'center',background:'rgba(0,0,0,0.4)',borderRadius:8,padding:'11px 14px',border:'1px solid rgba(255,255,255,0.1)',transition:'border 0.2s'}}
-                onFocus={e=>e.currentTarget.style.border='1px solid #f97316'} onBlur={e=>e.currentTarget.style.border='1px solid rgba(255,255,255,0.1)'}>
-                <User size={15} style={{color:'#888',marginRight:12,flexShrink:0}}/>
-                <input type="text" required value={loginData.username} onChange={e=>setLoginData({...loginData,username:e.target.value})}
-                  style={{background:'transparent',border:'none',color:'white',width:'100%',outline:'none',fontSize:'0.95rem',fontWeight:700}}
-                  placeholder="Administrador"/>
-              </div>
-            </div>
-            <div style={{marginBottom:20}}>
-              <label style={{display:'block',fontSize:'0.7rem',color:'#aaa',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.1em'}}>CLAVE DE SEGURIDAD</label>
-              <div style={{display:'flex',alignItems:'center',background:'rgba(0,0,0,0.4)',borderRadius:8,padding:'11px 14px',border:'1px solid rgba(255,255,255,0.1)'}}>
-                <Lock size={15} style={{color:'#888',marginRight:12,flexShrink:0}}/>
-                <input type="password" required value={loginData.password} onChange={e=>setLoginData({...loginData,password:e.target.value})}
-                  style={{background:'transparent',border:'none',color:'white',width:'100%',outline:'none',fontSize:'0.95rem',fontWeight:700}}
-                  placeholder="••••••••••••••"/>
-              </div>
-            </div>
-            {loginError && <div style={{background:'rgba(239,68,68,0.15)',color:'#f87171',fontSize:'0.7rem',padding:'10px 14px',borderRadius:8,marginBottom:12,textAlign:'center',border:'1px solid rgba(239,68,68,0.3)',textTransform:'uppercase',fontWeight:700}}>{loginError}</div>}
-            {!usersLoaded && (
-              <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,background:'rgba(249,115,22,0.1)',border:'1px solid rgba(249,115,22,0.3)',borderRadius:8,padding:'9px 14px',marginBottom:12}}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{animation:'spin 1s linear infinite',flexShrink:0}}>
-                  <style>{'@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}'}</style>
-                  <circle cx="12" cy="12" r="10" stroke="rgba(249,115,22,0.25)" strokeWidth="3"/>
-                  <path d="M12 2a10 10 0 0 1 10 10" stroke="#f97316" strokeWidth="3" strokeLinecap="round"/>
-                </svg>
-                <span style={{color:'#f97316',fontSize:'0.68rem',fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em'}}>Conectando con el sistema…</span>
-              </div>
-            )}
-            <button type="submit" disabled={!usersLoaded}
-              style={{width:'100%',background:usersLoaded?'#f97316':'#444',color:'white',border:'none',padding:'14px',borderRadius:8,fontSize:'0.95rem',fontWeight:900,cursor:usersLoaded?'pointer':'not-allowed',letterSpacing:'0.05em',transition:'all 0.3s',opacity:usersLoaded?1:0.65}}
-              onMouseEnter={e=>{if(usersLoaded)e.currentTarget.style.background='#ea580c';}} onMouseLeave={e=>{if(usersLoaded)e.currentTarget.style.background='#f97316';}}>
-              {usersLoaded?'INGRESAR AL SISTEMA →':'CARGANDO…'}
-            </button>
-          </form>
-
-          <div style={{marginTop:24,textAlign:'center',display:'flex',flexDirection:'column',gap:8}}>
-            <a href="#" style={{color:'#ccc',textDecoration:'none',fontSize:'0.85rem',transition:'color 0.2s'}}
-              onMouseEnter={e=>e.target.style.color='#f97316'} onMouseLeave={e=>e.target.style.color='#ccc'}>Olvidé mi contraseña</a>
-            <a href="#" style={{color:'#ccc',textDecoration:'none',fontSize:'0.85rem',transition:'color 0.2s'}}
-              onMouseEnter={e=>e.target.style.color='#f97316'} onMouseLeave={e=>e.target.style.color='#ccc'}>Contactar a soporte</a>
-          </div>
-        </div>
-        </div>
-
-        {settings?.loginVideo && (
-          <button onClick={()=>setLoginVideoMuted(v=>!v)} className="absolute bottom-14 right-8 z-30 bg-black/50 hover:bg-black/80 text-white p-2.5 rounded-full transition-all border border-white/20">
-            <span className="text-lg">{loginVideoMuted?'🔇':'🔊'}</span>
-          </button>
-        )}
-      </div>
-    );
-  }
-
-
-
-  // ============================================================================
-  // SISTEMA DE NOTIFICACIONES
-  // ============================================================================
-  const pushNotif = async (type, title, body, meta = {}) => {
-    try {
-      await addDoc(getColRef('notifications'), {
-        type, title, body, meta, date: new Date().toLocaleString('es-VE'), timestamp: Date.now(), readBy: []
-      });
-    } catch (e) { console.warn('Notif Error:', e); }
-  };
-
-  const myNotifications = notifications.filter(n => {
-    if (!n.meta?.destino) return true; 
-    const dest = String(n.meta.destino).toLowerCase();
-    const rol = String(appUser?.role || '').toLowerCase();
-    if (rol === 'master' || rol === 'admin') return true;
-    if (rol === 'planta' && dest === 'planta') return true;
-    if ((rol === 'almacen' || rol === 'almacén') && dest === 'almacen') return true;
-    if (rol === 'ventas' && dest === 'ventas') return true;
-    return false;
-  });
-
-  const unreadCount = myNotifications.filter(n => !(n.readBy || []).includes(appUser?.username)).length;
-
-  const handleNotifClick = async (notif) => {
-    if (appUser?.username && !(notif.readBy || []).includes(appUser.username)) {
-      await updateDoc(getDocRef('notifications', notif.id), { readBy: [...(notif.readBy || []), appUser.username] });
-    }
-    setShowNotifPanel(false);
-    if (notif.meta?.targetTab) { clearAllReports(); setActiveTab(notif.meta.targetTab); }
-  };
-
-  const markAllAsRead = async () => {
-    const batch = writeBatch(db);
-    myNotifications.forEach(n => {
-      if (!(n.readBy || []).includes(appUser?.username)) { 
-        batch.update(getDocRef('notifications', n.id), { readBy: [...(n.readBy || []), appUser?.username] }); 
-      }
-    });
-    await batch.commit();
-  };
-
-  const clearAllNotifs = async () => {
-    const batch = writeBatch(db);
-    myNotifications.forEach(n => batch.delete(getDocRef('notifications', n.id)));
-    await batch.commit();
-  };
-
-  // ============================================================================
-  // PANTALLA DE SELECCIÓN DE PORTAL (post-login) — Master / Producción / Administración / Finanzas
-  // ============================================================================
-
-  // ============================================================================
-  // PORTAL VENDEDOR — rol Vendedor → experiencia dedicada
-  // ============================================================================
-  // Vendedor con rol Vendedor → portal personal directo (sin pantalla de selección de portales)
-  const isVendorPortal = appUser?.role === 'Vendedor';
-  if (appUser && isVendorPortal) {
-    const vendNombre = (appUser?.vendedorNombre || '').trim() ||
-      // Si no hay vendedorNombre, buscar en la lista de vendedores configurados el que más se parezca al nombre del usuario
-      ((settings?.vendedores||[]).find(v=>
-        appUser?.name?.toUpperCase().includes(v.split(' ')[0].toUpperCase()) ||
-        v.toUpperCase().includes((appUser?.name||'').split(' ')[0].toUpperCase())
-      ) || appUser?.name || '').trim();
-    // Buscar cotizaciones — match flexible por nombre
-    const posiblesNombres = [...new Set([
-      vendNombre,
-      appUser?.vendedorNombre,
-      appUser?.name,
-    ].filter(Boolean).map(n=>n.trim().toUpperCase()))];
-    const matchVend = (v) => posiblesNombres.some(n=>(v||'').trim().toUpperCase()===n);
-    const misCotiz = (cotizaciones||[]).filter(c=>matchVend(c.vendedor)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-    const misActas = (actasReclamo||[]).filter(a=>matchVend(a.vendedor));
-    const mesActual = getTodayDate().substring(0,7);
-    const cotizMes = misCotiz.filter(c=>(c.fecha||'').startsWith(mesActual));
-    const aprobadas = misCotiz.filter(c=>c.status==='APROBADA'||c.status==='FACTURADA');
-    const totalCotizado = misCotiz.reduce((s,c)=>s+parseNum(c.total||0),0);
-    const conversion = misCotiz.length>0 ? Math.round((aprobadas.length/misCotiz.length)*100) : 0;
-
-    // clientes asignados a este vendedor
-    const misClientes = (clients||[]).filter(cl=>((cl.vendedorAsignado||cl.vendedor||'').toUpperCase()===(vendNombre).toUpperCase()));
-
-    // ── helpers acta ──
-    const initActaForm = () => ({
-      cliente:'', rif:'', vendedor:vendNombre, telefono:'',
-      producto:'', cantidad:'', lote:'', orden:'', fechaEntrega:'',
-      fechaReclamo:getTodayDate(),
-      c1:false,c2:false,c3:false,c4:false,c5:false,c6:false,c7:false,c8:false,
-      e1:false,e2:false,e3:false,e4:false,e5:false,e6:false,
-      descripcion:'',
-      nomCli:'',ciCli:'',fchCli:'',
-      nomVen:vendNombre,ciVen:'',fchVen:'',
-      nomJef:'',ciJef:'',fchJef:'',
-    });
-    const nextActaNum = () => {
-      const nums = (actasReclamo||[]).map(a=>parseInt(String(a.id||'').replace(/\D/g,'')||'0')).filter(Boolean);
-      return 'JGB-'+ String((nums.length>0?Math.max(...nums):0)+1).padStart(4,'0');
-    };
-    const guardarActa = async() => {
-      if(!pvActaForm?.cliente){setDialog({title:'Falta cliente',text:'Ingresa el nombre del cliente.',type:'alert'});return;}
-      try {
-        const id = pvActaId || nextActaNum();
-        await setDoc(getDocRef('actasReclamo',id),{
-          ...pvActaForm, id, vendedor:vendNombre,
-          fotos:{
-            f1:pvActaFotos[1]?'[foto]':null,
-            f2:pvActaFotos[2]?'[foto]':null,
-            f3:pvActaFotos[3]?'[foto]':null,
-          },
-          timestamp:pvActaId?(pvActaForm.timestamp||Date.now()):Date.now(),
-          user:appUser?.name
-        });
-        setPvActaId(id);
-        setDialog({title:'✅ Acta guardada',text:`Acta ${id} guardada correctamente.`,type:'alert'});
-      } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-    };
-    const imprimirActa = () => {
-      const AF = pvActaForm;
-      if(!AF) return;
-      const OR = '#C85A00';
-      const INCONF = ['Producto defectuoso','Producto incompleto / faltante','Producto incorrecto','Daño en transporte','Producto vencido / caducado','Error de facturación','Fallo de sellado / empaque','Otros'];
-      const EVID = ['Fotografía del producto','Video demostrativo','Factura / comprobante','Producto en condiciones originales','Empaque original','Otros documentos'];
-      const chkRow = (arr, keys) => arr.map((lbl,i)=>`<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;font-size:7pt">${AF[keys[i]]?'☑':'☐'} ${lbl}</span>`).join('');
-      const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-      <style>
-        *{box-sizing:border-box;margin:0;padding:0}
-        @page{size:A4 portrait;margin:6mm}
-        body{font-family:Arial,Helvetica,sans-serif;font-size:7.5pt;color:#111;background:#fff}
-        .page{width:100%}
-        .hdr{background:${OR};color:#fff;padding:5px 10px;display:flex;justify-content:space-between;align-items:center;border-radius:2px 2px 0 0}
-        .hdr-l{font-size:9pt;font-weight:bold}.hdr-r{font-size:8pt;opacity:.9}
-        .corr{font-size:9pt;font-weight:bold;color:${OR};border:1.5px solid ${OR};padding:3px 12px;border-radius:20px;background:#fff}
-        .sec{background:${OR};color:#fff;font-weight:bold;font-size:7pt;padding:3px 8px;text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
-        .grid{display:grid;border-left:1px solid #ccc;border-top:1px solid #ccc}
-        .g2{grid-template-columns:60px 1fr 60px 1fr}
-        .g3{grid-template-columns:90px 1fr 80px 1fr}
-        .g1{grid-template-columns:80px 1fr}
-        .lbl{background:#f5f0ea;font-weight:bold;font-size:6pt;color:${OR};padding:2px 4px;border-right:1px solid #ccc;border-bottom:1px solid #ccc;display:flex;align-items:center}
-        .val{border-right:1px solid #ccc;border-bottom:1px solid #ccc;padding:2px 4px;font-size:7pt}
-        .chk-box{border:1px solid #ccc;border-top:none;padding:4px 6px;display:flex;flex-wrap:wrap}
-        .desc-box{border:1px solid #ccc;border-top:none;padding:4px 6px;min-height:14mm;font-size:7pt}
-        .pol{border:1px solid #ccc;border-top:none;padding:4px 6px;font-size:6pt;line-height:1.5}
-        .pol b{color:${OR}}
-        .sig-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:1px solid #ccc;border-top:none}
-        .sig-col{padding:4px 6px;border-right:1px solid #ccc}
-        .sig-col:last-child{border-right:none}
-        .sig-title{background:${OR};color:#fff;font-weight:bold;font-size:6pt;text-align:center;padding:2px;margin:-4px -6px 4px;text-transform:uppercase}
-        .sig-field{display:flex;gap:4px;margin-bottom:3px;font-size:6pt}
-        .sig-field span{color:${OR};font-weight:bold;white-space:nowrap}
-        .sig-line{border-top:1px solid ${OR};margin-top:6px;padding-top:2px;font-size:5pt;color:#999;text-align:center}
-        .footer{background:#f5f0ea;border:1px solid #ccc;border-top:none;padding:3px 6px;font-size:5pt;color:#555;display:flex;justify-content:space-between}
-        .warn{background:#fff3cd;border:1px solid #ffc107;border-top:none;padding:3px 6px;font-size:6pt;color:#7b4f00;font-weight:bold}
-        @media print{.no-print{display:none}}
-      </style></head><body>
-      <div style="text-align:center;padding:8px;background:#fff;border-bottom:1px solid #ddd" class="no-print">
-        <button onclick="window.print()" style="background:${OR};color:#fff;padding:8px 28px;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer">🖨 IMPRIMIR / GUARDAR PDF</button>
-      </div>
-      <div class="page">
-        <div class="hdr">
-          <div class="hdr-l">SERVICIOS JIRET G&amp;B, C.A. &nbsp;·&nbsp; RIF: J-412309374 &nbsp;·&nbsp; ASEGURAMIENTO DE LA CALIDAD<br><span style="font-size:10pt;letter-spacing:.05em">ACTA DE RECLAMO / DEVOLUCIÓN</span></div>
-          <div class="corr">${pvActaId||'Sin guardar'}</div>
-        </div>
-        <div class="sec">Datos generales del reclamo</div>
-        <div class="grid g2">
-          <div class="lbl">CLIENTE:</div><div class="val">${AF.cliente||''}</div>
-          <div class="lbl">RIF / C.I.:</div><div class="val">${AF.rif||''}</div>
-          <div class="lbl">VENDEDOR:</div><div class="val">${AF.vendedor||''}</div>
-          <div class="lbl">TELÉFONO:</div><div class="val">${AF.telefono||''}</div>
-        </div>
-        <div class="grid g3">
-          <div class="lbl">PROD./SERVICIO:</div><div class="val">${AF.producto||''}</div>
-          <div class="lbl">CANT. ENTREGADA:</div><div class="val">${AF.cantidad||''}</div>
-          <div class="lbl">LOTE / CÓDIGO:</div><div class="val">${AF.lote||''}</div>
-          <div class="lbl">ORDEN COMPRA:</div><div class="val">${AF.orden||''}</div>
-        </div>
-        <div class="grid g1">
-          <div class="lbl">FECHA ENTREGA:</div><div class="val">${AF.fechaEntrega||''}</div>
-        </div>
-        <div class="sec">Tipo de inconformidad (marque con X)</div>
-        <div class="chk-box">${chkRow(INCONF,['c1','c2','c3','c4','c5','c6','c7','c8'])}</div>
-        <div class="sec">Evidencias requeridas (obligatorio)</div>
-        <div class="chk-box">${chkRow(EVID,['e1','e2','e3','e4','e5','e6'])}</div>
-        <div class="warn">⚠ Sin fotografía o video el reclamo NO será procesado.</div>
-        <div class="sec">Descripción detallada del defecto</div>
-        <div class="desc-box">${(AF.descripcion||'').replace(/\n/g,'<br>')}</div>
-        <div class="sec">Fotografías del producto</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;border:1px solid #ccc;border-top:none;padding:4px">
-          ${[1,2,3].map(n=>`<div style="border:1px dashed #ccc;min-height:28mm;display:flex;align-items:center;justify-content:center;font-size:6pt;color:#999;border-radius:4px;overflow:hidden">${pvActaFotos[n]?`<img src="${pvActaFotos[n]}" style="width:100%;height:100%;object-fit:cover;display:block">`:`Foto ${n} — Sin adjuntar`}</div>`).join('')}
-        </div>
-        <div class="sec">Políticas de reclamo y devolución</div>
-        <div class="pol">
-          <b>1. Plazo:</b> 7 días hábiles desde la recepción. &nbsp;<b>2. Evidencia:</b> Obligatorio fotografía y/o video. &nbsp;<b>3. Condición:</b> Producto sin daños adicionales. &nbsp;<b>4. Trazabilidad:</b> Indicar factura, lote o código. &nbsp;<b>5. Error cliente:</b> No se aceptan devoluciones por pedido equivocado. &nbsp;<b>6. Producto en uso:</b> No proceden salvo defecto de fabricación. &nbsp;<b>7. Respuesta:</b> 5 días hábiles. &nbsp;<b>8. Devolución:</b> En empaque original.
-        </div>
-        <div class="sec">Firmas y conformidad</div>
-        <div class="sig-grid">
-          <div class="sig-col"><div class="sig-title">Cliente</div><div class="sig-field"><span>Nombre:</span>${AF.nomCli||''}</div><div class="sig-field"><span>C.I.:</span>${AF.ciCli||''}</div><div class="sig-field"><span>Fecha:</span>${AF.fchCli||''}</div><div class="sig-line">Firma</div></div>
-          <div class="sig-col"><div class="sig-title">Vendedor</div><div class="sig-field"><span>Nombre:</span>${AF.nomVen||AF.vendedor||''}</div><div class="sig-field"><span>C.I.:</span>${AF.ciVen||''}</div><div class="sig-field"><span>Fecha:</span>${AF.fchVen||''}</div><div class="sig-line">Firma</div></div>
-          <div class="sig-col"><div class="sig-title">Jefe de Calidad</div><div class="sig-field"><span>Nombre:</span>${AF.nomJef||''}</div><div class="sig-field"><span>C.I.:</span>${AF.ciJef||''}</div><div class="sig-field"><span>Fecha:</span>${AF.fchJef||''}</div><div class="sig-line">Firma</div></div>
-        </div>
-        <div class="footer"><span>Original → Servicios Jiret G&amp;B &nbsp;|&nbsp; Copia 1 → Cliente &nbsp;|&nbsp; Copia 2 → Vendedor</span><span>AV CIRCUNVALACION NRO 02 · C.C EL DIVIDIVI · LOCAL G-9 · MARACAIBO, ZULIA</span></div>
-      </div>
-      </body></html>`;
-      const w = window.open('','_blank','width=900,height=700');
-      w.document.write(html);
-      w.document.close();
-    };
-    const nuevaActa = () => { setPvActaId(null); setPvActaForm(initActaForm()); setPvActaFotos({1:null,2:null,3:null}); };
-    const cargarActa = (a) => { setPvActaId(a.id); setPvActaForm({...initActaForm(),...a}); setPvActaFotos({1:null,2:null,3:null}); setPvShowActaHist(false); };
-    const eliminarActa = (id) => setDialog({title:'Eliminar acta',text:`¿Eliminar ${id}?`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('actasReclamo',id));if(pvActaId===id){setPvActaId(null);setPvActaForm(null);}}});
-
-    const INCONFORMIDADES=['Producto defectuoso','Producto incompleto / faltante','Producto incorrecto','Daño en transporte','Producto vencido / caducado','Error de facturación','Fallo de sellado / empaque','Otros'];
-    const EVIDENCIAS=['Fotografía del producto','Video demostrativo','Factura / comprobante','Producto en condiciones originales','Empaque original','Otros documentos'];
-    const POLITICAS=[
-      {n:'1',tit:'Plazo',txt:'El reclamo debe notificarse dentro de los 7 días hábiles siguientes a la recepción.'},
-      {n:'2',tit:'Evidencia',txt:'Obligatorio fotografía y/o video del defecto. Sin evidencia el reclamo no procede.'},
-      {n:'3',tit:'Condición',txt:'El producto debe estar en condiciones óptimas, sin daños adicionales ni alteraciones.'},
-      {n:'4',tit:'Trazabilidad',txt:'Indicar número de factura, lote o código del producto al momento del reclamo.'},
-      {n:'5',tit:'Respuesta',txt:'Servicios Jiret G&B emitirá respuesta en 5 días hábiles.'},
-      {n:'6',tit:'Error del cliente',txt:'No se aceptan devoluciones por pedido equivocado, cambio de opinión o especificaciones incorrectas.'},
-      {n:'7',tit:'Producto en uso',txt:'No proceden devoluciones de productos usados, instalados o consumidos, salvo defecto de fabricación comprobable.'},
-      {n:'8',tit:'Devolución física',txt:'Retorno en empaque original. Flete se acordará según el origen del defecto.'},
-    ];
-
-    const PILL_STATUS = {
-      'VIGENTE':'bg-amber-100 text-amber-800',
-      'APROBADA':'bg-green-100 text-green-800',
-      'FACTURADA':'bg-blue-100 text-blue-800',
-      'NO CONCRETADA':'bg-gray-100 text-gray-600',
-    };
-
-    const OR = '#E8541A';
-    const fld = (label, id, placeholder='', type='text', readOnly=false) => (
-      <div className="flex flex-col gap-1">
-        <label className="text-[9px] font-black uppercase tracking-wider" style={{color:'#9ca3af'}}>{label}</label>
-        <input type={type} value={pvActaForm?.[id]||''} readOnly={readOnly}
-          onChange={e=>setPvActaForm(f=>({...f,[id]:e.target.value}))}
-          placeholder={placeholder}
-          className={`border rounded-lg px-3 py-2 text-xs outline-none transition-all ${readOnly?'bg-orange-50 font-black':'bg-white focus:border-orange-400'}`}
-          style={{borderColor:readOnly?OR:'#e5e7eb',color:readOnly?OR:'#111'}}/>
-      </div>
-    );
-
-    const loadFoto = (n, e) => {
-      const file = e.target.files?.[0];
-      if(!file) return;
-      const r = new FileReader();
-      r.onload = ev => setPvActaFotos(f=>({...f,[n]:ev.target.result}));
-      r.readAsDataURL(file);
-    };
-
-    // Si pvModoForm=true → mostrar el módulo de cotizaciones del ERP completo
-    // con clientes filtrados al vendedor. Mismo diseño exacto que el admin ve.
-    if(pvModoForm) {
-      // Filtrar clients para que el módulo solo muestre los del vendedor
-      // Lo hacemos sobreescribiendo temporalmente la lista via contexto
-      window._pvVendedorFilter = vendNombre; // el módulo de cotizaciones lo leerá
-      return (
-        <div className="min-h-screen flex flex-col" style={{background:'#f4f4f0'}}>
-          {/* Header del portal */}
-          <div style={{background:'#111',borderBottom:`2px solid #E8541A`,padding:'8px 20px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
-            <div style={{display:'flex',alignItems:'center',gap:10}}>
-              <button onClick={()=>{setPvModoForm(false);setShowNewCotizPanel(false);setEditingCotizId(null);window._pvVendedorFilter='';}}
-                style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',background:'rgba(255,255,255,0.1)',border:'none',color:'#fff',borderRadius:8,fontSize:11,fontWeight:700,cursor:'pointer'}}>
-                ← Mis cotizaciones
-              </button>
-              <span style={{color:'#fff',fontWeight:900,fontSize:13}}>Supply G&B <span style={{color:'#E8541A'}}>| {editingCotizId?`Editando ${editingCotizId}`:'Nueva Cotización'}</span></span>
-            </div>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span style={{color:'rgba(255,255,255,0.6)',fontSize:11}}>Vendedor:</span>
-              <span style={{color:'#E8541A',fontWeight:900,fontSize:11}}>{vendNombre}</span>
-            </div>
-          </div>
-          {/* Módulo cotizaciones del ERP completo */}
-          <div style={{flex:1,overflow:'auto'}}>
-            <div className="p-0">
-              {ventasView==='cotizaciones'&&(()=>{
-                const generateCotizId=()=>`COT-${((cotizaciones||[]).reduce((m,r)=>Math.max(m,parseInt(String(r.id).replace(/\D/g,'')||'0')),0)+1).toString().padStart(4,'0')}`;
-                const handleSaveCotiz=async()=>{
-                  try{
-                    const id=editingCotizId||newCotizForm.documento||generateCotizId();
-                    const base=parseNum(cotizItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||newCotizForm.montoBase||0);
-                    const ivaAmt=newCotizForm.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
-                    await setDoc(getDocRef('cotizaciones',id),{
-                      ...newCotizForm,id,documento:id,vendedor:vendNombre,
-                      tasa:parseNum(newCotizForm.tasa||settings?.tasaBCV||0),
-                      montoBase:base,iva:ivaAmt,total:parseFloat((base+ivaAmt).toFixed(2)),
-                      items:cotizItems,condicionPago:newCotizForm.condicionPago||'CONTADO',
-                      diasCredito:newCotizForm.diasCredito||'',porcentajeAnticipo:newCotizForm.porcentajeAnticipo||'',
-                      tiempoEntrega:newCotizForm.tiempoEntrega||'',formaPago:newCotizForm.formaPago||'BS A TASA BCV',
-                      timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
-                      user:appUser?.name,status:'VIGENTE'
-                    });
-                    setPvModoForm(false);setShowNewCotizPanel(false);setEditingCotizId(null);
-                    setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);
-                    window._pvVendedorFilter='';
-                    setDialog({title:'✅ Cotización guardada',text:`${id} guardada correctamente.`,type:'alert'});
-                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                };
-                const vendedoresList=(settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[];
-                const MOTIVOS_NO=['PRECIO ELEVADO','CLIENTE NO RESPONDIÓ','COMPRÓ A OTRO PROVEEDOR','FUERA DE PRESUPUESTO','TIEMPO DE ENTREGA','PRODUCTO NO DISPONIBLE','OTRO'];
-                const updateCotizItem=(idx,patch)=>setCotizItems(prev=>prev.map((it,i)=>{if(i!==idx)return it;const n={...it,...patch};n.total=parseNum(n.cantidad)*parseNum(n.precioUnit);return n;}));
-                const aplicarResultadoCotiz=async(mod)=>{
-                  try{await updateDoc(getDocRef('cotizaciones',mod.id),{status:mod.status,motivoNoConcretada:mod.status==='NO CONCRETADA'?(mod.motivo||''):'',statusUser:appUser?.name||'',statusDate:getTodayDate()});setCotizOutcomeModal(null);}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                };
-                // Filtrar clientes solo a los del vendedor
-                const clientsFiltradosPV=(clients||[]).filter(cl=>
-                  (cl.vendedor||cl.vendedorAsignado||'').trim().toUpperCase()===vendNombre.toUpperCase()
-                );
-                // Inyectar clients filtrados temporalmente para que el form los use
-                const _clientsOrig = clients;
-                // Renderizar el panel de cotización del ERP con clients filtrados
-                return showNewCotizPanel&&(
-                  <div className="p-8 bg-gray-50/50">
-                    <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm space-y-5">
-                      <div className="flex justify-between items-center border-b pb-4 flex-wrap gap-3">
-                        <h3 className="text-sm font-black uppercase">{editingCotizId?`Editando: ${editingCotizId}`:'Nueva Cotización'}</h3>
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                            <input type="date" value={newCotizForm.fecha} onChange={e=>setNewCotizForm({...newCotizForm,fecha:e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50"/>
-                          </div>
-                          <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black">{editingCotizId||generateCotizId()}</span>
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Validez (días)</label>
-                            <input type="number" value={newCotizForm.validez||'15'} onChange={e=>setNewCotizForm({...newCotizForm,validez:e.target.value})} className="border-2 border-gray-200 rounded-xl p-2 text-xs font-bold w-20 outline-none focus:border-orange-400" min="1"/>
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Condición de Venta</label>
-                            <select value={newCotizForm.condicionId||''} onChange={e=>{const c=(settings?.condicionesPago||[]).find(x=>x.id===e.target.value);setNewCotizForm({...newCotizForm,condicionId:e.target.value,condicionPago:c?.titulo||'',formaPago:c?.formaPago||newCotizForm.formaPago||'',diasCredito:c?.diasCredito||'',porcentajeAnticipo:c?.anticipo||''});}} className="border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-400 min-w-[160px]">
-                              <option value="">— Sin condición —</option>
-                              {(settings?.condicionesPago||[]).map(c=><option key={c.id} value={c.id}>{c.titulo}</option>)}
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                      {/* Cliente — solo del vendedor */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Cliente</label>
-                          <div className="relative">
-                            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                            <input type="text" value={newCotizForm.neClientSearch||''} onChange={e=>{setNewCotizForm({...newCotizForm,neClientSearch:e.target.value,neShowClientDrop:true});}}
-                              placeholder="Buscar por nombre o RIF..." className="w-full pl-9 border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
-                          </div>
-                          {newCotizForm.neShowClientDrop&&(newCotizForm.neClientSearch||'').length>0&&(
-                            <div className="border-2 border-gray-100 rounded-2xl mt-1 max-h-40 overflow-y-auto shadow-lg bg-white z-10 relative">
-                              {clientsFiltradosPV.filter(c=>(c.name||c.razonSocial||'').toUpperCase().includes((newCotizForm.neClientSearch||'').toUpperCase())||(c.rif||'').toUpperCase().includes((newCotizForm.neClientSearch||'').toUpperCase())).map(c=>(
-                                <button key={c.id} onClick={()=>setNewCotizForm({...newCotizForm,clientRif:c.rif||c.id,clientName:c.name||c.razonSocial||'',clientAddress:c.direccion||'',neClientSearch:c.name||c.razonSocial||'',neShowClientDrop:false})}
-                                  className="w-full text-left px-4 py-2.5 hover:bg-orange-50 border-b border-gray-50 text-xs">
-                                  <span className="font-black">{c.name||c.razonSocial}</span><span className="text-gray-400 ml-2">{c.rif}</span>
-                                </button>
-                              ))}
-                              {clientsFiltradosPV.length===0&&<div className="px-4 py-3 text-xs text-gray-400">Sin clientes asignados</div>}
-                            </div>
-                          )}
-                          {newCotizForm.clientName&&<div className="mt-2 text-xs font-black text-orange-600 bg-orange-50 px-3 py-1.5 rounded-xl inline-block">{newCotizForm.clientName} · {newCotizForm.clientRif}</div>}
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Vendedor</label>
-                          <div className="border-2 border-orange-200 bg-orange-50 rounded-2xl p-3 text-xs font-black text-orange-700">{vendNombre}</div>
-                        </div>
-                      </div>
-                      {/* Tiempo de entrega + descripción */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <div>
-                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-2">⏱ Tiempo de Entrega</label>
-                          <input type="text" value={newCotizForm.tiempoEntrega||''} onChange={e=>setNewCotizForm({...newCotizForm,tiempoEntrega:e.target.value})} placeholder="Ej: De 3 a 5 días hábiles" className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Descripción / Concepto General</label>
-                          <input type="text" value={newCotizForm.descripcion||''} onChange={e=>setNewCotizForm({...newCotizForm,descripcion:e.target.value})} placeholder="Ej: Cotización Bolsas Plásticas" className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400 uppercase"/>
-                        </div>
-                      </div>
-                      {/* Productos */}
-                      <div className="bg-orange-50 border-2 border-orange-200 rounded-3xl p-5">
-                        <div className="flex items-center justify-between mb-4">
-                          <h4 className="text-[10px] font-black text-orange-700 uppercase tracking-widest flex items-center gap-2"><Package size={14}/>Agregar Producto</h4>
-                          <span className="text-[9px] bg-orange-200 text-orange-800 px-2 py-1 rounded-full font-black">{cotizItems.length} ítems</span>
-                        </div>
-                        <div className="relative mb-3">
-                          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/>
-                          <input type="text" value={newCotizForm.cotizProdSearch||''} onChange={e=>setNewCotizForm({...newCotizForm,cotizProdSearch:e.target.value})} placeholder="Buscar por código o descripción..." className="w-full pl-9 border-2 border-orange-300 rounded-2xl p-3 text-xs outline-none focus:border-orange-500 bg-white"/>
-                        </div>
-                        <select size={5} className="w-full border-2 border-orange-200 rounded-xl text-xs bg-white" onChange={e=>{if(!e.target.value)return;const inv=(inventory||[]).find(i=>i.id===e.target.value||i.displayId===e.target.value);if(inv){const newIt={invCode:inv.displayId||inv.id,desc:inv.desc||'',cantidad:1,precioUnit:0,unidad:inv.unit||'und',total:0};setCotizItems([...cotizItems,newIt]);}}}>
-                          <option value="">— Seleccionar —</option>
-                          {Object.entries((inventory||[]).filter(i=>i.category!=='Productos Terminados'&&(!newCotizForm.cotizProdSearch||(i.desc||'').toUpperCase().includes((newCotizForm.cotizProdSearch||'').toUpperCase())||(i.displayId||i.id||'').toUpperCase().includes((newCotizForm.cotizProdSearch||'').toUpperCase()))).reduce((g,i)=>{const c=i.category||'Otros';if(!g[c])g[c]=[];g[c].push(i);return g;},{})).map(([cat,items])=>(
-                            <optgroup key={cat} label={`— ${cat.toUpperCase()} —`}>
-                              {items.map(i=><option key={i.id} value={i.displayId||i.id}>{i.displayId||i.id} — {i.desc}</option>)}
-                            </optgroup>
-                          ))}
-                        </select>
-                      </div>
-                      {/* Tabla ítems */}
-                      {cotizItems.length>0&&(
-                        <div className="border border-gray-100 rounded-2xl overflow-hidden">
-                          <table className="w-full text-[11px]">
-                            <thead><tr style={{background:'#E8541A'}} className="text-white">
-                              <th className="py-3 px-4 text-left">Descripción</th>
-                              <th className="py-3 px-3 text-right">Cant.</th>
-                              <th className="py-3 px-3 text-center">U.M.</th>
-                              <th className="py-3 px-3 text-right font-black text-orange-200">Precio U. (USD)</th>
-                              <th className="py-3 px-3 text-right">Total</th>
-                              <th className="py-3 px-2"></th>
-                            </tr></thead>
-                            <tbody>
-                              {cotizItems.map((it,idx)=>(
-                                <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
-                                  <td className="py-2 px-4"><input value={it.desc||''} onChange={e=>updateCotizItem(idx,{desc:e.target.value})} className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] outline-none focus:border-orange-400"/></td>
-                                  <td className="py-2 px-3 text-right"><input type="number" min="0" value={it.cantidad||''} onChange={e=>updateCotizItem(idx,{cantidad:parseFloat(e.target.value)||0})} className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-right outline-none focus:border-orange-400"/></td>
-                                  <td className="py-2 px-3 text-center"><input value={it.unidad||'und'} onChange={e=>updateCotizItem(idx,{unidad:e.target.value})} className="w-14 border border-gray-200 rounded-lg px-2 py-1.5 text-[10px] text-center outline-none"/></td>
-                                  <td className="py-2 px-3"><input type="number" min="0" step="0.01" value={it.precioUnit||''} onChange={e=>updateCotizItem(idx,{precioUnit:parseFloat(e.target.value)||0})} className="w-24 border-2 border-orange-200 bg-orange-50 rounded-lg px-2 py-1.5 text-[10px] text-right outline-none focus:border-orange-500 font-black ml-auto block"/></td>
-                                  <td className="py-2 px-3 text-right font-black text-gray-700">${formatNum((it.cantidad||0)*(it.precioUnit||0))}</td>
-                                  <td className="py-2 px-2 text-center"><button onClick={()=>setCotizItems(prev=>prev.filter((_,i)=>i!==idx))} className="text-red-400 hover:text-red-600 text-base font-black">×</button></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                      {/* Subtotales */}
-                      <div className="flex justify-between items-start gap-4">
-                        <div className="flex-1">
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-2">Observaciones / Condiciones de pago:</label>
-                          <textarea rows={2} value={newCotizForm.observaciones||''} onChange={e=>setNewCotizForm({...newCotizForm,observaciones:e.target.value})} className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400 resize-none"/>
-                        </div>
-                        <div className="min-w-[220px] bg-gray-50 border border-gray-200 rounded-2xl p-4 text-right">
-                          {(()=>{
-                            const base=cotizItems.reduce((s,it)=>s+(it.cantidad||0)*(it.precioUnit||0),0);
-                            const iva=newCotizForm.aplicaIva==='SI'?base*0.16:0;
-                            const total=base+iva;
-                            const tasa=parseNum(newCotizForm.tasa||settings?.tasaBCV||1);
-                            return<>
-                              <div className="flex justify-between text-xs mb-1"><span className="text-gray-500">Subtotal</span><span className="font-black">${formatNum(base)}</span></div>
-                              <div className="flex justify-between text-xs mb-2 items-center gap-2">
-                                <span className="text-gray-500">IVA</span>
-                                <div className="flex items-center gap-1">
-                                  <select value={newCotizForm.aplicaIva||'SI'} onChange={e=>setNewCotizForm({...newCotizForm,aplicaIva:e.target.value})} className="border border-gray-200 rounded text-[9px] px-1 py-0.5 outline-none">
-                                    <option value="SI">16%</option><option value="NO">0%</option>
-                                  </select>
-                                  <span className="font-black">${formatNum(iva)}</span>
-                                </div>
-                              </div>
-                              <div className="border-t border-gray-200 pt-2 flex justify-between items-center">
-                                <span className="font-black text-sm uppercase">Total</span>
-                                <span className="font-black text-xl text-orange-600">${formatNum(total)}</span>
-                              </div>
-                            </>;
-                          })()}
-                        </div>
-                      </div>
-                      <div className="flex justify-end pt-2">
-                        <button onClick={handleSaveCotiz} className="bg-orange-500 text-white px-12 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-orange-600">Guardar Cotización</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-screen flex flex-col" style={{background:'#f4f4f0',fontFamily:'Arial,sans-serif'}}>
-        {/* Mobile bottom nav for vendor portal */}
-        <div className="fixed bottom-0 left-0 right-0 z-[999] md:hidden bg-black border-t border-white/10 print:hidden" style={{paddingBottom:'env(safe-area-inset-bottom)'}}>
-          <div className="flex items-center justify-around px-1 py-2">
-            {[
-              {id:'cotizaciones',icon:<FileText size={20}/>,label:'Cotizaciones'},
-              {id:'clientes',icon:<Users size={20}/>,label:'Clientes'},
-              {id:'rendimiento',icon:<BarChart3 size={20}/>,label:'Rendimiento'},
-              {id:'actas',icon:<ClipboardList size={20}/>,label:'Actas'},
-            ].map(item=>(
-              <button key={item.id} onClick={()=>{setPvView(item.id);if(item.id==='actas'&&!pvActaForm)setPvActaForm(initActaForm());}}
-                className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl transition-all ${pvView===item.id?'text-orange-500':'text-gray-500'}`}>
-                {item.icon}<span className="text-[8px] font-black uppercase">{item.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        {/* TOP BAR */}
-        <div style={{background:'#111',borderBottom:`2px solid ${OR}`,padding:'10px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <div style={{width:32,height:32,background:OR,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center'}}>
-              <Users size={16} style={{color:'#fff'}}/>
-            </div>
-            <div>
-              <div style={{color:'#fff',fontWeight:900,fontSize:14}}>Supply G&B <span style={{color:OR}}>| Portal Vendedor</span></div>
-              <div style={{color:'rgba(255,255,255,0.5)',fontSize:10}}>SERVICIOS JIRET G&B, C.A.</div>
-            </div>
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:12}}>
-            <div style={{color:'rgba(255,255,255,0.7)',fontSize:11}}>Bienvenido, <b style={{color:'#fff'}}>{vendNombre}</b></div>
-            <div style={{width:32,height:32,background:OR,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:900,fontSize:12}}>
-              {vendNombre.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
-            </div>
-            <button onClick={async()=>{try{await deleteDoc(getDocRef('activeSessions',appUser.username))}catch(e){}try{await signOut(auth)}catch(e){}setAppUser(null);}}
-              style={{padding:'6px 12px',borderRadius:8,border:'1px solid rgba(239,68,68,0.4)',background:'transparent',color:'#f87171',fontSize:11,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
-              <LogOut size={12}/> Salir
-            </button>
-          </div>
-        </div>
-
-        {/* BODY */}
-        <div style={{display:'flex',flex:1,minHeight:0}}>
-
-          {/* SIDEBAR */}
-          <div style={{width:220,background:'#fff',borderRight:'1px solid #f0f0f0',display:'flex',flexDirection:'column',flexShrink:0}}>
-            <div style={{padding:'16px 12px 8px',fontSize:9,fontWeight:900,color:'#9ca3af',textTransform:'uppercase',letterSpacing:2}}>Mi espacio</div>
-            {[
-              {id:'cotizaciones',icon:<FileText size={16}/>,label:'Mis Cotizaciones',badge:misCotiz.length},
-              {id:'clientes',icon:<Users size={16}/>,label:'Mis Clientes',badge:misClientes.length},
-              {id:'rendimiento',icon:<BarChart3 size={16}/>,label:'Mi Rendimiento'},
-              {id:'actas',icon:<ClipboardList size={16}/>,label:'Actas de Reclamo',badge:misActas.length},
-            ].map(item=>(
-              <button key={item.id} onClick={()=>{setPvView(item.id);if(item.id==='actas'&&!pvActaForm)setPvActaForm(initActaForm());}}
-                style={{display:'flex',alignItems:'center',gap:9,padding:'9px 16px',border:'none',background:pvView===item.id?'#fff7ed':'transparent',
-                  borderRight:pvView===item.id?`2px solid ${OR}`:'2px solid transparent',
-                  color:pvView===item.id?OR:'#6b7280',cursor:'pointer',textAlign:'left',fontSize:12,fontWeight:pvView===item.id?700:400,width:'100%',transition:'all .12s'}}>
-                <span style={{color:'inherit'}}>{item.icon}</span>
-                <span style={{flex:1}}>{item.label}</span>
-                {item.badge!=null&&item.badge>0&&<span style={{background:pvView===item.id?OR:'#f3f4f6',color:pvView===item.id?'#fff':'#6b7280',fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:20}}>{item.badge}</span>}
-              </button>
-            ))}
-            <div style={{padding:'16px 12px 8px',marginTop:8,fontSize:9,fontWeight:900,color:'#9ca3af',textTransform:'uppercase',letterSpacing:2,borderTop:'1px solid #f0f0f0'}}>Acceso restringido</div>
-            {['Facturación','Inventario','CxC','Banco','Configuración'].map(m=>(
-              <div key={m} style={{display:'flex',alignItems:'center',gap:9,padding:'8px 16px',color:'#d1d5db',fontSize:12,cursor:'not-allowed',opacity:0.5}}>
-                <Lock size={13} style={{color:'#d1d5db'}}/> {m}
-              </div>
-            ))}
-            <div style={{marginTop:'auto',padding:'12px 16px',borderTop:'1px solid #f0f0f0',fontSize:10,color:'#9ca3af',display:'flex',alignItems:'center',gap:6}}>
-              <Lock size={12}/> Solo cotizaciones y actas
-            </div>
-          </div>
-
-          {/* MAIN CONTENT */}
-          <div style={{flex:1,overflowY:'auto',padding:24,paddingBottom:80}}>
-
-            {/* ── COTIZACIONES ── */}
-            {pvView==='cotizaciones'&&(()=>{
-              // Si el panel de nueva cotización está abierto, redirigir al módulo real
-              // pero manteniendo el contexto del portal vendedor
-              if(showNewCotizPanel) {
-                const generateCotizIdPV = () => `COT-${((cotizaciones||[]).reduce((m,r)=>Math.max(m,parseInt(String(r.id).replace(/\D/g,'')||'0')),0)+1).toString().padStart(4,'0')}`;
-                const handleSaveCotizPV = async () => {
-                  try {
-                    const id = editingCotizId || newCotizForm.documento || generateCotizIdPV();
-                    const base = cotizItems.reduce((s,it)=>s+(it.cantidad||0)*(it.precioUnit||0),0);
-                    const ivaAmt = newCotizForm.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
-                    await setDoc(getDocRef('cotizaciones',id),{
-                      ...newCotizForm, id, documento:id, vendedor:vendNombre,
-                      tasa:parseNum(newCotizForm.tasa||settings?.tasaBCV||0),
-                      montoBase:base, iva:ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)),
-                      items:cotizItems, condicionPago:newCotizForm.condicionPago||'CONTADO',
-                      diasCredito:newCotizForm.diasCredito||'',
-                      porcentajeAnticipo:newCotizForm.porcentajeAnticipo||'',
-                      tiempoEntrega:newCotizForm.tiempoEntrega||'',
-                      formaPago:newCotizForm.formaPago||'BS A TASA BCV',
-                      timestamp:editingCotizId?(newCotizForm.timestamp||Date.now()):Date.now(),
-                      user:appUser?.name, status:'VIGENTE'
-                    });
-                    setShowNewCotizPanel(false); setEditingCotizId(null);
-                    setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});
-                    setCotizItems([]);
-                    setDialog({title:'\u2705 Cotización guardada',text:`${id} guardada.`,type:'alert'});
-                  } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
-                };
-                const tasaBCVpv = parseNum(settings?.tasaBCV||0)||1;
-                const baseTotal = cotizItems.reduce((s,it)=>s+(it.cantidad||0)*(it.precioUnit||0),0);
-                const ivaTotal = newCotizForm.aplicaIva==='SI'?baseTotal*0.16:0;
-                const grandTotal = baseTotal+ivaTotal;
-                const tasa = parseNum(newCotizForm.tasa||settings?.tasaBCV||1);
-                return (
-                  <div style={{background:'#fff',borderRadius:16,border:'1px solid #f0f0f0',overflow:'hidden'}}>
-                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:'1px solid #f0f0f0',background:'#fafafa'}}>
-                      <div style={{display:'flex',alignItems:'center',gap:10}}>
-                        <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);}}
-                          style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',border:'1px solid #e5e7eb',background:'#fff',borderRadius:8,fontSize:11,cursor:'pointer',color:'#374151',fontWeight:700}}>
-                          \u2190 Mis cotizaciones
-                        </button>
-                        <span style={{fontSize:13,fontWeight:900,color:'#111'}}>{editingCotizId?`Editando: ${editingCotizId}`:'Nueva Cotización'}</span>
-                        <span style={{background:'#fff7ed',color:OR,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:700,border:`1px solid ${OR}`}}>{editingCotizId||generateCotizIdPV()}</span>
-                      </div>
-                      <span style={{fontSize:11,fontWeight:900,color:OR}}>{vendNombre}</span>
-                    </div>
-                    <div style={{padding:20,display:'flex',flexDirection:'column',gap:14}}>
-                      <div style={{display:'grid',gridTemplateColumns:'160px 1fr 140px',gap:12}}>
-                        <div>
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Fecha</label>
-                          <input type="date" value={newCotizForm.fecha||getTodayDate()} onChange={e=>setNewCotizForm({...newCotizForm,fecha:e.target.value})}
-                            style={{width:'100%',border:'2px solid #fed7aa',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff7ed',fontWeight:700}}/>
-                        </div>
-                        <div>
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Cliente</label>
-                          <select value={newCotizForm.clientRif||''} onChange={e=>{const cl=(clients||[]).find(c=>c.rif===e.target.value||c.id===e.target.value);setNewCotizForm({...newCotizForm,clientRif:e.target.value,clientName:cl?.name||cl?.razonSocial||'',clientAddress:cl?.direccion||''});}}
-                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff'}}>
-                            <option value="">— Seleccionar cliente —</option>
-                            {(clients||[]).map(cl=><option key={cl.id} value={cl.rif||cl.id}>{cl.name||cl.razonSocial||cl.id}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Validez (días)</label>
-                          <input type="number" value={newCotizForm.validez||'15'} onChange={e=>setNewCotizForm({...newCotizForm,validez:e.target.value})} min="1"
-                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none'}}/>
-                        </div>
-                      </div>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-                        <div>
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Tasa BCV (Bs/$)</label>
-                          <input type="number" step="0.01" value={newCotizForm.tasa||settings?.tasaBCV||''} onChange={e=>setNewCotizForm({...newCotizForm,tasa:e.target.value})}
-                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none'}} placeholder={String(tasaBCVpv)}/>
-                        </div>
-                        <div>
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>IVA</label>
-                          <select value={newCotizForm.aplicaIva||'SI'} onChange={e=>setNewCotizForm({...newCotizForm,aplicaIva:e.target.value})}
-                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff'}}>
-                            <option value="SI">Sí (16%)</option><option value="NO">No</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Condición de Pago</label>
-                          <select value={newCotizForm.condicionPago||'CONTADO'} onChange={e=>setNewCotizForm({...newCotizForm,condicionPago:e.target.value})}
-                            style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'8px 10px',fontSize:12,outline:'none',background:'#fff'}}>
-                            <option>CONTADO</option><option>CRÉDITO 15 DÍAS</option><option>CRÉDITO 30 DÍAS</option><option>CRÉDITO 60 DÍAS</option><option>ANTICIPO 50%</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div>
-                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                          <label style={{fontSize:10,fontWeight:900,color:'#111',textTransform:'uppercase'}}>Ítems / Productos</label>
-                          <button onClick={()=>setCotizItems([...cotizItems,{desc:'',cantidad:1,precioUnit:0,unidad:'und',total:0}])}
-                            style={{display:'flex',alignItems:'center',gap:5,padding:'6px 14px',background:OR,color:'#fff',border:'none',borderRadius:8,fontSize:11,fontWeight:700,cursor:'pointer'}}>
-                            + Agregar ítem
-                          </button>
-                        </div>
-                        {cotizItems.length===0
-                          ? <div style={{textAlign:'center',padding:'20px 0',color:'#9ca3af',border:'2px dashed #e5e7eb',borderRadius:10,fontSize:12}}>Sin ítems — presiona "Agregar ítem"</div>
-                          : <table style={{width:'100%',borderCollapse:'collapse',border:'1px solid #f0f0f0',borderRadius:10,overflow:'hidden',fontSize:12}}>
-                              <thead><tr style={{background:'#f9fafb'}}>
-                                {['Descripción','Cant.','U.M.','Precio Unit.','Total',''].map(h=>(
-                                  <th key={h} style={{padding:'8px 12px',textAlign:h==='Total'||h==='Precio Unit.'?'right':'left',fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',borderBottom:'1px solid #f0f0f0'}}>{h}</th>
-                                ))}
-                              </tr></thead>
-                              <tbody>
-                                {cotizItems.map((it,idx)=>(
-                                  <tr key={idx} style={{borderBottom:'1px solid #f9fafb'}}>
-                                    <td style={{padding:'6px 12px'}}><input value={it.desc||''} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,desc:e.target.value}:x))} style={{width:'100%',border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none'}} placeholder="Descripción"/></td>
-                                    <td style={{padding:'6px 8px'}}><input type="number" min="0" value={it.cantidad||''} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,cantidad:parseFloat(e.target.value)||0,total:(parseFloat(e.target.value)||0)*(x.precioUnit||0)}:x))} style={{width:70,border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none',textAlign:'right'}}/></td>
-                                    <td style={{padding:'6px 8px'}}><input value={it.unidad||'und'} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,unidad:e.target.value}:x))} style={{width:60,border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none'}}/></td>
-                                    <td style={{padding:'6px 8px',textAlign:'right'}}><input type="number" min="0" step="0.01" value={it.precioUnit||''} onChange={e=>setCotizItems(prev=>prev.map((x,i)=>i===idx?{...x,precioUnit:parseFloat(e.target.value)||0,total:(x.cantidad||0)*(parseFloat(e.target.value)||0)}:x))} style={{width:90,border:'1px solid #e5e7eb',borderRadius:6,padding:'5px 8px',fontSize:11,outline:'none',textAlign:'right'}}/></td>
-                                    <td style={{padding:'6px 12px',textAlign:'right',fontWeight:700}}>${formatNum((it.cantidad||0)*(it.precioUnit||0))}</td>
-                                    <td style={{padding:'6px 8px',textAlign:'center'}}><button onClick={()=>setCotizItems(prev=>prev.filter((_,i)=>i!==idx))} style={{border:'none',background:'none',color:'#ef4444',cursor:'pointer',fontSize:18,lineHeight:1}}>\u00d7</button></td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                        }
-                      </div>
-                      {cotizItems.length>0&&(
-                        <div style={{display:'flex',justifyContent:'flex-end'}}>
-                          <div style={{background:'#f9fafb',border:'1px solid #f0f0f0',borderRadius:10,padding:'14px 20px',minWidth:260}}>
-                            {[['Base imponible','$'+formatNum(baseTotal),'#374151'],['IVA (16%)','$'+formatNum(ivaTotal),'#6b7280'],['TOTAL USD','$'+formatNum(grandTotal),'#111'],['Bs (\u2248)','Bs '+formatNum(grandTotal*tasa),'#E8541A']].map(([l,v,c])=>(
-                              <div key={l} style={{display:'flex',justifyContent:'space-between',marginBottom:4,fontSize:12}}>
-                                <span style={{color:'#9ca3af'}}>{l}</span>
-                                <span style={{fontWeight:l==='TOTAL USD'?900:700,color:c,fontSize:l==='TOTAL USD'?15:12}}>{v}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      <div>
-                        <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',display:'block',marginBottom:5}}>Observaciones</label>
-                        <textarea value={newCotizForm.observaciones||''} onChange={e=>setNewCotizForm({...newCotizForm,observaciones:e.target.value})} rows={2}
-                          style={{width:'100%',border:'2px solid #e5e7eb',borderRadius:10,padding:'10px',fontSize:12,outline:'none',resize:'vertical',fontFamily:'inherit'}} placeholder="Condiciones adicionales..."/>
-                      </div>
-                      <div style={{display:'flex',justifyContent:'flex-end',gap:10,paddingTop:4}}>
-                        <button onClick={()=>{setShowNewCotizPanel(false);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);}}
-                          style={{padding:'10px 20px',border:'1px solid #e5e7eb',background:'#fff',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer',color:'#374151'}}>
-                          Cancelar
-                        </button>
-                        <button onClick={handleSaveCotizPV}
-                          style={{padding:'10px 28px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:900,cursor:'pointer',textTransform:'uppercase',letterSpacing:0.5}}>
-                          Guardar Cotización
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-              return (
-                <div>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
-                    <div>
-                      <div style={{fontSize:18,fontWeight:900,color:'#111'}}>Mis Cotizaciones</div>
-                      <div style={{fontSize:12,color:'#9ca3af',marginTop:2}}>Cotizaciones de {vendNombre||'todos los vendedores'}</div>
-                    </div>
-                    <button onClick={()=>{setShowNewCotizPanel(true);setEditingCotizId(null);setNewCotizForm({...initialCotizForm,fecha:getTodayDate(),vendedor:vendNombre});setCotizItems([]);setVentasView('cotizaciones');setPvModoForm(true);}}                      style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',background:OR,color:'#fff',border:'none',borderRadius:10,fontSize:12,fontWeight:700,cursor:'pointer'}}>
-                      <Plus size={14}/> Nueva Cotización
-                    </button>
-                  </div>
-
-                  {/* KPIs */}
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
-                    {[
-                      {l:'Este mes',v:cotizMes.length,sub:'cotizaciones generadas',c:OR},
-                      {l:'Conversión',v:conversion+'%',sub:'aprobadas / emitidas',c:'#111'},
-                      {l:'Total cotizado',v:'$'+formatNum(totalCotizado),sub:'histórico',c:OR},
-                    ].map((k,i)=>(
-                      <div key={i} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'14px 18px'}}>
-                        <div style={{fontSize:10,color:'#9ca3af',marginBottom:4}}>{k.l}</div>
-                        <div style={{fontSize:22,fontWeight:900,color:k.c}}>{k.v}</div>
-                        <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{k.sub}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Tabla cotizaciones */}
-                  <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,overflow:'hidden'}}>
-                    <div style={{padding:'12px 18px',borderBottom:'1px solid #f0f0f0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <span style={{fontSize:13,fontWeight:700,color:'#111'}}>Cotizaciones activas</span>
-                      <span style={{fontSize:10,color:'#9ca3af'}}>{misCotiz.length} total</span>
-                    </div>
-                    {misCotiz.length===0
-                      ? <div style={{textAlign:'center',padding:'40px 0',color:'#9ca3af'}}>
-                          <FileText size={32} style={{margin:'0 auto 8px',opacity:0.3}}/>
-                          <div style={{fontSize:12,fontWeight:700}}>Sin cotizaciones aún</div>
-                          <div style={{fontSize:11,marginTop:4}}>Crea tu primera cotización</div>
-                        </div>
-                      : <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                          <thead>
-                            <tr style={{background:'#fafafa'}}>
-                              {['N° Cotización','Cliente','Fecha','Válida hasta','Estado','Monto',''].map(h=>(
-                                <th key={h} style={{padding:'9px 14px',textAlign:'left',fontSize:10,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.6,borderBottom:'1px solid #f0f0f0'}}>{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {misCotiz.map((c,i)=>(
-                              <tr key={c.id} style={{borderBottom:'1px solid #f9fafb',background:i%2===0?'#fff':'#fafafa'}}>
-                                <td style={{padding:'10px 14px',fontWeight:700,color:OR,fontSize:12}}>{c.id}</td>
-                                <td style={{padding:'10px 14px',color:'#111',fontWeight:500}}>{c.clientName||c.client||'—'}</td>
-                                <td style={{padding:'10px 14px',color:'#6b7280'}}>{c.fecha||'—'}</td>
-                                <td style={{padding:'10px 14px',color:'#6b7280'}}>{c.validez||'—'}</td>
-                                <td style={{padding:'10px 14px'}}>
-                                  <span style={{padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:700,background:c.status==='VIGENTE'?'#fff7ed':c.status==='APROBADA'?'#f0fdf4':c.status==='FACTURADA'?'#eff6ff':'#f9fafb',color:c.status==='VIGENTE'?'#c2410c':c.status==='APROBADA'?'#15803d':c.status==='FACTURADA'?'#1d4ed8':'#6b7280',border:`1px solid ${c.status==='VIGENTE'?'#fed7aa':c.status==='APROBADA'?'#bbf7d0':c.status==='FACTURADA'?'#bfdbfe':'#e5e7eb'}`}}>
-                                    {c.status||'VIGENTE'}
-                                  </span>
-                                </td>
-                                <td style={{padding:'10px 14px',fontWeight:900,color:'#111',textAlign:'right'}}>${formatNum(parseNum(c.total||0))}</td>
-                                <td style={{padding:'10px 8px',textAlign:'center'}}>
-                                  <button onClick={()=>{setEditingCotizId(c.id);setNewCotizForm({...c,fecha:c.fecha||getTodayDate()});setCotizItems(c.items||[]);setShowNewCotizPanel(true);setVentasView('cotizaciones');setPvModoForm(true);}}
-                                    style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'transparent',fontSize:10,color:'#6b7280',cursor:'pointer'}}>
-                                    ✏ Editar
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                    }
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* ── CLIENTES ── */}
-            {pvView==='clientes'&&(
-              <div>
-                <div style={{fontSize:18,fontWeight:900,color:'#111',marginBottom:4}}>Mis Clientes</div>
-                <div style={{fontSize:12,color:'#9ca3af',marginBottom:20}}>Clientes asignados a {vendNombre}</div>
-                {misClientes.length===0
-                  ? <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'40px 0',textAlign:'center',color:'#9ca3af'}}>
-                      <Users size={32} style={{margin:'0 auto 8px',opacity:0.3}}/>
-                      <div style={{fontSize:12,fontWeight:700}}>Sin clientes asignados</div>
-                      <div style={{fontSize:11,marginTop:4}}>El administrador debe asignarte clientes desde Configuración</div>
-                    </div>
-                  : <div style={{display:'grid',gap:10}}>
-                      {misClientes.map(cl=>(
-                        <div key={cl.id} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                          <div>
-                            <div style={{fontWeight:700,fontSize:13,color:'#111'}}>{cl.name||cl.clientName||'—'}</div>
-                            <div style={{fontSize:11,color:'#9ca3af',marginTop:2}}>{cl.rif||'—'} · {cl.phone||cl.telefono||'—'}</div>
-                          </div>
-                          <div style={{fontSize:11,color:OR,fontWeight:700}}>
-                            {misCotiz.filter(c=>c.clientRif===cl.rif||c.clientName===cl.name).length} cotiz.
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                }
-              </div>
-            )}
-
-            {/* ── RENDIMIENTO ── */}
-            {pvView==='rendimiento'&&(
-              <div>
-                <div style={{fontSize:18,fontWeight:900,color:'#111',marginBottom:4}}>Mi Rendimiento</div>
-                <div style={{fontSize:12,color:'#9ca3af',marginBottom:20}}>Estadísticas personales de {vendNombre}</div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12}}>
-                  {[
-                    {l:'Total cotizaciones',v:misCotiz.length,sub:'históricas'},
-                    {l:'Vigentes',v:misCotiz.filter(c=>c.status==='VIGENTE').length,sub:'en proceso'},
-                    {l:'Aprobadas',v:misCotiz.filter(c=>c.status==='APROBADA').length,sub:'ganadas'},
-                    {l:'Facturadas',v:misCotiz.filter(c=>c.status==='FACTURADA').length,sub:'convertidas a venta'},
-                    {l:'No concretadas',v:misCotiz.filter(c=>c.status==='NO CONCRETADA').length,sub:'perdidas'},
-                    {l:'Tasa de conversión',v:conversion+'%',sub:'aprobadas+facturadas / total'},
-                    {l:'Total cotizado',v:'$'+formatNum(totalCotizado),sub:'monto histórico'},
-                    {l:'Actas de reclamo',v:misActas.length,sub:'registradas'},
-                  ].map((k,i)=>(
-                    <div key={i} style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'16px 18px'}}>
-                      <div style={{fontSize:10,color:'#9ca3af',marginBottom:6,textTransform:'uppercase',letterSpacing:0.6}}>{k.l}</div>
-                      <div style={{fontSize:24,fontWeight:900,color:OR}}>{k.v}</div>
-                      <div style={{fontSize:10,color:'#9ca3af',marginTop:4}}>{k.sub}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* ── ACTAS DE RECLAMO ── */}
-            {pvView==='actas'&&pvActaForm&&(()=>{
-              const AF = pvActaForm;
-              const setF = (k,v) => setPvActaForm(f=>({...f,[k]:v}));
-              return (
-              <div>
-                {/* Toolbar acta */}
-                <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,padding:'12px 18px',marginBottom:16,display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:8,flex:1}}>
-                    <ClipboardList size={16} style={{color:OR}}/>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:900,color:'#111'}}>Acta de Reclamo / Devolución</div>
-                      <div style={{fontSize:10,color:'#9ca3af'}}>{pvActaId?`Correlativo: ${pvActaId} · Editando`:'Nueva acta — sin guardar'}</div>
-                    </div>
-                  </div>
-                  <div style={{display:'flex',gap:8}}>                    <button onClick={()=>setPvShowActaHist(v=>!v)}
-                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:11,color:'#6b7280',cursor:'pointer'}}>
-                      <History size={13}/> Historial ({misActas.length})
-                    </button>
-                    <button onClick={nuevaActa}
-                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:8,fontSize:11,color:'#6b7280',cursor:'pointer'}}>
-                      <Plus size={13}/> Nueva
-                    </button>
-                    <button onClick={imprimirActa}
-                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'none',background:'#1a3366',color:'#fff',borderRadius:8,fontSize:11,cursor:'pointer'}}>
-                      <Printer size={13}/> PDF / Imprimir
-                    </button>
-                    <button onClick={guardarActa}
-                      style={{display:'flex',alignItems:'center',gap:6,padding:'7px 18px',border:'none',background:OR,color:'#fff',borderRadius:8,fontSize:11,fontWeight:700,cursor:'pointer'}}>
-                      <Save size={13}/> Guardar
-                    </button>
-                  </div>
-                </div>
-
-                {/* Historial lateral */}
-                {pvShowActaHist&&(
-                  <div style={{background:'#fff',border:`2px solid ${OR}`,borderRadius:12,padding:'14px',marginBottom:16}}>
-                    <div style={{fontSize:12,fontWeight:700,color:OR,marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      Historial de actas<button onClick={()=>setPvShowActaHist(false)} style={{border:'none',background:'none',color:'#9ca3af',cursor:'pointer',fontSize:16}}>×</button>
-                    </div>
-                    {misActas.length===0
-                      ? <div style={{color:'#9ca3af',fontSize:11,textAlign:'center',padding:'12px 0'}}>No hay actas guardadas</div>
-                      : misActas.map(a=>(
-                        <div key={a.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 10px',border:'1px solid #f0f0f0',borderRadius:8,marginBottom:6,background:'#fafafa'}}>
-                          <div>
-                            <div style={{fontWeight:700,fontSize:12,color:OR}}>{a.id}</div>
-                            <div style={{fontSize:10,color:'#6b7280'}}>{a.cliente||'—'} · {a.fechaReclamo||'—'}</div>
-                          </div>
-                          <div style={{display:'flex',gap:6}}>
-                            <button onClick={()=>cargarActa(a)} style={{padding:'4px 10px',border:'1px solid #e5e7eb',background:'transparent',borderRadius:6,fontSize:10,cursor:'pointer',color:'#374151'}}>Ver</button>
-                            <button onClick={()=>eliminarActa(a.id)} style={{padding:'4px 8px',border:'1px solid #fecaca',background:'transparent',borderRadius:6,fontSize:10,cursor:'pointer',color:'#dc2626'}}><Trash2 size={11}/></button>
-                          </div>
-                        </div>
-                      ))
-                    }
-                  </div>
-                )}
-
-                {/* Formulario acta */}
-                <div style={{background:'#fff',border:'1px solid #f0f0f0',borderRadius:12,overflow:'hidden'}}>
-                  {/* Header naranja */}
-                  <div style={{background:OR,padding:'10px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div>
-                      <div style={{color:'#fff',fontWeight:900,fontSize:13}}>SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div>
-                      <div style={{color:'rgba(255,255,255,0.85)',fontSize:10}}>ACTA DE RECLAMO / DEVOLUCIÓN — ASEGURAMIENTO DE LA CALIDAD</div>
-                    </div>
-                    <div style={{background:'rgba(255,255,255,0.2)',border:'1px solid rgba(255,255,255,0.4)',borderRadius:20,padding:'4px 14px',color:'#fff',fontSize:11,fontWeight:700}}>
-                      {pvActaId||'Sin guardar'}
-                    </div>
-                  </div>
-
-                  <div style={{padding:'20px'}}>
-                    {/* Datos generales */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Datos generales del reclamo</div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}}>
-                      {[
-                        ['cliente','Cliente','Nombre del cliente'],
-                        ['rif','RIF / C.I.','J-000000000'],
-                        ['vendedor','Vendedor','',false,true],
-                        ['telefono','Teléfono','0414-0000000'],
-                        ['producto','Producto / Servicio','Descripción'],
-                        ['cantidad','Cant. entregada','0'],
-                        ['lote','Lote / Código','—'],
-                        ['orden','Orden de compra','—'],
-                        ['fechaEntrega','Fecha de entrega','',false,false,'date'],
-                        ['fechaReclamo','Fecha del reclamo','',false,false,'date'],
-                      ].map(([id,label,ph,_,ro,type])=>(
-                        <div key={id} className="flex flex-col gap-1">
-                          <label style={{fontSize:9,fontWeight:700,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.6}}>{label}</label>
-                          <input type={type||'text'} value={AF[id]||''} readOnly={ro}
-                            onChange={e=>!ro&&setF(id,e.target.value)}
-                            placeholder={ph}
-                            style={{border:`1px solid ${ro?OR:'#e5e7eb'}`,borderRadius:8,padding:'8px 12px',fontSize:12,outline:'none',background:ro?'#fff7ed':'#fff',color:ro?OR:'#111',fontWeight:ro?700:400}}/>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Tipo de inconformidad */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Tipo de inconformidad (marque con X)</div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:20}}>
-                      {INCONFORMIDADES.map((inc,i)=>(
-                        <label key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',border:`1px solid ${AF['c'+(i+1)]?OR:'#e5e7eb'}`,borderRadius:8,background:AF['c'+(i+1)]?'#fff7ed':'#fafafa',cursor:'pointer',fontSize:11,transition:'all .12s'}}>
-                          <input type="checkbox" checked={!!AF['c'+(i+1)]} onChange={e=>setF('c'+(i+1),e.target.checked)} style={{accentColor:OR,width:13,height:13}}/>
-                          {inc}
-                        </label>
-                      ))}
-                    </div>
-
-                    {/* Evidencias */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Evidencias requeridas (obligatorio)</div>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
-                      {EVIDENCIAS.map((ev,i)=>(
-                        <label key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',border:`1px solid ${AF['e'+(i+1)]?OR:'#e5e7eb'}`,borderRadius:8,background:AF['e'+(i+1)]?'#fff7ed':'#fafafa',cursor:'pointer',fontSize:11,transition:'all .12s'}}>
-                          <input type="checkbox" checked={!!AF['e'+(i+1)]} onChange={e=>setF('e'+(i+1),e.target.checked)} style={{accentColor:OR,width:13,height:13}}/>
-                          {ev}
-                        </label>
-                      ))}
-                    </div>
-                    <div style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,padding:'8px 14px',fontSize:11,color:'#92400e',display:'flex',alignItems:'center',gap:8,marginBottom:20}}>
-                      ⚠ Sin fotografía o video el reclamo no será procesado.
-                    </div>
-
-                    {/* Descripción */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Descripción detallada del defecto</div>
-                    <textarea value={AF.descripcion||''} onChange={e=>setF('descripcion',e.target.value)}
-                      placeholder="Describa detalladamente el defecto observado en el producto o servicio..."
-                      style={{width:'100%',border:'1px solid #e5e7eb',borderRadius:8,padding:'10px 12px',fontSize:12,minHeight:80,resize:'vertical',outline:'none',marginBottom:20,fontFamily:'inherit'}}/>
-
-                    {/* Fotos */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Fotografías del producto (máx. 3)</div>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:20}}>
-                      {[1,2,3].map(n=>{
-                        const foto=pvActaFotos[n];
-                        const labels={1:'Evidencia principal',2:'Vista adicional',3:'Empaque / etiqueta'};
-                        return(
-                        <div key={n} style={{border:`1px solid ${foto?OR:'#e5e7eb'}`,borderRadius:10,overflow:'hidden'}}>
-                          <div style={{background:foto?'#052e16':'#1a0800',padding:'7px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                            <span style={{fontSize:11,fontWeight:700,color:foto?'#4ade80':OR}}>
-                              {foto?'✓':''} Foto {n} — {labels[n]}
-                            </span>
-                            <span style={{fontSize:9,background:foto?'#14532d':'#2a1000',color:foto?'#86efac':'#f97316',padding:'2px 8px',borderRadius:20}}>{foto?'Adjunta':'Opcional'}</span>
-                          </div>
-                          <div style={{position:'relative',height:160,background:foto?'#000':'#fafafa',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,cursor:'pointer',overflow:'hidden'}}
-                            onClick={()=>document.getElementById(`pvfoto${n}`).click()}>
-                            {foto
-                              ? <>
-                                  <img src={foto} alt={`Foto ${n}`} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
-                                  <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0)',transition:'background .2s',display:'flex',alignItems:'center',justifyContent:'center',gap:12}}
-                                    onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,0,0,0.5)'}}
-                                    onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,0,0,0)'}}>
-                                    <button onClick={e=>{e.stopPropagation();setPvActaFotos(f=>({...f,[n]:null}));}}
-                                      style={{width:36,height:36,borderRadius:'50%',background:'#dc2626',border:'none',color:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                                      <Trash2 size={15}/>
-                                    </button>
-                                  </div>
-                                </>
-                              : <>
-                                  <div style={{position:'absolute',inset:8,border:'1.5px dashed #d1d5db',borderRadius:8,pointerEvents:'none'}}/>
-                                  <Camera size={28} style={{color:'#d1d5db'}}/>
-                                  <div style={{fontSize:11,color:'#9ca3af',textAlign:'center',lineHeight:1.5}}>Clic para adjuntar<br/><span style={{fontSize:9}}>JPG · PNG · WEBP</span></div>
-                                </>
-                            }
-                          </div>
-                          <div style={{padding:'8px 10px',borderTop:'1px solid #f0f0f0'}}>
-                            <input id={`pvfoto${n}`} type="file" accept="image/*" style={{display:'none'}} onChange={e=>loadFoto(n,e)}/>
-                            <button onClick={()=>document.getElementById(`pvfoto${n}`).click()}
-                              style={{width:'100%',padding:'6px',border:'1px solid #e5e7eb',borderRadius:6,background:'transparent',fontSize:11,color:'#6b7280',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
-                              <Paperclip size={12}/> {foto?'Reemplazar':'Adjuntar imagen'}
-                            </button>
-                          </div>
-                        </div>);
-                      })}
-                    </div>
-
-                    {/* Políticas */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Políticas de reclamo y devolución</div>
-                    <div style={{background:'#fafafa',border:'1px solid #f0f0f0',borderRadius:8,padding:'12px 16px',marginBottom:20,display:'flex',flexDirection:'column',gap:5}}>
-                      {POLITICAS.map(p=>(
-                        <div key={p.n} style={{fontSize:11,color:'#374151',lineHeight:1.5}}>
-                          <span style={{color:OR,fontWeight:700}}>{p.n}. {p.tit}:</span> {p.txt}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Firmas */}
-                    <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'5px 12px',borderRadius:6,textTransform:'uppercase',letterSpacing:0.8,marginBottom:12}}>Firmas y conformidad</div>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:20}}>
-                      {[
-                        {title:'Cliente', fields:[['nomCli','Nombre'],['ciCli','C.I.'],['fchCli','Fecha']]},
-                        {title:'Vendedor', fields:[['nomVen','Nombre'],['ciVen','C.I.'],['fchVen','Fecha']], ro:true},
-                        {title:'Jefe de Calidad', fields:[['nomJef','Nombre'],['ciJef','C.I.'],['fchJef','Fecha']]},
-                      ].map(sig=>(
-                        <div key={sig.title} style={{border:'1px solid #e5e7eb',borderRadius:10,overflow:'hidden'}}>
-                          <div style={{background:OR,color:'#fff',fontSize:10,fontWeight:700,padding:'6px 12px',textAlign:'center',textTransform:'uppercase',letterSpacing:0.6}}>{sig.title}</div>
-                          <div style={{padding:'10px 12px',background:'#fafafa',display:'flex',flexDirection:'column',gap:6}}>
-                            {sig.fields.map(([id,lbl])=>(
-                              <div key={id} style={{display:'flex',flexDirection:'column',gap:2}}>
-                                <label style={{fontSize:9,color:'#9ca3af',textTransform:'uppercase',letterSpacing:0.4}}>{lbl}</label>
-                                <input type="text" value={AF[id]||''} readOnly={sig.ro}
-                                  onChange={e=>!sig.ro&&setF(id,e.target.value)}
-                                  style={{border:'none',borderBottom:'1px solid #e5e7eb',borderRadius:0,padding:'3px 0',fontSize:11,background:'transparent',color:sig.ro?OR:'#111',fontWeight:sig.ro?700:400,outline:'none'}}/>
-                              </div>
-                            ))}
-                            <div style={{borderTop:'1px solid #e5e7eb',marginTop:6,paddingTop:4,fontSize:9,color:'#9ca3af',textAlign:'center'}}>Firma</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Footer */}
-                    <div style={{background:'#f9fafb',border:'1px solid #f0f0f0',borderRadius:8,padding:'8px 14px',display:'flex',justifyContent:'space-between',fontSize:10,color:'#9ca3af'}}>
-                      <span>Original → Servicios Jiret G&B &nbsp;|&nbsp; Copia 1 → Cliente &nbsp;|&nbsp; Copia 2 → Vendedor</span>
-                      <span>Maracaibo, Zulia · RIF: J-412309374</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              );
-            })()}
-
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (appUser && !selectedPortal) {
-    const PORTALES = [
-      { id:'produccion', title:'PRODUCCIÓN', desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="5" y="50" width="54" height="5" rx="2" fill="#c2410c"/><rect x="9" y="26" width="14" height="24" rx="2.5" fill="#fb923c" stroke="#c2410c" strokeWidth="1.6"/><ellipse cx="16" cy="26" rx="7" ry="3" fill="#fdba74" stroke="#c2410c" strokeWidth="1.6"/><rect x="11" y="33" width="10" height="2.4" rx="1.2" fill="#c2410c"/><rect x="11" y="40" width="10" height="2.4" rx="1.2" fill="#c2410c"/><rect x="26" y="16" width="11" height="34" rx="2.5" fill="#f97316" stroke="#c2410c" strokeWidth="1.6"/><ellipse cx="31.5" cy="16" rx="5.5" ry="2.6" fill="#fdba74" stroke="#c2410c" strokeWidth="1.6"/><rect x="28.5" y="24" width="6" height="2.2" rx="1.1" fill="#c2410c"/><rect x="28.5" y="31" width="6" height="2.2" rx="1.1" fill="#c2410c"/><rect x="40" y="30" width="6.5" height="20" rx="1.5" fill="#ea580c" stroke="#c2410c" strokeWidth="1.5"/><path d="M51 22 l0 5 l4.5 8.2 a2.6 2.6 0 0 1 -2.3 3.9 h-4.4 a2.6 2.6 0 0 1 -2.3 -3.9 l4.5 -8.2 l0 -5 z" fill="#fdba74" stroke="#c2410c" strokeWidth="1.5"/><rect x="47.5" y="19.5" width="8" height="3" rx="1.5" fill="#c2410c"/></svg> },
-      { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación y clientes', color:'#3b82f6',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><g fill="#3b82f6"><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(0 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(45 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(90 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(135 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(180 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(225 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(270 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(315 32 19)"/><circle cx="32" cy="19" r="9"/></g><circle cx="32" cy="19" r="4" fill="#1e3a8a"/><g fill="#60a5fa"><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(0 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(60 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(120 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(180 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(240 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(300 46.7 31)"/><circle cx="46.7" cy="31" r="5.5"/></g><circle cx="46.7" cy="31" r="2.3" fill="#1e3a8a"/><circle cx="19" cy="36" r="6" fill="#1d4ed8"/><path d="M8 56 v-4 a11 11 0 0 1 22 0 v4 z" fill="#2563eb"/><circle cx="44" cy="40" r="5.5" fill="#1e40af"/><path d="M33 56 v-3.5 a10 10 0 0 1 20 0 v3.5 z" fill="#1d4ed8"/></svg> },
-      { id:'finanzas', title:'FINANZAS', desc:'Costos, reportes financieros y KPI gerencial', color:'#22c55e',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="7" y="49" width="44" height="3.5" rx="1.7" fill="#15803d"/><rect x="10" y="38" width="7.5" height="11" rx="1.5" fill="#4ade80"/><rect x="20" y="31" width="7.5" height="18" rx="1.5" fill="#22c55e"/><rect x="30" y="23" width="7.5" height="26" rx="1.5" fill="#16a34a"/><rect x="40" y="15" width="7.5" height="34" rx="1.5" fill="#15803d"/><path d="M11 39 L24 31 L34 24 L49 12" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M49 12 l-7 0.5 M49 12 l-0.6 7" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round"/><circle cx="52" cy="43" r="9" fill="#22c55e" stroke="#bbf7d0" strokeWidth="1.6"/><text x="52" y="47.5" textAnchor="middle" fontSize="11" fontWeight="900" fill="#ffffff" fontFamily="Arial">$</text><circle cx="15" cy="20" r="6.5" fill="#16a34a" stroke="#bbf7d0" strokeWidth="1.3"/><text x="15" y="23.5" textAnchor="middle" fontSize="8" fontWeight="900" fill="#ffffff" fontFamily="Arial">%</text></svg> },
-      { id:'contabilidad', title:'CONTABILIDAD', desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="8" width="44" height="48" rx="4" fill="#0e7490" opacity="0.15" stroke="#0e7490" strokeWidth="1.5"/><rect x="10" y="8" width="44" height="10" rx="4" fill="#06b6d4" opacity="0.9"/><rect x="16" y="24" width="14" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="30" width="20" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="36" width="12" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="42" width="18" height="2.5" rx="1.2" fill="#0e7490"/><rect x="36" y="24" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="38" y="30" width="10" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="40" y="36" width="8" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="36" y="42" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="10" y="48" width="44" height="2.5" rx="1.2" fill="#0e7490"/><text x="32" y="17" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">LIBRO MAYOR</text></svg> },
-      { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
-      { id:'vendedores_portal', title:'VENDEDORES', desc:'Gestión de cotizaciones, clientes y actas de reclamo', color:'#E8541A',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="22" cy="18" r="9" fill="#E8541A" opacity="0.85"/><circle cx="42" cy="18" r="7" fill="#E8541A" opacity="0.5"/><path d="M6 46 v-4 a16 16 0 0 1 32 0 v4 z" fill="#E8541A" opacity="0.85"/><path d="M38 46 v-3 a14 14 0 0 1 20 0 v3 z" fill="#E8541A" opacity="0.5"/><rect x="34" y="34" width="22" height="3" rx="1.5" fill="#c2410c"/><rect x="34" y="40" width="18" height="3" rx="1.5" fill="#c2410c" opacity="0.6"/><circle cx="54" cy="54" r="8" fill="#E8541A"/><text x="54" y="58" textAnchor="middle" fontSize="11" fontWeight="900" fill="white" fontFamily="Arial">$</text></svg> },
-      { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
-        icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
-    ];
-    return (
-      <div className="min-h-screen w-full relative overflow-hidden" style={{background:'#111'}}>
-        {/* Fondo: video/imagen del login o gradiente por defecto */}
-        <div className="absolute inset-0">
-          {settings?.loginBg ? (
-            <img src={settings.loginBg} className="w-full h-full object-cover object-center" alt="bg"/>
-          ) : (
-            <div className="w-full h-full" style={{background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}/>
-          )}
-          <div className="absolute inset-0" style={{background:'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.78) 100%)'}}/>
-          {/* Grid técnico sutil */}
-          <svg width="100%" height="100%" style={{position:'absolute',inset:0,opacity:0.5}} xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <pattern id="portalGrid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(249,115,22,0.06)" strokeWidth="0.8"/>
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#portalGrid)"/>
+      <div style={{minHeight:'100vh',width:'100%',display:'flex',flexDirection:'column',background:'#0f0f0f',position:'relative',overflow:'hidden'}}>
+        {/* Fondo */}
+        <div style={{position:'absolute',inset:0,zIndex:0}}>
+          {settings?.loginBg
+            ? <img src={settings.loginBg} style={{width:'100%',height:'100%',objectFit:'cover',objectPosition:'center'}} alt="bg"/>
+            : <div style={{width:'100%',height:'100%',background:'linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)'}}/>
+          }
+          <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,rgba(0,0,0,0.65) 0%,rgba(0,0,0,0.82) 100%)'}}/>
+          <svg width="100%" height="100%" style={{position:'absolute',inset:0,opacity:0.4}} xmlns="http://www.w3.org/2000/svg">
+            <defs><pattern id="pg2" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(249,115,22,0.07)" strokeWidth="0.8"/></pattern></defs>
+            <rect width="100%" height="100%" fill="url(#pg2)"/>
           </svg>
         </div>
 
         {/* HEADER */}
-        <header className="absolute top-0 left-0 w-full z-20 flex justify-between items-center px-5 sm:px-8 py-3" style={{background:'rgba(18,18,18,0.92)',borderBottom:'2px solid #f97316'}}>
-          <div className="flex items-center">
-            <span className="text-white font-black text-lg sm:text-xl">Supply </span>
-            <span className="text-white font-black text-xl sm:text-2xl">G</span>
-            <div className="bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-sm font-black mx-0.5">&amp;</div>
-            <span className="text-white font-black text-xl sm:text-2xl">B</span>
+        <header style={{position:'relative',zIndex:10,display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 28px',background:'rgba(15,15,15,0.95)',borderBottom:'2px solid #f97316',flexShrink:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:2}}>
+            <span style={{color:'#fff',fontWeight:900,fontSize:20,letterSpacing:'-0.5px'}}>Supply </span>
+            <span style={{color:'#fff',fontWeight:900,fontSize:22}}>G</span>
+            <div style={{background:'#f97316',color:'#fff',borderRadius:'50%',width:22,height:22,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,fontWeight:900,margin:'0 2px'}}>&amp;</div>
+            <span style={{color:'#fff',fontWeight:900,fontSize:22}}>B</span>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2">
-              <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center"><User size={14} className="text-white"/></div>
-              <span className="text-white text-xs font-bold">{appUser?.name || 'Usuario'}</span>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,background:'rgba(255,255,255,0.08)',borderRadius:12,padding:'7px 14px'}}>
+              <div style={{width:28,height:28,borderRadius:'50%',background:'rgba(255,255,255,0.15)',display:'flex',alignItems:'center',justifyContent:'center'}}><User size={14} style={{color:'#fff'}}/></div>
+              <span style={{color:'#fff',fontSize:13,fontWeight:700}}>{appUser?.name||'Usuario'}</span>
             </div>
-            <button onClick={async()=>{ try{ if(appUser?.role!=='Master'){ await deleteDoc(getDocRef('activeSessions', appUser.username)); } }catch(e){} try{ await signOut(auth);}catch(e){} setAppUser(null); }}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-black text-red-400 hover:text-white hover:bg-red-500/30 rounded-xl transition-all border border-red-500/30">
-              <LogOut size={14}/> <span>Salir</span>
+            <button onClick={async()=>{try{if(appUser?.role!=='Master'){await deleteDoc(getDocRef('activeSessions',appUser.username));}}catch(e){}try{await signOut(auth);}catch(e){}setAppUser(null);}}
+              style={{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',border:'1px solid rgba(239,68,68,0.35)',background:'transparent',color:'#f87171',borderRadius:12,fontSize:13,fontWeight:700,cursor:'pointer'}}>
+              <LogOut size={14}/> Salir
             </button>
           </div>
         </header>
 
-        {/* CONTENIDO CENTRAL */}
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center px-4 pt-20 pb-10">
-          <div className="text-center mb-8">
-            <h2 className="text-orange-400 text-xs sm:text-sm font-bold uppercase tracking-[0.25em] mb-2">Sistema ERP — Servicios Jiret G&amp;B</h2>
-            <h1 className="text-white text-2xl sm:text-4xl font-black uppercase tracking-wider">Seleccione un Portal</h1>
-            <div className="w-16 h-1 bg-orange-500 mx-auto mt-3 rounded-full"/>
-            <p className="text-white/50 text-xs sm:text-sm mt-3">Bienvenido, <span className="text-white font-bold">{appUser?.name || 'Usuario'}</span>. Elija el área de trabajo.</p>
+        {/* BODY */}
+        <div style={{position:'relative',zIndex:10,flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'32px 20px 24px'}}>
+
+          {/* Título */}
+          <div style={{textAlign:'center',marginBottom:36}}>
+            <div style={{color:'#f97316',fontSize:11,fontWeight:700,letterSpacing:'0.3em',textTransform:'uppercase',marginBottom:10}}>Sistema ERP — Servicios Jiret G&amp;B</div>
+            <h1 style={{color:'#fff',fontSize:32,fontWeight:900,textTransform:'uppercase',letterSpacing:'0.06em',margin:0,lineHeight:1.1}}>Seleccione un Portal</h1>
+            <div style={{width:60,height:3,background:'#f97316',borderRadius:2,margin:'12px auto 14px'}}/>
+            <p style={{color:'rgba(255,255,255,0.55)',fontSize:13,margin:0}}>Bienvenido, <span style={{color:'#fff',fontWeight:700}}>{appUser?.name||'Usuario'}</span>. Elija el área de trabajo.</p>
           </div>
 
-          {portalDenied && (
-            <div className="mb-6 flex items-center gap-3 px-5 py-3 rounded-2xl animate-in fade-in" style={{background:'rgba(239,68,68,0.15)',border:'1px solid rgba(239,68,68,0.4)'}}>
-              <Lock size={18} className="text-red-300 flex-shrink-0"/>
-              <span className="text-red-200 text-xs sm:text-sm font-bold">No posee permiso para acceder al portal <b className="text-white">{portalDenied}</b>. Solicite acceso a un administrador.</span>
-              <button onClick={()=>setPortalDenied('')} className="ml-auto text-red-200 hover:text-white"><X size={16}/></button>
+          {/* Alerta acceso denegado */}
+          {portalDenied&&(
+            <div style={{marginBottom:20,display:'flex',alignItems:'center',gap:10,padding:'10px 18px',borderRadius:14,background:'rgba(239,68,68,0.15)',border:'1px solid rgba(239,68,68,0.4)',maxWidth:600,width:'100%'}}>
+              <Lock size={16} style={{color:'#fca5a5',flexShrink:0}}/>
+              <span style={{color:'#fecaca',fontSize:12,fontWeight:600}}>Sin permiso para <b style={{color:'#fff'}}>{portalDenied}</b>. Solicite acceso a un administrador.</span>
+              <button onClick={()=>setPortalDenied('')} style={{marginLeft:'auto',background:'none',border:'none',color:'#fca5a5',cursor:'pointer',padding:2}}><X size={15}/></button>
             </div>
           )}
-          <div className="w-full" style={{maxWidth:1000}}>
-            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(min(100%,260px),1fr))', gap:20}}>
-              {PORTALES.map(p => {
-                const allowed = hasPortal(p.id);
-                return (
-                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else if(p.id==='vendedores_portal') { setActiveTab('home'); setVentasView('cotizaciones'); } else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
-                  style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
-                    border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
-                    cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
-                  onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.boxShadow=allowed?`0 14px 36px ${p.color}44`:'0 8px 22px rgba(0,0,0,0.18)';}}
-                  onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 24px rgba(0,0,0,0.22)';}}>
-                  {!allowed && <div style={{position:'absolute',top:14,right:14,display:'flex',alignItems:'center',gap:4,background:'rgba(0,0,0,0.08)',borderRadius:8,padding:'4px 8px'}}><Lock size={12} style={{color:'#9ca3af'}}/><span style={{fontSize:'0.6rem',fontWeight:800,color:'#9ca3af',textTransform:'uppercase'}}>Sin acceso</span></div>}
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'flex-start',height:76,marginBottom:14,filter:allowed?'none':'grayscale(0.6)',opacity:allowed?1:0.6}}>
-                    {p.icon}
+
+          {/* Grilla de portales — 3 columnas fijas, Configuración centrada */}
+          {(()=>{
+            const allowed = PORTALES.map(p=>({...p,ok:hasPortal(p.id)}));
+            const main = allowed.filter(p=>p.id!=='configuracion_portal');
+            const config = allowed.find(p=>p.id==='configuracion_portal');
+            const Card = ({p}) => (
+              <button onClick={()=>{if(p.ok){setPortalDenied('');clearAllReports();setSelectedPortal(p.id);if(p.id==='resena_portal')setActiveTab('resena');else if(p.id==='brochure_portal'){setActiveTab('resena');setResenaTab('catalogo');}else if(p.id==='vendedores_portal'){setActiveTab('home');setVentasView('cotizaciones');}else setActiveTab('home');}else setPortalDenied(p.title);}}
+                style={{textAlign:'left',position:'relative',background:p.ok?'#ffffff':'rgba(255,255,255,0.55)',border:'none',borderLeft:`5px solid ${p.ok?p.color:'#9ca3af'}`,borderRadius:16,padding:'22px 20px',cursor:'pointer',color:p.ok?'#111':'#6b7280',opacity:p.ok?1:0.7,transition:'transform .18s,box-shadow .18s',boxShadow:'0 4px 24px rgba(0,0,0,0.28)',width:'100%'}}
+                onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-5px)';e.currentTarget.style.boxShadow=p.ok?`0 16px 40px ${p.color}55`:'0 8px 24px rgba(0,0,0,0.2)';}}
+                onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.boxShadow='0 4px 24px rgba(0,0,0,0.28)';}}>
+                {!p.ok&&<div style={{position:'absolute',top:12,right:12,display:'flex',alignItems:'center',gap:3,background:'rgba(0,0,0,0.07)',borderRadius:8,padding:'3px 8px'}}><Lock size={10} style={{color:'#9ca3af'}}/><span style={{fontSize:'0.55rem',fontWeight:800,color:'#9ca3af',textTransform:'uppercase'}}>Sin acceso</span></div>}
+                <div style={{height:68,display:'flex',alignItems:'center',marginBottom:12,filter:p.ok?'none':'grayscale(0.5)',opacity:p.ok?1:0.65}}>{p.icon}</div>
+                <h3 style={{fontSize:'1.05rem',fontWeight:900,margin:0,letterSpacing:'0.04em',color:p.ok?'#111827':'#9ca3af'}}>{p.title}</h3>
+                <p style={{fontSize:'0.76rem',color:'#6b7280',margin:'6px 0 14px',lineHeight:1.5,minHeight:34}}>{p.desc}</p>
+                <div style={{display:'flex',alignItems:'center',gap:6,color:p.ok?p.color:'#9ca3af',fontWeight:900,fontSize:'0.75rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                  {p.ok?<>ENTRAR AL PORTAL <ArrowRight size={14}/></>:<><Lock size={12}/> ACCESO RESTRINGIDO</>}
+                </div>
+              </button>
+            );
+            return (
+              <div style={{width:'100%',maxWidth:980}}>
+                {/* Fila principal: hasta 3 por fila */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:18,marginBottom:18}}>
+                  {main.map(p=><Card key={p.id} p={p}/>)}
+                </div>
+                {/* Configuración centrada */}
+                {config&&(
+                  <div style={{display:'flex',justifyContent:'center'}}>
+                    <div style={{width:'calc(33.33% - 12px)'}}><Card p={config}/></div>
                   </div>
-                  <h3 style={{fontSize:'1.15rem',fontWeight:900,margin:0,letterSpacing:'0.05em',color:allowed?'#111827':'#9ca3af'}}>{p.title}</h3>
-                  <p style={{fontSize:'0.78rem',color:'#6b7280',margin:'8px 0 18px',lineHeight:1.5,minHeight:38}}>{p.desc}</p>
-                  <div style={{display:'flex',alignItems:'center',gap:8,color:allowed?p.color:'#9ca3af',fontWeight:900,fontSize:'0.8rem',textTransform:'uppercase',letterSpacing:'0.06em'}}>
-                    {allowed ? <>ENTRAR AL PORTAL <ArrowRight size={16}/></> : <><Lock size={14}/> ACCESO RESTRINGIDO</>}
-                  </div>
-                </button>
-                );
-              })}
-            </div>
-          </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* FOOTER */}
-        <footer className="absolute bottom-0 left-0 w-full z-20 flex justify-center items-center px-8 py-2" style={{background:'rgba(18,18,18,0.85)',borderTop:'1px solid rgba(255,255,255,0.1)'}}>
-          <span className="text-white/25 text-[9px] uppercase tracking-[0.3em]">SUPPLY G&amp;B — SISTEMA ERP — SERVICIOS JIRET</span>
+        <footer style={{position:'relative',zIndex:10,textAlign:'center',padding:'8px',background:'rgba(10,10,10,0.88)',borderTop:'1px solid rgba(255,255,255,0.07)',flexShrink:0}}>
+          <span style={{color:'rgba(255,255,255,0.2)',fontSize:9,letterSpacing:'0.3em',textTransform:'uppercase'}}>SUPPLY G&amp;B — SISTEMA ERP — SERVICIOS JIRET</span>
         </footer>
       </div>
     );
