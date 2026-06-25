@@ -754,7 +754,7 @@ function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '', productoDestinoId: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', nroControl: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '', neOrigen: '',
+  const initialInvoiceForm = { fecha: getTodayDate(), fechaFactura: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', nroControl: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '', neOrigen: '',
     baseGravableBs: '', ivaBs: '', totalBs: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
   // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
@@ -9950,8 +9950,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       className="border-2 border-green-200 rounded-xl px-3 py-1.5 text-xs font-black outline-none focus:border-green-400 bg-white">
                       <option value="general">📊 General (Todo)</option>
                       {(()=>{
-                        const yrs=[...new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,4)).filter(y=>y&&y.length===4))].sort().reverse();
-                        const months=[...new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))].sort().reverse();
+                        const yrs=[...new Set((notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>(ne.fecha||'').substring(0,4)).filter(y=>y&&y.length===4))].sort().reverse();
+                        const months=[...new Set((notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>(ne.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))].sort().reverse();
                         const mL=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
                         return <>
                           {yrs.map(y=><optgroup key={`sg-${y}`} label={`── ${y} ──`}>
@@ -10833,7 +10833,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -10946,7 +10946,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
-                rows.push({fecha:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -12457,7 +12457,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
             // IMPORTANTE: la fecha de la factura es HOY (fecha de emisión de la factura),
             // NO la fecha de la NE. La NE conserva su fecha original intacta.
-            setNewInvoiceForm(f=>({...f,fecha:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
+            setNewInvoiceForm(f=>({...f,fecha:ne.fecha||getTodayDate(),fechaFactura:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
             setVentasView('facturacion');
           };
           const neAnios=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse();
@@ -13168,8 +13168,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <h3 className="text-sm font-black uppercase text-black tracking-widest">{editingInvoiceId ? `Editando Factura: ${editingInvoiceId}` : 'Registrar Factura de Venta'}</h3>
                       <div className="flex items-center gap-4">
                         <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📅 Fecha de Factura</label>
-                          <input type="date" value={newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fecha: e.target.value})} className="border-2 border-orange-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">📦 Fecha de Nota</label>
+                          <input type="date" value={newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fecha: e.target.value})} className="border-2 border-blue-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500 bg-blue-50" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">🧾 Fecha de Factura</label>
+                          <input type="date" value={newInvoiceForm.fechaFactura||newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fechaFactura: e.target.value})} className="border-2 border-orange-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
                         </div>
                         <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
                         {newInvoiceForm.neOrigen && <span className="bg-blue-100 text-blue-800 px-3 py-2 rounded-xl text-[10px] font-black">NE: {newInvoiceForm.neOrigen}</span>}
@@ -15660,11 +15664,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           // ── Facturas con nroFiscal en el período ──────────────────────────────
           const factsPeriodo = (invoices||[]).filter(inv=>{
             if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-            const f=inv.fecha||''; if(f<periodoDesde||f>periodoHasta) return false;
+            const f=inv.fechaFactura||inv.fecha||''; if(f<periodoDesde||f>periodoHasta) return false;
             if(libroFiltFact&&!(inv.nroFiscal||'').includes(libroFiltFact.toUpperCase())&&!(inv.nroControl||'').includes(libroFiltFact.toUpperCase())&&!(inv.documento||'').toUpperCase().includes(libroFiltFact.toUpperCase())) return false;
             if(libroFiltCliente&&!(inv.clientName||'').toUpperCase().includes(libroFiltCliente.toUpperCase())&&!(inv.clientRif||'').includes(libroFiltCliente.toUpperCase())) return false;
             return true;
-          }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+          }).sort((a,b)=>(a.fechaFactura||a.fecha||'').localeCompare(b.fechaFactura||b.fecha||''));
 
           // ── Retenciones del período — filtra por rango de fechas del período ──
           const retPeriodo=(retenciones||[]).filter(r=>{
@@ -15683,7 +15687,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const ivaAmt=parseNum(inv.iva||0)||(inv.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0);
             const total=parseNum(inv.total||0)||base+ivaAmt;
             const ret=retPeriodo.find(r=>r.facturaId===inv.id);
-            rows.push({seq:seq++,fecha:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
+            rows.push({seq:seq++,fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
               totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, alicuota:inv.aplicaIva==='SI'?'16%':'0%',
               ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
@@ -16757,10 +16761,8 @@ ${resumenHtml}
 
       // Meses únicos — protegido contra valores undefined/null
       const uniqueMonths = [...new Set([
-        // Meses con costos operativos
         ...(opCosts || []).map(c => c?.month || (c?.date ? String(c.date).substring(0, 7) : null)).filter(Boolean),
-        // Meses con facturas (invoices) — misma fuente que Estado Financiero
-        ...(invoices||[]).map(inv=>(inv.fecha||'').substring(0,7)).filter(ym=>ym && ym.length===7),
+        ...(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>(ne.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7),
       ])].sort().reverse();
 
       // Nombres de mes para mostrar
@@ -17011,17 +17013,17 @@ ${resumenHtml}
                         <tr><td colSpan="4" className="p-8 text-center text-gray-400 font-bold uppercase">Sin costos registrados</td></tr>
                       ) : uniqueMonths.filter(ym=>costFilterMonth==='TODOS'||ym===costFilterMonth).map(ym => {
                         const costoMes = (opCosts||[]).filter(c => (c?.month||'') === ym).reduce((s,c) => s + parseNum(c.amount), 0);
-                        // Misma fuente que Estado Financiero: invoices (maquilaInvoices INVO-XXXX)
-                        const ingresosMes = (invoices||[])
-                          .filter(inv => (inv.fecha||'').startsWith(ym))
-                          .reduce((s,inv) => {
-                            const items = inv.itemsFacturados||[];
-                            if(items.length > 0) {
-                              const sub = items.reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||it.precio||0),0);
-                              return s + (sub > 0 ? sub : parseNum(inv.montoBase||0));
+                        // Ingresos desde Notas de Entrega (misma fuente que Estado Financiero)
+                        const ingresosMes = (notasEntrega||[])
+                          .filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(ym))
+                          .reduce((s,ne) => {
+                            const items = ne.items||[];
+                            if(items.length>0){
+                              const sub=items.reduce((si,it)=>si+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0);
+                              return s+(sub>0?sub:parseNum(ne.montoBase||ne.total||0));
                             }
-                            return s + parseNum(inv.montoBase||inv.total||0);
-                          }, 0);
+                            return s+parseNum(ne.montoBase||ne.total||0);
+                          },0);
                         const pct = ingresosMes > 0 ? (costoMes / ingresosMes * 100) : 0;
                         return (
                           <tr key={ym} className="hover:bg-gray-50 transition-colors">
@@ -23213,24 +23215,21 @@ ${resumenHtml}
              d.includes('TERMO') || d.includes('TERMOENCOGIBLE');
     };
 
-    // ── INGRESOS y COSTOS: misma lógica que "Productos Vendidos" ──────────────
-    // Lee TODAS las facturas del período con itemsFacturados de bolsas/termoencogibles
-    const facturasDelPeriodo = (invoices||[]).filter(inv => {
-      const d = inv.fecha || '';
-      return d.startsWith(ym);
-    });
+    // ── INGRESOS y COSTOS: desde Notas de Entrega (fuente de verdad) ──────────
+    // La NE es la venta real — se usa su fecha y sus ítems
+    const nesDelPeriodo = (notasEntrega||[]).filter(ne =>
+      ne.status !== 'ANULADA' && (ne.fecha||'').startsWith(ym)
+    );
 
     const cogsRows = [];
     let totalCostoProd = 0;
     let totalIngresosItems = 0;
     const facturasContadas = new Set();
 
-    facturasDelPeriodo.forEach(inv => {
-      const allItems = (inv.itemsFacturados||[]).length > 0
-        ? inv.itemsFacturados
-        : (inv.fgId ? [{ fgId: inv.fgId, cantidad: parseNum(inv.fgCantidad||0), desc: '', costoUnit: 0, precio: parseNum(inv.precioUnit||0) }] : []);
+    nesDelPeriodo.forEach(ne => {
+      const allItems = (ne.items||[]).length > 0 ? ne.items : [];
+      let neTieneItemsValidos = false;
 
-      let invTieneItemsValidos = false;
       allItems.forEach(it => {
         const code = it.invCode || it.fgId || it.codigo || '';
         const desc = it.desc || it.descripcion || '';
@@ -23238,15 +23237,14 @@ ${resumenHtml}
         const cant = parseNum(it.cantidad || it.qty || 0);
         if (cant <= 0) return;
 
-        // Ingreso del ítem
+        // Ingreso
         const precioUnit = parseNum(it.precioUnit || it.precio || 0);
         const subTotal = precioUnit > 0 ? precioUnit * cant : 0;
         totalIngresosItems += subTotal;
-        invTieneItemsValidos = true;
+        neTieneItemsValidos = true;
 
-        // Costo congelado — EXACTA misma cadena que Prod. Vendidos (usa fgId limpio)
+        // Costo del ítem
         let costoU = parseNum(it.costoUnit || 0);
-        // fgId limpio (sin sufijo ___uid): igual que como lo usa productos_vendidos
         const fgIdLimpio = it.fgId || (it.invCode||'').split('___')[0] || code.split('___')[0];
         const fgRec = fgIdLimpio ? (finishedGoodsInventory||[]).find(f => f.id === fgIdLimpio) : null;
         if (costoU <= 0 && fgRec) {
@@ -23256,7 +23254,7 @@ ${resumenHtml}
         if (costoU <= 0 && fgIdLimpio) {
           const km = (invMovements||[]).find(m =>
             m.itemId === `FG::${fgIdLimpio}` && m.type === 'SALIDA' &&
-            (m.docRef||'').includes(inv.documento||inv.id||'') && parseNum(m.unitCost||0) > 0
+            (m.docRef||'').includes(ne.documento||ne.id||'') && parseNum(m.unitCost||0) > 0
           );
           if (km) costoU = parseNum(km.unitCost||0);
         }
@@ -23274,50 +23272,46 @@ ${resumenHtml}
         totalCostoProd += costoTotal2;
 
         cogsRows.push({
-          opId: inv.opAsignada || '—',
-          opNum: String(inv.opAsignada||'').replace('OP-','').padStart(5,'0'),
+          opId: ne.opRelacionada || ne.opId || ne.opAsignada || '—',
+          opNum: String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
           producto: desc || code,
-          cliente: inv.clientName || inv.clientRif || '',
+          cliente: ne.clientName || ne.clientRif || '',
           cantVendida: cant,
           unidad: it.unidad || it.unit || 'und',
           costoUnit: costoU,
           costoTotal: costoTotal2,
           esTermo: it.esTermo || false,
-          factura: inv.documento || inv.id,
-          nroFiscal: inv.nroFiscal || '',
-          fecha: inv.fecha || '',
-          invId: inv.id,
+          factura: ne.documento || ne.id,
+          nroFiscal: ne.nroFiscal || ne.facturaId || '',
+          fecha: ne.fecha || '',
+          invId: ne.id,
           itemCode: code,
           cuentaIngreso: '4.1.01.01.002',
-          cuentaIngresoNombre: 'Ingresos por Producción (Bolsas / Termoencogibles)',
+          cuentaIngresoNombre: 'Ingresos por Ventas (Notas de Entrega)',
           cuentaCosto: '5.1.01.01.002',
           cuentaCostoNombre: 'Costos de Producción'
         });
       });
 
-      // Si la factura tiene ítems válidos, contarla para ingresos
-      // (si no hubo ítems válidos pero sí montoBase con OP, incluir el montoBase)
-      if (!invTieneItemsValidos && inv.opAsignada) {
-        const base = parseNum(inv.montoBase || 0);
+      // Si NE tiene montoBase pero sin ítems desglosados con precio
+      if (!neTieneItemsValidos) {
+        const base = parseNum(ne.montoBase || ne.total || 0);
         if (base > 0) {
           totalIngresosItems += base;
-          facturasContadas.add(inv.id);
+          facturasContadas.add(ne.id);
         }
       }
     });
 
-    // Ingresos: suma de (precioUnit × cantidad) de ítems válidos
-    // Si alguna factura no tiene ítems desglosados, usar montoBase
-    // Recalcular desde ítems es más preciso
     const totalIngresosNE = totalIngresosItems;
-    const totalIngresosInv = 0; // ya incluido arriba
+    const totalIngresosInv = 0;
 
-    // NC/ND del período — ajustan ingresos
+    // NC/ND del período
     const notasPeriodo = (notasVentaCD||[]).filter(nc => (nc.fecha||'').startsWith(ym));
     const ajusteNotasUsd = notasPeriodo.reduce((s,nc) => {
+      const ne = (notasEntrega||[]).find(e=>e.id===nc.neId);
       const inv = (invoices||[]).find(i=>i.id===nc.facturaId);
-      const ne  = (notasEntrega||[]).find(e=>e.id===nc.neId);
-      const tasaNC = parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+      const tasaNC = parseNum(nc.tasaFactura||ne?.tasa||inv?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
       const baseImpBs = parseNum(nc.monto||0);
       const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : baseImpBs;
       return s + (nc.tipo==='NC' ? -baseUsd : baseUsd);
@@ -23325,18 +23319,18 @@ ${resumenHtml}
 
     const totalIngresos = totalIngresosNE + totalIngresosInv + ajusteNotasUsd;
 
-    // Facturasperiodo para el desglose del PDF (mostrar en INGRESOS colapsable)
-    const facturasperiodo = facturasDelPeriodo
-      .filter(inv => (inv.itemsFacturados||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'')))
-      .map(inv => ({
-        ...inv,
-        documento: inv.documento || inv.id,
-        clientName: inv.clientName || '',
-        montoBase: parseNum(inv.montoBase || 0),
+    // Desglose de NEs para mostrar en INGRESOS colapsable
+    const facturasperiodo = nesDelPeriodo
+      .filter(ne => (ne.items||[]).some(it => esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'', it.desc||'')) || parseNum(ne.montoBase||ne.total||0)>0)
+      .map(ne => ({
+        ...ne,
+        documento: ne.documento || ne.id,
+        clientName: ne.clientName || '',
+        montoBase: parseNum(ne.montoBase || ne.total || 0),
         isNota: false
       }));
 
-    // Costos operativos del periodo, agrupados por cuenta contable
+        // Costos operativos del periodo, agrupados por cuenta contable
     const costosPeriodo = (opCosts || []).filter(c => (c.month || (c.date||'').substring(0,7) || '').startsWith(ym));
 
     const movsProd = (invMovements || []).filter(m =>
@@ -23398,9 +23392,9 @@ ${resumenHtml}
     // Build list of year-months to aggregate
     const getAggregateYMs = () => {
       if(erMesesExtra.includes('ALL')) {
-        // General: all unique year-months from invoices and costs
+        // General: all unique year-months from notasEntrega and costs
         const allYMs = new Set();
-        (invoices||[]).forEach(inv => { if(inv.fecha) allYMs.add(inv.fecha.substring(0,7)); });
+        (notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').forEach(ne => { if(ne.fecha) allYMs.add(ne.fecha.substring(0,7)); });
         (opCosts||[]).forEach(c => { if(c.fecha||c.month) allYMs.add((c.fecha||c.month||'').substring(0,7)); });
         return allYMs.size > 0 ? [...allYMs] : [ymA];
       }
