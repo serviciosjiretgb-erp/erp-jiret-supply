@@ -24260,23 +24260,36 @@ ${resumenHtml}
     const currentYM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const prevDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
     const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
-    const mesActual = safeUnifiedAll.filter(i=>(i.fecha||'').startsWith(currentYM)).reduce((s,i)=>s+parseNum(i.montoBase||0),0);
-    const mesAnterior = safeUnifiedAll.filter(i=>(i.fecha||'').startsWith(prevYM)).reduce((s,i)=>s+parseNum(i.montoBase||0),0);
-    const crecimiento = mesAnterior > 0 ? ((mesActual-mesAnterior)/mesAnterior*100) : 0;
-    const subioMes = mesActual >= mesAnterior;
 
-    // ── KPI Totals ──
-    const totalIngresos = safeInvoices.reduce((s,i)=>s+parseNum(i.montoBase||0),0);
-    // Costos operativos + costo de ventas (desde NEs e invoices directas)
-    const costosOp = safeOpCosts.reduce((s,c)=>s+parseNum(c.amount||c.monto||0),0);
-    const costoVentas = safeInvoicesRaw.reduce((s,inv)=>{
-      // Para NEs: sumar de items; para invoices: sumar de itemsFacturados
-      const itemsCostNE = (inv.items||[]).reduce((ss,it)=>ss+parseNum(it.costoUnit||0)*parseNum(it.cantidad||0),0);
-      const itemsCostInv = (inv.itemsFacturados||[]).reduce((ss,it)=>ss+parseNum(it.costoTotal||0),0);
-      return s + (itemsCostNE > 0 ? itemsCostNE : itemsCostInv);
-    },0);
-    const totalCostos = costosOp + costoVentas;
-    const margen = totalIngresos - totalCostos;
+    // ── KPI Totals — usar calcEstadoData (misma fuente que Estado Financiero) ──
+    const _kpiData = (() => {
+      try {
+        if(kpiPeriod === 1) {
+          return calcEstadoData(activeMonth);
+        } else {
+          const results = months.map(m => { try { return calcEstadoData(m.ym); } catch(e) { return null; } }).filter(Boolean);
+          return {
+            totalIngresos:  results.reduce((s,r)=>s+r.totalIngresos,0),
+            totalCostoProd: results.reduce((s,r)=>s+r.totalCostoProd,0),
+            totalCostosOp:  results.reduce((s,r)=>s+r.totalCostosOp,0),
+          };
+        }
+      } catch(e) { return { totalIngresos:0, totalCostoProd:0, totalCostosOp:0 }; }
+    })();
+    const totalIngresos = _kpiData.totalIngresos;
+    const costoVentas   = _kpiData.totalCostoProd;
+    const costosOp      = _kpiData.totalCostosOp;
+    const totalCostos   = costoVentas + costosOp;
+    const margen        = totalIngresos - totalCostos;
+
+    // Mes actual vs anterior (variación %)
+    const _kpiActual   = (() => { try { return calcEstadoData(currentYM); } catch(e) { return {totalIngresos:0}; } })();
+    const _kpiAnterior = (() => { try { return calcEstadoData(prevYM);    } catch(e) { return {totalIngresos:0}; } })();
+    const mesActual    = _kpiActual.totalIngresos;
+    const mesAnterior  = _kpiAnterior.totalIngresos;
+    const crecimiento  = mesAnterior > 0 ? ((mesActual-mesAnterior)/mesAnterior*100) : 0;
+    const subioMes     = mesActual >= mesAnterior;
+
     const opsCompletadas = safeRequirements.filter(r=>r.status==='COMPLETADO').length;
     const opsProceso = safeRequirements.filter(r=>r.status==='EN PROCESO').length;
 
