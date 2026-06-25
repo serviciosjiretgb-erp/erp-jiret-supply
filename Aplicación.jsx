@@ -23348,17 +23348,25 @@ ${resumenHtml}
         const desc = it.desc || it.descripcion || '';
         const tp   = it.tipoProducto || '';
         if (!esBolsaOrTermo(code, desc, tp)) return;
-        const cant = parseNum(it.cantidad || it.qty || 0);
-        if (cant <= 0) return;
 
-        // Ingreso
         const precioUnit = parseNum(it.precioUnit || it.precio || 0);
-        const subTotal = precioUnit > 0 ? precioUnit * cant : 0;
+        const costoUnit0 = parseNum(it.costoUnit || 0);
+
+        // Usar warehouseQtys igual que Productos Vendidos — captura cantidad real por almacén
+        const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length > 0
+          ? it.warehouseQtys : null;
+        const cantTotal = wqty
+          ? Object.values(wqty).reduce((s,q)=>s+parseNum(q||0),0)
+          : parseNum(it.cantidad || it.qty || 0);
+
+        if (cantTotal <= 0) return;
+
+        const subTotal = precioUnit > 0 ? precioUnit * cantTotal : 0;
         totalIngresosItems += subTotal;
         neTieneItemsValidos = true;
 
         // Costo del ítem
-        let costoU = parseNum(it.costoUnit || 0);
+        let costoU = costoUnit0;
         const fgIdLimpio = it.fgId || (it.invCode||'').split('___')[0] || code.split('___')[0];
         const fgRec = fgIdLimpio ? (finishedGoodsInventory||[]).find(f => f.id === fgIdLimpio) : null;
         if (costoU <= 0 && fgRec) {
@@ -23382,7 +23390,7 @@ ${resumenHtml}
           costoU = parseNum(fgRec.costoUnitario || fgRec.costoUnitarioMillar || 0);
         }
 
-        const costoTotal2 = costoU * cant;
+        const costoTotal2 = costoU * cantTotal;
         totalCostoProd += costoTotal2;
 
         cogsRows.push({
@@ -23390,11 +23398,11 @@ ${resumenHtml}
           opNum: String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
           producto: desc || code,
           cliente: ne.clientName || ne.clientRif || '',
-          cantVendida: cant,
+          cantVendida: cantTotal,
           unidad: it.unidad || it.unit || 'und',
           costoUnit: costoU,
           costoTotal: costoTotal2,
-          esTermo: it.esTermo || false,
+          esTermo: it.esTermo || (tp==='TERMOENCOGIBLE') || false,
           factura: ne.documento || ne.id,
           nroFiscal: ne.nroFiscal || ne.facturaId || '',
           fecha: ne.fecha || '',
@@ -23433,7 +23441,11 @@ ${resumenHtml}
         ...ne,
         documento: ne.documento || ne.id,
         clientName: ne.clientName || '',
-        montoBase: (ne.items||[]).filter(it=>esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'',it.desc||'',it.tipoProducto||'')).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0),
+        montoBase: (ne.items||[]).filter(it=>esBolsaOrTermo(it.invCode||it.fgId||it.codigo||'',it.desc||'',it.tipoProducto||'')).reduce((s,it)=>{
+          const wq=it.warehouseQtys&&Object.keys(it.warehouseQtys).length>0?it.warehouseQtys:null;
+          const cant=wq?Object.values(wq).reduce((a,q)=>a+parseNum(q||0),0):parseNum(it.cantidad||0);
+          return s+cant*parseNum(it.precioUnit||0);
+        },0),
         isNota: false
       }));
 
