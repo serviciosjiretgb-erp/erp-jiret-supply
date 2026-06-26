@@ -11148,7 +11148,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           nesMes.forEach(ne=>{ const v=(ne.vendedor||'—').toUpperCase(); porVend[v]=(porVend[v]||0)+parseNum(ne.montoBase||0); });
           factsDirect.forEach(inv=>{ const v=(inv.vendedor||'—').toUpperCase(); porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0); });
           const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
-          const totalVentas = vendArr.reduce((s,v)=>s+v.monto,0);
+          const totalVentasBruto = vendArr.reduce((s,v)=>s+v.monto,0);
+
+          // Ajuste NC del período
+          const ajusteNCDash = (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).reduce((s,nc)=>{
+            const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+            const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
+            return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
+          },0);
+          const totalVentas = totalVentasBruto + ajusteNCDash;
           const mejorVend = vendArr[0];
           const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
           const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
@@ -14223,6 +14231,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               rows.push({fecha:v.fecha,cliente:v.cliente,vendedor:v.vendedor,loc:v.localidad,prod:pk,cant:it.cant,und:it.unidad,pu:it.precioUnit,sub:it.subtotal,tipo:it.tipo});
             });
           });
+
+          // Ajuste NC para el período filtrado
+          const ajusteNCGraf = (notasVentaCD||[]).filter(nc=>{
+            if(fVF.anio && !(nc.fecha||'').startsWith(fVF.anio)) return false;
+            if(fVF.mes && (nc.fecha||'').substring(5,7) !== fVF.mes) return false;
+            return true;
+          }).reduce((s,nc)=>{
+            const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+            const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
+            return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
+          },0);
+          totV = totV + ajusteNCGraf;
 
           const t10P=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,10);
           const t10C=Object.entries(byCli).sort((a,b)=>b[1]-a[1]).slice(0,10);
