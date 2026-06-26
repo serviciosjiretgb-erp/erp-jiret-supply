@@ -16349,8 +16349,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const sNE=getSaldoEC(ne);
                 const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC));
                 const ncsNE=(notasVentaCD||[]).filter(n=>{const a=n.neId||'',b2=n.neOrigen||'';return a===ne.id||b2===ne.id||a===ne.documento||b2===ne.documento;});
-                const retsNE=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
-                const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||(ne.facturaId&&inv.id===ne.facturaId));
+                const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                const retsNE=(()=>{
+                  const factKeys=[invV?.id,invV?.nroFiscal,invV?.documento,ne.facturaId,ne.nroFiscal,ne.id,ne.documento].filter(Boolean);
+                  const seen=new Set();const result=[];
+                  for(const r of (retenciones||[])){
+                    const rk=r.nroComprobante||r.nroRetencion||r.id;
+                    if(seen.has(rk)) continue;
+                    if(factKeys.some(k=>r.facturaId===k||r.neId===k||r.neOrigen===k)){seen.add(rk);result.push(r);}
+                  }
+                  return result;
+                })();
                 const bg=ni%2===0?'#fff':'#f8fafc';
                 body+=`<tr style="background:${bg};border-bottom:1px solid #f1f5f9">
                   <td style="padding:5px 8px;font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
@@ -16455,8 +16464,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const sNE=getSaldoEC(ne);
                 const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC));
                 const ncsNE=(notasVentaCD||[]).filter(n=>{const a=n.neId||'',b2=n.neOrigen||'';return a===ne.id||b2===ne.id||a===ne.documento||b2===ne.documento;});
-                const retsNE=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
-                const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||(ne.facturaId&&inv.id===ne.facturaId));
+                const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                const retsNE=(()=>{
+                  const factKeys=[invV?.id,invV?.nroFiscal,invV?.documento,ne.facturaId,ne.nroFiscal,ne.id,ne.documento].filter(Boolean);
+                  const seen=new Set();const result=[];
+                  for(const r of (retenciones||[])){
+                    const rk=r.nroComprobante||r.nroRetencion||r.id;
+                    if(seen.has(rk)) continue;
+                    if(factKeys.some(k=>r.facturaId===k||r.neId===k||r.neOrigen===k)){seen.add(rk);result.push(r);}
+                  }
+                  return result;
+                })();
                 rows+=`<tr class="${ni%2===0?'':'alt'}"><td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td>${ne.fecha||'—'}</td><td>Nota Entrega</td><td>${(ne.items||[])[0]?.desc||'—'}</td><td style="text-align:right">$${formatNum(parseNum(ne.total||ne.montoBase||0))}</td><td>—</td><td>—</td><td style="text-align:right;font-weight:bold;color:${sNE<0.01?'#16a34a':'#dc2626'}">$${formatNum(sNE)}</td></tr>`;
                 if(invV){const bBs=parseNum(invV.baseGravableBs||invV.baseImponible||0);const ivaV=parseNum(invV.ivaBs||invV.montoIVA||0);const tV=parseNum(invV.tasa||0);rows+=`<tr class="fac"><td style="padding-left:16px;color:#4338ca;font-weight:bold">↳ Fac. ${invV.nroFiscal||invV.documento||'—'}</td><td style="color:#6366f1">${invV.fecha||'—'}</td><td>Fac. Fiscal</td><td style="color:#4338ca">${bBs>0?'Base Bs.'+formatNum(bBs):''}${ivaV>0?' IVA Bs.'+formatNum(ivaV):''}${tV>0?' Tasa '+formatNum(tV):''}</td><td colspan="4"></td></tr>`;}
                 ncsNE.forEach(nc=>{const t=parseNum(nc.tasaFactura||0)||tasaBCVec;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);rows+=`<tr class="nc"><td style="padding-left:16px;color:#7c3aed;font-weight:bold">↳ ${nc.tipo||'NC'} · ${nc.nroDocumento||'—'}</td><td style="color:#7c3aed">${nc.fecha||'—'}</td><td>Nota Crédito</td><td style="color:#9ca3af;font-style:italic">${nc.descripcion||'—'}${b>0?' · Bs.'+formatNum(b):''}</td><td>—</td><td style="text-align:right;color:#7c3aed;font-weight:bold">-$${formatNum(u)}</td><td>—</td><td>—</td></tr>`;});
@@ -16573,8 +16591,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoEC(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC));
                             const ncsNE=(notasVentaCD||[]).filter(n=>{const a=n.neId||'',b2=n.neOrigen||'';return a===ne.id||b2===ne.id||a===ne.documento||b2===ne.documento;});
-                            const retsNE=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
-                            const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||(ne.facturaId&&inv.id===ne.facturaId));
+                            const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                            const retsNE=(()=>{
+                              const factKeys=[invV?.id,invV?.nroFiscal,invV?.documento,ne.facturaId,ne.nroFiscal,ne.id,ne.documento].filter(Boolean);
+                              const seen=new Set();const result=[];
+                              for(const r of (retenciones||[])){
+                                const rk=r.nroComprobante||r.nroRetencion||r.id;
+                                if(seen.has(rk)) continue;
+                                if(factKeys.some(k=>r.facturaId===k||r.neId===k||r.neOrigen===k)){seen.add(rk);result.push(r);}
+                              }
+                              return result;
+                            })();
                             const saldado2=sNE<0.01;
                             const bg=ni%2===0?'bg-white':'bg-gray-50';
                             return(
