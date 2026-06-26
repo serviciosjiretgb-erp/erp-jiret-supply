@@ -17443,6 +17443,9 @@ ${resumenHtml}
                     </div>
                  </div>
                )}
+             </div>
+
+             <div className="lg:col-span-8 p-8 bg-white">
                  <div className="hidden pdf-header mb-8">
                    <ReportHeader />
                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">SIMULACIÓN DE PRODUCCIÓN Y COSTOS</h1>
