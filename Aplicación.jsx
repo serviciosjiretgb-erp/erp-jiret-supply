@@ -17360,34 +17360,35 @@ ${resumenHtml}
                  <div className="mt-4 bg-orange-50 p-4 rounded-xl border border-orange-200">
                     <h4 className="text-[10px] font-black text-orange-800 uppercase mb-3">Dimensiones para cálculo de Millar</h4>
 
-                    {/* Selector de producto desde catálogo */}
+                    {/* Selector de fórmula por categoría */}
                     <div className="mb-3">
-                      <label className="text-[9px] font-black text-orange-700 uppercase block mb-1">📦 Cargar desde Catálogo (opcional)</label>
+                      <label className="text-[9px] font-black text-orange-700 uppercase block mb-1">📋 Cargar desde Fórmulas</label>
                       <select
                         onChange={(e) => {
-                          const fgId = e.target.value;
-                          if(!fgId) return;
-                          const fg = (finishedGoodsInventory||[]).find(f=>f.id===fgId);
-                          if(!fg) return;
+                          const fId = e.target.value;
+                          if(!fId) return;
+                          const f = (formulas||[]).find(x=>x.id===fId);
+                          if(!f) return;
                           setCalcInputs(prev=>({
                             ...prev,
-                            ancho:   parseNum(fg.ancho||fg.anchoTotal||0),
-                            largo:   parseNum(fg.largo||0),
-                            fuelles: parseNum(fg.fuelles||fg.fuellesTotal||fg.fuelle||0),
-                            micras:  fg.micras||fg.espesor||'',
+                            ancho:   parseNum(f.ancho||0),
+                            largo:   parseNum(f.largo||0),
+                            fuelles: parseNum(f.fuelles||0),
+                            micras:  f.micras||'',
                           }));
                         }}
                         className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 bg-white text-gray-800">
-                        <option value="">— Seleccionar producto del catálogo —</option>
-                        {(finishedGoodsInventory||[])
-                          .filter(fg => (fg.tipoProducto||'').toUpperCase()==='BOLSAS' || /BOL|BOLSA/i.test(fg.producto||fg.categoria||''))
-                          .sort((a,b)=>(a.producto||a.categoria||'').localeCompare(b.producto||b.categoria||''))
-                          .map(fg=>(
-                            <option key={fg.id} value={fg.id}>
-                              {fg.producto||fg.categoria||fg.id}
-                              {fg.ancho?` · ${fg.ancho}×${fg.largo||0}cm`:''}
-                              {fg.micras?` · ${fg.micras}mic`:''}
-                              {fg.cliente?` · ${fg.cliente}`:''}
+                        <option value="">— Seleccionar categoría / fórmula —</option>
+                        {(formulas||[])
+                          .filter(f => !f.tipoProducto || f.tipoProducto==='BOLSAS')
+                          .sort((a,b)=>(a.categoria||'').localeCompare(b.categoria||''))
+                          .map(f=>(
+                            <option key={f.id} value={f.id}>
+                              {f.categoria||f.id}
+                              {f.ancho?` · A:${f.ancho}cm`:''}
+                              {f.fuelles&&parseNum(f.fuelles)>0?` F:${f.fuelles}cm`:''}
+                              {f.largo?` L:${f.largo}cm`:''}
+                              {f.micras?` · ${f.micras}mic`:''}
                             </option>
                           ))
                         }
@@ -17402,9 +17403,46 @@ ${resumenHtml}
                     </div>
                  </div>
                )}
-             </div>
 
-             <div className="lg:col-span-8 p-8 bg-white">
+               {calcInputs?.tipoProducto === 'TERMOENCOGIBLE' && (
+                 <div className="mt-4 bg-green-50 p-4 rounded-xl border border-green-200">
+                    <h4 className="text-[10px] font-black text-green-800 uppercase mb-3">Dimensiones Termoencogible</h4>
+                    {/* Selector de fórmula termoencogible */}
+                    <div className="mb-3">
+                      <label className="text-[9px] font-black text-green-700 uppercase block mb-1">📋 Cargar desde Fórmulas</label>
+                      <select
+                        onChange={(e) => {
+                          const fId = e.target.value;
+                          if(!fId) return;
+                          const f = (formulas||[]).find(x=>x.id===fId);
+                          if(!f) return;
+                          setCalcInputs(prev=>({
+                            ...prev,
+                            ancho:  parseNum(f.ancho||0),
+                            micras: f.micras||'',
+                          }));
+                        }}
+                        className="w-full border-2 border-green-300 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-green-500 bg-white text-gray-800">
+                        <option value="">— Seleccionar categoría / fórmula —</option>
+                        {(formulas||[])
+                          .filter(f => f.tipoProducto==='TERMOENCOGIBLE')
+                          .sort((a,b)=>(a.categoria||'').localeCompare(b.categoria||''))
+                          .map(f=>(
+                            <option key={f.id} value={f.id}>
+                              {f.categoria||f.id}
+                              {f.ancho?` · ${f.ancho}cm`:''}
+                              {f.micras?` · ${f.micras}mic`:''}
+                            </option>
+                          ))
+                        }
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className="text-[9px] font-bold text-green-700 uppercase">Ancho/Diámetro (cm)</label><input type="number" value={calcInputs?.ancho === 0 ? '' : calcInputs?.ancho} onChange={(e) => handleCalcChange('ancho', e.target.value)} className="w-full text-xs font-black text-center outline-none bg-white rounded p-2 border border-green-200 text-black" /></div>
+                      <div><label className="text-[9px] font-bold text-green-700 uppercase">Micras</label><input type="text" inputMode="decimal" value={calcInputs?.micras ?? ''} onChange={(e) => setCalcInputs({...calcInputs, micras: e.target.value})} className="w-full text-xs font-black text-center outline-none bg-white rounded p-2 border border-green-200 text-black" placeholder="ej: 7" /></div>
+                    </div>
+                 </div>
+               )}
                  <div className="hidden pdf-header mb-8">
                    <ReportHeader />
                    <h1 className="text-2xl font-black text-black uppercase border-b-4 border-orange-500 pb-2">SIMULACIÓN DE PRODUCCIÓN Y COSTOS</h1>
