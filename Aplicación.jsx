@@ -15305,7 +15305,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const montoBs=pm.moneda==='Bs'?parseNum(pm.monto):parseNum(pm.monto)*parseNum(pm.tasa||1);
             // Multicobro totals
             const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
-            const saldoTrasPago=Math.max(0,saldoTotalCliente-totalLineasUSD);
+            const saldoTrasPago=saldoTotalCliente-totalLineasUSD;
 
             // Distribución automática del monto entre NEs (más antigua primero)
             const nesParaDistribuir = nesSelecIds.length>0
@@ -15447,9 +15447,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                           <div style={{fontSize:8,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:3}}>Pagando ahora</div>
                           <div style={{fontSize:15,fontWeight:900,color:'#16a34a'}}>${formatNum(totalLineasUSD)}</div>
                         </div>
-                        <div style={{background:saldoTrasPago<0.01?'#f0fdf4':'#fffbeb',borderRadius:10,padding:'10px 12px',textAlign:'center',border:`1px solid ${saldoTrasPago<0.01?'#86efac':'#fed7aa'}`}}>
-                          <div style={{fontSize:8,fontWeight:900,color:saldoTrasPago<0.01?'#15803d':'#92400e',textTransform:'uppercase',marginBottom:3}}>Saldo tras pago</div>
-                          <div style={{fontSize:15,fontWeight:900,color:saldoTrasPago<0.01?'#16a34a':'#f97316'}}>${formatNum(saldoTrasPago)}</div>
+                        <div style={{background:saldoTrasPago<=-0.01?'#eff6ff':saldoTrasPago<0.01?'#f0fdf4':'#fffbeb',borderRadius:10,padding:'10px 12px',textAlign:'center',border:`1px solid ${saldoTrasPago<=-0.01?'#93c5fd':saldoTrasPago<0.01?'#86efac':'#fed7aa'}`}}>
+                          <div style={{fontSize:8,fontWeight:900,color:saldoTrasPago<=-0.01?'#1d4ed8':saldoTrasPago<0.01?'#15803d':'#92400e',textTransform:'uppercase',marginBottom:3}}>Saldo tras pago</div>
+                          <div style={{fontSize:15,fontWeight:900,color:saldoTrasPago<=-0.01?'#2563eb':saldoTrasPago<0.01?'#16a34a':'#f97316'}}>{saldoTrasPago<=-0.01?'Saldo a favor: -':'$'}{formatNum(Math.abs(saldoTrasPago))}</div>
                         </div>
                       </div>
                     )}
