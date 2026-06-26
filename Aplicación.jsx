@@ -1510,7 +1510,7 @@ function App() {
       //    Esto corrige: nombre que no cambia, portales que no aplican, permisos desactualizados.
       setAppUser(prev => {
         if (!prev) return prev;
-        const updated = loadedUsers.find(u => u.username === prev.username);
+        const updated = loadedUsers.find(u => u.username === prev.username || u.id === prev.username || u.username === prev.id);
         if (!updated) return prev;
         // Preservar _sessionId y solo actualizar los campos que vienen de Firebase
         return { ...prev, ...updated, _sessionId: prev._sessionId };
@@ -4901,13 +4901,18 @@ function App() {
               { id:'vext_prod', title:'Producción Planta', icon:<Factory size={22}/>, color:'#3b82f6',
                 perms:['produccion_activa','produccion_proceso','produccion_historial'],
                 sub:'OPs activas e historial de planta', chart:[30,55,40,70,50,80],
-                portalGate: 'produccion', // solo mostrar si el usuario NO tiene acceso directo a este portal
+                portalGate: 'produccion',
                 go: ()=>{ clearAllReports(); setActiveTab('produccion'); setProdView(getFirstProdView()); } },
               { id:'vext_inv', title:'Control de Inventario', icon:<Package size={22}/>, color:'#22c55e',
                 perms:['inv_almacen','inv_general','inv_terminados','inv_kardex','inv_movimientos'],
                 sub:'Existencias y movimientos', chart:[60,45,70,55,80,65],
                 portalGate: 'produccion',
                 go: ()=>{ clearAllReports(); setActiveTab('inventario'); setInvView(getFirstInvView()); } },
+              { id:'vext_sim', title:'Simulador OP', icon:<Calculator size={22}/>, color:'#f97316',
+                perms:['simulador'],
+                sub:'Simulación de producción y costos', chart:[45,60,35,75,55,80],
+                portalGate: 'produccion',
+                go: ()=>{ clearAllReports(); setActiveTab('simulador'); } },
               { id:'vext_finiquito', title:'Finiquito por OP', icon:<FileText size={22}/>, color:'#f59e0b',
                 perms:['rep_finiquito'],
                 sub:'Reportes Financieros — Por orden individual', chart:[40,65,50,75,55,70],
@@ -17351,13 +17356,13 @@ ${resumenHtml}
                    <div class="table-wrap"><table>
                      <thead><tr><th>Insumo</th><th style="text-align:center">% Mezcla</th><th style="text-align:center">KG a Cargar</th><th style="text-align:right">Costo U.</th><th style="text-align:right">Costo Total</th></tr></thead>
                      <tbody>${ingredientesRows}</tbody>
-                     <tfoot><tr><td colspan="2" style="text-align:right">TOTALES DE PREPARACIÓN</td><td style="text-align:center;color:#f97316">${formatNum(calcTotalMezcla)} KG</td><td style="color:#94a3b8">COSTO TOTAL MP</td><td style="text-align:right;color:#f97316">$${formatNum(calcCostoTotalMP)}</td></tr></tfoot>
+                     <tfoot><tr><td colspan="2" style="text-align:right">TOTALES DE PREPARACIÓN</td><td style="text-align:center;color:#f97316">${formatNum(calcTotalMezcla)} KG</td><td style="color:#94a3b8">COSTO TOTAL MP</td><td style="text-align:right;color:#f97316">$${formatNum(calcCostoMezclaPreparada)}</td></tr></tfoot>
                    </table></div>
                    <div class="section-title">💰 Indicadores Unitarios de Costo</div>
                    <div class="indicators">
-                     <div class="ind ind-gray"><div class="ind-label">Costo Promedio Mezcla</div><div class="ind-value">$${formatNum(simCostoKgPlanta)} / KG</div><div class="ind-sub">Total / KG Planta</div></div>
-                     <div class="ind ind-gray"><div class="ind-label">Costo Neto x Kilo Terminado</div><div class="ind-value">$${formatNum(simCostoKgNeto)} / KG</div><div class="ind-sub">Absorbiendo Merma</div></div>
-                     <div class="ind ind-green"><div class="ind-label">Costo por ${isBolsas?'Millares (Final)':'KG Termoencogible'}</div><div class="ind-value">$${formatNum(isBolsas?simCostoMillar:simCostoKgNeto)}</div><div class="ind-sub">Costo Real Materia Prima</div></div>
+                     <div class="ind ind-gray"><div class="ind-label">Costo Promedio Mezcla</div><div class="ind-value">$${formatNum(calcCostoPromedio)} / KG</div><div class="ind-sub">Total / KG Planta</div></div>
+                     <div class="ind ind-gray"><div class="ind-label">Costo Neto x Kilo Terminado</div><div class="ind-value">$${formatNum(calcCostoUnitarioNeto)} / KG</div><div class="ind-sub">Absorbiendo Merma</div></div>
+                     <div class="ind ind-green"><div class="ind-label">Costo por ${isBolsas?'Millares (Final)':'KG Termoencogible'}</div><div class="ind-value">$${formatNum(calcCostoFinalUnidad)}</div><div class="ind-sub">Costo Real Materia Prima</div></div>
                    </div>
                    <div class="footer">Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}</div>
                  </div>
@@ -27251,21 +27256,21 @@ ${resumenHtml}
 
   if (appUser && !selectedPortal) {
     const PORTALES = [
-      { id:'produccion', title:'PRODUCCIÓN', desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316',
+      { id:'produccion', title:'PRODUCCIÓN', desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316', permsReq:['produccion','formulas','inventario','simulador'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="5" y="50" width="54" height="5" rx="2" fill="#c2410c"/><rect x="9" y="26" width="14" height="24" rx="2.5" fill="#fb923c" stroke="#c2410c" strokeWidth="1.6"/><ellipse cx="16" cy="26" rx="7" ry="3" fill="#fdba74" stroke="#c2410c" strokeWidth="1.6"/><rect x="11" y="33" width="10" height="2.4" rx="1.2" fill="#c2410c"/><rect x="11" y="40" width="10" height="2.4" rx="1.2" fill="#c2410c"/><rect x="26" y="16" width="11" height="34" rx="2.5" fill="#f97316" stroke="#c2410c" strokeWidth="1.6"/><ellipse cx="31.5" cy="16" rx="5.5" ry="2.6" fill="#fdba74" stroke="#c2410c" strokeWidth="1.6"/><rect x="28.5" y="24" width="6" height="2.2" rx="1.1" fill="#c2410c"/><rect x="28.5" y="31" width="6" height="2.2" rx="1.1" fill="#c2410c"/><rect x="40" y="30" width="6.5" height="20" rx="1.5" fill="#ea580c" stroke="#c2410c" strokeWidth="1.5"/><path d="M51 22 l0 5 l4.5 8.2 a2.6 2.6 0 0 1 -2.3 3.9 h-4.4 a2.6 2.6 0 0 1 -2.3 -3.9 l4.5 -8.2 l0 -5 z" fill="#fdba74" stroke="#c2410c" strokeWidth="1.5"/><rect x="47.5" y="19.5" width="8" height="3" rx="1.5" fill="#c2410c"/></svg> },
-      { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación y clientes', color:'#3b82f6',
+      { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación y clientes', color:'#3b82f6', permsReq:['ventas','banco'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><g fill="#3b82f6"><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(0 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(45 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(90 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(135 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(180 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(225 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(270 32 19)"/><rect x="29.5" y="6" width="5" height="6" rx="1.2" transform="rotate(315 32 19)"/><circle cx="32" cy="19" r="9"/></g><circle cx="32" cy="19" r="4" fill="#1e3a8a"/><g fill="#60a5fa"><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(0 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(60 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(120 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(180 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(240 46.7 31)"/><rect x="45" y="22" width="3.4" height="4" rx="0.8" transform="rotate(300 46.7 31)"/><circle cx="46.7" cy="31" r="5.5"/></g><circle cx="46.7" cy="31" r="2.3" fill="#1e3a8a"/><circle cx="19" cy="36" r="6" fill="#1d4ed8"/><path d="M8 56 v-4 a11 11 0 0 1 22 0 v4 z" fill="#2563eb"/><circle cx="44" cy="40" r="5.5" fill="#1e40af"/><path d="M33 56 v-3.5 a10 10 0 0 1 20 0 v3.5 z" fill="#1d4ed8"/></svg> },
-      { id:'finanzas', title:'FINANZAS', desc:'Costos, reportes financieros y KPI gerencial', color:'#22c55e',
+      { id:'finanzas', title:'FINANZAS', desc:'Costos, reportes financieros y KPI gerencial', color:'#22c55e', permsReq:['costos','costos_operativos','kpi'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="7" y="49" width="44" height="3.5" rx="1.7" fill="#15803d"/><rect x="10" y="38" width="7.5" height="11" rx="1.5" fill="#4ade80"/><rect x="20" y="31" width="7.5" height="18" rx="1.5" fill="#22c55e"/><rect x="30" y="23" width="7.5" height="26" rx="1.5" fill="#16a34a"/><rect x="40" y="15" width="7.5" height="34" rx="1.5" fill="#15803d"/><path d="M11 39 L24 31 L34 24 L49 12" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M49 12 l-7 0.5 M49 12 l-0.6 7" stroke="#bbf7d0" strokeWidth="2.6" strokeLinecap="round"/><circle cx="52" cy="43" r="9" fill="#22c55e" stroke="#bbf7d0" strokeWidth="1.6"/><text x="52" y="47.5" textAnchor="middle" fontSize="11" fontWeight="900" fill="#ffffff" fontFamily="Arial">$</text><circle cx="15" cy="20" r="6.5" fill="#16a34a" stroke="#bbf7d0" strokeWidth="1.3"/><text x="15" y="23.5" textAnchor="middle" fontSize="8" fontWeight="900" fill="#ffffff" fontFamily="Arial">%</text></svg> },
-      { id:'contabilidad', title:'CONTABILIDAD', desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4',
+      { id:'contabilidad', title:'CONTABILIDAD', desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4', permsReq:['costos'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="8" width="44" height="48" rx="4" fill="#0e7490" opacity="0.15" stroke="#0e7490" strokeWidth="1.5"/><rect x="10" y="8" width="44" height="10" rx="4" fill="#06b6d4" opacity="0.9"/><rect x="16" y="24" width="14" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="30" width="20" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="36" width="12" height="2.5" rx="1.2" fill="#0e7490"/><rect x="16" y="42" width="18" height="2.5" rx="1.2" fill="#0e7490"/><rect x="36" y="24" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="38" y="30" width="10" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="40" y="36" width="8" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="36" y="42" width="12" height="2.5" rx="1.2" fill="#06b6d4"/><rect x="10" y="48" width="44" height="2.5" rx="1.2" fill="#0e7490"/><text x="32" y="17" textAnchor="middle" fontSize="7" fontWeight="900" fill="white" fontFamily="Arial">LIBRO MAYOR</text></svg> },
-      { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A',
+      { id:'resena_portal', title:'RESEÑA', desc:'Presentación institucional, activos y proyección financiera', color:'#E8541A', permsReq:['resena'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><rect x="10" y="6" width="44" height="52" rx="4" fill="#E8541A" opacity="0.15" stroke="#E8541A" strokeWidth="1.5"/><rect x="10" y="6" width="44" height="11" rx="4" fill="#E8541A" opacity="0.9"/><text x="32" y="16" textAnchor="middle" fontSize="6.5" fontWeight="900" fill="white" fontFamily="Arial">RESEÑA INST.</text><rect x="17" y="23" width="18" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="29" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="33" width="26" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="39" width="22" height="2.5" rx="1.2" fill="#E8541A"/><rect x="17" y="43" width="30" height="2" rx="1" fill="#c2410c" opacity="0.5"/><rect x="17" y="47" width="24" height="2" rx="1" fill="#c2410c" opacity="0.5"/><circle cx="47" cy="50" r="8" fill="#E8541A"/><text x="47" y="54" textAnchor="middle" fontSize="10" fontWeight="900" fill="white" fontFamily="Arial">i</text></svg> },
-      { id:'vendedores_portal', title:'VENDEDORES', desc:'Gestión de cotizaciones, clientes y actas de reclamo', color:'#E8541A',
+      { id:'vendedores_portal', title:'VENDEDORES', desc:'Gestión de cotizaciones, clientes y actas de reclamo', color:'#E8541A', permsReq:['vendedores','vend_cotizaciones','vend_clientes'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="22" cy="18" r="9" fill="#E8541A" opacity="0.85"/><circle cx="42" cy="18" r="7" fill="#E8541A" opacity="0.5"/><path d="M6 46 v-4 a16 16 0 0 1 32 0 v4 z" fill="#E8541A" opacity="0.85"/><path d="M38 46 v-3 a14 14 0 0 1 20 0 v3 z" fill="#E8541A" opacity="0.5"/><rect x="34" y="34" width="22" height="3" rx="1.5" fill="#c2410c"/><rect x="34" y="40" width="18" height="3" rx="1.5" fill="#c2410c" opacity="0.6"/><circle cx="54" cy="54" r="8" fill="#E8541A"/><text x="54" y="58" textAnchor="middle" fontSize="11" fontWeight="900" fill="white" fontFamily="Arial">$</text></svg> },
-      { id:'redes_portal', title:'REDES SOCIALES', desc:'Gestión de contenido, publicaciones y presencia digital', color:'#8b5cf6',
+      { id:'redes_portal', title:'REDES SOCIALES', desc:'Gestión de contenido, publicaciones y presencia digital', color:'#8b5cf6', permsReq:[],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><circle cx="14" cy="32" r="8" fill="#8b5cf6"/><circle cx="50" cy="14" r="7" fill="#7c3aed"/><circle cx="50" cy="50" r="7" fill="#7c3aed"/><line x1="21" y1="29" x2="43" y2="17" stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round"/><line x1="21" y1="35" x2="43" y2="47" stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round"/><circle cx="14" cy="32" r="4" fill="#ede9fe"/><circle cx="50" cy="14" r="3.5" fill="#ede9fe"/><circle cx="50" cy="50" r="3.5" fill="#ede9fe"/></svg> },
-      { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b',
+      { id:'configuracion_portal', title:'CONFIGURACIÓN', desc:'Usuarios, ajustes del sistema y auditoría', color:'#64748b', permsReq:['configuracion','auditoria'],
         icon:<svg viewBox="0 0 64 64" width="76" height="76" fill="none"><path d="M32 18 a14 14 0 1 1 0 28 a14 14 0 0 1 0-28z" fill="#64748b" opacity="0.15" stroke="#64748b" strokeWidth="1.5"/><circle cx="32" cy="32" r="6" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(60 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(120 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(180 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(240 32 32)"/><rect x="29.5" y="5" width="5" height="8" rx="2" fill="#64748b" transform="rotate(300 32 32)"/><circle cx="32" cy="32" r="4" fill="#f8fafc"/></svg> },
     ];
     return (
@@ -27328,7 +27333,9 @@ ${resumenHtml}
           <div className="w-full" style={{maxWidth:1200}}>
             <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:20}}>
               {PORTALES.map(p => {
-                const allowed = hasPortal(p.id);
+                const portalOk = hasPortal(p.id);
+                const permsOk = appUser?.role==='Master' || !p.permsReq || p.permsReq.length===0 || p.permsReq.some(pm=>hasPerm(pm));
+                const allowed = portalOk && permsOk;
                 return (
                 <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else if(p.id==='vendedores_portal') { setActiveTab('home'); setVentasView('cotizaciones'); } else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
                   style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
