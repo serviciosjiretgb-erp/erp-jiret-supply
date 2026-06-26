@@ -4537,7 +4537,6 @@ function App() {
       redes_portal:        [],
       configuracion_portal:['configuracion','auditoria'],
     };
-    const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
     const visibleCards  = portalTabList
       ? moduleCards.filter(c => portalTabList.includes(c.tab))
       : moduleCards;
@@ -17275,7 +17274,96 @@ ${resumenHtml}
              <h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Calculator className="text-orange-500" size={24}/> Simulador de Producción</h2>
              <div className="flex gap-2">
                <button onClick={handleResetCalc} className="bg-gray-200 text-gray-700 px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-300 transition-colors flex items-center gap-2"><PlusCircle size={16}/> NUEVA SIMULACIÓN</button>
-               <button onClick={() => handleExportPDF('Simulador_Produccion', true)} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
+               <button onClick={() => {
+                 const ingredientesRows = (calcIngredientesProcesados||[]).map(ing => {
+                   return `<tr>
+                     <td style="padding:10px 14px;border-bottom:1px solid #f3f4f6;font-weight:700">${ing.desc||ing.nombre||'—'}</td>
+                     <td style="padding:10px 14px;border-bottom:1px solid #f3f4f6;text-align:center;font-weight:900;color:#f97316">${parseNum(ing.pct||0).toFixed(0)}%</td>
+                     <td style="padding:10px 14px;border-bottom:1px solid #f3f4f6;text-align:center;font-weight:900;color:#f97316">${formatNum(ing.kg||0)} KG</td>
+                     <td style="padding:10px 14px;border-bottom:1px solid #f3f4f6;text-align:right">$${formatNum(ing.costo||0)}</td>
+                     <td style="padding:10px 14px;border-bottom:1px solid #f3f4f6;text-align:right;font-weight:900">$${formatNum(ing.totalCost||0)}</td>
+                   </tr>`;
+                 }).join('');
+                 const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+                 <title>Simulación de Producción</title>
+                 <style>
+                   *{margin:0;padding:0;box-sizing:border-box;}
+                   body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#111;font-size:11px;}
+                   .header{background:#0f172a;padding:18px 28px;display:flex;justify-content:space-between;align-items:center;}
+                   .logo{color:#f97316;font-size:22px;font-weight:900;letter-spacing:-0.5px;}
+                   .logo span{color:#fff;}
+                   .header-right{text-align:right;color:#94a3b8;font-size:9px;}
+                   .header-right h2{color:#fff;font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:1px;}
+                   .orange-bar{background:#f97316;height:4px;}
+                   .body{padding:24px 28px;}
+                   .section-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#64748b;border-bottom:2px solid #f3f4f6;padding-bottom:6px;margin-bottom:14px;}
+                   .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;}
+                   .kpi{border-radius:12px;padding:14px;border:1px solid #e2e8f0;}
+                   .kpi-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px;}
+                   .kpi-value{font-size:22px;font-weight:900;line-height:1.1;}
+                   .kpi-sub{font-size:8px;color:#94a3b8;margin-top:3px;}
+                   .kpi-blue{background:#eff6ff;border-color:#bfdbfe;}.kpi-blue .kpi-value{color:#1d4ed8;}
+                   .kpi-orange{background:#fff7ed;border-color:#fed7aa;}.kpi-orange .kpi-value{color:#ea580c;}
+                   .kpi-dark{background:#0f172a;border-color:#1e293b;}.kpi-dark .kpi-value{color:#fff;}.kpi-dark .kpi-label{color:#94a3b8;}
+                   .kpi-gray{background:#f8fafc;border-color:#e2e8f0;}.kpi-gray .kpi-value{color:#1e293b;}
+                   table{width:100%;border-collapse:collapse;}
+                   thead tr{background:#0f172a;color:#fff;}
+                   thead th{padding:10px 14px;text-align:left;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px;}
+                   tfoot tr{background:#0f172a;color:#fff;}
+                   tfoot td{padding:10px 14px;font-size:10px;font-weight:900;}
+                   .table-wrap{border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;margin-bottom:24px;}
+                   .indicators{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:8px;}
+                   .ind{border-radius:12px;padding:16px;text-align:center;}
+                   .ind-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:6px;}
+                   .ind-value{font-size:20px;font-weight:900;}
+                   .ind-sub{font-size:8px;color:#94a3b8;margin-top:2px;}
+                   .ind-gray{background:#f8fafc;border:1px solid #e2e8f0;}.ind-gray .ind-value{color:#1e293b;}
+                   .ind-green{background:#f0fdf4;border:2px solid #86efac;}.ind-green .ind-value{color:#16a34a;}.ind-green .ind-label{color:#15803d;}
+                   .dim-box{background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:14px;margin-bottom:20px;}
+                   .dim-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;}
+                   .dim-item{text-align:center;}
+                   .dim-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#92400e;}
+                   .dim-value{font-size:14px;font-weight:900;color:#ea580c;}
+                   .footer{text-align:center;font-size:8px;color:#94a3b8;margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0;}
+                   @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+                 </style></head><body>
+                 <div class="header">
+                   <div><div class="logo">Supply <span>G&B</span></div><div style="color:#94a3b8;font-size:9px;margin-top:2px;">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div></div>
+                   <div class="header-right"><h2>Simulación de Producción y Costos</h2><div>Fecha: ${getTodayDate()} · ${isBolsas?'Bolsas / Empaques':'Termoencogible'}</div></div>
+                 </div>
+                 <div class="orange-bar"></div>
+                 <div class="body">
+                   ${isBolsas&&calcInputs?.ancho?`<div class="dim-box"><div class="section-title">📐 Dimensiones del Producto</div><div class="dim-grid">
+                     <div class="dim-item"><div class="dim-label">Ancho</div><div class="dim-value">${calcInputs.ancho} cm</div></div>
+                     <div class="dim-item"><div class="dim-label">Fuelles</div><div class="dim-value">${calcInputs.fuelles||0} cm</div></div>
+                     <div class="dim-item"><div class="dim-label">Largo</div><div class="dim-value">${calcInputs.largo||0} cm</div></div>
+                     <div class="dim-item"><div class="dim-label">Micras</div><div class="dim-value">${calcInputs.micras||'—'}</div></div>
+                   </div></div>`:''}
+                   <div class="section-title">📊 Resumen de Producción</div>
+                   <div class="kpi-grid">
+                     <div class="kpi kpi-gray"><div class="kpi-label">Demanda Neta</div><div class="kpi-value">${formatNum(calcKilosNetos)}</div><div class="kpi-sub">KG · Peso Millar: ${formatNum(simPesoMillar)} g</div></div>
+                     <div class="kpi kpi-blue"><div class="kpi-label">${isBolsas?'Millares a Producir':'KG a Producir'}</div><div class="kpi-value">${formatNum(inputCantidadSolicitada)}</div><div class="kpi-sub">${isBolsas?`= ${formatNum(calcKilosNetos)} KG netos`:'Termoencogible'}</div></div>
+                     <div class="kpi kpi-orange"><div class="kpi-label">Merma Proyectada (${mermaPorc}%)</div><div class="kpi-value">${formatNum(calcMermaGlobalKg)}</div><div class="kpi-sub">KG</div></div>
+                     <div class="kpi kpi-dark"><div class="kpi-label">Carga a Planta</div><div class="kpi-value">${formatNum(calcTotalMezcla)}</div><div class="kpi-sub">KG Total Mezcla</div></div>
+                   </div>
+                   <div class="section-title">🧪 Desglose de Formulación y Costos</div>
+                   <div class="table-wrap"><table>
+                     <thead><tr><th>Insumo</th><th style="text-align:center">% Mezcla</th><th style="text-align:center">KG a Cargar</th><th style="text-align:right">Costo U.</th><th style="text-align:right">Costo Total</th></tr></thead>
+                     <tbody>${ingredientesRows}</tbody>
+                     <tfoot><tr><td colspan="2" style="text-align:right">TOTALES DE PREPARACIÓN</td><td style="text-align:center;color:#f97316">${formatNum(calcTotalMezcla)} KG</td><td style="color:#94a3b8">COSTO TOTAL MP</td><td style="text-align:right;color:#f97316">$${formatNum(calcCostoTotalMP)}</td></tr></tfoot>
+                   </table></div>
+                   <div class="section-title">💰 Indicadores Unitarios de Costo</div>
+                   <div class="indicators">
+                     <div class="ind ind-gray"><div class="ind-label">Costo Promedio Mezcla</div><div class="ind-value">$${formatNum(simCostoKgPlanta)} / KG</div><div class="ind-sub">Total / KG Planta</div></div>
+                     <div class="ind ind-gray"><div class="ind-label">Costo Neto x Kilo Terminado</div><div class="ind-value">$${formatNum(simCostoKgNeto)} / KG</div><div class="ind-sub">Absorbiendo Merma</div></div>
+                     <div class="ind ind-green"><div class="ind-label">Costo por ${isBolsas?'Millares (Final)':'KG Termoencogible'}</div><div class="ind-value">$${formatNum(isBolsas?simCostoMillar:simCostoKgNeto)}</div><div class="ind-sub">Costo Real Materia Prima</div></div>
+                   </div>
+                   <div class="footer">Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}</div>
+                 </div>
+                 <script>window.onload=()=>window.print();</script></body></html>`;
+                 const w = window.open('','_blank','width=900,height=700');
+                 w.document.write(html); w.document.close();
+               }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-gray-800 transition-colors flex items-center gap-2"><Printer size={16}/> IMPRIMIR</button>
              </div>
           </div>
           
@@ -17369,13 +17457,24 @@ ${resumenHtml}
                           if(!fId) return;
                           const f = (formulas||[]).find(x=>x.id===fId);
                           if(!f) return;
-                          setCalcInputs(prev=>({
-                            ...prev,
+                          // Autocompletar dimensiones
+                          const newInputs = {
+                            ...calcInputs,
                             ancho:   parseNum(f.ancho||0),
                             largo:   parseNum(f.largo||0),
                             fuelles: parseNum(f.fuelles||0),
                             micras:  f.micras||'',
-                          }));
+                          };
+                          // Autocompletar ingredientes si la fórmula los tiene
+                          if((f.ingredientes||[]).length > 0) {
+                            newInputs.ingredientes = f.ingredientes.map((ing,i) => ({
+                              id: Date.now()+i,
+                              nombre: ing.materialId||ing.nombre||ing.name||'',
+                              pct:    parseNum(ing.porcentaje||ing.pct||0),
+                              costo:  parseNum(ing.costoUnit||ing.costo||0),
+                            }));
+                          }
+                          setCalcInputs(newInputs);
                         }}
                         className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 bg-white text-gray-800">
                         <option value="">— Seleccionar categoría / fórmula —</option>
@@ -17416,11 +17515,20 @@ ${resumenHtml}
                           if(!fId) return;
                           const f = (formulas||[]).find(x=>x.id===fId);
                           if(!f) return;
-                          setCalcInputs(prev=>({
-                            ...prev,
+                          const newInputs = {
+                            ...calcInputs,
                             ancho:  parseNum(f.ancho||0),
                             micras: f.micras||'',
-                          }));
+                          };
+                          if((f.ingredientes||[]).length > 0) {
+                            newInputs.ingredientes = f.ingredientes.map((ing,i) => ({
+                              id: Date.now()+i,
+                              nombre: ing.materialId||ing.nombre||ing.name||'',
+                              pct:    parseNum(ing.porcentaje||ing.pct||0),
+                              costo:  parseNum(ing.costoUnit||ing.costo||0),
+                            }));
+                          }
+                          setCalcInputs(newInputs);
                         }}
                         className="w-full border-2 border-green-300 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-green-500 bg-white text-gray-800">
                         <option value="">— Seleccionar categoría / fórmula —</option>
