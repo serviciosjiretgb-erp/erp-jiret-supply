@@ -15323,11 +15323,20 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       </div>
 
                       {/* Referencia */}
-                      <div style={{marginBottom:12}}>
+                      <div style={{marginBottom:10}}>
                         <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>N° Referencia</label>
                         <input type="text" placeholder="REF-0000000"
                           value={pm.lineaActual?.referencia||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,referencia:e.target.value.toUpperCase()}}))}
                           style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box',textTransform:'uppercase'}}
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                      </div>
+
+                      {/* Descripción */}
+                      <div style={{marginBottom:12}}>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Descripción (opcional)</label>
+                        <input type="text" placeholder="Ej: Abono parcial, Saldo factura..."
+                          value={pm.lineaActual?.concepto||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,concepto:e.target.value}}))}
+                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',boxSizing:'border-box'}}
                           onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
                       </div>
 
@@ -16105,8 +16114,13 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             return true;
           });
 
+          // Filtrar NEs por vendedor ANTES de agrupar
+          const nesParaEC = ecVendedor!=='TODOS'
+            ? allNEs.filter(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor)
+            : allNEs;
+
           const porCli={};
-          allNEs.forEach(ne=>{
+          nesParaEC.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
             if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
             porCli[k].nes.push(ne);
@@ -16114,15 +16128,14 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
-          if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
           if(ecEstado==='SALDADO')   cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0)<0.01);
           if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0)>=0.01);
 
           const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
-          const totalFact  = cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
+          const totalFact  = cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.totalUSD||ne.montoBase||0),0),0);
           const totalSaldo = cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoEC(ne),0),0);
           const totalCobrado = totalFact-totalSaldo;
-          const allExpanded = cliList.every(cl=>ecExpanded[cl.clientRif]);
+          const allExpanded = cliList.length>0&&cliList.every(cl=>ecExpanded[cl.clientRif]);
 
           // ── PDF Estado de Cuenta ─────────────────────────────────────
           const exportarEcPDF = () => {
