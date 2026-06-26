@@ -15053,6 +15053,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const saldoTotalCliente=clienteSel?.total||0;
             const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/Math.max(parseNum(pm.tasa),1);
             const montoBs=pm.moneda==='Bs'?parseNum(pm.monto):parseNum(pm.monto)*parseNum(pm.tasa||1);
+            // Multicobro totals
+            const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
+            const saldoTrasPago=Math.max(0,saldoTotalCliente-totalLineasUSD);
 
             // Distribución automática del monto entre NEs (más antigua primero)
             const nesParaDistribuir = nesSelecIds.length>0
@@ -15182,6 +15185,24 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   {/* COL 2 — Líneas de Pago (Multicobro) */}
                   <div style={{flex:1,overflowY:'auto',background:'#fff',padding:'20px 24px',display:'flex',flexDirection:'column',gap:16}}>
                     <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2}}>3 · Métodos de Pago</div>
+
+                    {/* Balance en tiempo real */}
+                    {clienteSel&&(
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+                        <div style={{background:'#f8fafc',borderRadius:10,padding:'10px 12px',textAlign:'center',border:'1px solid #e2e8f0'}}>
+                          <div style={{fontSize:8,fontWeight:900,color:'#64748b',textTransform:'uppercase',marginBottom:3}}>Deuda Total</div>
+                          <div style={{fontSize:15,fontWeight:900,color:'#dc2626'}}>${formatNum(saldoTotalCliente)}</div>
+                        </div>
+                        <div style={{background:'#f0fdf4',borderRadius:10,padding:'10px 12px',textAlign:'center',border:'1px solid #86efac'}}>
+                          <div style={{fontSize:8,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:3}}>Pagando ahora</div>
+                          <div style={{fontSize:15,fontWeight:900,color:'#16a34a'}}>${formatNum(totalLineasUSD)}</div>
+                        </div>
+                        <div style={{background:saldoTrasPago<0.01?'#f0fdf4':'#fffbeb',borderRadius:10,padding:'10px 12px',textAlign:'center',border:`1px solid ${saldoTrasPago<0.01?'#86efac':'#fed7aa'}`}}>
+                          <div style={{fontSize:8,fontWeight:900,color:saldoTrasPago<0.01?'#15803d':'#92400e',textTransform:'uppercase',marginBottom:3}}>Saldo tras pago</div>
+                          <div style={{fontSize:15,fontWeight:900,color:saldoTrasPago<0.01?'#16a34a':'#f97316'}}>${formatNum(saldoTrasPago)}</div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Líneas ya agregadas */}
                     {(pm.lineasPago||[]).length>0&&(
@@ -15757,6 +15778,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const totalFiltrado = histFiltered.reduce((s,c)=>s+parseNum(c.monto||0),0);
 
                 const generarPDFHistorial = () => {
+                  const totalFiltradoBs = histFiltered.filter(c=>c.moneda==='Bs').reduce((s,c)=>s+parseNum(c.montoBs||0),0);
                   const rows = histFiltered.map(cb=>`<tr style="border-bottom:1px solid #f3f4f6">
                     <td style="padding:6px 10px;color:#64748b">${cb.fecha||'—'}</td>
                     <td style="padding:6px 10px;font-weight:700;color:#f97316">${cb.neDocumento||cb.neId||'—'}</td>
@@ -15765,6 +15787,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <td style="padding:6px 10px;color:#64748b">${cb.cuentaBancoNombre||'—'}</td>
                     <td style="padding:6px 10px">${cb.metodo||'—'}</td>
                     <td style="padding:6px 10px;font-size:9px;color:#94a3b8">${cb.referencia||'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-weight:900;color:#3b82f6">${cb.moneda==='Bs'&&parseNum(cb.montoBs||0)>0?`Bs.${formatNum(parseNum(cb.montoBs))}`:'—'}</td>
                     <td style="padding:6px 10px;text-align:right;font-weight:900;color:#16a34a">$${formatNum(parseNum(cb.monto))}</td>
                     <td style="padding:6px 10px;text-align:center"><span style="background:${cb.tipo==='Abono'?'#fef3c7':'#dcfce7'};color:${cb.tipo==='Abono'?'#92400e':'#15803d'};padding:2px 6px;border-radius:6px;font-size:9px;font-weight:700">${cb.tipo||'Pago'}</span></td>
                   </tr>`).join('');
@@ -15779,9 +15802,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   <div class="hr"><h2 style="color:#fff;font-size:12px;font-weight:900;text-transform:uppercase">Historial de Cobros</h2>
                   <div>Generado: ${getTodayDate()} · ${histFiltered.length} registros</div></div></div>
                   <div style="padding:16px 20px"><table>
-                  <thead><tr><th>Fecha</th><th>NE</th><th>Cliente</th><th>Vendedor</th><th>Cuenta</th><th>Método</th><th>Referencia</th><th style="text-align:right">Monto USD</th><th style="text-align:center">Tipo</th></tr></thead>
+                  <thead><tr><th>Fecha</th><th>NE</th><th>Cliente</th><th>Vendedor</th><th>Cuenta</th><th>Método</th><th>Referencia</th><th style="text-align:right">Monto Bs.</th><th style="text-align:right">Monto USD</th><th style="text-align:center">Tipo</th></tr></thead>
                   <tbody>${rows}</tbody>
-                  <tfoot><tr><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL</td><td style="text-align:right;padding:8px 10px;color:#16a34a;font-weight:900">$${formatNum(totalFiltrado)}</td><td></td></tr></tfoot>
+                  <tfoot><tr><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL</td><td style="text-align:right;padding:8px 10px;color:#3b82f6;font-weight:900">Bs.${formatNum(totalFiltradoBs)}</td><td style="text-align:right;padding:8px 10px;color:#16a34a;font-weight:900">$${formatNum(totalFiltrado)}</td><td></td></tr></tfoot>
                   </table></div><script>window.onload=()=>window.print();</script></body></html>`;
                   const w=window.open('','_blank','width=900,height=700');w.document.write(html);w.document.close();
                 };
@@ -15824,6 +15847,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                           <th className="py-3 px-4 text-left">Cuenta</th>
                           <th className="py-3 px-4 text-left">Método</th>
                           <th className="py-3 px-4 text-left">Referencia</th>
+                          <th className="py-3 px-4 text-right">Monto Bs.</th>
                           <th className="py-3 px-4 text-right">Monto USD</th>
                           <th className="py-3 px-4 text-center">Tipo</th>
                           <th className="py-3 px-4 text-center">Acciones</th>
@@ -15839,12 +15863,69 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <td className="py-2.5 px-4 text-gray-500 text-[9px]">{cb.cuentaBancoNombre||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-500">{cb.metodo||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-400 text-[9px] font-mono">{cb.referencia||'—'}</td>
+                            <td className="py-2.5 px-4 text-right font-black text-blue-600">
+                              {cb.moneda==='Bs'&&parseNum(cb.montoBs||0)>0
+                                ? `Bs.${formatNum(parseNum(cb.montoBs))}`
+                                : <span className="text-gray-300 text-[9px]">—</span>}
+                            </td>
                             <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
                             <td className="py-2.5 px-4 text-center">
                               <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black ${cb.tipo==='Abono'?'bg-yellow-100 text-yellow-700':'bg-green-100 text-green-700'}`}>{cb.tipo||'Pago'}</span>
                             </td>
                             <td className="py-2.5 px-4 text-center">
                               <div className="flex items-center gap-1 justify-center">
+                                <button onClick={()=>{
+                                  // PDF del cobro individual — agrupa por grupoCobroId si existe
+                                  const grupoId=cb.grupoCobroId;
+                                  const lineasGrupo=grupoId?(cobrosCxc||[]).filter(c=>c.grupoCobroId===grupoId):[cb];
+                                  const totalGrupo=lineasGrupo.reduce((s,c)=>s+parseNum(c.monto||0),0);
+                                  const rows=lineasGrupo.map(c=>`<tr style="border-bottom:1px solid #f1f5f9">
+                                    <td style="padding:8px 12px;font-weight:700;color:#f97316">${c.neDocumento||c.neId||'—'}</td>
+                                    <td style="padding:8px 12px">${c.metodo||'—'}</td>
+                                    <td style="padding:8px 12px;color:#64748b">${c.cuentaBancoNombre||'—'}</td>
+                                    <td style="padding:8px 12px;font-family:monospace;color:#94a3b8;font-size:10px">${c.referencia||'—'}</td>
+                                    <td style="padding:8px 12px">${c.fecha||'—'}</td>
+                                    <td style="padding:8px 12px;text-align:right;font-weight:900;color:#3b82f6">${c.moneda==='Bs'&&parseNum(c.montoBs||0)>0?`Bs.${formatNum(parseNum(c.montoBs))}`:'—'}</td>
+                                    <td style="padding:8px 12px;text-align:right;font-weight:900;color:#16a34a">$${formatNum(parseNum(c.monto))}</td>
+                                  </tr>`).join('');
+                                  const totalBsGrupo=lineasGrupo.filter(c=>c.moneda==='Bs').reduce((s,c)=>s+parseNum(c.montoBs||0),0);
+                                  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de Cobro</title>
+                                  <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
+                                  .hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
+                                  .logo{color:#f97316;font-size:20px;font-weight:900;}.logo span{color:#fff;}
+                                  .bar{background:#f97316;height:3px;}.body{padding:20px 24px;}
+                                  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+                                  .kpi{border:1px solid #e2e8f0;border-radius:10px;padding:12px;text-align:center;}
+                                  .kpi-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px;}
+                                  .kpi-value{font-size:18px;font-weight:900;}
+                                  table{width:100%;border-collapse:collapse;}
+                                  thead tr{background:#0f172a;}thead th{padding:8px 12px;text-align:left;font-size:8px;font-weight:900;text-transform:uppercase;color:#fff;}
+                                  tfoot td{background:#f8fafc;padding:8px 12px;font-weight:900;}
+                                  .footer{text-align:center;font-size:8px;color:#94a3b8;margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;}
+                                  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+                                  <div class="hdr">
+                                    <div><div class="logo">Supply <span>G&B</span></div><div style="color:#94a3b8;font-size:9px;margin-top:2px">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div></div>
+                                    <div style="text-align:right"><h2 style="color:#fff;font-size:13px;font-weight:900;text-transform:uppercase">Comprobante de Cobro</h2><div style="color:#94a3b8;font-size:9px">Fecha: ${cb.fecha||getTodayDate()} · ID: ${grupoId||cb.id}</div></div>
+                                  </div>
+                                  <div class="bar"></div>
+                                  <div class="body">
+                                    <div class="kpis">
+                                      <div class="kpi"><div class="kpi-label">Cliente</div><div class="kpi-value" style="font-size:13px;color:#111">${cb.clientName||'—'}</div></div>
+                                      <div class="kpi"><div class="kpi-label">Total Cobrado</div><div class="kpi-value" style="color:#16a34a">$${formatNum(totalGrupo)}</div></div>
+                                      <div class="kpi"><div class="kpi-label">Líneas de pago</div><div class="kpi-value" style="color:#3b82f6">${lineasGrupo.length}</div></div>
+                                    </div>
+                                    <table><thead><tr><th>Documento</th><th>Método</th><th>Cuenta / Caja</th><th>Referencia</th><th>Fecha</th><th style="text-align:right">Monto Bs.</th><th style="text-align:right">Monto USD</th></tr></thead>
+                                    <tbody>${rows}</tbody>
+                                    <tfoot><tr><td colspan="5" style="text-align:right;padding:8px 12px">TOTAL COBRADO</td><td style="text-align:right;padding:8px 12px;color:#3b82f6;font-weight:900">${totalBsGrupo>0?`Bs.${formatNum(totalBsGrupo)}`:'—'}</td><td style="text-align:right;padding:8px 12px;color:#16a34a;font-weight:900">$${formatNum(totalGrupo)}</td></tr></tfoot>
+                                    </table>
+                                    <div class="footer">Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}</div>
+                                  </div>
+                                  <script>window.onload=()=>window.print();</script></body></html>`;
+                                  const w=window.open('','_blank','width=860,height=650');w.document.write(html);w.document.close();
+                                }} title="Comprobante PDF"
+                                  className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
+                                  🖨 PDF
+                                </button>
                                 <button onClick={()=>reversarCobro(cb)} title="Reversar cobro"
                                   className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                                   ↩ Reversar
@@ -15853,11 +15934,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             </td>
                           </tr>
                         ))}
-                        {paginated.length===0&&<tr><td colSpan={10} className="py-8 text-center text-gray-400 font-bold">Sin resultados</td></tr>}
+                        {paginated.length===0&&<tr><td colSpan={11} className="py-8 text-center text-gray-400 font-bold">Sin resultados</td></tr>}
                       </tbody>
                       <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                         <tr>
                           <td colSpan={7} className="py-2.5 px-4 text-right font-black text-gray-600 uppercase text-[9px]">Total filtrado:</td>
+                          <td className="py-2.5 px-4 text-right font-black text-blue-600">Bs.{formatNum(histFiltered.filter(c=>c.moneda==='Bs').reduce((s,c)=>s+parseNum(c.montoBs||0),0))}</td>
                           <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum(totalFiltrado)}</td>
                           <td colSpan={2}/>
                         </tr>
@@ -27883,7 +27965,7 @@ ${resumenHtml}
              </nav>
 
         {activeTab === 'ventas' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-[100]">
+           <div className="print:hidden sticky top-[52px] sm:top-[72px] z-[100]" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
               <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
                  {[
                    {id:'dashboard',           icon:<BarChart3 size={15}/>,  label:'Dashboard',       perm:'ventas_dashboard'},
@@ -27902,14 +27984,14 @@ ${resumenHtml}
                    {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
                    {id:'cxc',                 icon:<ClipboardList size={15}/>,label:'Ctas. x Cobrar', perm:'ventas_ne'},
                  ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
-                    <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`py-2 px-1 flex items-center gap-1 text-[9px] font-black uppercase tracking-wide transition-all border-b-4 whitespace-nowrap ${ventasView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                    <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${ventasView === t.id ? 'border-orange-500 text-orange-400 bg-white/5' : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
            </div>
         )}
 
         {activeTab === 'inventario' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[52px] sm:top-[72px] z-[100]">
+           <div className="print:hidden sticky top-[52px] sm:top-[72px] z-[100]" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
               <div className="w-full flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
                 {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
@@ -27919,7 +28001,7 @@ ${resumenHtml}
                       {id:'requisiciones', icon:<ClipboardList size={14}/>, label:'Planta', perm:'inv_planta'},
                       {id:'almacen', icon:<Warehouse size={14}/>, label:'Almacén/OC', perm:'inv_almacen'},
                     ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
-                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${invView===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
                 </div>}
@@ -27933,7 +28015,7 @@ ${resumenHtml}
                       {id:'alimentario',    icon:<FileText size={14}/>,  label:'Orden Salida', perm:'inv_osa'},
                       {id:'almacenes_mgmt', icon:<Warehouse size={14}/>, label:'Almacenes',    perm:'inv_almacenes'},
                     ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
-                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${invView===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
                 </div>}
@@ -27948,7 +28030,7 @@ ${resumenHtml}
                       {id:'kardex',      icon:<History size={14}/>,          label:'Kardex',      perm:'inv_kardex'},
                       {id:'reporte177',  icon:<FileCheck size={14}/>,        label:'Mov. Unidades',     perm:'inv_movimientos'},
                     ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t=>(
-                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`py-2 px-3 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${invView===t.id?'border-orange-500 text-black':'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                      <button key={t.id} onClick={()=>{setInvView(t.id);clearAllReports();setShowMovForm(false);if(t.id==='entradas')setMovForm(f=>({...f,type:'ENTRADA'}));if(t.id==='salidas')setMovForm(f=>({...f,type:'AUTOCONSUMO'}));}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${invView===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                     ))}
                   </div>
                 </div>}
@@ -27957,7 +28039,7 @@ ${resumenHtml}
         )}
 
         {activeTab === 'produccion' && (
-           <div className="bg-white border-b border-gray-200 shadow-sm print:hidden sticky top-[72px] z-30">
+           <div className="print:hidden sticky top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
               <div className="w-full flex gap-4 px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[ 
                    {id:'proyeccion',    icon:<TrendingUp size={16}/>,     label:'Proyección MP',      perm:'produccion_proyeccion'},
@@ -27967,7 +28049,7 @@ ${resumenHtml}
                    {id:'en_proceso',    icon:<Gauge size={16}/>,          label:'Reporte en Proceso', perm:'produccion_proceso'},
                    {id:'reportes',      icon:<FileText size={16}/>,       label:'Historial / Reportes',perm:'produccion_historial'}
                  ].filter(t => hasPerm(t.perm) || appUser?.role==='Master').map(t => (
-                    <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`py-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest transition-all border-b-4 whitespace-nowrap ${prodView === t.id ? 'border-orange-500 text-black' : 'border-transparent text-gray-400 hover:text-gray-700'}`}>{t.icon} {t.label}</button>
+                    <button key={t.id} onClick={()=>{setProdView(t.id); clearAllReports();}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${prodView === t.id ? 'border-orange-500 text-orange-400 bg-white/5' : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
               </div>
            </div>
@@ -28009,10 +28091,41 @@ ${resumenHtml}
            </div>
            {activeTab === 'home' && renderHome()}
            {activeTab === 'ventas' && renderVentasModule()}
+
+           {/* ── FÓRMULAS SUB-NAV ── */}
+           {activeTab === 'formulas' && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 {[{id:'formulas',icon:'🧪',label:'Fórmulas'},{id:'ingredients',icon:'🧱',label:'Materias Primas'}].map(t=>(
+                   <button key={t.id} onClick={()=>setFormulasView?.(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${(formulasView||'formulas')===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
+                 ))}
+               </div>
+             </div>
+           )}
            {activeTab === 'formulas' && renderFormulasModule()}
+
+           {/* ── PRODUCCIÓN SUB-NAV ── */}
            {activeTab === 'produccion' && renderProduccionModule()}
            {activeTab === 'inventario' && renderInventoryModule()}
+
+           {/* ── SIMULADOR SUB-NAV ── */}
+           {activeTab === 'simulador' && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><Calculator size={13}/> Simulador OP</button>
+               </div>
+             </div>
+           )}
            {activeTab === 'simulador' && renderSimuladorModule()}
+
+           {/* ── COSTOS OPERATIVOS SUB-NAV ── */}
+           {activeTab === 'costos_operativos' && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><DollarSign size={13}/> Costos Operativos</button>
+               </div>
+             </div>
+           )}
            {activeTab === 'costos_operativos' && renderCostosOperativosModule()}
            {activeTab === 'configuracion' && renderConfiguracionModule()}
            {/* ── PORTAL VENDEDORES (vista admin) ── */}
@@ -29496,9 +29609,56 @@ ${resumenHtml}
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
+           {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
+           {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 {[
+                   {id:'general',icon:<BarChart3 size={13}/>,label:'General'},
+                   {id:'ingresos_vs_costos',icon:<TrendingUp size={13}/>,label:'Ing. vs Costos'},
+                   {id:'mermas',icon:<AlertTriangle size={13}/>,label:'Mermas'},
+                   {id:'reporte_bobinas',icon:<Package size={13}/>,label:'Bobinas'},
+                   {id:'resumen_mensual',icon:<CalendarDays size={13}/>,label:'Resumen Mensual'},
+                   {id:'super_finiquito',icon:<FileText size={13}/>,label:'Finiquito OP'},
+                   {id:'estado_financiero',icon:<DollarSign size={13}/>,label:'Estado Financiero'},
+                 ].filter(t=>hasPerm('costos')||hasPerm('costos_reportes')||hasPerm('rep_finiquito')||appUser?.role==='Master').map(t=>(
+                   <button key={t.id} onClick={()=>{setShowReportType(t.id);setShowFiniquitoOP(null);}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${showReportType===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
+                 ))}
+               </div>
+             </div>
+           )}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
+
+           {/* ── ESTADO DE RESULTADO SUB-NAV ── */}
+           {activeTab === 'estado_resultado' && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 {[{id:'estado',icon:<BarChart3 size={13}/>,label:'Estado Resultado'},{id:'variaciones',icon:<TrendingUp size={13}/>,label:'Variaciones'}].map(t=>(
+                   <button key={t.id} onClick={()=>setErView(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${erView===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
+                 ))}
+               </div>
+             </div>
+           )}
            {activeTab === 'estado_resultado' && renderEstadoResultadoModule()}
+
+           {/* ── LIBRO DIARIO SUB-NAV ── */}
+           {activeTab === 'libro_diario' && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><BookOpen size={13}/> Libro Diario</button>
+               </div>
+             </div>
+           )}
            {activeTab === 'libro_diario' && renderLibroDiarioModule()}
+
+           {/* ── KPI SUB-NAV ── */}
+           {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
+             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+               <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+                 <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><BarChart3 size={13}/> Panel KPI Gerencial</button>
+               </div>
+             </div>
+           )}
            {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && renderKPIModule()}
            {activeTab === 'auditoria' && (hasPerm('auditoria') || appUser?.role==='Master') && renderAuditoriaModule()}
         </main>
