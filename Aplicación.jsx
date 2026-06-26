@@ -11147,8 +11147,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const porVend = {};
           nesMes.forEach(ne=>{ const v=(ne.vendedor||'—').toUpperCase(); porVend[v]=(porVend[v]||0)+parseNum(ne.montoBase||0); });
           factsDirect.forEach(inv=>{ const v=(inv.vendedor||'—').toUpperCase(); porVend[v]=(porVend[v]||0)+parseNum(inv.montoBase||inv.total||0); });
-          const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
-          const totalVentasBruto = vendArr.reduce((s,v)=>s+v.monto,0);
+          const vendArrBruto = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
+          const totalVentasBruto = vendArrBruto.reduce((s,v)=>s+v.monto,0);
 
           // Ajuste NC del período
           const ajusteNCDash = (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).reduce((s,nc)=>{
@@ -11157,6 +11157,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
           },0);
           const totalVentas = totalVentasBruto + ajusteNCDash;
+          // Escalar cada vendedor proporcionalmente
+          const ratioNCDash = totalVentasBruto > 0 ? totalVentas / totalVentasBruto : 1;
+          const vendArr = vendArrBruto.map(v=>({...v, monto: v.monto * ratioNCDash}));
           const mejorVend = vendArr[0];
           const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
           const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
@@ -11179,8 +11182,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
           );
           const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
-          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0);
-          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0);
+          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0) * ratioNCDash;
+          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0) * ratioNCDash;
 
           const exportDashExcel = () => {
             const td=(c,r=false,b=false)=>`<td style="padding:5px 8px;border:1px solid #ccc;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
@@ -14244,11 +14247,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           },0);
           totV = totV + ajusteNCGraf;
 
-          const t10P=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,10);
-          const t10C=Object.entries(byCli).sort((a,b)=>b[1]-a[1]).slice(0,10);
-          const tV=Object.entries(byVend).sort((a,b)=>b[1]-a[1]);
-          const tL=Object.entries(byLoc).sort((a,b)=>b[1]-a[1]);
-          const tCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+          // Ratio NC para escalar todos los breakdowns proporcionalmente
+          const totVBruto = totV - ajusteNCGraf; // reversar para obtener bruto
+          const ratioNC = totVBruto > 0 ? totV / totVBruto : 1; // totV ya tiene NC aplicada
+
+          const t10P=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>[k,v*ratioNC]);
+          const t10C=Object.entries(byCli).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>[k,v*ratioNC]);
+          const tV=Object.entries(byVend).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
+          const tL=Object.entries(byLoc).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
+          const tCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
           const totVend=tV.reduce((s,x)=>s+x[1],0)||1;
           const totLoc=tL.reduce((s,x)=>s+x[1],0)||1;
           const totCat=tCat.reduce((s,x)=>s+x[1],0)||1;
