@@ -14577,7 +14577,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Helpers de saldo con fecha de corte ────────────────────────
           const getSaldoNEAtFecha = (ne, fRef) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne));
+            // No usar Math.max — permitir saldo negativo (saldo a favor del cliente)
+            return parseNum(ne.total||ne.totalUSD||0)-cobrado-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
           };
           // Encontrar invoice vinculado a NE usando mapas pre-computados
           const findInvForNE=(ne)=>{
@@ -14948,26 +14949,44 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
               const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
               const batch=writeBatch(db);
+              const grupoId=m._grupoId||Date.now().toString(36).toUpperCase();
+
+              // ── MODO EDICIÓN: revertir cobros anteriores ──────────────
+              if(m._editMode){
+                const allCobsGrupo=(cobrosCxc||[]).filter(c=>c.grupoCobroId===m._grupoId||lineas.some(l=>l._cobId===c.id));
+                const neIdsPrevios=[...new Set(allCobsGrupo.map(c=>c.neId).filter(Boolean))];
+                for(const neId of neIdsPrevios){
+                  const ne=(notasEntrega||[]).find(n=>n.id===neId);
+                  if(!ne) continue;
+                  const cobradoPrevio=allCobsGrupo.filter(c=>c.neId===neId).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                  const saldoRestaurado=getSaldoNEAtFecha(ne,null)+cobradoPrevio;
+                  batch.update(getDocRef('notasEntrega',neId),{
+                    statusCxC:saldoRestaurado>0.01?'PENDIENTE':'COBRADA',
+                    montoCobrado:Math.max(0,(getCobradoNEAtFecha(ne,null)||0)-cobradoPrevio),
+                    saldoPendiente:saldoRestaurado
+                  });
+                }
+                allCobsGrupo.forEach(c=>batch.delete(getDocRef('cobros_cxc',c.id)));
+              }
+
               let restante=totalUSD;
               const cobrosGenerados=[];
-              const grupoId=Date.now().toString(36).toUpperCase();
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
-                const saldoNE=getSaldoNEAtFecha(ne,null);
-                // ✅ FIX: registrar el monto real cobrado, no truncado al saldo
-                // Si paga de más, el saldo queda negativo (saldo a favor del cliente)
-                const montoNE=restante; // TODO distribuir entre varias NEs si aplica
+                const saldoNE=m._editMode?getSaldoNEAtFecha(ne,null):getSaldoNEAtFecha(ne,null);
+                if(!m._editMode&&saldoNE<=0.001) continue;
+                const montoNE=restante;
                 restante=0;
-                const nuevoSaldo=saldoNE-montoNE; // puede ser negativo = saldo a favor
+                const nuevoSaldo=saldoNE-montoNE;
                 const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
                 for(const linea of lineas){
                   const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
                   const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
                   const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
                   if(montoLineaNE<0.001) continue;
-                  const cobId=`COB-${grupoId}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+                  const cobId='COB-'+grupoId+'-'+Math.random().toString(36).slice(2,6).toUpperCase();
                   const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
-                  const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
+                  const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>'CAJA::'+c.id===linea.cuentaId):null;
                   const tasa=parseNum(linea.tasa||tasaBCV);
                   batch.set(getDocRef('cobros_cxc',cobId),{
                     id:cobId,neId:ne.id,neDocumento:ne.id,clientName:ne.clientName||m.clientName,
@@ -14978,10 +14997,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     vendedor:ne.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
                   });
                   if(cta){
-                    const mvId=`MV-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
+                    const mvId='MV-'+grupoId+'-'+Math.random().toString(36).slice(2,4).toUpperCase();
                     batch.set(getDocRef('banco_movimientos',mvId),{
                       id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Cobro CxC',
-                      concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
+                      concepto:(linea.concepto||'Cobro CxC')+' — '+m.clientName+' — '+ne.id,
                       referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
                       cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
                       montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
@@ -14999,8 +15018,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               }
               await batch.commit();
               setCxcPagoModal(null);
-              const saldoFavor=cobrosGenerados.some(c=>c.nuevoSaldo<-0.01);
-              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(totalUSD)} en ${lineas.length} método${lineas.length>1?'s':''}. ${cobrosGenerados.length} NE${cobrosGenerados.length>1?'s':''} actualizadas.${cobrosGenerados.some(c=>c.nuevoSaldo<-0.01)?' ⚠️ Saldo a favor del cliente.':''}`,type:'alert'});
+              setDialog({title:m._editMode?'✅ Cobro actualizado':'✅ Cobro registrado',text:m._editMode?'Cobro actualizado correctamente.':'Cobro de $'+formatNum(totalUSD)+' registrado.',type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
@@ -15012,7 +15030,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               const montoAnterior=parseNum(cobro.monto||0);
               const montoNuevo=parseNum(nuevosDatos.monto||0);
               const diferencia=montoNuevo-montoAnterior;
-              // Actualizar solo los campos editables del cobro (no duplicar)
+              // Actualizar el cobro existente (no duplicar)
               batch.update(getDocRef('cobros_cxc',cobro.id),{
                 monto:montoNuevo,
                 montoUSD:montoNuevo,
@@ -15027,7 +15045,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               });
               // Actualizar saldo en NE
               const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
-              if(ne){
+              if(ne&&diferencia!==0){
                 const saldoActual=getSaldoNEAtFecha(ne,null);
                 const nuevoSaldo=saldoActual-diferencia;
                 const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
@@ -15037,19 +15055,24 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   saldoPendiente:nuevoSaldo
                 });
               }
-              // Actualizar movimiento bancario si existe
-              const mvBanco=(bancoMovimientos||[]).find(mv=>mv.referencia===cobro.referencia&&mv.clientName===cobro.clientName);
-              if(mvBanco&&diferencia!==0){
-                batch.update(getDocRef('banco_movimientos',mvBanco.id),{
-                  montoUSD:montoNuevo,
-                  montoBs:montoNuevo*parseNum(nuevosDatos.tasa||cobro.tasa||1)
-                });
-                const cta=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
-                if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+diferencia});
+              // Buscar movimiento bancario vinculado directamente en Firestore
+              if(diferencia!==0){
+                try{
+                  const movsSnap=await getDocs(getColRef('banco_movimientos'));
+                  const mvBanco=movsSnap.docs.map(d=>d.data()).find(mv=>mv.referencia===cobro.referencia&&mv.clientName===cobro.clientName);
+                  if(mvBanco){
+                    batch.update(getDocRef('banco_movimientos',mvBanco.id),{
+                      montoUSD:montoNuevo,
+                      montoBs:montoNuevo*parseNum(nuevosDatos.tasa||cobro.tasa||1)
+                    });
+                    const cta=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
+                    if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+diferencia});
+                  }
+                }catch(_){}
               }
               await batch.commit();
               setCxcEditModal(null);
-              setDialog({title:'✅ Cobro actualizado',text:`Cobro actualizado a $${formatNum(montoNuevo)}.`,type:'alert'});
+              setDialog({title:'✅ Cobro actualizado',text:'Cobro actualizado a $'+formatNum(montoNuevo)+'.',type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
@@ -15553,8 +15576,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       )}
                       <button onClick={guardarPagoMasivo}
                         disabled={!pm.clientRif||(pm.lineasPago||[]).length===0}
-                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#e5e7eb':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
-                        <CheckCircle size={15}/> Confirmar y Registrar
+                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#e5e7eb':pm._editMode?'linear-gradient(135deg,#1d4ed8,#1e40af)':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
+                        <CheckCircle size={15}/> {pm._editMode?'Actualizar Cobro':'Confirmar y Registrar'}
                       </button>
                       <button onClick={()=>setCxcPagoModal(null)}
                         style={{width:'100%',padding:'10px',borderRadius:12,border:'2px solid #e5e7eb',background:'transparent',color:'#9ca3af',fontWeight:900,fontSize:11,textTransform:'uppercase',cursor:'pointer',letterSpacing:1}}>
@@ -15684,17 +15707,23 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <button onClick={()=>setCxcSelectedClient('')} className="text-[9px] text-gray-400 hover:text-red-500 font-black ml-1">✕ Ver todos</button>
                   </div>
                 )}
-                {[
-                  {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
-                  {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
-                  {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
-                ].map((m,i)=>(
-                  <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
-                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
-                    <p className={`text-xl font-black ${m.c}`}>{m.v}</p>
-                    <p className="text-[8px] text-gray-400">{m.s}</p>
-                  </div>
-                ))}
+                {(()=>{
+                  const totalCobradoHist=clienteActivoData
+                    ?(cobrosCxc||[]).filter(c=>c.clientName===clienteActivoData.clientName).reduce((s,c)=>s+parseNum(c.monto||0),0)
+                    :(cobrosCxc||[]).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                  return[
+                    {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
+                    {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
+                    {l:'Total cobrado',v:`$${formatNum(totalCobradoHist)}`,s:`Bs. ${formatNum(totalCobradoHist*tasaBCV)}`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
+                    {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
+                  ].map((m,i)=>(
+                    <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
+                      <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
+                      <p className={`text-xl font-black ${m.c}`}>{m.v}</p>
+                      <p className="text-[8px] text-gray-400">{m.s}</p>
+                    </div>
+                  ));
+                })()}
               </div>
 
               {/* Tabla clientes */}
@@ -16120,7 +16149,38 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                   className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                                   🖨 PDF
                                 </button>
-                                <button onClick={()=>setCxcEditModal({...cb,_monto:String(cb.monto||''),_metodo:cb.metodo||'Transferencia',_referencia:cb.referencia||'',_fecha:cb.fecha||getTodayDate(),_concepto:cb.concepto||'',_cuentaId:cb.cuentaBancariaId||'',_cuentaNombre:cb.cuentaBancoNombre||''})} title="Editar cobro"
+                                <button onClick={()=>{
+                                  // Agrupar todas las líneas del mismo grupo
+                                  const grupoId=cb.grupoCobroId;
+                                  const lineasGrupo=grupoId?(cobrosCxc||[]).filter(c=>c.grupoCobroId===grupoId):[cb];
+                                  // Reconstruir lineasPago desde los cobros del grupo
+                                  const lineasPago=lineasGrupo.map(c=>({
+                                    moneda:c.moneda||'USD',
+                                    monto:String(c.monto||''),
+                                    tasa:String(c.tasa||tasaBCV),
+                                    metodo:c.metodo||'Transferencia',
+                                    cuentaId:c.cuentaBancariaId||'',
+                                    cuentaNombre:c.cuentaBancoNombre||'',
+                                    referencia:c.referencia||'',
+                                    concepto:c.concepto||'',
+                                    fecha:c.fecha||getTodayDate(),
+                                    _cobId:c.id // id original para borrar al guardar
+                                  }));
+                                  // Buscar NEs del cliente
+                                  const nesSelec={};
+                                  lineasGrupo.forEach(c=>{if(c.neId)nesSelec[c.neId]=true;});
+                                  setCxcPagoModal({
+                                    clientSearch:cb.clientName||'',
+                                    clientRif:cb.clientRif||(notasEntrega||[]).find(ne=>ne.id===cb.neId)?.clientRif||'',
+                                    clientName:cb.clientName||'',
+                                    nesSelec,
+                                    lineasPago,
+                                    lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:getTodayDate()},
+                                    distribucion:{},
+                                    _editMode:true, // flag para saber que es edición
+                                    _grupoId:grupoId||cb.id
+                                  });
+                                }} title="Editar cobro"
                                   className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
                                   ✏️ Editar
                                 </button>
