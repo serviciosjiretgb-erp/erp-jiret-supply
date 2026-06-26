@@ -12,7 +12,7 @@ import {
   Mail, CreditCard, CalendarDays, MapPin, Key, PieChart,
   Tag, Layers, ArrowUpCircle, ArrowDownCircle, RefreshCw,
   BookMarked, Coins, BadgeDollarSign, Inbox, Send, Eye, EyeOff,
-  Printer, Activity, AlignLeft, Filter, ChevronDown
+  Printer, Activity, AlignLeft, Filter, ChevronDown, Edit3
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
@@ -3745,7 +3745,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
                   )}
                   <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
                     <button onClick={()=>openEdit(c)} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-slate-200 text-[9px] font-black text-slate-600 hover:bg-slate-50 transition-all">
-                      <Pencil size={11}/> Editar
+                      <Edit3 size={11}/> Editar
                     </button>
                     <button onClick={()=>toggleActivo(c)} className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-[9px] font-black transition-all ${c.activo!==false?'border-red-200 text-red-500 hover:bg-red-50':'border-emerald-200 text-emerald-600 hover:bg-emerald-50'}`}>
                       {c.activo!==false?<><EyeOff size={11}/> Inactivar</>:<><Eye size={11}/> Activar</>}
