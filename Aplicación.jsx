@@ -1,14 +1,3 @@
-// ============================================================================
-// ERP G&B SUPPLY — VERSIÓN OPTIMIZADA
-// Optimizaciones aplicadas:
-//   1. LiveClock extraído como componente aislado (elimina 1 re-render/seg del árbol completo)
-//   2. useMemo para datos derivados costosos (proyección MP, filtros, costos, stock)
-//   3. useCallback para clearAllReports, requireAdminPassword, cancelAdminModal, hasPerm
-//   4. Lazy useState initializers para formularios con getTodayDate()
-//   5. generateProjectionData convertido a valor memoizado + wrapper de compatibilidad
-// ============================================================================
-// recharts loaded via CDN in index.html
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
@@ -448,6 +437,13 @@ function App() {
   const [histFiltFecha, setHistFiltFecha] = useState('');
   const [histFiltMetodo, setHistFiltMetodo] = useState('TODOS');
   const HIST_PER_PAGE = 25;
+  // Estado de Cuenta states
+  const [ecSearch, setEcSearch] = useState('');
+  const [ecVendedor, setEcVendedor] = useState('TODOS');
+  const [ecEstado, setEcEstado] = useState('TODOS');
+  const [ecDesde, setEcDesde] = useState('');
+  const [ecHasta, setEcHasta] = useState('');
+  const [ecExpanded, setEcExpanded] = useState({});
   const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
@@ -14770,19 +14766,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   clTotal+=saldo; gTotUSD+=saldo; gTotTotal+=totalUSD; gTotCob+=cobradoNE; gTotNC+=ncNE; gTotRet+=retNE;
                   // Cobros parciales
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                  const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
-                  const retsNE=(retenciones||[]).filter(r=>(r.facturaId===ne.id||r.neId===ne.id));
-                  const detalles=[
-                    ...cobrosNE.map(cb=>`<div class="abono" style="${cols9}"><span style="padding-left:8px">✓ Abono · ${cb.fecha}</span><span style="font-size:9px;color:#64748b">${cb.referencia||'—'}</span><span style="color:#64748b">${cb.metodo||'—'}</span><span></span><span></span><span style="color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</span><span style="color:#64748b">${formatNum(parseNum(cb.monto)*tasa)}</span><span></span><span></span></div>`),
-                    ...ncsNE.map(nc=>`<div class="nc" style="${cols9}"><span style="padding-left:8px">NC · ${nc.fecha||'—'}</span><span style="font-size:9px">${nc.nroDocumento||nc.documento||'—'}</span><span></span><span></span><span></span><span style="color:#3b82f6;font-weight:bold">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</span><span style="color:#64748b">${formatNum(parseNum(nc.monto||nc.totalNeto||0)*tasa)}</span><span></span><span></span></div>`),
-                    ...retsNE.map(r=>`<div class="ret" style="${cols9}"><span style="padding-left:8px">RET · ${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:9px">${r.nroRetencion||'—'}</span><span></span><span></span><span></span><span></span><span></span><span style="color:#b45309;font-weight:bold">$${formatNum(parseNum(r.montoRetenido||0))}</span><span></span></div>`),
-                  ].join('');
+                  const ncsNE=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return(ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
+                  const retsNE=(retenciones||[]).filter(r=>(r.facturaId===ne.id||r.neId===ne.id||r.neOrigen===ne.id));
                   const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   const diasCredPDF=parseNum(ne.diasCredito||0);
                   const invLinkedIdsPDF=(invoices||[]).filter(inv=>inv.neOrigen===ne.id).map(inv=>inv.id);
                   const retsNEPDF=(retenciones||[]).filter(r=>r.facturaId===(invVincPDF?.id||'NONE')||r.neId===ne.id||invLinkedIdsPDF.includes(r.facturaId));
                   const retCompPDF=retsNEPDF.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
+                  // Sub-filas: factura fiscal, NCs, retenciones, cobros
+                  const detalles=[
+                    ...(invVincPDF?[`<div style="display:grid;${cols9};background:#eef2ff;border-left:3px solid #6366f1;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#4338ca;font-weight:bold;font-size:9px">↳ Fac. ${invVincPDF.nroFiscal||invVincPDF.documento||'—'}${invVincPDF.nroControl?' · Ctrl.'+invVincPDF.nroControl:''}</span><span style="font-size:9px;color:#6366f1">${invVincPDF.fecha||'—'}</span><span style="font-size:8px;color:#4338ca;grid-column:span 9">${parseNum(invVincPDF.baseImponible||invVincPDF.montoBase||0)>0?'Base Bs.'+formatNum(parseNum(invVincPDF.baseImponible||invVincPDF.montoBase||0))+' · ':''}${parseNum(invVincPDF.montoIVA||invVincPDF.iva||0)>0?'IVA Bs.'+formatNum(parseNum(invVincPDF.montoIVA||invVincPDF.iva||0))+' · ':''}${parseNum(invVincPDF.tasa||0)>0?'Tasa: '+formatNum(parseNum(invVincPDF.tasa))+' Bs/$':''}</span></div>`]:[]),
+                    ...ncsNE.map(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);return`<div style="display:grid;${cols9};background:#faf5ff;border-left:3px solid #9333ea;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#7c3aed;font-weight:bold;font-size:9px">↳ ${nc.tipo||'NC'} · ${nc.nroDocumento||'—'}</span><span style="font-size:9px;color:#7c3aed">${nc.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 7">${nc.descripcion||'—'}${b>0?' · Bs.'+formatNum(b)+' / Tasa '+formatNum(t):''}</span><span style="text-align:right;color:#7c3aed;font-weight:bold">-$${formatNum(u)}</span><span></span></div>`;}),
+                    ...retsNE.map(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||1;const ru=rt>1?rb/rt:0;return`<div style="display:grid;${cols9};background:#fffbeb;border-left:3px solid #d97706;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#92400e;font-weight:bold;font-size:9px">↳ Ret. IVA</span><span style="font-size:9px;color:#b45309">${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:8px;color:#b45309;grid-column:span 6">Comp. ${r.nroRetencion||r.nroComprobante||'—'} · ${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}${invVincPDF?' · Fac. '+(invVincPDF.nroFiscal||'—'):''}</span><span></span><span style="text-align:right;color:#b45309;font-weight:bold">${ru>0?'$'+formatNum(ru):'Bs.'+formatNum(rb)}</span><span></span></div>`;}),
+                    ...cobrosNE.map(cb=>`<div style="display:grid;${cols9};background:#f0fdf4;border-left:3px solid #16a34a;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#15803d;font-weight:bold;font-size:9px">↳ Pago · ${cb.fecha}</span><span style="font-size:9px;color:#64748b">${cb.referencia||'—'}</span><span style="font-size:9px;color:#15803d;grid-column:span 4">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</span><span style="text-align:right;color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</span><span style="font-size:8px;color:#64748b">${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</span><span></span><span></span></div>`),
+                  ].join('');
                   return `<div class="ne-row" style="${cols9}">
                     <span style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</span>
                     <span style="font-size:9px;color:#64748b">${ne.fecha||'—'}</span>
@@ -14878,8 +14876,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const retComp=retsNE.map(r=>r.nroRetencion||'').filter(Boolean).join(' / ');
                   detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE)+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(cx=>cx.neId===ne.id&&(!fechaRef||(cx.fecha||'')<=fechaRef));
-                  cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">✓ Abono · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td colspan="3"></td></tr>`;});
-                  retsNE.forEach(r=>{detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">RET · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">${r.nroRetencion||'—'}</td><td colspan="7"></td><td class="a">$${formatNum(parseNum(r.montoRetenido||0))}</td><td></td></tr>`;});
+                  // Factura fiscal
+                  if(invVinc){const baseBsA=parseNum(invVinc.baseImponible||invVinc.montoBase||0);const ivaA=parseNum(invVinc.montoIVA||invVinc.iva||0);const totalBsA=parseNum(invVinc.totalBs||0);const tasaA=parseNum(invVinc.tasa||0);detRows+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:16px;color:#4338ca;font-weight:bold">📋 Fac. ${invVinc.nroFiscal||invVinc.documento||'—'}</td><td class="left">${invVinc.fecha||'—'}</td><td class="left" colspan="2">${invVinc.nroControl?'Ctrl. '+invVinc.nroControl:''}</td><td colspan="3"></td><td class="left" style="color:#4338ca">${baseBsA>0?'Base: Bs.'+formatNum(baseBsA):''}${ivaA>0?' IVA: Bs.'+formatNum(ivaA):''}${totalBsA>0?' Tot: Bs.'+formatNum(totalBsA):''}${tasaA>0?' Tasa: '+formatNum(tasaA):''}  </td><td colspan="3"></td></tr>`;}
+                  cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">💰 Pago · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}${parseNum(cb.montoBs||0)>0?' / Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td colspan="3"></td></tr>`;});
+                  retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||1;const ru=rt>1?rb/rt:0;detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 Ret. IVA · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td class="left">${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}</td><td colspan="6"></td><td class="a">${ru>0?'$'+formatNum(ru):'Bs.'+formatNum(rb)}</td><td></td></tr>`;});
                 });
                 const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
                 detRows+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL</td><td style="color:#dc2626">$${formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
@@ -14905,9 +14905,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const diasCredXLS=parseNum(ne.diasCredito||0);
                   body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                  cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">✓ Abono</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${formatNum(parseNum(cb.monto)*getTasa(ne))}</td><td></td></tr>`;});
-                  const ncsNE=(notasVentaCD||[]).filter(n=>n.neOrigen===ne.id&&n.tipo==='NC'&&(!fechaRef||(n.fecha||'')<=fechaRef));
-                  ncsNE.forEach(nc=>{body+=`<tr class="nc"><td class="left" style="padding-left:20px">NC</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td></td><td class="b">-$${formatNum(parseNum(nc.monto||nc.totalNeto||0))}</td><td></td><td></td><td></td><td></td></tr>`;});
+                  // Factura fiscal
+                  if(invVincXLS){const bBs=parseNum(invVincXLS.baseImponible||invVincXLS.montoBase||0);const ivaD=parseNum(invVincXLS.montoIVA||invVincXLS.iva||0);const tBs=parseNum(invVincXLS.totalBs||0);const tD=parseNum(invVincXLS.tasa||0);body+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:20px;color:#4338ca;font-weight:bold">📋 Fac. ${invVincXLS.nroFiscal||invVincXLS.documento||'—'}</td><td class="left">${invVincXLS.fecha||'—'}</td><td class="left" colspan="3">${bBs>0?'Base Bs.'+formatNum(bBs)+' · ':''}${ivaD>0?'IVA Bs.'+formatNum(ivaD)+' · ':''}${tBs>0?'Total Bs.'+formatNum(tBs)+' · ':''}${tD>0?'Tasa: '+formatNum(tD):''}  </td><td colspan="7"></td></tr>`;}
+                  cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">💰 Pago</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td></td></tr>`;});
+                  const ncsNEd=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return (ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
+                  ncsNEd.forEach(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${nc.tipo||'NC'}</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed;font-style:italic">${nc.descripcion||'—'}</td><td class="b">-$${formatNum(u)}</td><td class="left">${b>0?'Bs.'+formatNum(b):''}</td><td colspan="5"></td></tr>`;});
+                  const retsNEd=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
+                  retsNEd.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||1;const ru=rt>1?rb/rt:0;body+=`<tr class="ret"><td class="left" style="padding-left:20px;color:#92400e;font-weight:bold">🧾 Ret. IVA</td><td class="left">${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td></td><td class="left">${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}${invVincXLS?' · Fac. '+(invVincXLS.nroFiscal||'—'):''}</td><td colspan="3"></td><td class="a">${ru>0?'$'+formatNum(ru):'Bs.'+formatNum(rb)}</td><td colspan="3"></td></tr>`;});
                 });
                 const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
                 const clTotUSD=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
@@ -16038,279 +16042,209 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
         })()}
 
         {ventasView === 'estado_cuenta' && (() => {
-          try {
-            const tasaBCV = parseNum(settings?.tasaBCV||0)||1;
-            // ── Estados
-            const [ecSearch,setEcSearch] = React.useState('');
-            const [ecVendedor,setEcVendedor] = React.useState('TODOS');
-            const [ecEstado,setEcEstado] = React.useState('TODOS');
-            const [ecDesde,setEcDesde] = React.useState('');
-            const [ecHasta,setEcHasta] = React.useState('');
-            const [ecExpanded,setEcExpanded] = React.useState({});
-
-            // ── Helpers
-            const getSaldoNE = (ne) => {
-              const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-              const nc=(notasVentaCD||[]).filter(n=>{
-                const ni=n.neId||'',no=n.neOrigen||'';
-                return (ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);
-              }).reduce((s,n)=>{
-                const t=parseNum(n.tasaFactura||0)||tasaBCV;
-                const b=parseNum(n.monto||0);
-                const tot=n.tieneIva===false?b:b;
-                const usd=t>1?tot/t:parseNum(n.montoUSD||0);
-                return s+(n.tipo==='NC'?usd:-usd);
-              },0);
-              const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{
-                const rb=parseNum(r.montoRetenido||r.monto||0);
-                const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCV;
-                return s+(rt>1?rb/rt:0);
-              },0);
-              return Math.max(0, parseNum(ne.total||ne.montoBase||0) - cobrado - nc - ret);
-            };
-
-            // ── Todas las NEs (incluye pagadas)
-            const allNEs = (notasEntrega||[]).filter(ne=>{
-              if(ne.status==='ANULADA') return false;
-              if(ecDesde&&(ne.fecha||'')<ecDesde) return false;
-              if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
-              return true;
-            });
-
-            // ── Agrupar por cliente
-            const porCli={};
-            allNEs.forEach(ne=>{
-              const k=ne.clientRif||ne.clientName||'SIN-RIF';
-              if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
-              porCli[k].nes.push(ne);
-            });
-
-            let cliList = Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
-
-            // Filtros
-            if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
-            if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
-            if(ecEstado!=='TODOS'){
-              cliList=cliList.filter(cl=>{
-                const saldoTotal=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
-                if(ecEstado==='SALDADO') return saldoTotal<0.01;
-                if(ecEstado==='PENDIENTE') return saldoTotal>=0.01;
-                return true;
-              });
-            }
-
-            const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
-
-            // KPIs
-            const totalFact=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
-            const totalSaldo=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoNE(ne),0),0);
-            const totalCobrado=totalFact-totalSaldo;
-
-            return (
-              <div className="p-4 space-y-4">
-                {/* Filtros */}
-                <div className="bg-white rounded-2xl border border-gray-100 p-4">
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <input value={ecSearch} onChange={e=>setEcSearch(e.target.value)} placeholder="🔍 Buscar cliente o RIF..."
-                      className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[180px]"/>
-                    <select value={ecVendedor} onChange={e=>setEcVendedor(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400">
-                      {vendedoresEc.map(v=><option key={v} value={v}>{v==='TODOS'?'Todos los vendedores':v}</option>)}
-                    </select>
-                    <select value={ecEstado} onChange={e=>setEcEstado(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400">
-                      <option value="TODOS">Todos</option>
-                      <option value="PENDIENTE">Con saldo</option>
-                      <option value="SALDADO">Saldados</option>
-                    </select>
-                    <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
-                      <span className="text-[9px] text-gray-400 font-bold">Desde</span>
-                      <input type="date" value={ecDesde} onChange={e=>setEcDesde(e.target.value)} className="border-none outline-none text-[10px] font-bold"/>
-                      <span className="text-[9px] text-gray-400 font-bold">hasta</span>
-                      <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border-none outline-none text-[10px] font-bold"/>
-                    </div>
-                    {(ecDesde||ecHasta||ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS')&&
-                      <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+          const tasaBCVec = parseNum(settings?.tasaBCV||0)||1;
+          const getSaldoNE = (ne) => {
+            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
+            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
+            return Math.max(0,parseNum(ne.total||ne.montoBase||0)-cobrado-nc-ret);
+          };
+          const allNEs=(notasEntrega||[]).filter(ne=>{
+            if(ne.status==='ANULADA') return false;
+            if(ecDesde&&(ne.fecha||'')<ecDesde) return false;
+            if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
+            return true;
+          });
+          const porCli={};
+          allNEs.forEach(ne=>{
+            const k=ne.clientRif||ne.clientName||'SIN-RIF';
+            if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
+            porCli[k].nes.push(ne);
+          });
+          let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
+          if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
+          if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
+          if(ecEstado==='SALDADO') cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)<0.01);
+          if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)>=0.01);
+          const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
+          const totalFact=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
+          const totalSaldo=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoNE(ne),0),0);
+          const totalCobrado=totalFact-totalSaldo;
+          return (
+            <div className="p-4 space-y-4">
+              <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                <div className="flex flex-wrap gap-2 items-center">
+                  <input value={ecSearch} onChange={e=>setEcSearch(e.target.value)} placeholder="🔍 Buscar cliente o RIF..."
+                    className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[180px]"/>
+                  <select value={ecVendedor} onChange={e=>setEcVendedor(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none">
+                    {vendedoresEc.map(v=><option key={v} value={v}>{v==='TODOS'?'Todos los vendedores':v}</option>)}
+                  </select>
+                  <select value={ecEstado} onChange={e=>setEcEstado(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none">
+                    <option value="TODOS">Todos</option>
+                    <option value="PENDIENTE">Con saldo</option>
+                    <option value="SALDADO">Saldados</option>
+                  </select>
+                  <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
+                    <span className="text-[9px] text-gray-400 font-bold">Desde</span>
+                    <input type="date" value={ecDesde} onChange={e=>setEcDesde(e.target.value)} className="border-none outline-none text-[10px] font-bold bg-transparent"/>
+                    <span className="text-[9px] text-gray-400 font-bold">hasta</span>
+                    <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border-none outline-none text-[10px] font-bold bg-transparent"/>
                   </div>
+                  {(ecDesde||ecHasta||ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS')&&
+                    <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
                 </div>
-
-                {/* KPIs */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    {l:'Clientes',v:cliList.length,c:'text-gray-800'},
-                    {l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},
-                    {l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},
-                    {l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'},
-                  ].map(k=>(
-                    <div key={k.l} className="bg-white rounded-2xl border border-gray-100 p-4">
-                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">{k.l}</div>
-                      <div className={`text-xl font-black ${k.c}`}>{k.v}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Lista clientes */}
-                {cliList.map(cl=>{
-                  const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
-                  const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
-                  const cobradoCli=facturadoCli-saldoCli;
-                  const saldado=saldoCli<0.01;
-                  const exp=!!ecExpanded[cl.clientRif];
-                  return(
-                  <div key={cl.clientRif} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                    {/* Header cliente */}
-                    <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
-                      onClick={()=>setEcExpanded(p=>({...p,[cl.clientRif]:!p[cl.clientRif]}))}>
-                      <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs ${saldado?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>
-                          {(cl.clientName||'?').slice(0,2).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="font-black text-sm text-gray-900">{cl.clientName}</div>
-                          <div className="text-[9px] text-gray-400">{cl.clientRif} · {cl.nes[0]?.vendedor||'—'} · {cl.nes.length} doc{cl.nes.length>1?'s':''}</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right"><div className="text-[9px] text-gray-400">Facturado</div><div className="text-sm font-black text-gray-700">${formatNum(facturadoCli)}</div></div>
-                        <div className="text-right"><div className="text-[9px] text-gray-400">Cobrado</div><div className="text-sm font-black text-green-700">${formatNum(cobradoCli)}</div></div>
-                        <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldado?'text-green-700':'text-red-600'}`}>${formatNum(saldoCli)}</div></div>
-                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado?'Saldado':'Con saldo'}</span>
-                        <ChevronDown size={14} className={`text-gray-400 transition-transform ${exp?'rotate-180':''}`}/>
-                      </div>
-                    </div>
-
-                    {/* Detalle expandido */}
-                    {exp&&(
-                      <div className="border-t border-gray-100 overflow-x-auto">
-                        <table className="w-full text-[9px]" style={{minWidth:900}}>
-                          <thead className="bg-gray-900">
-                            <tr className="text-gray-400 font-black uppercase">
-                              <th className="py-2 px-3 text-left">Documento</th>
-                              <th className="py-2 px-3 text-left">Fecha</th>
-                              <th className="py-2 px-3 text-left">Tipo</th>
-                              <th className="py-2 px-3 text-left">Detalle</th>
-                              <th className="py-2 px-3 text-right">Cargo USD</th>
-                              <th className="py-2 px-3 text-right">NC/Ret.</th>
-                              <th className="py-2 px-3 text-right">Abono</th>
-                              <th className="py-2 px-3 text-right">Saldo</th>
-                              <th className="py-2 px-3 text-center">Estado</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map((ne,ni)=>{
-                              const sNE=getSaldoNE(ne);
-                              const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
-                              const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                              const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
-                              const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
-                              const saldado2=sNE<0.01;
-                              return(
-                              <React.Fragment key={ne.id}>
-                                {/* Fila NE */}
-                                <tr className={`border-b border-gray-100 ${ni%2===0?'bg-white':'bg-gray-50'}`}>
-                                  <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
-                                  <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
-                                  <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Entrega</span></td>
-                                  <td className="py-2 px-3 text-gray-500 max-w-[200px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
-                                  <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
-                                  <td className="py-2 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-2 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-2 px-3 text-right font-black text-red-600">${formatNum(sNE)}</td>
-                                  <td className="py-2 px-3 text-center">
-                                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${saldado2?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado2?'Saldado':'Pendiente'}</span>
-                                  </td>
-                                </tr>
-                                {/* Factura fiscal */}
-                                {invV2&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
-                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ Fac. {invV2.nroFiscal||invV2.documento||'—'}</td>
-                                  <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
-                                  <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Factura Fiscal</span></td>
-                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">
-                                    {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
-                                    {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
-                                    {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">· Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
-                                  </td>
-                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-center"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Emitida</span></td>
-                                </tr>}
-                                {/* NCs */}
-                                {ncsNE2.map(nc=>{
-                                  const t=parseNum(nc.tasaFactura||0)||tasaBCV;
-                                  const b=parseNum(nc.monto||0);
-                                  const u=t>1?b/t:parseNum(nc.montoUSD||0);
-                                  return<tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
-                                    <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
-                                    <td className="py-1.5 px-3 text-[8px] text-purple-600">{nc.fecha||'—'}</td>
-                                    <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
-                                    <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}{t>1?` / Tasa ${formatNum(t)}`:''}</span>}</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-right font-black text-purple-700">-${formatNum(u)}</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">NC</span></td>
-                                  </tr>;
-                                })}
-                                {/* Retenciones */}
-                                {retsNE2.map((r,ri)=>{
-                                  const rb=parseNum(r.montoRetenido||r.monto||0);
-                                  const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCV;
-                                  const ru=rt>1?rb/rt:0;
-                                  return<tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
-                                    <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700">↳ RET · {r.nroRetencion||r.nroComprobante||'—'}</td>
-                                    <td className="py-1.5 px-3 text-[8px] text-amber-600">{r.fechaComprobante||r.fecha||'—'}</td>
-                                    <td className="py-1.5 px-3"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Retención IVA</span></td>
-                                    <td className="py-1.5 px-3 text-[8px] text-gray-500">Ret. IVA {r.porcentaje||r.pct?`${r.porcentaje||r.pct}%`:'75%'}{rb>0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(rb)}</span>}{rt>1&&<span className="text-gray-400"> / Tasa {formatNum(rt)}</span>}{invV2&&<span className="ml-2 text-gray-400">· Fac. {invV2.nroFiscal||'—'}</span>}</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-right font-black text-amber-700">{ru>0?`$${formatNum(ru)}`:rb>0?`Bs.${formatNum(rb)}`:'—'}</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-center"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret.</span></td>
-                                  </tr>;
-                                })}
-                                {/* Cobros */}
-                                {cobNE.map((cb,ci)=>(
-                                  <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
-                                    <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
-                                    <td className="py-1.5 px-3 text-[8px] text-green-600">{cb.fecha||'—'}</td>
-                                    <td className="py-1.5 px-3"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
-                                    <td className="py-1.5 px-3 text-[8px] text-gray-500">
-                                      <span className="font-bold text-green-700">{cb.metodo||'—'}</span>
-                                      {cb.cuentaBancoNombre&&<span className="ml-1">· {cb.cuentaBancoNombre}</span>}
-                                      {cb.referencia&&<span className="ml-1 font-mono text-gray-400">· Ref. {cb.referencia}</span>}
-                                      {parseNum(cb.montoBs||0)>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
-                                    </td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
-                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                    <td className="py-1.5 px-3 text-center"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Cobrado</span></td>
-                                  </tr>
-                                ))}
-                              </React.Fragment>);
-                            })}
-                          </tbody>
-                          <tfoot>
-                            <tr style={{background:'#0f172a'}} className="text-[9px]">
-                              <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}</td>
-                              <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
-                              <td className="py-2 px-3 text-right text-purple-400 font-black">—</td>
-                              <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
-                              <td className="py-2 px-3 text-right text-orange-400 font-black">${formatNum(saldoCli)}</td>
-                              <td></td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    )}
-                  </div>);
-                })}
-                {cliList.length===0&&<div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin registros con los filtros aplicados</div>}
               </div>
-            );
-          } catch(e) { return <div className="p-8 text-red-500">Error: {e.message}</div>; }
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[{l:'Clientes',v:cliList.length,c:'text-gray-800'},{l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},{l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},{l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'}].map(k=>(
+                  <div key={k.l} className="bg-white rounded-2xl border border-gray-100 p-4">
+                    <div className="text-[9px] font-black text-gray-400 uppercase mb-1">{k.l}</div>
+                    <div className={`text-xl font-black ${k.c}`}>{k.v}</div>
+                  </div>
+                ))}
+              </div>
+              {cliList.map(cl=>{
+                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
+                const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
+                const cobradoCli=facturadoCli-saldoCli;
+                const saldado=saldoCli<0.01;
+                const exp=!!ecExpanded[cl.clientRif];
+                return(
+                <div key={cl.clientRif} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
+                    onClick={()=>setEcExpanded(p=>({...p,[cl.clientRif]:!p[cl.clientRif]}))}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs ${saldado?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>
+                        {(cl.clientName||'?').slice(0,2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-black text-sm text-gray-900">{cl.clientName}</div>
+                        <div className="text-[9px] text-gray-400">{cl.clientRif} · {cl.nes[0]?.vendedor||'—'} · {cl.nes.length} doc{cl.nes.length>1?'s':''}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Facturado</div><div className="text-sm font-black text-gray-700">${formatNum(facturadoCli)}</div></div>
+                      <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Cobrado</div><div className="text-sm font-black text-green-700">${formatNum(cobradoCli)}</div></div>
+                      <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldado?'text-green-700':'text-red-600'}`}>${formatNum(saldoCli)}</div></div>
+                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado?'Saldado':'Con saldo'}</span>
+                      <ChevronDown size={14} className={`text-gray-400 transition-transform ${exp?'rotate-180':''}`}/>
+                    </div>
+                  </div>
+                  {exp&&(
+                    <div className="border-t border-gray-100 overflow-x-auto">
+                      <table className="w-full text-[9px]" style={{minWidth:900}}>
+                        <thead style={{background:'#0f172a'}}>
+                          <tr className="text-gray-400 font-black uppercase">
+                            <th className="py-2 px-3 text-left">Documento</th>
+                            <th className="py-2 px-3 text-left">Fecha</th>
+                            <th className="py-2 px-3 text-left">Tipo</th>
+                            <th className="py-2 px-3 text-left">Detalle</th>
+                            <th className="py-2 px-3 text-right">Cargo USD</th>
+                            <th className="py-2 px-3 text-right">NC/Ret.</th>
+                            <th className="py-2 px-3 text-right">Abono</th>
+                            <th className="py-2 px-3 text-right">Saldo</th>
+                            <th className="py-2 px-3 text-center">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map((ne,ni)=>{
+                            const sNE=getSaldoNE(ne);
+                            const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
+                            const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
+                            const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
+                            const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                            const saldado2=sNE<0.01;
+                            const rowBg=ni%2===0?'bg-white':'bg-gray-50';
+                            return(
+                            <React.Fragment key={ne.id}>
+                              <tr className={`border-b border-gray-100 ${rowBg}`}>
+                                <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
+                                <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
+                                <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span></td>
+                                <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
+                                <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
+                                <td className="py-2 px-3 text-right text-gray-300">—</td>
+                                <td className="py-2 px-3 text-right text-gray-300">—</td>
+                                <td className="py-2 px-3 text-right font-black text-red-600">${formatNum(sNE)}</td>
+                                <td className="py-2 px-3 text-center"><span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${saldado2?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado2?'Saldado':'Pendiente'}</span></td>
+                              </tr>
+                              {invV2&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ {invV2.nroFiscal||invV2.documento||'—'}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
+                                <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500 col-span-2">
+                                  {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
+                                  {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
+                                  {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
+                                </td>
+                                <td className="py-1.5 px-3 text-right text-gray-300" colSpan={4}>—</td>
+                                <td className="py-1.5 px-3 text-center"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Emitida</span></td>
+                              </tr>}
+                              {ncsNE2.map(nc=>{const t=parseNum(nc.tasaFactura||0)||tasaBCVec;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);return(
+                                <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-600">{nc.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}</span>}</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-purple-700">-${formatNum(u)}</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">NC</span></td>
+                                </tr>);
+                              })}
+                              {retsNE2.map((r,ri)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;const ru=rt>1?rb/rt:0;return(
+                                <tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700">↳ {r.nroRetencion||r.nroComprobante||'—'}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-amber-600">{r.fechaComprobante||r.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Retención IVA</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">{r.porcentaje||r.pct?`${r.porcentaje||r.pct}%`:'75%'}{rb>0&&<span className="ml-1 text-gray-400">· Bs.{formatNum(rb)}</span>}{invV2&&<span className="ml-1 text-gray-400">· Fac. {invV2.nroFiscal||'—'}</span>}</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-amber-700">{ru>0?`$${formatNum(ru)}`:`Bs.${formatNum(rb)}`}</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret.</span></td>
+                                </tr>);
+                              })}
+                              {cobNE.map((cb,ci)=>(
+                                <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-green-600">{cb.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">
+                                    <span className="font-bold text-green-700">{cb.metodo||'—'}</span>
+                                    {cb.cuentaBancoNombre&&<span className="ml-1">· {cb.cuentaBancoNombre}</span>}
+                                    {cb.referencia&&<span className="ml-1 font-mono text-gray-400">· {cb.referencia}</span>}
+                                    {parseNum(cb.montoBs||0)>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
+                                  </td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Cobrado</span></td>
+                                </tr>
+                              ))}
+                            </React.Fragment>);
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{background:'#0f172a'}} className="text-[9px]">
+                            <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}</td>
+                            <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
+                            <td className="py-2 px-3 text-right text-purple-400 font-black">—</td>
+                            <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
+                            <td className="py-2 px-3 text-right text-orange-400 font-black">${formatNum(saldoCli)}</td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>);
+              })}
+              {cliList.length===0&&<div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin registros con los filtros aplicados</div>}
+            </div>
+          );
         })()}
-
         {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
           const fmtVen = n => {
             const parts = Math.abs(parseNum(n)||0).toFixed(2).split('.');
@@ -28302,7 +28236,7 @@ ${resumenHtml}
 
         {activeTab === 'ventas' && (
            <div className="print:hidden sticky top-[52px] sm:top-[72px] z-[100]" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
-              <div className="w-full flex gap-0.5 px-2 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
+              <div className="w-full flex gap-0 px-1 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none',WebkitOverflowScrolling:'touch'}}>
                  {[
                    {id:'dashboard',           icon:<BarChart3 size={15}/>,  label:'Dashboard',       perm:'ventas_dashboard'},
                    {id:'grafica_ventas',      icon:<BarChart3 size={15}/>,  label:'Gráfica',          perm:'ventas_graficas'},
