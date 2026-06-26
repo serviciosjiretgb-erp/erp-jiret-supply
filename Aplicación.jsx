@@ -437,6 +437,7 @@ function App() {
   const [cotizaciones, setCotizaciones] = useState([]);
   const [cobrosCxc, setCobrosCxc] = useState([]);
   const [cuentasBanco, setCuentasBanco] = useState([]); // banco_cuentas para selector en modal cobro
+  const [cajasCuentas, setCajasCuentas] = useState([]); // caja_cuentas para selector en modal cobro
   const [cxcSelectedClient, setCxcSelectedClient] = useState('');
   const [cxcExpandAll, setCxcExpandAll] = useState(false);
   const [cxcCobroModal, setCxcCobroModal] = useState(null);
@@ -1560,6 +1561,7 @@ function App() {
     const unsubActas = onSnapshot(getColRef('actasReclamo'), (s) => setActasReclamo(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubCobrosCxc = onSnapshot(getColRef('cobros_cxc'), (s) => setCobrosCxc(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCuentasBanco = onSnapshot(getColRef('banco_cuentas'), (s) => setCuentasBanco(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubCajasCuentas = onSnapshot(getColRef('caja_cuentas'), (s) => setCajasCuentas(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({_fsId:d.id, id:d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -1587,7 +1589,7 @@ function App() {
     
     return () => { 
       unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco();
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco(); unsubCajasCuentas();
       unsubResena(); unsubResenaImg(); unsubComRep();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
@@ -14904,21 +14906,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           const guardarPagoMasivo=async()=>{
             const m=cxcPagoModal;
             if(!m.clientRif){setDialog({title:'Sin cliente',text:'Selecciona un cliente.',type:'alert'});return;}
-            if(!parseNum(m.monto)){setDialog({title:'Sin monto',text:'Ingresa el monto cobrado.',type:'alert'});return;}
-            if(!m.cuentaId){setDialog({title:'Sin cuenta',text:'Selecciona la cuenta bancaria destino.',type:'alert'});return;}
-            if(!(m.referencia||'').trim()){setDialog({title:'Sin referencia',text:'Ingresa el número de referencia.',type:'alert'});return;}
+            const lineas=(m.lineasPago||[]);
+            if(lineas.length===0){setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});return;}
             try{
-              const montoUSD = m.moneda==='USD' ? parseNum(m.monto) : parseNum(m.monto)/Math.max(parseNum(m.tasa),1);
-              const montoBs  = m.moneda==='Bs'  ? parseNum(m.monto) : parseNum(m.monto)*parseNum(m.tasa||1);
-              const tasa     = parseNum(m.tasa||tasaBCV);
-              const cta=(cuentasBanco||[]).find(c=>c.id===m.cuentaId);
-              const batch=writeBatch(db);
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
-              // NEs ordenadas por fecha (más antigua primero) — si no hay selección, tomar todas pendientes del cliente
               const allNesCliente=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
               const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
-              let restante=montoUSD;
+              const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
+              const batch=writeBatch(db);
+              let restante=totalUSD;
               const cobrosGenerados=[];
+              const grupoId=Date.now().toString(36).toUpperCase();
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
                 const saldoNE=getSaldoNEAtFecha(ne,null);
@@ -14927,37 +14925,46 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 restante-=montoNE;
                 const nuevoSaldo=Math.max(0,saldoNE-montoNE);
                 const nuevoStatus=nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
-                const cobId=`COB-${Date.now().toString(36).toUpperCase()}-${ne.id.slice(-4)}`;
-                batch.set(getDocRef('cobros_cxc',cobId),{
-                  id:cobId, neId:ne.id, neDocumento:ne.id, clientName:ne.clientName||m.clientName,
-                  monto:montoNE, montoUSD:montoNE, montoBs:montoNE*tasa, tasa,
-                  moneda:m.moneda, metodo:m.metodo, referencia:m.referencia,
-                  concepto:m.concepto||'Cobro CxC', fecha:m.fecha,
-                  cuentaBancariaId:m.cuentaId, cuentaBancoNombre:cta?.banco||'',
-                  vendedor:ne.vendedor||'', timestamp:Date.now()
-                });
+                for(const linea of lineas){
+                  const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
+                  const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
+                  const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
+                  if(montoLineaNE<0.001) continue;
+                  const cobId=`COB-${grupoId}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+                  const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
+                  const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
+                  const tasa=parseNum(linea.tasa||tasaBCV);
+                  batch.set(getDocRef('cobros_cxc',cobId),{
+                    id:cobId,neId:ne.id,neDocumento:ne.id,clientName:ne.clientName||m.clientName,
+                    monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
+                    moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
+                    concepto:linea.concepto||'Cobro CxC',fecha:linea.fecha,
+                    cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
+                    vendedor:ne.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
+                  });
+                  if(cta){
+                    const mvId=`MV-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
+                    batch.set(getDocRef('banco_movimientos',mvId),{
+                      id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Cobro CxC',
+                      concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
+                      referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
+                      cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
+                      montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
+                      estatus:'No Conciliado',timestamp:Date.now()
+                    });
+                    batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoLineaNE});
+                  }
+                }
                 batch.update(getDocRef('notasEntrega',ne.id),{
-                  statusCxC:nuevoStatus, montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
-                  saldoPendiente:nuevoSaldo, fechaUltimoCobro:m.fecha, refUltimoCobro:m.referencia
+                  statusCxC:nuevoStatus,montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
+                  saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
+                  refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
                 });
-                cobrosGenerados.push({cobId,ne,montoNE,nuevoStatus});
+                cobrosGenerados.push({ne,montoNE,nuevoStatus});
               }
-              // Movimiento bancario único con detalle de NEs
-              const mvId=`MV-${Date.now().toString(36).toUpperCase()}`;
-              const nesDesc=cobrosGenerados.map(c=>`${c.ne.id} $${formatNum(c.montoNE)}`).join(' | ')||'Sin NE específica';
-              batch.set(getDocRef('banco_movimientos',mvId),{
-                id:mvId, fecha:m.fecha, tipo:'Ingreso', origenIngreso:'Cobro CxC',
-                concepto:`${m.concepto||'Cobro CxC'} — ${m.clientName}${nesDesc?` — ${nesDesc}`:''}`,
-                referencia:m.referencia, clientName:m.clientName, clientRif:m.clientRif,
-                cuentaId:m.cuentaId, cuentaNombre:cta?.banco||'',
-                montoUSD, montoBs, tasa, moneda:m.moneda,
-                metodo:m.metodo, nesIds:cobrosGenerados.map(c=>c.ne.id),
-                terceroNombre:m.clientName, estatus:'No Conciliado', timestamp:Date.now()
-              });
-              if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoUSD});
               await batch.commit();
               setCxcPagoModal(null);
-              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(montoUSD)} registrado en ${cta?.banco||'banco'}. ${cobrosGenerados.length} NE(s) actualizadas.`,type:'alert'});
+              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(totalUSD)} en ${lineas.length} método(s). ${cobrosGenerados.length} NE(s) actualizadas.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
@@ -15065,6 +15072,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             // Bancos por moneda
             const bancosBS=(cuentasBanco||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT');
             const bancosUSD=(cuentasBanco||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT');
+            const cajasDisponibles=(cajasCuentas||[]).filter(c=>c.activo!==false);
 
             return(
             <div className="fixed inset-0 z-[300]" style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(3px)',display:'flex',alignItems:'stretch',justifyContent:'center',padding:'20px'}}>
@@ -15133,6 +15141,14 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const saldo=getSaldoNEAtFecha(ne,null);
                         const sel=!!pm.nesSelec?.[ne.id];
                         const aplicado=distMap[ne.id]||0;
+                        const invVinc=ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento);
+                        const nroFiscal=invVinc?.nroFiscal||ne.nroFiscal||null;
+                        const tasa=parseNum(invVinc?.tasa||ne.tasa||tasaBCV||1);
+                        const baseUSD=parseNum(invVinc?.montoBase||ne.montoBase||ne.total||0);
+                        const ivaPct=invVinc?.aplicaIva==='NO'?0:0.16;
+                        const baseBs=baseUSD*tasa;
+                        const ivaBs=baseBs*ivaPct;
+                        const totalBs=baseBs+ivaBs;
                         return(
                         <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
                           style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',cursor:'pointer',background:sel?'#fff7ed':i%2===0?'#fff':'#fafafa',display:'flex',gap:10,alignItems:'center'}}
@@ -15149,98 +15165,144 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}</span>
                               {montoUSD>0&&aplicado>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
                             </div>
+                            {nroFiscal&&<div style={{marginTop:3,display:'flex',flexWrap:'wrap',gap:4,alignItems:'center'}}>
+                              <span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Fac. {nroFiscal}</span>
+                              {baseBs>0&&<>
+                                <span style={{fontSize:8,color:'#64748b',fontWeight:700}}>Base: <b style={{color:'#1e293b'}}>Bs.{formatNum(baseBs)}</b></span>
+                                {ivaBs>0&&<span style={{fontSize:8,color:'#64748b',fontWeight:700}}>IVA: <b style={{color:'#dc2626'}}>Bs.{formatNum(ivaBs)}</b></span>}
+                                <span style={{fontSize:8,color:'#64748b',fontWeight:700}}>Total: <b style={{color:'#15803d'}}>Bs.{formatNum(totalBs)}</b></span>
+                              </>}
+                            </div>}
                           </div>
                         </div>);
                       })}
                     </div>}
                   </div>
 
-                  {/* COL 2 — Monto / Datos */}
-                  <div style={{flex:1,overflowY:'auto',background:'#fff',padding:'20px 28px',display:'flex',flexDirection:'column',gap:20}}>
-                    <div>
-                      <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:12}}>3 · Moneda del Pago</div>
-                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                        {[{k:'USD',emoji:'💵',label:'Dólares (USD)',sub:'Monto en dólares'},{k:'Bs',emoji:'🇻🇪',label:'Bolívares (Bs)',sub:'Monto en bolívares'}].map(cur=>(
-                          <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,moneda:cur.k,monto:''}))}
-                            style={{padding:'14px 18px',borderRadius:14,border:`2px solid ${pm.moneda===cur.k?'#E8541A':'#e5e7eb'}`,background:pm.moneda===cur.k?'#fff7ed':'#fafafa',cursor:'pointer',textAlign:'left',transition:'all .15s'}}>
-                            <div style={{fontWeight:900,fontSize:13,color:pm.moneda===cur.k?'#E8541A':'#374151'}}>{cur.emoji} {cur.label}</div>
-                            <div style={{fontSize:10,color:pm.moneda===cur.k?'#c2410c':'#9ca3af',marginTop:3}}>{cur.sub}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                  {/* COL 2 — Líneas de Pago (Multicobro) */}
+                  <div style={{flex:1,overflowY:'auto',background:'#fff',padding:'20px 24px',display:'flex',flexDirection:'column',gap:16}}>
+                    <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2}}>3 · Métodos de Pago</div>
 
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-                      <div>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Monto {pm.moneda}</label>
-                        <div style={{position:'relative'}}>
-                          <span style={{position:'absolute',left:14,top:'50%',transform:'translateY(-50%)',color:'#9ca3af',fontWeight:900,fontSize:14}}>{pm.moneda==='USD'?'$':'Bs'}</span>
-                          <input type="number" step="0.01" min="0" value={pm.monto} onChange={e=>setCxcPagoModal(m=>({...m,monto:e.target.value}))}
-                            style={{width:'100%',paddingLeft:32,paddingRight:12,paddingTop:12,paddingBottom:12,border:'2px solid #E8541A',borderRadius:12,fontSize:18,fontWeight:900,outline:'none',boxSizing:'border-box',color:'#111'}} placeholder="0.00"/>
-                        </div>
-                        {parseNum(pm.monto)>0&&<div style={{marginTop:6,fontSize:11,fontWeight:700,color:'#6b7280'}}>{pm.moneda==='USD'?`≈ Bs. ${formatNum(montoBs)}`:`≈ USD $${formatNum(montoUSD)}`}</div>}
-                      </div>
-                      <div>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Tasa Bs/$</label>
-                        <input type="number" step="0.01" min="1" value={pm.tasa} onChange={e=>setCxcPagoModal(m=>({...m,tasa:e.target.value}))}
-                          style={{width:'100%',padding:'12px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:16,fontWeight:900,outline:'none',boxSizing:'border-box',color:'#111'}} placeholder="Ej: 50.00"
-                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
-                      </div>
-                    </div>
-
-                    {clienteSel&&montoUSD>0&&(
-                      <div style={{background:saldoRestanteCliente<-0.01?'#f0fdf4':saldoRestanteCliente<0.01?'#f0fdf4':'#fff7ed',border:`2px solid ${saldoRestanteCliente<-0.01?'#bbf7d0':saldoRestanteCliente<0.01?'#bbf7d0':'#fed7aa'}`,borderRadius:14,padding:'14px 18px'}}>
-                        <div style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Impacto en cartera</div>
-                        {[['Cartera total',`$${formatNum(saldoTotalCliente)}`,'#374151'],['Pago recibido',`- $${formatNum(montoUSD)}`,'#16a34a']].map(([k,v,c])=>(
-                          <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:4}}>
-                            <span style={{color:'#9ca3af'}}>{k}</span><span style={{fontWeight:700,color:c}}>{v}</span>
-                          </div>
-                        ))}
-                        <div style={{borderTop:'1px solid rgba(0,0,0,0.08)',paddingTop:8,marginTop:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                          <span style={{fontSize:11,fontWeight:900,color:'#111'}}>Saldo restante</span>
-                          <div style={{textAlign:'right'}}>
-                          <span style={{fontSize:20,fontWeight:900,color:saldoRestanteCliente<-0.01?'#16a34a':saldoRestanteCliente<0.01?'#16a34a':'#E8541A'}}>
-                            {saldoRestanteCliente<-0.01?`+$${formatNum(Math.abs(saldoRestanteCliente))}`:`$${formatNum(Math.max(0,saldoRestanteCliente))}`}
+                    {/* Líneas ya agregadas */}
+                    {(pm.lineasPago||[]).length>0&&(
+                      <div style={{background:'#f8fafc',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+                        <div style={{padding:'8px 12px',background:'#0f172a',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span style={{fontSize:9,fontWeight:900,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1}}>Pagos agregados</span>
+                          <span style={{fontSize:11,fontWeight:900,color:'#4ade80'}}>
+                            Total: ${formatNum((pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0))}
                           </span>
-                          {saldoRestanteCliente<-0.01&&<div style={{fontSize:10,fontWeight:700,color:'#16a34a',marginTop:2}}>✅ Saldo a favor del cliente</div>}
                         </div>
-                        </div>
+                        {(pm.lineasPago||[]).map((l,i)=>{
+                          const lUSD=l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1);
+                          return(
+                          <div key={i} style={{padding:'10px 12px',borderBottom:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:8,background:'#fff'}}>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:2}}>
+                                <span style={{fontSize:10,fontWeight:900,color:'#111'}}>{l.metodo}</span>
+                                <span style={{fontSize:10,fontWeight:900,color:'#16a34a'}}>${formatNum(lUSD)}</span>
+                                {l.moneda==='Bs'&&<span style={{fontSize:9,color:'#64748b'}}>Bs.{formatNum(parseNum(l.monto))}</span>}
+                              </div>
+                              <div style={{display:'flex',gap:10,fontSize:9,color:'#64748b'}}>
+                                <span>{l.cuentaNombre||'Sin cuenta'}</span>
+                                {l.referencia&&<span>Ref: {l.referencia}</span>}
+                                <span>{l.fecha}</span>
+                              </div>
+                            </div>
+                            <button onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:(m.lineasPago||[]).filter((_,j)=>j!==i)}))}
+                              style={{padding:'4px 8px',background:'#fee2e2',color:'#dc2626',border:'none',borderRadius:6,fontSize:9,fontWeight:900,cursor:'pointer'}}>✕</button>
+                          </div>);
+                        })}
                       </div>
                     )}
 
-                    <div>
-                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Concepto / Detalle</label>
-                      <input type="text" value={pm.concepto} onChange={e=>setCxcPagoModal(m=>({...m,concepto:e.target.value}))}
-                        placeholder="Abono, Anticipo, Pago total, Cruce..."
-                        style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,outline:'none',boxSizing:'border-box',color:'#111'}}
-                        onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
-                    </div>
+                    {/* Formulario línea actual */}
+                    <div style={{background:'#fffbeb',borderRadius:12,border:'2px solid #fed7aa',padding:'16px'}}>
+                      <div style={{fontSize:9,fontWeight:900,color:'#92400e',textTransform:'uppercase',marginBottom:12}}>➕ Nueva línea de pago</div>
 
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-                      <div>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Fecha</label>
-                        <input type="date" value={pm.fecha} onChange={e=>setCxcPagoModal(m=>({...m,fecha:e.target.value}))}
-                          style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,outline:'none',boxSizing:'border-box',color:'#111'}}
+                      {/* Moneda */}
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+                        {[{k:'USD',emoji:'💵',label:'Dólares'},{k:'Bs',emoji:'🇻🇪',label:'Bolívares'}].map(cur=>(
+                          <button key={cur.k} onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,moneda:cur.k,monto:''}}))}
+                            style={{padding:'8px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.moneda===cur.k?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.moneda===cur.k?'#fff7ed':'#fafafa',cursor:'pointer',textAlign:'left'}}>
+                            <div style={{fontWeight:900,fontSize:11,color:pm.lineaActual?.moneda===cur.k?'#E8541A':'#374151'}}>{cur.emoji} {cur.label}</div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Monto */}
+                      <div style={{marginBottom:10}}>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Monto {pm.lineaActual?.moneda==='Bs'?'(Bs)':'(USD)'}</label>
+                        <input type="number" step="0.01" placeholder="0.00"
+                          value={pm.lineaActual?.monto||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,monto:e.target.value}}))}
+                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:14,fontWeight:900,outline:'none',boxSizing:'border-box'}}
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                        {pm.lineaActual?.moneda==='Bs'&&parseNum(pm.lineaActual?.monto)>0&&parseNum(pm.lineaActual?.tasa)>0&&(
+                          <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= ${formatNum(parseNum(pm.lineaActual.monto)/parseNum(pm.lineaActual.tasa))} USD</div>
+                        )}
+                      </div>
+
+                      {pm.lineaActual?.moneda==='Bs'&&(
+                        <div style={{marginBottom:10}}>
+                          <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                          <input type="number" step="0.01"
+                            value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                            style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
+                            onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                        </div>
+                      )}
+
+                      {/* Método */}
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Método</label>
+                          <select value={pm.lineaActual?.metodo||'Transferencia'} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,metodo:e.target.value}}))}
+                            style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',background:'#fff',boxSizing:'border-box'}}>
+                            {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Fecha</label>
+                          <input type="date" value={pm.lineaActual?.fecha||getTodayDate()} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,fecha:e.target.value}}))}
+                            style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',boxSizing:'border-box'}}
+                            onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                        </div>
+                      </div>
+
+                      {/* Referencia */}
+                      <div style={{marginBottom:12}}>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>N° Referencia</label>
+                        <input type="text" placeholder="REF-0000000"
+                          value={pm.lineaActual?.referencia||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,referencia:e.target.value.toUpperCase()}}))}
+                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box',textTransform:'uppercase'}}
                           onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
                       </div>
-                      <div>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>Método de Pago</label>
-                        <select value={pm.metodo} onChange={e=>setCxcPagoModal(m=>({...m,metodo:e.target.value}))}
-                          style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,outline:'none',boxSizing:'border-box',color:'#111',background:'#fff'}}>
-                          {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
-                        </select>
-                      </div>
-                    </div>
 
-                    <div>
-                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:8}}>N° Referencia / Comprobante</label>
-                      <input type="text" value={pm.referencia} onChange={e=>setCxcPagoModal(m=>({...m,referencia:e.target.value.toUpperCase()}))}
-                        style={{width:'100%',padding:'11px 14px',border:'2px solid #e5e7eb',borderRadius:12,fontSize:12,fontWeight:900,outline:'none',boxSizing:'border-box',color:'#111',textTransform:'uppercase'}} placeholder="REF-0000000"
-                        onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                      {/* Cuenta seleccionada */}
+                      {pm.lineaActual?.cuentaId&&(
+                        <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'8px 12px',marginBottom:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span style={{fontSize:10,fontWeight:900,color:'#15803d'}}>✓ {pm.lineaActual.cuentaNombre}</span>
+                          <button onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,cuentaId:'',cuentaNombre:''}}))}
+                            style={{fontSize:9,color:'#dc2626',background:'none',border:'none',cursor:'pointer',fontWeight:900}}>✕ Quitar</button>
+                        </div>
+                      )}
+
+                      {/* Botón agregar */}
+                      <button onClick={()=>{
+                        const la=pm.lineaActual||{};
+                        if(!parseNum(la.monto)){alert('Ingresa el monto');return;}
+                        if(!la.cuentaId){alert('Selecciona la cuenta o caja destino (panel derecho)');return;}
+                        const nuevaLinea={...la,monto:la.monto,tasa:la.tasa||String(tasaBCV)};
+                        setCxcPagoModal(m=>({...m,
+                          lineasPago:[...(m.lineasPago||[]),nuevaLinea],
+                          lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:getTodayDate()}
+                        }));
+                      }} style={{width:'100%',padding:'11px',background:'linear-gradient(135deg,#E8541A,#c2410c)',color:'#fff',border:'none',borderRadius:10,fontWeight:900,fontSize:12,cursor:'pointer',textTransform:'uppercase',letterSpacing:1}}>
+                        ➕ Agregar este pago
+                      </button>
                     </div>
                   </div>
 
-                  {/* COL 3 — Banco + Confirmar */}
+                                    {/* COL 3 — Banco + Confirmar */}
                   <div style={{width:270,borderLeft:'2px solid #f3f4f6',display:'flex',flexDirection:'column',flexShrink:0,background:'#fafafa'}}>
                     <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
                       <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:12}}>4 · Cuenta Bancaria</div>
@@ -15248,11 +15310,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         <div style={{fontSize:9,fontWeight:900,color:'#1d4ed8',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>🏦 Nacionales (Bs)</div>
                         <div style={{display:'flex',flexDirection:'column',gap:6}}>
                           {bancosBS.map(ct=>(
-                            <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
-                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
-                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0,transition:'background .15s'}}/>
+                            <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}}))}
+                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0,transition:'background .15s'}}/>
                               <div style={{flex:1,minWidth:0}}>
-                                <div style={{fontSize:11,fontWeight:900,color:pm.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                                <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
                                 <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta}</div>
                               </div>
                             </button>
@@ -15263,12 +15325,27 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Internacionales / USD</div>
                         <div style={{display:'flex',flexDirection:'column',gap:6}}>
                           {bancosUSD.map(ct=>(
-                            <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}))}
-                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
-                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
+                            <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}}))}
+                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
                               <div style={{flex:1,minWidth:0}}>
-                                <div style={{fontSize:11,fontWeight:900,color:pm.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                                <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
                                 <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>}
+                      {cajasDisponibles.length>0&&<div style={{marginTop:12}}>
+                        <div style={{fontSize:9,fontWeight:900,color:'#10b981',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💰 Cajas de Efectivo</div>
+                        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                          {cajasDisponibles.map(cj=>(
+                            <button key={cj.id} onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,cuentaId:`CAJA::${cj.id}`,cuentaNombre:`CAJA: ${cj.nombre}`}}))}
+                              style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#10b981':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#f0fdf4':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                              <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#10b981':'#d1d5db',flexShrink:0}}/>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#10b981':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cj.nombre}</div>
+                                <div style={{fontSize:9,color:'#9ca3af'}}>{cj.moneda==='BS'?'Bolívares (Bs)':'Dólares (USD)'}{cj.descripcion?` · ${cj.descripcion}`:''}</div>
                               </div>
                             </button>
                           ))}
@@ -15278,20 +15355,25 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
                     {/* Resumen + botones */}
                     <div style={{borderTop:'2px solid #f3f4f6',padding:'14px',flexShrink:0}}>
-                      {clienteSel&&parseNum(pm.monto)>0&&pm.cuentaId&&(
+                      {(pm.lineasPago||[]).length>0&&(
                         <div style={{background:'#fff',border:'2px solid #f3f4f6',borderRadius:12,padding:'12px 14px',marginBottom:12}}>
                           <div style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',marginBottom:8}}>Resumen</div>
-                          {[['Cliente',pm.clientName],['NEs',nesSelecIds.length>0?`${nesSelecIds.length} selec.`:`Auto (${nesParaDistribuir.length})`],['USD',`$${formatNum(montoUSD)}`],['Bs',`Bs. ${formatNum(montoBs)}`],['Banco',(cuentasBanco||[]).find(c=>c.id===pm.cuentaId)?.banco||'—']].map(([k,v])=>(
+                          {[
+                            ['Cliente',pm.clientName||'—'],
+                            ['NEs',nesSelecIds.length>0?`${nesSelecIds.length} selec.`:`Auto (${nesParaDistribuir.length})`],
+                            ['Total USD',`$${formatNum((pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0))}`],
+                            ['Líneas de pago',`${(pm.lineasPago||[]).length} método(s)`],
+                          ].map(([k,v])=>(
                             <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:4}}>
                               <span style={{color:'#9ca3af'}}>{k}</span>
-                              <span style={{fontWeight:900,color:'#111',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}}>{v}</span>
+                              <span style={{fontWeight:900,color:'#111'}}>{v}</span>
                             </div>
                           ))}
                         </div>
                       )}
                       <button onClick={guardarPagoMasivo}
-                        disabled={!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia}
-                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia)?'#e5e7eb':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||!parseNum(pm.monto)||!pm.cuentaId||!pm.referencia)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
+                        disabled={!pm.clientRif||(pm.lineasPago||[]).length===0}
+                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#e5e7eb':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
                         <CheckCircle size={15}/> Confirmar y Registrar
                       </button>
                       <button onClick={()=>setCxcPagoModal(null)}
@@ -15397,7 +15479,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     </select>
                   </div>
                   {cxcModo==='fecha' && <input type="date" value={cxcFechaRef} onChange={e=>setCxcFechaRef(e.target.value)} className="border-2 border-orange-300 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-500"/>}
-                  <button onClick={()=>setCxcPagoModal({clientSearch:'',clientRif:'',clientName:'',nesSelec:{},moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',referencia:'',concepto:'',fecha:getTodayDate(),distribucion:{}})}
+                  <button onClick={()=>setCxcPagoModal({clientSearch:'',clientRif:'',clientName:'',nesSelec:{},lineasPago:[],lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:getTodayDate()},distribucion:{}})}
                     className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:shadow-xl transition-all"
                     style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
                     <DollarSign size={13}/> 💳 Registrar Cobro
