@@ -22194,7 +22194,6 @@ ${resumenHtml}
                         return (
                           <tr key={m.ym} className={`hover:bg-gray-50 ${m.ym === selMonth ? 'bg-blue-50' : ''}`}>
                             <td className="py-3 px-4 border-r font-black">{m.label}</td>
-                            >
                             <td className="py-3 px-4 border-r text-right font-bold text-orange-600">${formatNum(m.costosMP)}</td>
                             <td className="py-3 px-4 border-r text-right font-bold text-red-500">${formatNum(m.costosOP)}</td>
                             
