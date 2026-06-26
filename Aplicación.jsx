@@ -449,6 +449,7 @@ function App() {
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
   const [ecFechaRef, setEcFechaRef] = useState(getTodayDate());
   const [ecModo, setEcModo] = useState('actual'); // 'actual' | 'fecha'
+  const [cxcEditModal, setCxcEditModal] = useState(null); // cobro a editar
   const [showNewCotizPanel, setShowNewCotizPanel] = useState(false);
   const [editingCotizId, setEditingCotizId] = useState(null);
   const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '', condicionPago: 'CONTADO', diasCredito: '', porcentajeAnticipo: '', tiempoEntrega: '', formaPago: 'BS A TASA BCV' };
@@ -14953,11 +14954,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
                 const saldoNE=getSaldoNEAtFecha(ne,null);
-                const montoNE=Math.min(restante,saldoNE);
-                if(montoNE<=0.001) continue;
-                restante-=montoNE;
-                const nuevoSaldo=Math.max(0,saldoNE-montoNE);
-                const nuevoStatus=nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
+                // ✅ FIX: registrar el monto real cobrado, no truncado al saldo
+                // Si paga de más, el saldo queda negativo (saldo a favor del cliente)
+                const montoNE=restante; // TODO distribuir entre varias NEs si aplica
+                restante=0;
+                const nuevoSaldo=saldoNE-montoNE; // puede ser negativo = saldo a favor
+                const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
                 for(const linea of lineas){
                   const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
                   const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
@@ -14993,15 +14995,64 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
                   refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
                 });
-                cobrosGenerados.push({ne,montoNE,nuevoStatus});
+                cobrosGenerados.push({ne,montoNE,nuevoStatus,nuevoSaldo});
               }
               await batch.commit();
               setCxcPagoModal(null);
-              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(totalUSD)} en ${lineas.length} método(s). ${cobrosGenerados.length} NE(s) actualizadas.`,type:'alert'});
+              const saldoFavor=cobrosGenerados.some(c=>c.nuevoSaldo<-0.01);
+              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(totalUSD)} en ${lineas.length} método${lineas.length>1?'s':''}. ${cobrosGenerados.length} NE${cobrosGenerados.length>1?'s':''} actualizadas.${cobrosGenerados.some(c=>c.nuevoSaldo<-0.01)?' ⚠️ Saldo a favor del cliente.':''}`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
           // ── REVERSAR COBRO ─────────────────────────────────────────────
+          // ── EDITAR COBRO ────────────────────────────────────────────
+          const editarCobro=async(cobro,nuevosDatos)=>{
+            try{
+              const batch=writeBatch(db);
+              const montoAnterior=parseNum(cobro.monto||0);
+              const montoNuevo=parseNum(nuevosDatos.monto||0);
+              const diferencia=montoNuevo-montoAnterior;
+              // Actualizar solo los campos editables del cobro (no duplicar)
+              batch.update(getDocRef('cobros_cxc',cobro.id),{
+                monto:montoNuevo,
+                montoUSD:montoNuevo,
+                montoBs:montoNuevo*parseNum(nuevosDatos.tasa||cobro.tasa||1),
+                metodo:nuevosDatos.metodo||cobro.metodo,
+                referencia:nuevosDatos.referencia||cobro.referencia,
+                concepto:nuevosDatos.concepto||cobro.concepto||'',
+                fecha:nuevosDatos.fecha||cobro.fecha,
+                cuentaBancariaId:nuevosDatos.cuentaId||cobro.cuentaBancariaId||'',
+                cuentaBancoNombre:nuevosDatos.cuentaNombre||cobro.cuentaBancoNombre||'',
+                _editado:true,_editadoTs:Date.now()
+              });
+              // Actualizar saldo en NE
+              const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
+              if(ne){
+                const saldoActual=getSaldoNEAtFecha(ne,null);
+                const nuevoSaldo=saldoActual-diferencia;
+                const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
+                batch.update(getDocRef('notasEntrega',ne.id),{
+                  statusCxC:nuevoStatus,
+                  montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+diferencia,
+                  saldoPendiente:nuevoSaldo
+                });
+              }
+              // Actualizar movimiento bancario si existe
+              const mvBanco=(bancoMovimientos||[]).find(mv=>mv.referencia===cobro.referencia&&mv.clientName===cobro.clientName);
+              if(mvBanco&&diferencia!==0){
+                batch.update(getDocRef('banco_movimientos',mvBanco.id),{
+                  montoUSD:montoNuevo,
+                  montoBs:montoNuevo*parseNum(nuevosDatos.tasa||cobro.tasa||1)
+                });
+                const cta=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
+                if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+diferencia});
+              }
+              await batch.commit();
+              setCxcEditModal(null);
+              setDialog({title:'✅ Cobro actualizado',text:`Cobro actualizado a $${formatNum(montoNuevo)}.`,type:'alert'});
+            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          };
+
           const reversarCobro=async(cobro)=>{
             setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento bancario también será eliminado. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
               try{
@@ -15064,6 +15115,72 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           };
 
           // ── MODAL COBRO MASIVO — pantalla completa horizontal ────────
+          // ── MODAL EDITAR COBRO ─────────────────────────────────────
+          if(cxcEditModal){
+            const ec=cxcEditModal;
+            return(
+            <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                <div className="px-6 py-4 flex justify-between items-center" style={{background:'#1d4ed8'}}>
+                  <h3 className="text-white font-black text-sm uppercase flex items-center gap-2">✏️ Editar Cobro</h3>
+                  <button onClick={()=>setCxcEditModal(null)} className="text-white/70 hover:text-white"><X size={18}/></button>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700">
+                    <span className="font-black">NE:</span> {ec.neDocumento||ec.neId} · <span className="font-black">Cliente:</span> {ec.clientName}
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto USD</label>
+                    <input type="number" step="0.01" value={ec._monto}
+                      onChange={e=>setCxcEditModal(m=>({...m,_monto:e.target.value}))}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-black outline-none focus:border-blue-500"/>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método</label>
+                      <select value={ec._metodo} onChange={e=>setCxcEditModal(m=>({...m,_metodo:e.target.value}))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] outline-none focus:border-blue-500">
+                        {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                      <input type="date" value={ec._fecha} onChange={e=>setCxcEditModal(m=>({...m,_fecha:e.target.value}))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] outline-none focus:border-blue-500"/>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia</label>
+                    <input type="text" value={ec._referencia} onChange={e=>setCxcEditModal(m=>({...m,_referencia:e.target.value.toUpperCase()}))}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] font-mono outline-none focus:border-blue-500 uppercase"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
+                    <input type="text" value={ec._concepto} onChange={e=>setCxcEditModal(m=>({...m,_concepto:e.target.value}))}
+                      placeholder="Descripción del cobro..."
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] outline-none focus:border-blue-500"/>
+                  </div>
+                  {parseNum(ec._monto)!==parseNum(ec.monto)&&(
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700">
+                      ⚠️ Cambiando de <b>${formatNum(parseNum(ec.monto))}</b> → <b>${formatNum(parseNum(ec._monto))}</b>
+                      {parseNum(ec._monto)>parseNum(ec.monto)&&<span className="ml-1">(diferencia: +${formatNum(parseNum(ec._monto)-parseNum(ec.monto))})</span>}
+                    </div>
+                  )}
+                  <div className="flex gap-3 pt-2">
+                    <button onClick={()=>editarCobro(ec,{monto:ec._monto,metodo:ec._metodo,referencia:ec._referencia,fecha:ec._fecha,concepto:ec._concepto,tasa:ec.tasa,cuentaId:ec._cuentaId,cuentaNombre:ec._cuentaNombre})}
+                      className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[11px] uppercase hover:bg-blue-700 transition-all">
+                      ✅ Guardar cambios
+                    </button>
+                    <button onClick={()=>setCxcEditModal(null)}
+                      className="px-4 py-3 border border-gray-200 rounded-xl text-gray-500 font-black text-[11px] hover:bg-gray-50">
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>);
+          }
+
           if(cxcPagoModal){
             const pm=cxcPagoModal;
             // Construir lista de clientes con saldo independiente de filtros
@@ -16002,6 +16119,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 }} title="Comprobante PDF"
                                   className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                                   🖨 PDF
+                                </button>
+                                <button onClick={()=>setCxcEditModal({...cb,_monto:String(cb.monto||''),_metodo:cb.metodo||'Transferencia',_referencia:cb.referencia||'',_fecha:cb.fecha||getTodayDate(),_concepto:cb.concepto||'',_cuentaId:cb.cuentaBancariaId||'',_cuentaNombre:cb.cuentaBancoNombre||''})} title="Editar cobro"
+                                  className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
+                                  ✏️ Editar
                                 </button>
                                 <button onClick={()=>reversarCobro(cb)} title="Reversar cobro"
                                   className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
