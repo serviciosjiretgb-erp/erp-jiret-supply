@@ -15713,45 +15713,80 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                                 const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
                                                 const baseBs=parseNum(nc.monto||0);
                                                 const totalBs=nc.tieneIva===false?baseBs:baseBs*1.16;
-                                                const ncUSD=tNC>1?totalBs/tNC:0;
+                                                const ncUSD=tNC>1?totalBs/tNC:parseNum(nc.montoUSD||0);
                                                 return(
-                                                <tr key={nc.id} className="bg-blue-50 text-[8px]">
-                                                  <td colSpan={2} className="py-1 px-4 text-blue-700 font-bold">{nc.tipo||'NC'} · {nc.fecha||'—'} · <span className="font-mono">{nc.nroDocumento||'—'}</span></td>
-                                                  <td colSpan={2} className="py-1 px-2 text-gray-500 italic">{nc.descripcion||'—'}</td>
-                                                  <td></td>
-                                                  <td className="py-1 px-2 text-right text-blue-700 font-black">{ncUSD>0?`-$${formatNum(ncUSD)}`:`Bs.${formatNum(totalBs)}`}</td>
-                                                  <td colSpan={6}></td>
+                                                <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                                                  <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-purple-600 font-bold">{nc.fecha||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
+                                                  <td className="py-1.5 px-2 text-[8px]"><span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded text-[8px]">{nc.nroDocumento||'—'}</span></td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-purple-700">-${formatNum(ncUSD)}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
+                                                    <span className="text-purple-500 italic">{nc.descripcion||'Nota de crédito'}</span>
+                                                    {baseBs>0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(baseBs)}{tNC>1?` / Tasa ${formatNum(tNC)}`:''}</span>}
+                                                  </td>
                                                 </tr>);
                                               })}
-                                              {/* Fila de info fiscal + retenciones — más limpia */}
-                                              {(invVinc||retsNE.length>0||cobrosNE.length>0)&&(
-                                                <tr className="bg-slate-50 border-b border-slate-200 text-[8px]">
-                                                  <td colSpan={11} className="px-4 py-1.5">
-                                                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-                                                      {invVinc&&<span className="flex items-center gap-1 text-slate-500">
-                                                        <span className="text-slate-400">📋</span>
-                                                        <span>Fac. <b className="text-indigo-600">{invVinc.nroFiscal||invVinc.documento||'—'}</b></span>
-                                                        {invVinc.nroControl&&<span className="text-slate-400">· Ctrl. <b>{invVinc.nroControl}</b></span>}
-                                                      </span>}
-                                                      {cobrosNE.map((cb,ci)=>(
-                                                        <span key={ci} className="flex items-center gap-1 text-green-700 font-bold">
-                                                          <span>💰 Cobro {ci+1}: <b>${formatNum(parseNum(cb.monto))}</b></span>
-                                                          {cb.fecha&&<span className="text-slate-400 font-normal">{cb.fecha}</span>}
-                                                          {cb.referencia&&<span className="text-slate-400 font-normal">· {cb.referencia}</span>}
-                                                          {cb.concepto&&<span className="text-slate-400 font-normal italic">· {cb.concepto}</span>}
-                                                        </span>
-                                                      ))}
-                                                      {retsNE.map((r,ri)=>(
-                                                        <span key={ri} className="flex items-center gap-1 text-amber-700 font-bold">
-                                                          <span>🧾 Ret.{ri+1}: <b>{r.nroRetencion||r.nroComprobante||'—'}</b></span>
-                                                          {(r.fechaComprobante||r.fecha)&&<span className="text-slate-400 font-normal">{r.fechaComprobante||r.fecha}</span>}
-                                                          {parseNum(r.montoRetenido||0)>0&&<span className="text-amber-600">Bs.{formatNum(parseNum(r.montoRetenido))}</span>}
-                                                        </span>
-                                                      ))}
-                                                    </div>
+                                              {invVinc&&(
+                                                <tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
+                                                  <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-indigo-700">↳ Fac. Fiscal</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-indigo-600 font-bold">{invVinc.fecha||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
+                                                  <td className="py-1.5 px-2 text-[8px]">
+                                                    <span className="font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[8px]">{invVinc.nroFiscal||invVinc.documento||'—'}</span>
+                                                    {invVinc.nroControl&&<span className="ml-1 text-[7px] text-gray-400"> Ctrl.{invVinc.nroControl}</span>}
+                                                  </td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={4}>—</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
+                                                    {parseNum(invVinc.baseImponible||invVinc.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invVinc.baseImponible||invVinc.montoBase||0))}</b></span>}
+                                                    {parseNum(invVinc.montoIVA||invVinc.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invVinc.montoIVA||invVinc.iva||0))}</b></span>}
+                                                    {parseNum(invVinc.totalBs||0)>0&&<span className="ml-2">Total: <b className="text-indigo-700">Bs.{formatNum(parseNum(invVinc.totalBs||0))}</b></span>}
+                                                    {parseNum(invVinc.tasa||0)>0&&<span className="ml-2 text-gray-400">· Tasa: {formatNum(parseNum(invVinc.tasa))} Bs/$</span>}
                                                   </td>
                                                 </tr>
                                               )}
+                                              {retsNE.map((r,ri)=>{
+                                                const retBs=parseNum(r.montoRetenido||r.monto||0);
+                                                const retTasa=parseNum(r.tasa||r.tasaFactura||0)||tasaBCV;
+                                                const retUSD=retTasa>1?retBs/retTasa:0;
+                                                return(
+                                                <tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
+                                                  <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-amber-700">↳ Retención</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-amber-600 font-bold">{r.fechaComprobante||r.fecha||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
+                                                  <td className="py-1.5 px-2 text-[8px]"><span className="font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[8px]">{r.nroRetencion||r.nroComprobante||'—'}</span></td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={3}>—</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-amber-700">{retUSD>0?`$${formatNum(retUSD)}`:retBs>0?`Bs.${formatNum(retBs)}`:'—'}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
+                                                    Ret. IVA {r.porcentaje||r.pct?`${r.porcentaje||r.pct}%`:'75%'}
+                                                    {retBs>0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(retBs)}</span>}
+                                                    {retTasa>1&&<span className="text-gray-400"> / Tasa {formatNum(retTasa)}</span>}
+                                                    {invVinc&&<span className="ml-2 text-gray-400">· Fac. {invVinc.nroFiscal||invVinc.documento||'—'}</span>}
+                                                  </td>
+                                                </tr>);
+                                              })}
+                                              {cobrosNE.map((cb,ci)=>(
+                                                <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
+                                                  <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-green-700">↳ Pago{cobrosNE.length>1?' '+(ci+1):''}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-green-600 font-bold">{cb.fecha||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
+                                                  <td className="py-1.5 px-2 text-[8px] font-mono text-gray-500">{cb.referencia||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={3}>—</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
+                                                    <span className="font-bold text-green-700">{cb.metodo||'Pago'}</span>
+                                                    {cb.cuentaBancoNombre&&<span className="ml-1 text-gray-500">· {cb.cuentaBancoNombre}</span>}
+                                                    {cb.montoBs>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
+                                                  </td>
+                                                </tr>
+                                              ))}
                                             </React.Fragment>
                                           );
                                         })}
@@ -16000,6 +16035,280 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               })()}
             </div>
           );
+        })()}
+
+        {ventasView === 'estado_cuenta' && (() => {
+          try {
+            const tasaBCV = parseNum(settings?.tasaBCV||0)||1;
+            // ── Estados
+            const [ecSearch,setEcSearch] = React.useState('');
+            const [ecVendedor,setEcVendedor] = React.useState('TODOS');
+            const [ecEstado,setEcEstado] = React.useState('TODOS');
+            const [ecDesde,setEcDesde] = React.useState('');
+            const [ecHasta,setEcHasta] = React.useState('');
+            const [ecExpanded,setEcExpanded] = React.useState({});
+
+            // ── Helpers
+            const getSaldoNE = (ne) => {
+              const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+              const nc=(notasVentaCD||[]).filter(n=>{
+                const ni=n.neId||'',no=n.neOrigen||'';
+                return (ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);
+              }).reduce((s,n)=>{
+                const t=parseNum(n.tasaFactura||0)||tasaBCV;
+                const b=parseNum(n.monto||0);
+                const tot=n.tieneIva===false?b:b;
+                const usd=t>1?tot/t:parseNum(n.montoUSD||0);
+                return s+(n.tipo==='NC'?usd:-usd);
+              },0);
+              const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{
+                const rb=parseNum(r.montoRetenido||r.monto||0);
+                const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCV;
+                return s+(rt>1?rb/rt:0);
+              },0);
+              return Math.max(0, parseNum(ne.total||ne.montoBase||0) - cobrado - nc - ret);
+            };
+
+            // ── Todas las NEs (incluye pagadas)
+            const allNEs = (notasEntrega||[]).filter(ne=>{
+              if(ne.status==='ANULADA') return false;
+              if(ecDesde&&(ne.fecha||'')<ecDesde) return false;
+              if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
+              return true;
+            });
+
+            // ── Agrupar por cliente
+            const porCli={};
+            allNEs.forEach(ne=>{
+              const k=ne.clientRif||ne.clientName||'SIN-RIF';
+              if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
+              porCli[k].nes.push(ne);
+            });
+
+            let cliList = Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
+
+            // Filtros
+            if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
+            if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
+            if(ecEstado!=='TODOS'){
+              cliList=cliList.filter(cl=>{
+                const saldoTotal=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
+                if(ecEstado==='SALDADO') return saldoTotal<0.01;
+                if(ecEstado==='PENDIENTE') return saldoTotal>=0.01;
+                return true;
+              });
+            }
+
+            const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
+
+            // KPIs
+            const totalFact=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
+            const totalSaldo=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoNE(ne),0),0);
+            const totalCobrado=totalFact-totalSaldo;
+
+            return (
+              <div className="p-4 space-y-4">
+                {/* Filtros */}
+                <div className="bg-white rounded-2xl border border-gray-100 p-4">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <input value={ecSearch} onChange={e=>setEcSearch(e.target.value)} placeholder="🔍 Buscar cliente o RIF..."
+                      className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[180px]"/>
+                    <select value={ecVendedor} onChange={e=>setEcVendedor(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400">
+                      {vendedoresEc.map(v=><option key={v} value={v}>{v==='TODOS'?'Todos los vendedores':v}</option>)}
+                    </select>
+                    <select value={ecEstado} onChange={e=>setEcEstado(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400">
+                      <option value="TODOS">Todos</option>
+                      <option value="PENDIENTE">Con saldo</option>
+                      <option value="SALDADO">Saldados</option>
+                    </select>
+                    <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
+                      <span className="text-[9px] text-gray-400 font-bold">Desde</span>
+                      <input type="date" value={ecDesde} onChange={e=>setEcDesde(e.target.value)} className="border-none outline-none text-[10px] font-bold"/>
+                      <span className="text-[9px] text-gray-400 font-bold">hasta</span>
+                      <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border-none outline-none text-[10px] font-bold"/>
+                    </div>
+                    {(ecDesde||ecHasta||ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS')&&
+                      <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+                  </div>
+                </div>
+
+                {/* KPIs */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    {l:'Clientes',v:cliList.length,c:'text-gray-800'},
+                    {l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},
+                    {l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},
+                    {l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'},
+                  ].map(k=>(
+                    <div key={k.l} className="bg-white rounded-2xl border border-gray-100 p-4">
+                      <div className="text-[9px] font-black text-gray-400 uppercase mb-1">{k.l}</div>
+                      <div className={`text-xl font-black ${k.c}`}>{k.v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Lista clientes */}
+                {cliList.map(cl=>{
+                  const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
+                  const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
+                  const cobradoCli=facturadoCli-saldoCli;
+                  const saldado=saldoCli<0.01;
+                  const exp=!!ecExpanded[cl.clientRif];
+                  return(
+                  <div key={cl.clientRif} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                    {/* Header cliente */}
+                    <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
+                      onClick={()=>setEcExpanded(p=>({...p,[cl.clientRif]:!p[cl.clientRif]}))}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs ${saldado?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>
+                          {(cl.clientName||'?').slice(0,2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-black text-sm text-gray-900">{cl.clientName}</div>
+                          <div className="text-[9px] text-gray-400">{cl.clientRif} · {cl.nes[0]?.vendedor||'—'} · {cl.nes.length} doc{cl.nes.length>1?'s':''}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right"><div className="text-[9px] text-gray-400">Facturado</div><div className="text-sm font-black text-gray-700">${formatNum(facturadoCli)}</div></div>
+                        <div className="text-right"><div className="text-[9px] text-gray-400">Cobrado</div><div className="text-sm font-black text-green-700">${formatNum(cobradoCli)}</div></div>
+                        <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldado?'text-green-700':'text-red-600'}`}>${formatNum(saldoCli)}</div></div>
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado?'Saldado':'Con saldo'}</span>
+                        <ChevronDown size={14} className={`text-gray-400 transition-transform ${exp?'rotate-180':''}`}/>
+                      </div>
+                    </div>
+
+                    {/* Detalle expandido */}
+                    {exp&&(
+                      <div className="border-t border-gray-100 overflow-x-auto">
+                        <table className="w-full text-[9px]" style={{minWidth:900}}>
+                          <thead className="bg-gray-900">
+                            <tr className="text-gray-400 font-black uppercase">
+                              <th className="py-2 px-3 text-left">Documento</th>
+                              <th className="py-2 px-3 text-left">Fecha</th>
+                              <th className="py-2 px-3 text-left">Tipo</th>
+                              <th className="py-2 px-3 text-left">Detalle</th>
+                              <th className="py-2 px-3 text-right">Cargo USD</th>
+                              <th className="py-2 px-3 text-right">NC/Ret.</th>
+                              <th className="py-2 px-3 text-right">Abono</th>
+                              <th className="py-2 px-3 text-right">Saldo</th>
+                              <th className="py-2 px-3 text-center">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map((ne,ni)=>{
+                              const sNE=getSaldoNE(ne);
+                              const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
+                              const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
+                              const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
+                              const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                              const saldado2=sNE<0.01;
+                              return(
+                              <React.Fragment key={ne.id}>
+                                {/* Fila NE */}
+                                <tr className={`border-b border-gray-100 ${ni%2===0?'bg-white':'bg-gray-50'}`}>
+                                  <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
+                                  <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
+                                  <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Entrega</span></td>
+                                  <td className="py-2 px-3 text-gray-500 max-w-[200px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
+                                  <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
+                                  <td className="py-2 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-2 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-2 px-3 text-right font-black text-red-600">${formatNum(sNE)}</td>
+                                  <td className="py-2 px-3 text-center">
+                                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${saldado2?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado2?'Saldado':'Pendiente'}</span>
+                                  </td>
+                                </tr>
+                                {/* Factura fiscal */}
+                                {invV2&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ Fac. {invV2.nroFiscal||invV2.documento||'—'}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Factura Fiscal</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">
+                                    {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
+                                    {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
+                                    {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">· Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
+                                  </td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Emitida</span></td>
+                                </tr>}
+                                {/* NCs */}
+                                {ncsNE2.map(nc=>{
+                                  const t=parseNum(nc.tasaFactura||0)||tasaBCV;
+                                  const b=parseNum(nc.monto||0);
+                                  const u=t>1?b/t:parseNum(nc.montoUSD||0);
+                                  return<tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                                    <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
+                                    <td className="py-1.5 px-3 text-[8px] text-purple-600">{nc.fecha||'—'}</td>
+                                    <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
+                                    <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}{t>1?` / Tasa ${formatNum(t)}`:''}</span>}</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-right font-black text-purple-700">-${formatNum(u)}</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">NC</span></td>
+                                  </tr>;
+                                })}
+                                {/* Retenciones */}
+                                {retsNE2.map((r,ri)=>{
+                                  const rb=parseNum(r.montoRetenido||r.monto||0);
+                                  const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCV;
+                                  const ru=rt>1?rb/rt:0;
+                                  return<tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
+                                    <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700">↳ RET · {r.nroRetencion||r.nroComprobante||'—'}</td>
+                                    <td className="py-1.5 px-3 text-[8px] text-amber-600">{r.fechaComprobante||r.fecha||'—'}</td>
+                                    <td className="py-1.5 px-3"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Retención IVA</span></td>
+                                    <td className="py-1.5 px-3 text-[8px] text-gray-500">Ret. IVA {r.porcentaje||r.pct?`${r.porcentaje||r.pct}%`:'75%'}{rb>0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(rb)}</span>}{rt>1&&<span className="text-gray-400"> / Tasa {formatNum(rt)}</span>}{invV2&&<span className="ml-2 text-gray-400">· Fac. {invV2.nroFiscal||'—'}</span>}</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-right font-black text-amber-700">{ru>0?`$${formatNum(ru)}`:rb>0?`Bs.${formatNum(rb)}`:'—'}</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-center"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret.</span></td>
+                                  </tr>;
+                                })}
+                                {/* Cobros */}
+                                {cobNE.map((cb,ci)=>(
+                                  <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
+                                    <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
+                                    <td className="py-1.5 px-3 text-[8px] text-green-600">{cb.fecha||'—'}</td>
+                                    <td className="py-1.5 px-3"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
+                                    <td className="py-1.5 px-3 text-[8px] text-gray-500">
+                                      <span className="font-bold text-green-700">{cb.metodo||'—'}</span>
+                                      {cb.cuentaBancoNombre&&<span className="ml-1">· {cb.cuentaBancoNombre}</span>}
+                                      {cb.referencia&&<span className="ml-1 font-mono text-gray-400">· Ref. {cb.referencia}</span>}
+                                      {parseNum(cb.montoBs||0)>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
+                                    </td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
+                                    <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                    <td className="py-1.5 px-3 text-center"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Cobrado</span></td>
+                                  </tr>
+                                ))}
+                              </React.Fragment>);
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{background:'#0f172a'}} className="text-[9px]">
+                              <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}</td>
+                              <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
+                              <td className="py-2 px-3 text-right text-purple-400 font-black">—</td>
+                              <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
+                              <td className="py-2 px-3 text-right text-orange-400 font-black">${formatNum(saldoCli)}</td>
+                              <td></td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    )}
+                  </div>);
+                })}
+                {cliList.length===0&&<div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin registros con los filtros aplicados</div>}
+              </div>
+            );
+          } catch(e) { return <div className="p-8 text-red-500">Error: {e.message}</div>; }
         })()}
 
         {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
@@ -28010,6 +28319,7 @@ ${resumenHtml}
                    {id:'comisiones',          icon:<DollarSign size={15}/>, label:'Comisiones',      perm:'ventas_comisiones'},
                    {id:'vendedores',          icon:<Users size={15}/>,      label:'Vendedores',      perm:'ventas_vendedores'},
                    {id:'cxc',                 icon:<ClipboardList size={15}/>,label:'Ctas. x Cobrar', perm:'ventas_ne'},
+                   {id:'estado_cuenta',        icon:<FileText size={15}/>,    label:'Estado de Cuenta',perm:'ventas_ne'},
                  ].filter(t=>hasPerm(t.perm)||appUser?.role==='Master').map(t => (
                     <button key={t.id} onClick={()=>{setVentasView(t.id); clearAllReports();}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${ventasView === t.id ? 'border-orange-500 text-orange-400 bg-white/5' : 'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
