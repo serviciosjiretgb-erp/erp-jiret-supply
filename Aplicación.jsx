@@ -16364,7 +16364,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           // ── Saldo real idéntico a CxC ──────────────────────────────
           const getSaldoEC = (ne) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            return Math.max(0, parseNum(ne.total||ne.totalUSD||ne.montoBase||0)-cobrado-getNCUSDEC(ne,corteEC)-getRetUSDEC(ne));
+            return parseNum(ne.total||ne.totalUSD||ne.montoBase||0)-cobrado-getNCUSDEC(ne,corteEC)-getRetUSDEC(ne);
           };
 
           const allNEs=(notasEntrega||[]).filter(ne=>{
@@ -16647,8 +16647,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <div className="flex items-center gap-4">
                       <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Facturado</div><div className="text-sm font-black text-gray-700">${formatNum(facturadoCli)}</div></div>
                       <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Cobrado</div><div className="text-sm font-black text-green-700">${formatNum(cobradoCli)}</div></div>
-                      <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldado?'text-green-700':'text-red-600'}`}>${formatNum(saldoCli)}</div></div>
-                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado?'Saldado':'Con saldo'}</span>
+                      <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldoCli<=-0.01?'text-blue-600':saldado?'text-green-700':'text-red-600'}`}>{saldoCli<=-0.01?'-':''}\${formatNum(Math.abs(saldoCli))}</div></div>
+                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldoCli<=-0.01?'bg-blue-100 text-blue-700':saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldoCli<=-0.01?'A favor':saldado?'Saldado':'Con saldo'}</span>
                       <ChevronDown size={14} className={`text-gray-400 transition-transform flex-shrink-0 ${exp?'rotate-180':''}`}/>
                     </div>
                   </div>
@@ -16683,7 +16683,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               }
                               return result;
                             })();
-                            const saldado2=sNE<0.01;
+                            const saldado2=sNE<0.01; // incluye negativo (saldo a favor)
                             const bg=ni%2===0?'bg-white':'bg-gray-50';
                             return(
                             <React.Fragment key={ne.id}>
@@ -16695,7 +16695,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 <td className="py-2 px-3 text-right font-black text-gray-800 whitespace-nowrap">${formatNum(parseNum(ne.total||ne.totalUSD||ne.montoBase||0))}</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
-                                <td className={`py-2 px-3 text-right font-black whitespace-nowrap ${saldado2?'text-green-600':'text-red-600'}`}>${formatNum(sNE)}</td>
+                                <td className={`py-2 px-3 text-right font-black whitespace-nowrap ${sNE<=-0.01?'text-blue-600':saldado2?'text-green-600':'text-red-600'}`}>{sNE<=-0.01?'-':''}\${formatNum(Math.abs(sNE))}{sNE<=-0.01&&<span className="text-[7px] ml-1 font-normal">a favor</span>}</td>
                               </tr>
                               {invV&&(()=>{
                                 const bBs=parseNum(invV.baseGravableBs||invV.baseImponible||0);
@@ -16787,7 +16787,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
                             <td className="py-2 px-3 text-right text-purple-400 font-black">—</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
-                            <td className={`py-2 px-3 text-right font-black ${saldado?'text-green-400':'text-orange-400'}`}>${formatNum(saldoCli)}</td>
+                            <td className={`py-2 px-3 text-right font-black ${saldoCli<=-0.01?'text-blue-400':saldado?'text-green-400':'text-orange-400'}`}>{saldoCli<=-0.01?'-':''}\${formatNum(Math.abs(saldoCli))}</td>
                           </tr>
                         </tfoot>
                       </table>
