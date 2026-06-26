@@ -1782,6 +1782,7 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 function BancoApp({ fbUser, onBack, ventasMode = false }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
+  const [submodulo, setSubmodulo] = useState(null); // null | 'banco' | 'caja'
   const [cuentas,    setCuentas]  = useState([]);
   const [cajas,      setCajas]    = useState([]);
   const [movBanco,   setMovBanco] = useState([]);
@@ -2854,7 +2855,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       <div>
         {/* ── MODAL DETALLE / EDICIÓN ── */}
         {movDetalle && (
-          <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} wide
+          <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} xwide
             footer={
               editId
                 ? <><BBo onClick={()=>{setEditId(null);setForm(initF());}}>Cancelar</BBo><BBg onClick={saveEdit} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
@@ -3650,6 +3651,214 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
             </div>
           </div>
         </BModal>
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 4. CAJA — CUENTAS DE CAJA
+  // ══════════════════════════════════════════════════════════════════════
+  const CuentasCajaView = () => {
+    const [modal, setModal]   = useState(false);
+    const [editando, setEdit] = useState(null);
+    const [busy, setBusy]     = useState(false);
+    const initF = ()=>({nombre:'',moneda:'BS',saldoInicial:'0',cuentaContableCod:'',cuentaContableNom:'',descripcion:''});
+    const [form, setForm] = useState(initF());
+
+    const openNew  = ()=>{ setEdit(null); setForm(initF()); setModal(true); };
+    const openEdit = c  =>{ setEdit(c); setForm({nombre:c.nombre||'',moneda:c.moneda||'BS',saldoInicial:String(c.saldoInicial||0),cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',descripcion:c.descripcion||''}); setModal(true); };
+
+    const save = async()=>{
+      if(!form.nombre.trim()) return alert('El nombre de la caja es requerido');
+      setBusy(true);
+      try {
+        const data = { nombre:form.nombre.trim().toUpperCase(), moneda:form.moneda, saldoInicial:Number(form.saldoInicial)||0, cuentaContableCod:form.cuentaContableCod, cuentaContableNom:form.cuentaContableNom, descripcion:form.descripcion, activo:true };
+        if(editando) {
+          await updateDoc(getDocRef('caja_cuentas', editando.id), data);
+        } else {
+          const id = bancoGid();
+          await setDoc(getDocRef('caja_cuentas', id), {...data, id, ts:serverTimestamp()});
+        }
+        setModal(false); setEdit(null); setForm(initF());
+      } catch(e){ alert('Error: '+e.message); } finally { setBusy(false); }
+    };
+
+    const toggleActivo = async(c)=>{
+      await updateDoc(getDocRef('caja_cuentas',c.id),{activo:!c.activo});
+    };
+
+    const getSaldoCaja = (cajaId)=>{
+      const movs = movCaja.filter(m=>m.cajaId===cajaId);
+      const bs  = movs.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
+      const usd = movs.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+      return {bs,usd};
+    };
+
+    return (
+      <div>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-xl font-black uppercase text-slate-900">Cuentas de Caja</h2>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">Administración de cajas y fondos de efectivo</p>
+          </div>
+          <button onClick={openNew} className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase text-white shadow-lg transition-all hover:opacity-90" style={{background:'linear-gradient(135deg,#10b981,#059669)'}}>
+            <Plus size={14}/> Nueva Caja
+          </button>
+        </div>
+
+        {/* Grid de cajas */}
+        {cajas.length===0 ? (
+          <BEmptyState icon={PiggyBank} title="Sin cajas registradas" desc="Cree una caja para registrar movimientos de efectivo"/>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            {cajas.map(c=>{
+              const saldo = getSaldoCaja(c.id);
+              const monedaLabel = c.moneda==='BS'?'Bs':'USD';
+              const saldoVal = c.moneda==='BS'?saldo.bs:saldo.usd;
+              const saldoTotal = (c.saldoInicial||0) + saldoVal;
+              return (
+                <div key={c.id} className={`rounded-2xl border-2 p-5 transition-all ${c.activo!==false?'bg-white border-emerald-100 shadow-sm hover:shadow-md':'bg-slate-50 border-slate-200 opacity-60'}`}>
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{background:c.moneda==='BS'?'#10b981':'#3b82f6'}}>
+                        <PiggyBank size={18} className="text-white"/>
+                      </div>
+                      <div>
+                        <p className="font-black text-sm text-slate-900">{c.nombre}</p>
+                        {c.descripcion&&<p className="text-[10px] text-slate-400">{c.descripcion}</p>}
+                      </div>
+                    </div>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${c.moneda==='BS'?'bg-emerald-100 text-emerald-700':'bg-blue-100 text-blue-700'}`}>{monedaLabel}</span>
+                  </div>
+                  <div className="mb-3">
+                    <p className="text-[9px] text-slate-400 font-bold uppercase mb-0.5">Saldo Actual</p>
+                    <p className={`text-2xl font-black ${saldoTotal>=0?'text-emerald-600':'text-red-500'}`}>
+                      {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(Math.abs(saldoTotal))}
+                    </p>
+                    <p className="text-[9px] text-slate-400">Inicial: {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldoInicial||0)}</p>
+                  </div>
+                  {c.cuentaContableCod&&(
+                    <div className="bg-blue-50 rounded-lg px-2 py-1 mb-3">
+                      <p className="text-[9px] font-black text-blue-700">{c.cuentaContableCod} · {c.cuentaContableNom}</p>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                    <button onClick={()=>openEdit(c)} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-slate-200 text-[9px] font-black text-slate-600 hover:bg-slate-50 transition-all">
+                      <Pencil size={11}/> Editar
+                    </button>
+                    <button onClick={()=>toggleActivo(c)} className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-[9px] font-black transition-all ${c.activo!==false?'border-red-200 text-red-500 hover:bg-red-50':'border-emerald-200 text-emerald-600 hover:bg-emerald-50'}`}>
+                      {c.activo!==false?<><EyeOff size={11}/> Inactivar</>:<><Eye size={11}/> Activar</>}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Tabla resumen */}
+        {cajas.length>0&&(
+          <div className="bg-white rounded-2xl border-2 border-slate-100 overflow-hidden">
+            <div className="px-5 py-4 border-b-2 border-slate-100">
+              <h3 className="font-black text-sm uppercase text-slate-700 flex items-center gap-2"><PiggyBank size={15} className="text-emerald-500"/> Resumen de Cajas</h3>
+            </div>
+            <table className="w-full text-[10px]">
+              <thead className="bg-slate-50 border-b-2 border-slate-100">
+                <tr className="font-black text-slate-400 uppercase">
+                  <th className="py-3 px-5 text-left">Caja</th>
+                  <th className="py-3 px-4 text-center">Moneda</th>
+                  <th className="py-3 px-4 text-right">Saldo Inicial</th>
+                  <th className="py-3 px-4 text-right">Movimientos</th>
+                  <th className="py-3 px-4 text-right">Saldo Actual</th>
+                  <th className="py-3 px-4 text-left">Cuenta PUC</th>
+                  <th className="py-3 px-4 text-center">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cajas.map(c=>{
+                  const saldo=getSaldoCaja(c.id);
+                  const saldoMov=c.moneda==='BS'?saldo.bs:saldo.usd;
+                  const saldoTotal=(c.saldoInicial||0)+saldoMov;
+                  return (
+                    <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="py-3 px-5 font-black text-slate-800">{c.nombre}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${c.moneda==='BS'?'bg-emerald-100 text-emerald-700':'bg-blue-100 text-blue-700'}`}>{c.moneda==='BS'?'Bs':'USD'}</span>
+                      </td>
+                      <td className="py-3 px-4 text-right font-bold text-slate-600">{c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldoInicial||0)}</td>
+                      <td className="py-3 px-4 text-right font-bold text-slate-600">{saldoMov>=0?'+':''}{c.moneda==='BS'?'Bs.':'$'}{bancoFmt(saldoMov)}</td>
+                      <td className="py-3 px-4 text-right font-black">
+                        <span className={saldoTotal>=0?'text-emerald-600':'text-red-500'}>{c.moneda==='BS'?'Bs.':'$'}{bancoFmt(Math.abs(saldoTotal))}</span>
+                      </td>
+                      <td className="py-3 px-4 text-[9px] text-blue-700 font-bold">{c.cuentaContableCod?`${c.cuentaContableCod} · ${c.cuentaContableNom}`:'—'}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${c.activo!==false?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-400'}`}>{c.activo!==false?'Activa':'Inactiva'}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Modal Nueva/Editar Caja */}
+        {modal&&(
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{background:'rgba(0,0,0,0.55)'}}>
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-5 border-b-2 border-slate-100" style={{background:'#0f172a'}}>
+                <div>
+                  <h3 className="font-black text-white uppercase tracking-wide text-sm">{editando?'Editar Caja':'Nueva Cuenta de Caja'}</h3>
+                  <p className="text-slate-400 text-[10px] mt-0.5">Complete los datos de la caja de efectivo</p>
+                </div>
+                <button onClick={()=>setModal(false)} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
+              </div>
+              <div className="p-6 space-y-4">
+                {/* Moneda */}
+                <div>
+                  <label className="text-[9px] font-black text-slate-500 uppercase block mb-2">Moneda de la Caja</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[{id:'BS',label:'Bolívares (Bs)',color:'#10b981'},{id:'USD',label:'Dólares (USD)',color:'#3b82f6'}].map(m=>(
+                      <button key={m.id} onClick={()=>setForm({...form,moneda:m.id})}
+                        className={`p-3 rounded-xl border-2 text-left transition-all ${form.moneda===m.id?'border-current bg-opacity-10':'border-slate-200'}`}
+                        style={{borderColor:form.moneda===m.id?m.color:'',background:form.moneda===m.id?m.color+'15':''}}>
+                        <p className="font-black text-xs" style={{color:form.moneda===m.id?m.color:'#64748b'}}>{m.id}</p>
+                        <p className="text-[9px] text-slate-400 mt-0.5">{m.label}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Nombre */}
+                <BFG label="Nombre de la Caja">
+                  <input className={inp} value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value})} placeholder="Ej: CAJA PRINCIPAL, CAJA MARACAIBO"/>
+                </BFG>
+                {/* Descripción */}
+                <BFG label="Descripción (opcional)">
+                  <input className={inp} value={form.descripcion} onChange={e=>setForm({...form,descripcion:e.target.value})} placeholder="Ej: Efectivo zona industrial"/>
+                </BFG>
+                {/* Saldo inicial */}
+                <BFG label={`Saldo Inicial (${form.moneda==='BS'?'Bs':'USD'})`}>
+                  <input type="number" step="0.01" className={inp} value={form.saldoInicial} onChange={e=>setForm({...form,saldoInicial:e.target.value})}/>
+                </BFG>
+                {/* Cuenta Contable PUC */}
+                <BFG label="Cuenta Contable Asociada (PUC)">
+                  <select className={sel} value={form.cuentaContableCod} onChange={e=>{const c=contCuentas.find(x=>x.codigo===e.target.value);setForm({...form,cuentaContableCod:e.target.value,cuentaContableNom:c?.nombre||''})}}>
+                    <option value="">— Sin vincular al PUC —</option>
+                    {[...contCuentas].filter(c=>String(c.codigo).startsWith('1')).sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.codigo}>{c.codigo} · {c.nombre}</option>)}
+                  </select>
+                  {form.cuentaContableCod&&<p className="text-[10px] text-blue-600 font-black mt-1">✓ {form.cuentaContableCod} · {form.cuentaContableNom}</p>}
+                </BFG>
+              </div>
+              <div className="flex gap-3 px-6 pb-6">
+                <button onClick={()=>setModal(false)} className="flex-1 py-3 rounded-xl border-2 border-slate-200 font-black text-xs uppercase text-slate-500 hover:bg-slate-50">Cancelar</button>
+                <button onClick={save} disabled={busy} className="flex-1 py-3 rounded-xl font-black text-xs uppercase text-white transition-all hover:opacity-90 disabled:opacity-50" style={{background:'linear-gradient(135deg,#10b981,#059669)'}}>
+                  {busy?'Guardando...':editando?'Actualizar Caja':'Registrar Caja'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -4572,25 +4781,32 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     );
   };
 
-  const navGroups = [
+  const navGroupsBanco = [
     { group:'Analítica',   color:'#f97316', items:[{id:'dashboard',    label:'Panel General',      icon:LayoutDashboard}] },
     { group:'Bancos',      color:'#3b82f6', items:[{id:'cuentas',      label:'Cuentas Bancarias',  icon:Building2},
                                                     {id:'movimientos',  label:'Movimientos Banco',  icon:ArrowLeftRight},
                                                     {id:'conciliacion', label:'Conciliación',       icon:CheckCircle}] },
-    { group:'Caja',        color:'#10b981', items:[{id:'caja_op',      label:'Operaciones Caja',   icon:Banknote},
-                                                    {id:'vales',        label:'Relación de Vales',  icon:FileText},
-                                                    {id:'arqueo',       label:'Arqueo de Caja',     icon:Calculator}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_banco',label:'General de Banco',   icon:Building2},
-                                                    {id:'rpt_gral_caja', label:'General de Caja',   icon:PiggyBank},
                                                     {id:'rpt_comp_banco',label:'Comprobante Bancario',icon:FileText},
-                                                    {id:'rpt_comp_caja', label:'Comprobante de Caja', icon:FileText},
                                                     {id:'rpt_libro',    label:'Libro Diario General',icon:BookOpen}] },
     { group:'Config.',     color:'#64748b', items:[{id:'tasas',        label:'Tasas de Cambio',    icon:Globe}] },
   ];
+  const navGroupsCaja = [
+    { group:'Analítica',   color:'#10b981', items:[{id:'caja_dashboard', label:'Panel General',    icon:LayoutDashboard}] },
+    { group:'Caja',        color:'#10b981', items:[{id:'cuentas_caja',   label:'Cuentas de Caja',  icon:PiggyBank},
+                                                    {id:'caja_op',       label:'Operaciones Caja', icon:Banknote},
+                                                    {id:'vales',         label:'Relación de Vales',icon:FileText},
+                                                    {id:'arqueo',        label:'Arqueo de Caja',   icon:Calculator}] },
+    { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_caja',  label:'General de Caja',  icon:PiggyBank},
+                                                    {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText}] },
+    { group:'Config.',     color:'#64748b', items:[{id:'tasas',          label:'Tasas de Cambio',  icon:Globe}] },
+  ];
+  const navGroups = submodulo==='caja' ? navGroupsCaja : navGroupsBanco;
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
-    conciliacion:<ConciliacionView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
+    conciliacion:<ConciliacionView/>, cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
+    caja_dashboard:<CajaOpView/>,
     rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
     rpt_gral_caja:<ReportesGeneralView tipo="caja"/>,
     rpt_comp_banco:<ComprobantesBancariosView tipo="banco"/>,
@@ -4598,6 +4814,73 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     rpt_libro:<RepLibroDiarioView/>,
     tasas:<TasasView/>
   };
+
+  // ── Portal selector — pantalla de bienvenida ──────────────────────
+  if(!submodulo) return (
+    <div className="min-h-screen flex flex-col" style={{background:'#f8fafc'}}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4" style={{background:'#0f172a',borderBottom:'2px solid #f97316'}}>
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs font-black uppercase">
+            <ArrowLeft size={14}/> Volver
+          </button>
+          <div className="w-px h-5 bg-slate-700"/>
+          <span className="text-white font-black text-sm uppercase tracking-wide">Bancos & Tesorería</span>
+        </div>
+        <div className="text-slate-400 text-xs font-bold">SERVICIOS JIRET G&B, C.A.</div>
+      </div>
+      {/* Content */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-12">
+        <div className="text-center mb-10">
+          <h1 className="text-2xl font-black text-slate-900 uppercase tracking-wide mb-2">Seleccione un Módulo</h1>
+          <p className="text-slate-400 text-sm">¿Con qué desea trabajar hoy?</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+          {/* BANCOS */}
+          <button onClick={()=>{ setSubmodulo('banco'); setSec('dashboard'); }}
+            className="group text-left rounded-2xl border-2 border-slate-200 bg-white p-8 hover:border-blue-400 hover:shadow-xl transition-all duration-200"
+            style={{}}>
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5 transition-all group-hover:scale-110" style={{background:'#eff6ff'}}>
+              <Building2 size={28} style={{color:'#3b82f6'}}/>
+            </div>
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-wide mb-2">🏦 Bancos</h2>
+            <p className="text-sm text-slate-400 mb-5">Gestión de cuentas bancarias, movimientos y conciliación</p>
+            <div className="space-y-1.5">
+              {['Panel General','Cuentas Bancarias','Movimientos Banco','Conciliación','General de Banco','Comprobante Bancario','Tasas de Cambio'].map(m=>(
+                <div key={m} className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <div className="w-1.5 h-1.5 rounded-full" style={{background:'#3b82f6'}}/>
+                  {m}
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 flex items-center gap-2 font-black text-xs uppercase" style={{color:'#3b82f6'}}>
+              Entrar al módulo <ArrowRight size={14}/>
+            </div>
+          </button>
+          {/* CAJA */}
+          <button onClick={()=>{ setSubmodulo('caja'); setSec('cuentas_caja'); }}
+            className="group text-left rounded-2xl border-2 border-slate-200 bg-white p-8 hover:border-emerald-400 hover:shadow-xl transition-all duration-200">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5 transition-all group-hover:scale-110" style={{background:'#f0fdf4'}}>
+              <PiggyBank size={28} style={{color:'#10b981'}}/>
+            </div>
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-wide mb-2">💰 Caja</h2>
+            <p className="text-sm text-slate-400 mb-5">Control de efectivo, cajas físicas y movimientos de caja</p>
+            <div className="space-y-1.5">
+              {['Panel General (Caja)','Cuentas de Caja','Operaciones Caja','Relación de Vales','Arqueo de Caja','Comprobante de Caja','Tasas de Cambio'].map(m=>(
+                <div key={m} className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <div className="w-1.5 h-1.5 rounded-full" style={{background:'#10b981'}}/>
+                  {m}
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 flex items-center gap-2 font-black text-xs uppercase" style={{color:'#10b981'}}>
+              Entrar al módulo <ArrowRight size={14}/>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
   const allTabs = navGroups.flatMap(g => g.items.map(i => ({...i, group:g.group, color:g.color})));
   const curNav  = allTabs.find(n => n.id === sec);
 
@@ -4631,6 +4914,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       {/* ── Sub-nav horizontal estilo ERP ── */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="flex items-center overflow-x-auto scrollbar-hide px-4 gap-0.5">
+          {/* Botón cambiar módulo */}
+          <button onClick={()=>setSubmodulo(null)}
+            className="flex items-center gap-1.5 mr-3 px-3 py-2 rounded-lg text-[9px] font-black uppercase text-slate-400 hover:bg-slate-100 transition-all whitespace-nowrap border border-slate-200">
+            <ArrowLeft size={11}/>
+            {submodulo==='banco'?'🏦 Bancos':'💰 Caja'}
+          </button>
+          <div className="w-px h-6 bg-slate-200 mr-2 flex-shrink-0"/>
           {allTabs.map(t => {
             const Icon = t.icon;
             const active = sec === t.id;
