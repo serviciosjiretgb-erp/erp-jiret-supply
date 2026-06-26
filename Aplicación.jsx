@@ -442,6 +442,11 @@ function App() {
   const [cxcCobroModal, setCxcCobroModal] = useState(null);
   const [cxcSearch, setCxcSearch] = useState('');
   const [cxcVendedorFilter, setCxcVendedorFilter] = useState('TODOS');
+  const [histPage, setHistPage] = useState(0);
+  const [histSearch, setHistSearch] = useState('');
+  const [histFiltFecha, setHistFiltFecha] = useState('');
+  const [histFiltMetodo, setHistFiltMetodo] = useState('TODOS');
+  const HIST_PER_PAGE = 25;
   const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
@@ -15433,7 +15438,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               {/* Tabla clientes */}
               <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-4 border-b-2 border-gray-100">
-                  <h3 className="font-black text-sm uppercase text-gray-800">Análisis por cliente</h3>
+                  <h3 className="font-black text-sm uppercase text-gray-800">Análisis por Cliente</h3>
                   <span className="text-[10px] text-gray-400 font-bold">{clientesList.length} clientes · {nesAbiertas.length} docs</span>
                 </div>
                 {clientesList.length===0?(
@@ -15502,7 +15507,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                           const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento)||
                                                          (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):null)||
                                                          (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal):null);
-                                          const docFiscal=invVinc?(invVinc.nroFiscal||invVinc.nroControl||invVinc.documento||'—'):(ne.nroFiscal||'—');
+                                          const docFiscal = invVinc
+                                            ? (invVinc.nroFiscal || invVinc.nroControl || ne.nroFiscal || '—')
+                                            : (ne.nroFiscal || '—');
                                           // IDs de facturas vinculadas para lookup de NC/Ret
                                           const _neId2=ne.id||''; const _neDoc2=ne.documento||'';
                                           const _lnkIds=new Set([
@@ -15654,25 +15661,94 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               </div>
 
               {/* Historial cobros */}
-              {(cobrosCxc||[]).length>0&&(
+              {(cobrosCxc||[]).length>0&&(()=>{
+                const allCobros = [...(cobrosCxc||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+                const metodos = ['TODOS',...new Set(allCobros.map(c=>c.metodo||'').filter(Boolean))];
+                const histFiltered = allCobros.filter(cb=>{
+                  if(histSearch && !((cb.neDocumento||cb.neId||'').toLowerCase().includes(histSearch.toLowerCase()) || (cb.clientName||'').toLowerCase().includes(histSearch.toLowerCase()) || (cb.referencia||'').toLowerCase().includes(histSearch.toLowerCase()))) return false;
+                  if(histFiltFecha && !(cb.fecha||'').startsWith(histFiltFecha)) return false;
+                  if(histFiltMetodo!=='TODOS' && (cb.metodo||'')!==histFiltMetodo) return false;
+                  return true;
+                });
+                const totalPages = Math.ceil(histFiltered.length / HIST_PER_PAGE);
+                const paginated = histFiltered.slice(histPage*HIST_PER_PAGE, (histPage+1)*HIST_PER_PAGE);
+                const totalFiltrado = histFiltered.reduce((s,c)=>s+parseNum(c.monto||0),0);
+
+                const generarPDFHistorial = () => {
+                  const rows = histFiltered.map(cb=>`<tr style="border-bottom:1px solid #f3f4f6">
+                    <td style="padding:6px 10px;color:#64748b">${cb.fecha||'—'}</td>
+                    <td style="padding:6px 10px;font-weight:700;color:#f97316">${cb.neDocumento||cb.neId||'—'}</td>
+                    <td style="padding:6px 10px;font-weight:600">${cb.clientName||'—'}</td>
+                    <td style="padding:6px 10px;color:#64748b">${cb.vendedor||'—'}</td>
+                    <td style="padding:6px 10px;color:#64748b">${cb.cuentaBancoNombre||'—'}</td>
+                    <td style="padding:6px 10px">${cb.metodo||'—'}</td>
+                    <td style="padding:6px 10px;font-size:9px;color:#94a3b8">${cb.referencia||'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-weight:900;color:#16a34a">$${formatNum(parseNum(cb.monto))}</td>
+                    <td style="padding:6px 10px;text-align:center"><span style="background:${cb.tipo==='Abono'?'#fef3c7':'#dcfce7'};color:${cb.tipo==='Abono'?'#92400e':'#15803d'};padding:2px 6px;border-radius:6px;font-size:9px;font-weight:700">${cb.tipo||'Pago'}</span></td>
+                  </tr>`).join('');
+                  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Historial de Cobros</title>
+                  <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10px;color:#111;}
+                  .header{background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;}
+                  .logo{color:#f97316;font-size:18px;font-weight:900;}.logo span{color:#fff;}
+                  .hr{color:#94a3b8;font-size:9px;text-align:right;}table{width:100%;border-collapse:collapse;}
+                  thead tr{background:#0f172a;color:#fff;}thead th{padding:8px 10px;text-align:left;font-size:8px;font-weight:900;text-transform:uppercase;}
+                  tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}</style></head><body>
+                  <div class="header"><div class="logo">Supply <span>G&B</span><div style="color:#94a3b8;font-size:9px;margin-top:2px;">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div></div>
+                  <div class="hr"><h2 style="color:#fff;font-size:12px;font-weight:900;text-transform:uppercase">Historial de Cobros</h2>
+                  <div>Generado: ${getTodayDate()} · ${histFiltered.length} registros</div></div></div>
+                  <div style="padding:16px 20px"><table>
+                  <thead><tr><th>Fecha</th><th>NE</th><th>Cliente</th><th>Vendedor</th><th>Cuenta</th><th>Método</th><th>Referencia</th><th style="text-align:right">Monto USD</th><th style="text-align:center">Tipo</th></tr></thead>
+                  <tbody>${rows}</tbody>
+                  <tfoot><tr><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL</td><td style="text-align:right;padding:8px 10px;color:#16a34a;font-weight:900">$${formatNum(totalFiltrado)}</td><td></td></tr></tfoot>
+                  </table></div><script>window.onload=()=>window.print();</script></body></html>`;
+                  const w=window.open('','_blank','width=900,height=700');w.document.write(html);w.document.close();
+                };
+
+                return (
                 <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
-                  <div className="px-5 py-4 border-b-2 border-gray-100 flex justify-between items-center">
-                    <h3 className="font-black text-sm uppercase text-gray-800 flex items-center gap-2"><CheckCircle size={16} className="text-green-600"/>Historial de cobros</h3>
-                    <span className="text-[10px] text-gray-400 font-bold">{(cobrosCxc||[]).length} cobros · ${formatNum(cobradoMes)} este mes</span>
+                  {/* Header + filtros */}
+                  <div className="px-5 py-4 border-b-2 border-gray-100">
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className="font-black text-sm uppercase text-gray-800 flex items-center gap-2"><CheckCircle size={16} className="text-green-600"/>Historial de cobros</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-400 font-bold">{histFiltered.length} registros · ${formatNum(totalFiltrado)}</span>
+                        <button onClick={generarPDFHistorial} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-xl text-[9px] font-black uppercase hover:bg-gray-700 transition-all">
+                          <Printer size={11}/> PDF
+                        </button>
+                      </div>
+                    </div>
+                    {/* Filtros */}
+                    <div className="flex flex-wrap gap-2">
+                      <input value={histSearch} onChange={e=>{setHistSearch(e.target.value);setHistPage(0);}} placeholder="🔍 Buscar NE, cliente, referencia..."
+                        className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[180px]"/>
+                      <input type="month" value={histFiltFecha} onChange={e=>{setHistFiltFecha(e.target.value);setHistPage(0);}}
+                        className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400"/>
+                      <select value={histFiltMetodo} onChange={e=>{setHistFiltMetodo(e.target.value);setHistPage(0);}}
+                        className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
+                        {metodos.map(m=><option key={m} value={m}>{m==='TODOS'?'Todos los métodos':m}</option>)}
+                      </select>
+                      {(histSearch||histFiltFecha||histFiltMetodo!=='TODOS')&&<button onClick={()=>{setHistSearch('');setHistFiltFecha('');setHistFiltMetodo('TODOS');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+                    </div>
                   </div>
+                  {/* Tabla */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-[10px]">
                       <thead className="bg-gray-50 border-b-2 border-gray-100">
                         <tr className="font-black text-gray-400 uppercase">
-                          <th className="py-3 px-4 text-left">Fecha</th><th className="py-3 px-4 text-left">Documento</th>
-                          <th className="py-3 px-4 text-left">Cliente</th><th className="py-3 px-4 text-left">Vendedor</th>
-                          <th className="py-3 px-4 text-left">Cuenta</th><th className="py-3 px-4 text-left">Método</th>
+                          <th className="py-3 px-4 text-left">Fecha</th>
+                          <th className="py-3 px-4 text-left">Documento</th>
+                          <th className="py-3 px-4 text-left">Cliente</th>
+                          <th className="py-3 px-4 text-left">Vendedor</th>
+                          <th className="py-3 px-4 text-left">Cuenta</th>
+                          <th className="py-3 px-4 text-left">Método</th>
                           <th className="py-3 px-4 text-left">Referencia</th>
-                          <th className="py-3 px-4 text-right">Monto USD</th><th className="py-3 px-4 text-center">Tipo</th>
+                          <th className="py-3 px-4 text-right">Monto USD</th>
+                          <th className="py-3 px-4 text-center">Tipo</th>
+                          <th className="py-3 px-4 text-center">Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {[...(cobrosCxc||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)).map(cb=>(
+                        {paginated.map(cb=>(
                           <tr key={cb.id} className="border-b border-gray-100 hover:bg-gray-50">
                             <td className="py-2.5 px-4 text-gray-500">{cb.fecha||'—'}</td>
                             <td className="py-2.5 px-4 font-bold text-orange-600">{cb.neDocumento||cb.neId||'—'}</td>
@@ -15680,23 +15756,57 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <td className="py-2.5 px-4 text-gray-500">{cb.vendedor||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-500 text-[9px]">{cb.cuentaBancoNombre||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-500">{cb.metodo||'—'}</td>
-                            <td className="py-2.5 px-4 text-gray-400 text-[9px] italic">{cb.concepto||'—'}</td>
-                            <td className="py-2.5 px-4 text-gray-500 font-mono text-[9px]">{cb.referencia||'—'}</td>
+                            <td className="py-2.5 px-4 text-gray-400 text-[9px] font-mono">{cb.referencia||'—'}</td>
                             <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
-                            {cb.moneda==='Bs'&&<td className="py-2.5 px-4 text-right text-blue-600 text-[9px]">Bs.{formatNum(parseNum(cb.montoBs||0))}</td>}
                             <td className="py-2.5 px-4 text-center">
-                              <button onClick={()=>reversarCobro(cb)} title="Reversar cobro"
-                                className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
-                                ↩ Reversar
-                              </button>
+                              <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black ${cb.tipo==='Abono'?'bg-yellow-100 text-yellow-700':'bg-green-100 text-green-700'}`}>{cb.tipo||'Pago'}</span>
+                            </td>
+                            <td className="py-2.5 px-4 text-center">
+                              <div className="flex items-center gap-1 justify-center">
+                                <button onClick={()=>reversarCobro(cb)} title="Reversar cobro"
+                                  className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                                  ↩ Reversar
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
+                        {paginated.length===0&&<tr><td colSpan={10} className="py-8 text-center text-gray-400 font-bold">Sin resultados</td></tr>}
                       </tbody>
+                      <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                        <tr>
+                          <td colSpan={7} className="py-2.5 px-4 text-right font-black text-gray-600 uppercase text-[9px]">Total filtrado:</td>
+                          <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum(totalFiltrado)}</td>
+                          <td colSpan={2}/>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
+                  {/* Paginación */}
+                  {totalPages > 1 && (
+                    <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+                      <span className="text-[9px] text-gray-400 font-bold">Pág. {histPage+1} de {totalPages} · {histFiltered.length} registros</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={()=>setHistPage(0)} disabled={histPage===0} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">«</button>
+                        <button onClick={()=>setHistPage(p=>Math.max(0,p-1))} disabled={histPage===0} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">‹</button>
+                        {Array.from({length:Math.min(7,totalPages)},(_,i)=>{
+                          let page = i;
+                          if(totalPages>7){
+                            if(histPage<4) page=i;
+                            else if(histPage>totalPages-4) page=totalPages-7+i;
+                            else page=histPage-3+i;
+                          }
+                          return <button key={page} onClick={()=>setHistPage(page)}
+                            className={`px-2.5 py-1 rounded-lg border text-[9px] font-black transition-all ${histPage===page?'bg-orange-500 text-white border-orange-500':'hover:bg-gray-100'}`}>{page+1}</button>;
+                        })}
+                        <button onClick={()=>setHistPage(p=>Math.min(totalPages-1,p+1))} disabled={histPage===totalPages-1} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">›</button>
+                        <button onClick={()=>setHistPage(totalPages-1)} disabled={histPage===totalPages-1} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">»</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           );
         })()}
