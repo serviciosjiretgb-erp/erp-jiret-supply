@@ -1,3 +1,4 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
