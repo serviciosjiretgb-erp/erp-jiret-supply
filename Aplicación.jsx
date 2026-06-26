@@ -4537,6 +4537,7 @@ function App() {
       redes_portal:        [],
       configuracion_portal:['configuracion','auditoria'],
     };
+    const portalTabList = selectedPortal ? PORTAL_TABS[selectedPortal] : null;
     const visibleCards  = portalTabList
       ? moduleCards.filter(c => portalTabList.includes(c.tab))
       : moduleCards;
