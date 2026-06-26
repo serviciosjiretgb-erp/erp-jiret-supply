@@ -14943,52 +14943,104 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(!m.clientRif){setDialog({title:'Sin cliente',text:'Selecciona un cliente.',type:'alert'});return;}
             const lineas=(m.lineasPago||[]);
             if(lineas.length===0){setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});return;}
+
+            // ── MODO EDICIÓN ─────────────────────────────────────────────
+            if(m._editMode){
+              try{
+                // PASO 1: identificar cobros originales y NEs afectadas
+                const allCobsGrupo=(cobrosCxc||[]).filter(c=>c.grupoCobroId===m._grupoId||lineas.some(l=>l._cobId===c.id));
+                const neIdsOriginales=[...new Set([
+                  ...allCobsGrupo.map(c=>c.neId),
+                  ...lineas.map(l=>l._neId)
+                ].filter(Boolean))];
+                const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
+                const grupoId=m._grupoId;
+
+                // PASO 2: calcular montos previos por NE ANTES de tocar nada
+                const cobPrevMap={};
+                for(const neId of neIdsOriginales){
+                  cobPrevMap[neId]=allCobsGrupo.filter(c=>c.neId===neId).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                }
+
+                // PASO 3: batch único — borrar cobros viejos + crear nuevos + actualizar NE
+                const batch=writeBatch(db);
+
+                // Borrar cobros anteriores
+                allCobsGrupo.forEach(c=>batch.delete(getDocRef('cobros_cxc',c.id)));
+
+                // Crear nuevos cobros para cada NE original
+                for(const neId of neIdsOriginales){
+                  const ne=(notasEntrega||[]).find(n=>n.id===neId);
+                  if(!ne) continue;
+                  const cobPrev=cobPrevMap[neId]||0;
+                  const cobActual=getCobradoNEAtFecha(ne,null)||0;
+                  const totalNE=parseNum(ne.total||ne.totalUSD||0);
+                  const ncs=getNCUSDNEAtFecha(ne,null);
+                  const rets=getRetUSDNE(ne);
+                  // Saldo real = total - (cobrado sin contar el cobro que borramos) - NCs - Rets
+                  const saldoBase=totalNE-(cobActual-cobPrev)-ncs-rets;
+                  const montoNE=totalUSD;
+                  const nuevoSaldo=saldoBase-montoNE;
+                  const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
+
+                  for(const linea of lineas){
+                    const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
+                    const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
+                    const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
+                    if(montoLineaNE<0.001) continue;
+                    const cobId='COB-'+grupoId+'-'+Math.random().toString(36).slice(2,6).toUpperCase();
+                    const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
+                    const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>'CAJA::'+c.id===linea.cuentaId):null;
+                    const tasa=parseNum(linea.tasa||tasaBCV);
+                    batch.set(getDocRef('cobros_cxc',cobId),{
+                      id:cobId,neId:ne.id,neDocumento:ne.id,
+                      clientName:ne.clientName||m.clientName,
+                      clientRif:ne.clientRif||m.clientRif||'',
+                      monto:montoLineaNE,montoUSD:montoLineaNE,
+                      montoBs:montoLineaNE*tasa,tasa,
+                      moneda:linea.moneda,metodo:linea.metodo,
+                      referencia:linea.referencia,
+                      concepto:linea.concepto||'Cobro CxC',
+                      fecha:linea.fecha,
+                      cuentaBancariaId:linea.cuentaId,
+                      cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
+                      vendedor:ne.vendedor||'',
+                      grupoCobroId:grupoId,
+                      timestamp:Date.now()
+                    });
+                  }
+
+                  // Actualizar NE con saldo correcto
+                  batch.update(getDocRef('notasEntrega',ne.id),{
+                    statusCxC:nuevoStatus,
+                    montoCobrado:(cobActual-cobPrev)+montoNE,
+                    saldoPendiente:nuevoSaldo,
+                    fechaUltimoCobro:lineas[0]?.fecha,
+                    refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
+                  });
+                }
+
+                await batch.commit();
+                setCxcPagoModal(null);
+                setDialog({title:'✅ Cobro actualizado',text:'Cobro actualizado correctamente.',type:'alert'});
+              }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+              return;
+            }
+
+            // ── MODO NUEVO ───────────────────────────────────────────────
             try{
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
               const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
               const batch=writeBatch(db);
-              const grupoId=m._grupoId||Date.now().toString(36).toUpperCase();
-
-              // ── MODO EDICIÓN: revertir cobros anteriores ──────────────
-              if(m._editMode){
-                const allCobsGrupo=(cobrosCxc||[]).filter(c=>c.grupoCobroId===m._grupoId||lineas.some(l=>l._cobId===c.id));
-                const neIdsPrevios=[...new Set(allCobsGrupo.map(c=>c.neId).filter(Boolean))];
-                for(const neId of neIdsPrevios){
-                  const ne=(notasEntrega||[]).find(n=>n.id===neId);
-                  if(!ne) continue;
-                  const cobradoPrevio=allCobsGrupo.filter(c=>c.neId===neId).reduce((s,c)=>s+parseNum(c.monto||0),0);
-                  const saldoRestaurado=getSaldoNEAtFecha(ne,null)+cobradoPrevio;
-                  batch.update(getDocRef('notasEntrega',neId),{
-                    statusCxC:saldoRestaurado>0.01?'PENDIENTE':'COBRADA',
-                    montoCobrado:Math.max(0,(getCobradoNEAtFecha(ne,null)||0)-cobradoPrevio),
-                    saldoPendiente:saldoRestaurado
-                  });
-                }
-                allCobsGrupo.forEach(c=>batch.delete(getDocRef('cobros_cxc',c.id)));
-              }
-
-              // En modo edición: usar las NEs del nesSelec sin filtrar por saldo
-              // (el saldo fue restaurado en el batch pero Firestore aún no confirmó)
-              let nesADistribuir;
-              if(m._editMode){
-                // Usar NEs seleccionadas (las que tenía el cobro original)
-                const neIdsDelCobro=[...new Set((cobrosCxc||[]).filter(c=>c.grupoCobroId===m._grupoId||lineas.some(l=>l._cobId===c.id)).map(c=>c.neId).filter(Boolean))];
-                const idsAUsar=nesSelecIds.length>0?nesSelecIds:neIdsDelCobro;
-                nesADistribuir=(notasEntrega||[]).filter(ne=>!ne.status||ne.status!=='ANULADA').filter(ne=>idsAUsar.includes(ne.id)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
-                // Si no encontramos NEs, tomar las del cliente
-                if(nesADistribuir.length===0){
-                  nesADistribuir=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).slice(0,1);
-                }
-              } else {
-                const allNesCliente=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
-                nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
-              }
+              const grupoId=Date.now().toString(36).toUpperCase();
+              const allNesCliente=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+              const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
               let restante=totalUSD;
               const cobrosGenerados=[];
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
                 const saldoNE=getSaldoNEAtFecha(ne,null);
-                if(!m._editMode&&saldoNE<=0.001) continue;
+                if(saldoNE<=0.001) continue;
                 const montoNE=restante;
                 restante=0;
                 const nuevoSaldo=saldoNE-montoNE;
@@ -15003,39 +15055,50 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>'CAJA::'+c.id===linea.cuentaId):null;
                   const tasa=parseNum(linea.tasa||tasaBCV);
                   batch.set(getDocRef('cobros_cxc',cobId),{
-                    id:cobId,neId:ne.id,neDocumento:ne.id,clientName:ne.clientName||m.clientName,
-                    monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
-                    moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
-                    concepto:linea.concepto||'Cobro CxC',fecha:linea.fecha,
-                    cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
-                    vendedor:ne.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
+                    id:cobId,neId:ne.id,neDocumento:ne.id,
+                    clientName:ne.clientName||m.clientName,
+                    clientRif:ne.clientRif||m.clientRif||'',
+                    monto:montoLineaNE,montoUSD:montoLineaNE,
+                    montoBs:montoLineaNE*tasa,tasa,
+                    moneda:linea.moneda,metodo:linea.metodo,
+                    referencia:linea.referencia,
+                    concepto:linea.concepto||'Cobro CxC',
+                    fecha:linea.fecha,
+                    cuentaBancariaId:linea.cuentaId,
+                    cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
+                    vendedor:ne.vendedor||'',
+                    grupoCobroId:grupoId,
+                    timestamp:Date.now()
                   });
                   if(cta){
                     const mvId='MV-'+grupoId+'-'+Math.random().toString(36).slice(2,4).toUpperCase();
                     batch.set(getDocRef('banco_movimientos',mvId),{
                       id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Cobro CxC',
                       concepto:(linea.concepto||'Cobro CxC')+' — '+m.clientName+' — '+ne.id,
-                      referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
+                      referencia:linea.referencia,clientName:m.clientName,
+                      clientRif:m.clientRif||'',
                       cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
-                      montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
+                      montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
+                      moneda:linea.moneda,metodo:linea.metodo,
                       estatus:'No Conciliado',timestamp:Date.now()
                     });
                     batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoLineaNE});
                   }
                 }
                 batch.update(getDocRef('notasEntrega',ne.id),{
-                  statusCxC:nuevoStatus,montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
-                  saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
+                  statusCxC:nuevoStatus,
+                  montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
+                  saldoPendiente:nuevoSaldo,
+                  fechaUltimoCobro:lineas[0]?.fecha,
                   refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
                 });
                 cobrosGenerados.push({ne,montoNE,nuevoStatus,nuevoSaldo});
               }
               await batch.commit();
               setCxcPagoModal(null);
-              setDialog({title:m._editMode?'✅ Cobro actualizado':'✅ Cobro registrado',text:m._editMode?'Cobro actualizado correctamente.':'Cobro de $'+formatNum(totalUSD)+' registrado.',type:'alert'});
+              setDialog({title:'✅ Cobro registrado',text:'Cobro de $'+formatNum(totalUSD)+' registrado.',type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
-
           // ── REVERSAR COBRO ─────────────────────────────────────────────
           // ── EDITAR COBRO ────────────────────────────────────────────
           const editarCobro=async(cobro,nuevosDatos)=>{
@@ -16178,7 +16241,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                     referencia:c.referencia||'',
                                     concepto:c.concepto||'',
                                     fecha:c.fecha||getTodayDate(),
-                                    _cobId:c.id // id original para borrar al guardar
+                                    _cobId:c.id,
+                                    _neId:c.neId // guardar neId original
                                   }));
                                   // Buscar NEs del cliente
                                   const nesSelec={};
