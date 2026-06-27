@@ -1231,24 +1231,17 @@ function ProcuraApp({fbUser,onBack}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-
-  const navGroups=[
-    {group:'Principal',color:P_ORANGE,items:[
-      {id:'dashboard',label:'Dashboard',icon:LayoutDashboard},
-    ]},
-    {group:'Gestión',color:'#3b82f6',items:[
-      {id:'proveedores',label:'Proveedores',icon:Building2,badge:proveedores.filter(p=>p.activo!==false).length||undefined},
-      {id:'ordenes',label:'Órdenes de Compra',icon:ClipboardList,badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||undefined},
-      {id:'facturas',label:'Facturas de Compra',icon:FileText},
-    ]},
-    {group:'Financiero',color:'#22c55e',items:[
-      {id:'cxp',label:'Cuentas por Pagar',icon:CreditCard,badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||undefined},
-      {id:'historial',label:'Historial de Pagos',icon:Receipt},
-      {id:'estado_cuenta',label:'Estado de Cuenta',icon:BarChart3},
-    ]},
-  ];
-
   const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV};
+
+  const tabs=[
+    {id:'dashboard',   label:'Dashboard',         icon:<LayoutDashboard size={13}/>},
+    {id:'proveedores', label:'Proveedores',        icon:<Building2 size={13}/>, badge:proveedores.filter(p=>p.activo!==false).length||null},
+    {id:'ordenes',     label:'Órdenes de Compra',  icon:<ClipboardList size={13}/>, badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||null},
+    {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>},
+    {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
+    {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>},
+    {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>},
+  ];
 
   const renderView=()=>{
     switch(sec){
@@ -1258,23 +1251,55 @@ function ProcuraApp({fbUser,onBack}) {
       case 'facturas':return <FacturasCompraView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
       case 'historial':return <HistorialPagosView {...sharedProps}/>;
-      case 'estado_cuenta':return <EstadoCuentaProvView {...sharedProps}/>;
+      case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
       default:return null;
     }
   };
 
   return (
-    <>
-      <PSidebarLayout navGroups={navGroups} activeId={sec} onNav={setSec} onBack={onBack}
-        headerContent={<div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Módulo Procura · Supply G&B</div>}>
-        {renderView()}
-      </PSidebarLayout>
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* ── TOP BAR estilo Ventas ── */}
+      <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 print:hidden"
+        style={{background:'#111827',borderBottom:'2px solid #f97316'}}>
+        <button onClick={onBack}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase text-gray-400 hover:text-white hover:bg-white/10 transition-all">
+          <ArrowLeft size={13}/> Volver
+        </button>
+        <div className="w-px h-5 bg-white/20"/>
+        <ShoppingCart size={15} className="text-orange-500"/>
+        <span className="font-black text-white text-[11px] uppercase tracking-widest">Procura & Compras</span>
+        <div className="flex-1"/>
+        {/* KPIs rápidos */}
+        <div className="hidden md:flex items-center gap-4 text-[10px]">
+          <span className="text-gray-400">CxP: <span className="font-black text-orange-400">${pFmt(facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</span></span>
+          <span className="text-gray-400">Proveedores: <span className="font-black text-white">{proveedores.filter(p=>p.activo!==false).length}</span></span>
+          <span className="text-gray-400">OC abiertas: <span className="font-black text-white">{ordenesCompra.filter(o=>['APROBADA','ENVIADA'].includes(o.status)).length}</span></span>
+        </div>
+      </div>
 
-      {/* Dialog global */}
+      {/* ── SUB-NAV TABS estilo Ventas ── */}
+      <div className="flex-shrink-0 print:hidden" style={{background:'#111827',borderBottom:'2px solid #f97316'}}>
+        <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setSec(t.id)}
+              className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${sec===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
+              {t.icon} {t.label}
+              {t.badge>0&&<span className="ml-1 bg-orange-500 text-white text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── CONTENIDO ── */}
+      <div className="flex-1 overflow-y-auto bg-gray-50 p-5">
+        {renderView()}
+      </div>
+
+      {/* ── DIALOG ── */}
       {dialog&&(
         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:`3px solid ${P_ORANGE}`}}>
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:'3px solid #f97316'}}>
               <h3 className="font-black text-white text-sm uppercase tracking-widest">{dialog.title}</h3>
             </div>
             <div className="p-6">
@@ -1289,11 +1314,9 @@ function ProcuraApp({fbUser,onBack}) {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
-
-
 // ══ FIN PROCURA ══
 
 
@@ -6049,6 +6072,7 @@ function App() {
       configuracion:{dark:false, borderColor:'#6b7280', chartType:'configText'},
       auditoria:    {dark:false, borderColor:'#dc2626', chartType:'configText'},
       banco:        {dark:true,  borderColor:'#7c3aed', chartType:'configText'},
+      procura:      {dark:true,  borderColor:'#f97316', chartType:'configText'},
     };
 
     return (
