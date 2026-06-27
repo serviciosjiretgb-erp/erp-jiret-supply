@@ -113,6 +113,16 @@ const getTodayDate = () => {
 };
 
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
+
+const getUnidadCorrecta = (it) => {
+  if(it?.esTermo || /TERMO|THERMO|ENCOG/i.test(it?.desc||it?.invCode||'')) return 'KG';
+  const esBolsa = it?.esBolsa || it?.tipoProducto==='BOLSAS' ||
+    /BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|PAÑAL/i.test(it?.desc||it?.invCode||'');
+  if(esBolsa) return 'Millares';
+  const u = it?.unidad||it?.unit||'';
+  if(u && u!=='Millares' && u!=='Mill.') return u;
+  return 'Und';
+};
 // Tasa de cambio: hasta 4 decimales (mínimo 2)
 const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num || 0);
 
@@ -3084,13 +3094,21 @@ function App() {
       const cantNum = parseNum(it.cantidad)||1;
       const totalFacturado = parseNum(it.totalUSD||it.totalRenglon||0);
       const precioUnitVenta = totalFacturado > 0 ? totalFacturado/cantNum : parseNum(it.precioUnit||0);
+      const esBolsa = it.esBolsa ?? (fg?.tipoProducto==='BOLSAS') ?? /BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|LAMINA|PAÑAL/i.test(it.desc||fg?.producto||it.invCode||'');
+      const getUnidadItem = () => {
+        if(it.unidad && it.unidad!=='Millares' && it.unidad!=='Mill.') return it.unidad; // respetar si ya tiene unidad explícita
+        if(esTermo) return 'KG';
+        if(esBolsa) return 'Millares';
+        return 'Und'; // Stretch film, Cinta, Kraft, Fleje, etc.
+      };
       return {
         fgId: it.fgId,
         invCode: (it.invCode || '').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim() || '',
         cantidad: it.cantidad,
         desc: it.desc || fg?.producto || '',
-        unidad: it.unidad || (esTermo?'KG':'Millares'),
+        unidad: getUnidadItem(),
         esTermo,
+        esBolsa,
         precioUnit: precioUnitVenta,
         costoUnit: costoCapturado,
         costoTotal: parseNum(it.cantidad) * costoCapturado
@@ -3278,7 +3296,7 @@ function App() {
             precioUnit: parseNum(it.precioUnit||0),
             totalUSD: parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),
             desc: it.desc || formatFGLabel(fg)||fg.producto||fg.id,
-            unidad: it.unidad||(esTermo?'KG':'Mill.'),
+            unidad: it.unidad||(esTermo?'KG':((fg?.tipoProducto==='BOLSAS'||/BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|PAÑAL/i.test(it.desc||fg?.producto||''))?'Millares':'Und')),
             maxCant: parseNum(it.cantidad||0) + currentStock,
             esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false, _origCantidad: parseNum(it.cantidad||0)
           });
@@ -9729,7 +9747,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     {it.invCode && <span className="block text-[9px] font-black text-indigo-700 mb-1 tracking-wide">{it.invCode.split('___')[0]}</span>}
                     {it.desc||inv.productoMaquilado||'MAQUILA / SERVICIO'}
                   </td>
-                  <td className="p-4 border-r border-black text-center font-black">{formatNum(it.cantidad)} {it.unidad||''}</td>
+                  <td className="p-4 border-r border-black text-center font-black">{formatNum(it.cantidad)} {(()=>{
+                    // Corregir unidad según tipo de producto
+                    const u=it.unidad||'';
+                    if(it.esTermo) return 'KG';
+                    const esBolsaDesc=/BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|PAÑAL/i.test(it.desc||it.invCode||'');
+                    const esBolsa=it.esBolsa||it.tipoProducto==='BOLSAS'||esBolsaDesc;
+                    if(esBolsa) return 'Millares';
+                    if(u==='Millares'||u==='Mill.') return 'Und'; // corregir facturas viejas incorrectas
+                    return u||'Und';
+                  })()}</td>
                   <td className="p-4 border-r border-black text-right font-bold">{it.precioUnit>0?`$${formatNum(it.precioUnit)}`:'—'}</td>
                   <td className="p-4 text-right font-black">${formatNum(parseNum(it.precioUnit||0)*parseNum(it.cantidad||1)||parseNum(inv.montoBase)/Math.max((inv.itemsFacturados||[]).length,1))}</td>
                 </tr>
@@ -9904,7 +9931,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     fecha: ne.fecha||'',
                     cliente: ne.clientName||ne.clientRif||'—',
                     producto: it.desc||it.invCode||it.fgId||'—',
-                    medida: it.unit||it.unidad||'und',
+                    medida: getUnidadCorrecta(it),
                     cantidad, costoUnd: costoUnit,
                     totalCosto: cantidad*costoUnit,
                     precioVenta: precioUnit,
@@ -9925,7 +9952,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   fecha: ne.fecha||'',
                   cliente: ne.clientName||ne.clientRif||'—',
                   producto: it.desc||it.invCode||it.fgId||'—',
-                  medida: it.unit||it.unidad||'und',
+                  medida: getUnidadCorrecta(it),
                   cantidad, costoUnd: costoUnit,
                   totalCosto: cantidad*costoUnit,
                   precioVenta: precioUnit,
@@ -16830,8 +16857,20 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
           // ── Retenciones del período — filtra por rango de fechas del período ──
           const retPeriodo=(retenciones||[]).filter(r=>{
+            // ── CORRECCIÓN FISCAL: filtrar por quincena ASIGNADA, no por fecha ──
+            // Una retención del día 4 asignada a "2da quincena" DEBE aparecer en Q2
             const f=r.fechaComprobante||r.fecha||'';
-            return f>=periodoDesde&&f<=periodoHasta;
+            const fMes=(f||'').substring(0,7); // YYYY-MM
+            const mesFiltro=`${libroAnio}-${mes2}`;
+            if(fMes!==mesFiltro) return false; // mismo mes siempre
+            // Filtrar por quincena ASIGNADA (r.quincena), no por el día de la fecha
+            if(r.quincena&&(r.quincena==='1'||r.quincena==='2')){
+              return r.quincena===libroQuincena;
+            }
+            // Si no tiene quincena guardada, inferir por fecha (compatibilidad hacia atrás)
+            const dia=parseInt(f.substring(8,10)||'0');
+            const qInferida=dia<=15?'1':'2';
+            return qInferida===libroQuincena;
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
