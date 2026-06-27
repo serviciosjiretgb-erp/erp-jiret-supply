@@ -1285,6 +1285,7 @@ function ProcuraApp({fbUser,onBack}) {
 
 // ══ FIN PROCURA ══
 
+
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
 // ============================================================================
@@ -5795,11 +5796,11 @@ function App() {
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
         chart:null
       },
-
       (hasPerm('procura')||appUser?.role==='Master') && { tab:'procura', icon:<ShoppingCart size={20}/>, title:'Procura & Compras', color:'#f97316',
         stats: ()=>({ s1:'Proveedores, OC, CxP, Estado de Cuenta', s2:'Módulo de Procura'}),
         chart:null
-      },    ].filter(Boolean);
+      },
+    ].filter(Boolean);
 
     // ── FILTRO POR PORTAL ──────────────────────────────────────────────────────
     // Define qué tarjetas pertenecen a cada portal. Los módulos que no están
