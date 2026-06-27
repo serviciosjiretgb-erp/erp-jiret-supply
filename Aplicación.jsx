@@ -7,7 +7,7 @@ import {
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
   Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera,
-  ArrowLeft, Ban, Check, ChevronRight, CreditCard, FileSpreadsheet, Send, Truck} from 'lucide-react';
+  ArrowLeft, Ban, Check, ChevronRight, CreditCard, FileSpreadsheet, Send, Truck, Layers} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
@@ -717,208 +717,157 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
 };
 
 // ══════════════════════════════════════════════════════════════════════
-// MÓDULO 3: ÓRDENES DE COMPRA
+// CATÁLOGO DE PRODUCTOS Y SERVICIOS (Sub-módulo Procura)
 // ══════════════════════════════════════════════════════════════════════
-const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog}) => {
-  const [search,setSearch]=useState('');
-  const [filtStatus,setFiltStatus]=useState('TODOS');
+const CatalogoServiciosView = ({dialog,setDialog}) => {
+  const [tab,setTab]=useState('servicios');
+  const [servicios,setServicios]=useState([]);
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
-  const [items,setItems]=useState([]);
-  const [itemActual,setItemActual]=useState({desc:'',cantidad:'',precioUnit:'',unidad:'Und'});
+  const [inventory,setInventory]=useState([]);
+  const [invCat,setInvCat]=useState('TODOS');
+  const [search,setSearch]=useState('');
 
-  const filtradas=ordenesCompra.filter(o=>{
-    const matchSearch=(o.nroOC||'').toLowerCase().includes(search.toLowerCase())||(o.proveedor||'').toLowerCase().includes(search.toLowerCase());
-    const matchStatus=filtStatus==='TODOS'||o.status===filtStatus;
-    return matchSearch&&matchStatus;
+  useEffect(()=>{
+    const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();};
+  },[]);
+
+  const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado','Otros Terminados'];
+
+  const invFiltrado=inventory.filter(i=>{
+    const matchCat=invCat==='TODOS'||(i.subcategory||i.category||'')===invCat;
+    const matchSearch=!search||(i.desc||'').toLowerCase().includes(search.toLowerCase())||(i.id||'').toLowerCase().includes(search.toLowerCase());
+    return i.activo!==false&&matchCat&&matchSearch;
   });
 
-  const nextNroOC = () => {
-    const nums=ordenesCompra.map(o=>parseInt((o.nroOC||'OC-0000').replace(/[^0-9]/g,''))||0);
-    return `OC-${String(Math.max(0,...nums)+1).padStart(4,'0')}`;
-  };
+  const srvFiltrado=servicios.filter(s=>!search||(s.nombre||'').toLowerCase().includes(search.toLowerCase())||(s.categoria||'').toLowerCase().includes(search.toLowerCase()));
 
-  const initForm = () => ({
-    nroOC:nextNroOC(),proveedor:'',proveedorId:'',fecha:getTodayDate(),
-    fechaEntrega:'',moneda:'USD',tasa:'',status:'BORRADOR',
-    condPago:'30 días',observaciones:''
-  });
+  const initSrv=()=>({nombre:'',descripcion:'',categoria:'MANTENIMIENTO',unidad:'Serv.',precio:'',activo:true});
 
-  const totalOC = items.reduce((s,i)=>s+pNum(i.cantidad)*pNum(i.precioUnit),0);
-
-  const agregarItem = () => {
-    if(!itemActual.desc||!itemActual.cantidad||!itemActual.precioUnit)return;
-    setItems([...items,{...itemActual,id:pId(),total:pNum(itemActual.cantidad)*pNum(itemActual.precioUnit)}]);
-    setItemActual({desc:'',cantidad:'',precioUnit:'',unidad:'Und'});
-  };
-
-  const guardar = async () => {
-    if(!form.proveedor){setDialog({title:'Aviso',text:'Selecciona un proveedor.',type:'alert'});return;}
-    if(items.length===0){setDialog({title:'Aviso',text:'Agrega al menos un ítem.',type:'alert'});return;}
+  const guardarSrv=async()=>{
+    if(!form.nombre){setDialog({title:'Aviso',text:'El nombre es obligatorio.',type:'alert'});return;}
     try{
-      const id=form.id||`OC-${pId()}`;
-      await setDoc(getDocRef('procura_ordenes_compra',id),{
-        ...form,id,items,total:totalOC,
-        updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
-      });
+      const id=form.id||`SRV-${pId()}`;
+      await setDoc(getDocRef('procura_servicios',id),{...form,id,updatedAt:Date.now()});
       setModal(null);
-      setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const cambiarStatus = async(oc,nuevoStatus) => {
-    try{await updateDoc(getDocRef('procura_ordenes_compra',oc.id),{status:nuevoStatus,updatedAt:Date.now()});
-    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-  };
-
-  const exportPDF = (oc) => {
-    const prv=proveedores.find(p=>p.id===oc.proveedorId)||{};
-    let html=pdfOpen(`ORDEN DE COMPRA N° ${oc.nroOC}`,`Fecha: ${pDate(oc.fecha)} · Entrega: ${pDate(oc.fechaEntrega)}`);
-    html+=`<table style="margin-bottom:12px"><tr><td style="width:50%;border:none;vertical-align:top"><strong>PROVEEDOR:</strong><br>${oc.proveedor||'—'}<br>RIF: ${prv.rif||'—'}<br>${prv.direccion||''}</td>
-    <td style="width:50%;border:none;vertical-align:top;text-align:right"><strong>OC N°:</strong> ${oc.nroOC}<br><strong>Fecha:</strong> ${pDate(oc.fecha)}<br><strong>Entrega:</strong> ${pDate(oc.fechaEntrega)}<br><strong>Moneda:</strong> ${oc.moneda||'USD'}</td></tr></table>`;
-    html+=`<table><thead><tr><th>#</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr></thead><tbody>`;
-    (oc.items||[]).forEach((it,i)=>{html+=`<tr><td>${i+1}</td><td>${it.desc||'—'}</td><td>${it.unidad||'Und'}</td><td>${pFmt(it.cantidad)}</td><td>${pFmt(it.precioUnit)}</td><td>${pFmt(it.total||pNum(it.cantidad)*pNum(it.precioUnit))}</td></tr>`;});
-    html+=`<tr class="total-row"><td colspan="5" style="text-align:right">TOTAL ${oc.moneda||'USD'}</td><td>${pFmt(oc.total||0)}</td></tr></tbody></table>`;
-    html+=`<p style="margin-top:16px;font-size:10px;color:#64748b">Condición de pago: ${oc.condPago||'—'} · Observaciones: ${oc.observaciones||'Ninguna'}</p>`;
-    pdfPrint(html+pdfClose(`OC-${oc.nroOC}`));
-  };
-
-  const exportXLSAll = () => {
-    const rows=[['N° OC','Proveedor','Fecha','Fecha Entrega','Status','Moneda','Total','Condición Pago'],
-      ...filtradas.map(o=>[o.nroOC,o.proveedor,o.fecha,o.fechaEntrega,o.status,o.moneda,pFmt(o.total),o.condPago])];
-    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`ordenes_compra_${getTodayDate()}.csv`;a.click();
-  };
-
-  const statusList=['TODOS','BORRADOR','APROBADA','ENVIADA','RECIBIDA','CERRADA','ANULADA'];
+  const elimSrv=(s)=>setDialog({title:'¿Eliminar servicio?',text:`Se eliminará "${s.nombre}".`,type:'confirm',onConfirm:async()=>{
+    try{await deleteDoc(getDocRef('procura_servicios',s.id));}
+    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  }});
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex-1 relative min-w-48">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9`}/>
+      {/* Tabs */}
+      <div className="flex gap-2 mb-4">
+        <button onClick={()=>setTab('servicios')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='servicios'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+          ⚙️ Servicios
+        </button>
+        <button onClick={()=>setTab('inventario')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='inventario'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+          🏭 Productos (Inventario)
+        </button>
+        <div className="flex-1 relative">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." className={`${inp} pl-9 h-full`}/>
         </div>
-        <div className="flex gap-1">
-          {statusList.map(s=>(
-            <button key={s} onClick={()=>setFiltStatus(s)}
-              className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white':' text-slate-500 hover:bg-slate-100'}`}
-              style={filtStatus===s?{background:P_CARD}:{background:'white',border:'1.5px solid #e2e8f0'}}>
-              {s}
-            </button>
-          ))}
-        </div>
-        <PBo onClick={exportXLSAll} sm><FileSpreadsheet size={13}/> Excel</PBo>
-        <PBg onClick={()=>{setForm(initForm());setItems([]);setModal('form');}}><Plus size={14}/> Nueva OC</PBg>
+        {tab==='servicios'&&<PBg onClick={()=>{setForm(initSrv());setModal('srv');}}><Plus size={14}/> Nuevo servicio</PBg>}
       </div>
 
-      <PCard noPad>
-        <table className="w-full">
-          <thead><tr>
-            <PTh>N° OC</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>F. Entrega</PTh><PTh>Status</PTh><PTh right>Total</PTh><PTh>Acciones</PTh>
-          </tr></thead>
-          <tbody>
-            {filtradas.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/></td></tr>:
-            filtradas.map(oc=>{
-              const st=statusOC(oc.status);
-              return (
-                <tr key={oc.id} className="hover:bg-slate-50">
-                  <PTd><span className="font-black text-orange-600">{oc.nroOC}</span></PTd>
-                  <PTd>{oc.proveedor||'—'}</PTd>
-                  <PTd>{pDate(oc.fecha)}</PTd>
-                  <PTd>{pDate(oc.fechaEntrega)||'—'}</PTd>
-                  <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
-                  <PTd right mono><span className="font-black">{oc.moneda||'USD'} {pFmt(oc.total||0)}</span></PTd>
+      {/* SERVICIOS */}
+      {tab==='servicios'&&(
+        <PCard noPad>
+          <table className="w-full">
+            <thead><tr>
+              <PTh>Servicio</PTh><PTh>Categoría</PTh><PTh>Descripción</PTh><PTh>Unidad</PTh><PTh right>Precio ref.</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
+            </tr></thead>
+            <tbody>
+              {srvFiltrado.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={Truck} title="Sin servicios" desc="Registra tu primer servicio"/></td></tr>:
+              srvFiltrado.map(s=>(
+                <tr key={s.id} className="hover:bg-slate-50">
+                  <PTd><span className="font-black text-slate-800 text-xs">{s.nombre||'—'}</span></PTd>
+                  <PTd><PBadge v="blue">{s.categoria||'—'}</PBadge></PTd>
+                  <PTd><span className="text-[10px] text-slate-500">{s.descripcion||'—'}</span></PTd>
+                  <PTd>{s.unidad||'Serv.'}</PTd>
+                  <PTd right mono><span className="font-black">{s.precio?`$${pFmt(s.precio)}`:'—'}</span></PTd>
+                  <PTd><PBadge v={s.activo!==false?'green':'gray'}>{s.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
                   <PTd>
-                    <div className="flex gap-1.5 flex-wrap">
-                      <PBp sm onClick={()=>exportPDF(oc)}><Printer size={11}/></PBp>
-                      <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setModal('form');}}><Edit size={11}/></PBp>
-                      {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')}><Check size={11}/> Aprobar</PBg>}
-                      {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'ENVIADA')}><Send size={11}/> Enviar</PBo>}
-                      {oc.status==='ENVIADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'RECIBIDA')}><Truck size={11}/> Recibir</PBo>}
-                      {!['CERRADA','ANULADA'].includes(oc.status)&&<PBd sm onClick={()=>cambiarStatus(oc,'ANULADA')}><Ban size={11}/></PBd>}
+                    <div className="flex gap-2">
+                      <PBp sm onClick={()=>{setForm({...s});setModal('srv');}}><Edit size={11}/></PBp>
+                      <PBd sm onClick={()=>elimSrv(s)}><Trash2 size={11}/></PBd>
                     </div>
                   </PTd>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </PCard>
-
-      {/* Modal OC */}
-      <PModal open={modal==='form'} onClose={()=>setModal(null)} title={form.id?`Editar ${form.nroOC}`:'Nueva Orden de Compra'} xlwide>
-        <div className="grid grid-cols-2 gap-5">
-          {/* Col izq — datos */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <PFG label="N° OC"><input className={inp} value={form.nroOC||''} readOnly style={{background:'#f8fafc'}}/></PFG>
-              <PFG label="Fecha *"><input type="date" className={inp} value={form.fecha||''} onChange={e=>setForm({...form,fecha:e.target.value})}/></PFG>
-              <PFG label="Proveedor *" full>
-                <select className={sel} value={form.proveedorId||''} onChange={e=>{const p=proveedores.find(x=>x.id===e.target.value);setForm({...form,proveedorId:e.target.value,proveedor:p?.nombre||'',condPago:p?.condPago||form.condPago,moneda:p?.moneda||form.moneda});}}>
-                  <option value="">Seleccionar proveedor...</option>
-                  {proveedores.filter(p=>p.activo!==false).map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
-                </select>
-              </PFG>
-              <PFG label="Fecha de entrega"><input type="date" className={inp} value={form.fechaEntrega||''} onChange={e=>setForm({...form,fechaEntrega:e.target.value})}/></PFG>
-              <PFG label="Moneda">
-                <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
-                  {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
-                </select>
-              </PFG>
-              <PFG label="Tasa Bs/$"><input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="Ej: 62,50"/></PFG>
-              <PFG label="Condición de pago">
-                <select className={sel} value={form.condPago||'30 días'} onChange={e=>setForm({...form,condPago:e.target.value})}>
-                  {['Contado','7 días','15 días','30 días','45 días','60 días','90 días'].map(c=><option key={c}>{c}</option>)}
-                </select>
-              </PFG>
-              <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
-            </div>
-          </div>
-
-          {/* Col der — ítems */}
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Ítems de la orden</p>
-            {/* Formulario ítem */}
-            <div className="bg-slate-50 rounded-xl p-3 mb-3 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <input className={inp} placeholder="Descripción del producto/servicio" value={itemActual.desc} onChange={e=>setItemActual({...itemActual,desc:e.target.value})}/>
-                <select className={sel} value={itemActual.unidad} onChange={e=>setItemActual({...itemActual,unidad:e.target.value})}>
-                  {['Und','KG','Millares','LT','MT','GL','Caja','Rollo'].map(u=><option key={u}>{u}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <input type="number" className={inp} placeholder="Cantidad" value={itemActual.cantidad} onChange={e=>setItemActual({...itemActual,cantidad:e.target.value})}/>
-                <input type="number" className={inp} placeholder={`Precio unit. (${form.moneda||'USD'})`} value={itemActual.precioUnit} onChange={e=>setItemActual({...itemActual,precioUnit:e.target.value})}/>
-              </div>
-              {itemActual.cantidad&&itemActual.precioUnit&&<p className="text-xs font-black text-orange-600">= {form.moneda||'USD'} {pFmt(pNum(itemActual.cantidad)*pNum(itemActual.precioUnit))}</p>}
-              <PBg onClick={agregarItem} sm><Plus size={12}/> Agregar ítem</PBg>
-            </div>
-            {/* Lista ítems */}
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {items.map((it,i)=>(
-                <div key={it.id} className="flex items-center gap-2 bg-white rounded-lg p-2.5 border border-slate-100">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-black text-slate-800 truncate">{it.desc}</p>
-                    <p className="text-[10px] text-slate-400">{pFmt(it.cantidad)} {it.unidad} × {pFmt(it.precioUnit)}</p>
-                  </div>
-                  <span className="text-xs font-black text-orange-600 whitespace-nowrap">{pFmt(it.total||0)}</span>
-                  <button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button>
-                </div>
               ))}
-            </div>
-            {items.length>0&&(
-              <div className="mt-3 p-3 bg-slate-900 rounded-xl flex justify-between items-center">
-                <span className="text-[10px] font-black text-slate-400 uppercase">TOTAL {form.moneda||'USD'}</span>
-                <span className="font-black text-white text-lg">{pFmt(totalOC)}</span>
-              </div>
-            )}
+            </tbody>
+          </table>
+        </PCard>
+      )}
+
+      {/* INVENTARIO (solo lectura) */}
+      {tab==='inventario'&&(
+        <div>
+          <div className="flex gap-1 flex-wrap mb-3">
+            {cats.map(c=>(
+              <button key={c} onClick={()=>setInvCat(c)}
+                className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase transition-all ${invCat===c?'bg-orange-500 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
+                {c}
+              </button>
+            ))}
           </div>
+          <PCard noPad>
+            <table className="w-full">
+              <thead><tr>
+                <PTh>Código</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh right>Stock</PTh><PTh>Unidad</PTh>
+              </tr></thead>
+              <tbody>
+                {invFiltrado.length===0?<tr><td colSpan={5} className="py-12"><PEmpty icon={Package} title="Sin productos" desc="No hay productos en esta categoría"/></td></tr>:
+                invFiltrado.slice(0,100).map(inv=>(
+                  <tr key={inv.id} className="hover:bg-slate-50">
+                    <PTd mono>{inv.displayId||inv.id}</PTd>
+                    <PTd><span className="font-black text-xs">{inv.desc||'—'}</span></PTd>
+                    <PTd><PBadge v="gray">{inv.subcategory||inv.category||'—'}</PBadge></PTd>
+                    <PTd right mono><span className={`font-black ${pNum(inv.stock)>0?'text-emerald-600':'text-red-500'}`}>{pFmt(inv.stock||0)}</span></PTd>
+                    <PTd>{inv.unit||'Und'}</PTd>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </PCard>
         </div>
-        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
-          <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
-          <PBg onClick={guardar}><Save size={14}/> {form.id?'Actualizar OC':'Crear OC'}</PBg>
+      )}
+
+      {/* Modal Servicio */}
+      <PModal open={modal==='srv'} onClose={()=>setModal(null)} title={form.id?'Editar servicio':'Nuevo servicio'}
+        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardarSrv}><Save size={14}/> Guardar</PBg></>}>
+        <div className="grid grid-cols-2 gap-4">
+          <PFG label="Nombre del servicio *" full>
+            <input className={inp} value={form.nombre||''} onChange={e=>setForm({...form,nombre:e.target.value.toUpperCase()})} placeholder="Ej: TRANSPORTE DE CARGA, MANTENIMIENTO PREVENTIVO..."/>
+          </PFG>
+          <PFG label="Categoría">
+            <select className={sel} value={form.categoria||'MANTENIMIENTO'} onChange={e=>setForm({...form,categoria:e.target.value})}>
+              {['MANTENIMIENTO','TRANSPORTE','LOGÍSTICA','LIMPIEZA','CONSULTORIA','REPARACIONES','SERVICIOS PÚBLICOS','OTROS'].map(c=><option key={c}>{c}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Unidad">
+            <select className={sel} value={form.unidad||'Serv.'} onChange={e=>setForm({...form,unidad:e.target.value})}>
+              {['Serv.','HRS','DÍA','MES','KM','M²','Viaje'].map(u=><option key={u}>{u}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Precio de referencia ($)">
+            <input type="number" className={inp} value={form.precio||''} onChange={e=>setForm({...form,precio:e.target.value})} placeholder="0.00"/>
+          </PFG>
+          <PFG label="Descripción" full>
+            <textarea className={`${inp} resize-none`} rows={2} value={form.descripcion||''} onChange={e=>setForm({...form,descripcion:e.target.value})} placeholder="Descripción del servicio..."/>
+          </PFG>
+          <PFG label="Estado">
+            <select className={sel} value={form.activo!==false?'true':'false'} onChange={e=>setForm({...form,activo:e.target.value==='true'})}>
+              <option value="true">Activo</option><option value="false">Inactivo</option>
+            </select>
+          </PFG>
         </div>
       </PModal>
     </div>
@@ -926,8 +875,713 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog}) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════
-// MÓDULO 4: FACTURAS DE COMPRA
+// MÓDULO 3: ÓRDENES DE COMPRA
 // ══════════════════════════════════════════════════════════════════════
+const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}) => {
+  const [search,setSearch]=useState('');
+  const [filtStatus,setFiltStatus]=useState('TODOS');
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [items,setItems]=useState([]);
+  const [itemModal,setItemModal]=useState(false);
+  const [itemForm,setItemForm]=useState({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und'});
+  const [inventory,setInventory]=useState([]);
+  const [servicios,setServicios]=useState([]);
+  const [invTab,setInvTab]=useState('TODOS');
+
+  useEffect(()=>{
+    const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();};
+  },[]);
+
+  // Categorías del inventario
+  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado','Otros Terminados'];
+  const invFiltrado=inventory.filter(i=>{
+    if(invTab==='TODOS') return i.activo!==false;
+    return i.activo!==false&&(i.subcategory||i.category||'')===invTab;
+  });
+
+  const filtradas=ordenesCompra.filter(o=>{
+    const ms=(o.nroOC||'').toLowerCase().includes(search.toLowerCase())||(o.proveedor||'').toLowerCase().includes(search.toLowerCase());
+    const st=filtStatus==='TODOS'||o.status===filtStatus;
+    return ms&&st;
+  });
+
+  const nextNroOC=()=>{
+    const nums=ordenesCompra.map(o=>parseInt((o.nroOC||'OC-0000').replace(/[^0-9]/g,''))||0);
+    return `OC-${String(Math.max(0,...nums)+1).padStart(4,'0')}`;
+  };
+
+  const initForm=(prov=null)=>({
+    nroOC:nextNroOC(),
+    proveedor:prov?.nombre||'',proveedorId:prov?.id||'',
+    rif:prov?.rif||'',direccion:prov?.direccion||'',
+    contacto:prov?.contacto||'',telefono:prov?.telefono||'',
+    fechaEmision:getTodayDate(),fechaVencimiento:'',
+    tasa:'',diasCredito:prov?.condPago||'',
+    formaPago:'CREDITO',moneda:'USD',status:'BORRADOR',observaciones:''
+  });
+
+  // Auto-calcular vencimiento cuando cambian diasCredito o fechaEmision
+  const calcVencimiento=(fechaEmision,dias)=>{
+    if(!fechaEmision||!dias) return '';
+    const d=new Date(fechaEmision);
+    d.setDate(d.getDate()+parseInt(dias)||0);
+    return d.toISOString().slice(0,10);
+  };
+
+  const totalOC=items.reduce((s,i)=>s+pNum(i.cantidad)*pNum(i.precioUnit),0);
+
+  const agregarItem=()=>{
+    if(!itemForm.desc||!itemForm.cantidad||!itemForm.precioUnit){
+      setDialog({title:'Aviso',text:'Completa descripción, cantidad y precio.',type:'alert'});return;
+    }
+    const sub={...itemForm,id:pId(),total:pNum(itemForm.cantidad)*pNum(itemForm.precioUnit)};
+    setItems([...items,sub]);
+    setItemForm({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und'});
+    setItemModal(false);
+  };
+
+  const seleccionarProductoInv=(inv)=>{
+    setItemForm({
+      tipo:'PRODUCTO',
+      desc:inv.desc||inv.id||'',
+      categoria:inv.subcategory||inv.category||'',
+      cantidad:'',precioUnit:'',
+      unidad:inv.unit||'Und',
+      invId:inv.id
+    });
+  };
+
+  const seleccionarServicio=(srv)=>{
+    setItemForm({
+      tipo:'SERVICIO',
+      desc:srv.nombre||srv.descripcion||'',
+      categoria:srv.categoria||'Servicio',
+      cantidad:'1',precioUnit:srv.precio||'',
+      unidad:'Serv.',srvId:srv.id
+    });
+  };
+
+  const guardar=async()=>{
+    if(!form.proveedor){setDialog({title:'Aviso',text:'Selecciona un proveedor.',type:'alert'});return;}
+    if(items.length===0){setDialog({title:'Aviso',text:'Agrega al menos un ítem.',type:'alert'});return;}
+    try{
+      const id=form.id||`OC-${pId()}`;
+      await setDoc(getDocRef('procura_ordenes_compra',id),{
+        ...form,id,items,total:totalOC,updatedAt:Date.now(),
+        creadoEn:form.creadoEn||Date.now()
+      });
+      setModal(null);
+      setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const cambiarStatus=async(oc,s)=>{
+    try{await updateDoc(getDocRef('procura_ordenes_compra',oc.id),{status:s,updatedAt:Date.now()});}
+    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const imprimirOC=(oc)=>{
+    // Datos empresa desde configuración
+    const empNombre = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const empRif    = settings?.empresaRif         || 'J-412309374';
+    const empDir    = settings?.empresaDireccion   || 'Av. C2. CC El Dividivi Nivel PB Local G-9, Sector El Trebol, Maracaibo';
+    const empTel    = settings?.empresaTelefono    || '';
+    const empEmail  = settings?.emailProcura       || 'procura@supplygyb.com';
+
+    // Totales
+    const subtotalUSD = (oc.items||[]).reduce((s,i)=>s+pNum(i.total||0),0);
+    const tasa        = pNum(oc.tasa||0);
+    const subtotalBs  = tasa>0 ? subtotalUSD*tasa : 0;
+    const baseIvaUSD  = (oc.items||[]).filter(i=>i.tipo!=='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const baseIvaBs   = tasa>0 ? baseIvaUSD*tasa : 0;
+    const exentoUSD   = subtotalUSD - baseIvaUSD;
+    const exentoBs    = tasa>0 ? exentoUSD*tasa : 0;
+    const iva16USD    = baseIvaUSD*0.16;
+    const iva16Bs     = tasa>0 ? iva16USD*tasa : 0;
+    const totalUSD    = subtotalUSD + iva16USD;
+    const totalBs     = tasa>0 ? totalUSD*tasa : 0;
+
+    // Número en letras (simplificado)
+    const numLetras=(n)=>{
+      const un=['','UNO','DOS','TRES','CUATRO','CINCO','SEIS','SIETE','OCHO','NUEVE','DIEZ','ONCE','DOCE','TRECE','CATORCE','QUINCE','DIECISÉIS','DIECISIETE','DIECIOCHO','DIECINUEVE'];
+      const dec=['','','VEINTE','TREINTA','CUARENTA','CINCUENTA','SESENTA','SETENTA','OCHENTA','NOVENTA'];
+      const miles=['','MIL','MILLONES'];
+      if(n===0)return'CERO';
+      if(n<20)return un[Math.floor(n)];
+      if(n<100)return dec[Math.floor(n/10)]+(n%10?' Y '+un[n%10]:'');
+      if(n<1000)return(n===100?'CIEN':un[Math.floor(n/100)]+'CIENTOS')+(n%100?' '+numLetras(n%100):'');
+      if(n<1000000)return numLetras(Math.floor(n/1000))+' MIL'+(n%1000?' '+numLetras(n%1000):'');
+      return Math.floor(n)+'.';
+    };
+    const cents=Math.round((totalUSD%1)*100);
+    const wholeUSD=Math.floor(totalUSD);
+    const enLetras=`${numLetras(wholeUSD)} DÓLARES CON ${String(cents).padStart(2,'0')}/100`;
+
+    const pDate2=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`;};
+    const fmtBs=n=>n>0?new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n):'—';
+    const fmtUSD=n=>n>0?new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n):'—';
+
+    const css=`
+      @page{size:A4;margin:1.5cm}
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:Arial,sans-serif;color:#1e293b;font-size:10px}
+      .hdr{background:#000;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
+      .brand{font-size:18px;font-weight:900;color:#f97316}
+      .emp-hdr{text-align:right;font-size:8.5px;color:#d1d5db;line-height:1.5}
+      .emp-hdr strong{color:#f97316;font-size:11px;display:block}
+      .oc-title{background:#0f172a;color:#f97316;padding:10px 20px;font-size:17px;font-weight:900;text-align:center;letter-spacing:4px;border-bottom:2px solid #f97316}
+      .body{padding:14px 20px}
+      .info-row{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;margin-bottom:10px}
+      .box{border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px}
+      .box-title{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:#f97316;margin-bottom:6px;border-bottom:1px solid #f97316;padding-bottom:3px}
+      .field{margin-bottom:5px}
+      .field label{font-size:7px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;display:block}
+      .field p{font-size:10px;font-weight:700;color:#1e293b}
+      .divider{height:1px;background:#e2e8f0;margin:8px 0}
+      table.items{width:100%;border-collapse:collapse;margin:8px 0}
+      table.items th{background:#0f172a;color:#f97316;border:1px solid #374151;padding:6px 7px;text-align:left;font-size:7.5px;text-transform:uppercase;letter-spacing:.5px}
+      table.items th.r{text-align:right}
+      table.items td{border:1px solid #e2e8f0;padding:5px 7px;font-size:9.5px}
+      table.items td.r{text-align:right;font-weight:700}
+      table.items tr:nth-child(even) td{background:#f8fafc}
+      table.totales{width:100%;border-collapse:collapse;margin-top:6px}
+      table.totales td{padding:4px 8px;font-size:9px;border:1px solid #e2e8f0}
+      table.totales .lbl{font-weight:900;text-transform:uppercase;font-size:8px;color:#64748b;background:#f8fafc}
+      table.totales .val{text-align:right;font-family:monospace;font-weight:700}
+      table.totales .total-row td{background:#0f172a!important;color:#f97316;font-weight:900;font-size:11px;border-color:#374151}
+      .letras{background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;padding:5px 10px;font-size:9px;font-weight:900;color:#92400e;margin-top:4px}
+      .factura-box{border:2px solid #0f172a;border-radius:6px;padding:10px 14px;margin-top:10px;text-align:center}
+      .factura-box h3{font-size:11px;font-weight:900;text-transform:uppercase;text-decoration:underline;margin-bottom:4px}
+      .factura-box p{font-size:10px;font-weight:700;line-height:1.5}
+      .cond-box{border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;margin-top:10px;font-size:9px}
+      .cond-box h3{font-weight:900;text-transform:uppercase;text-decoration:underline;margin-bottom:6px;font-size:10px}
+      .cond-box p{margin-bottom:3px;line-height:1.5}
+      .firmas{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:20px}
+      .firma{border-top:1px solid #000;margin-top:28px;padding-top:5px;text-align:center;font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase}
+      .footer-bar{margin-top:14px;border-top:2px solid #f97316;padding:6px 20px;display:flex;justify-content:space-between;font-size:7px;color:#94a3b8}
+      .badge-s{background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:7px;font-weight:900}
+      .badge-p{background:#dcfce7;color:#166534;padding:1px 5px;border-radius:8px;font-size:7px;font-weight:900}
+      @media print{body{margin:0}@page{margin:1.5cm}}
+    `;
+
+    let html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>OC ${oc.nroOC}</title><style>${css}</style></head><body>
+    <div class="hdr">
+      <div class="brand">Supply G&amp;B</div>
+      <div class="emp-hdr">
+        <strong>${empNombre}</strong>
+        RIF: ${empRif}<br>
+        ${empDir}<br>
+        ${empTel?'Tel: '+empTel+'&nbsp;&nbsp;':''}${empEmail}
+      </div>
+    </div>
+    <div class="oc-title">ORDEN DE COMPRA N° ${oc.nroOC}</div>
+    <div class="body">
+
+      <!-- INFO PROVEEDOR Y OC -->
+      <div class="info-row">
+        <div class="box">
+          <div class="box-title">Proveedor</div>
+          <div class="field"><label>Razón Social</label><p>${oc.proveedor||'—'}</p></div>
+          <div class="field"><label>RIF</label><p>${oc.rif||'—'}</p></div>
+          <div class="field"><label>Dirección</label><p>${oc.direccion||'—'}</p></div>
+          <div class="field"><label>Persona de contacto</label><p>${oc.contacto||'—'}</p></div>
+          <div class="field"><label>Teléfono</label><p>${oc.telefono||'—'}</p></div>
+        </div>
+        <div class="box">
+          <div class="box-title">Datos de la orden</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
+            <div class="field"><label>N° Orden</label><p style="font-size:14px;color:#f97316;font-weight:900">${oc.nroOC}</p></div>
+            <div class="field"><label>Status</label><p>${oc.status||'BORRADOR'}</p></div>
+            <div class="field"><label>Fecha emisión</label><p>${pDate2(oc.fechaEmision)}</p></div>
+            <div class="field"><label>Fecha vencimiento</label><p>${pDate2(oc.fechaVencimiento)}</p></div>
+            <div class="field"><label>Días de crédito</label><p>${oc.diasCredito||'—'}</p></div>
+            <div class="field"><label>Forma de pago</label><p>${oc.formaPago||'—'}</p></div>
+            <div class="field"><label>Moneda</label><p>${oc.moneda||'USD'}</p></div>
+            <div class="field"><label>Tasa Bs./$</label><p>${oc.tasa||'—'}</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TABLA DE ÍTEMS -->
+      <table class="items">
+        <thead><tr>
+          <th style="width:4%">#</th>
+          <th style="width:7%">Tipo</th>
+          <th>Descripción</th>
+          <th style="width:12%">Categoría</th>
+          <th style="width:5%" class="r">Cant.</th>
+          <th style="width:6%">Unidad</th>
+          <th style="width:11%" class="r">P. Unit. USD</th>
+          <th style="width:11%" class="r">Total USD</th>
+          ${tasa>0?'<th style="width:11%" class="r">Total Bs.</th>':''}
+        </tr></thead>
+        <tbody>`;
+
+    (oc.items||[]).forEach((it,i)=>{
+      const totBs=tasa>0?pNum(it.total||0)*tasa:0;
+      html+=`<tr>
+        <td style="text-align:center">${i+1}</td>
+        <td><span class="${it.tipo==='SERVICIO'?'badge-s':'badge-p'}">${it.tipo||'PROD.'}</span></td>
+        <td><strong>${it.desc||'—'}</strong></td>
+        <td>${it.categoria||'—'}</td>
+        <td class="r">${pFmt(it.cantidad)}</td>
+        <td>${it.unidad||'Und'}</td>
+        <td class="r">${fmtUSD(pNum(it.precioUnit))}</td>
+        <td class="r">${fmtUSD(pNum(it.total||0))}</td>
+        ${tasa>0?`<td class="r">${fmtBs(totBs)}</td>`:''}
+      </tr>`;
+    });
+
+    html+=`</tbody></table>
+
+      <!-- TOTALES -->
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <table class="totales" style="width:${tasa>0?'55%':'35%'}">
+          <tr>
+            <td class="lbl">Sub-Total</td>
+            ${tasa>0?`<td class="val">Bs. ${fmtBs(subtotalBs)}</td>`:''}
+            <td class="val">USD ${fmtUSD(subtotalUSD)}</td>
+          </tr>
+          <tr>
+            <td class="lbl">Exento</td>
+            ${tasa>0?`<td class="val">Bs. ${fmtBs(exentoBs)}</td>`:''}
+            <td class="val">USD ${exentoUSD>0?fmtUSD(exentoUSD):'—'}</td>
+          </tr>
+          <tr>
+            <td class="lbl">Base IVA</td>
+            ${tasa>0?`<td class="val">Bs. ${fmtBs(baseIvaBs)}</td>`:''}
+            <td class="val">USD ${fmtUSD(baseIvaUSD)}</td>
+          </tr>
+          <tr>
+            <td class="lbl">IVA 16%</td>
+            ${tasa>0?`<td class="val">Bs. ${fmtBs(iva16Bs)}</td>`:''}
+            <td class="val">USD ${fmtUSD(iva16USD)}</td>
+          </tr>
+          <tr class="total-row">
+            <td class="lbl" style="color:#f97316">TOTAL A PAGAR</td>
+            ${tasa>0?`<td class="val" style="color:#f97316">Bs. ${fmtBs(totalBs)}</td>`:''}
+            <td class="val" style="color:#f97316">USD ${fmtUSD(totalUSD)}</td>
+          </tr>
+        </table>
+      </div>
+      <div class="letras">${enLetras}</div>
+
+      <!-- FAVOR EMITIR FACTURA -->
+      <div class="factura-box">
+        <h3>FAVOR EMITIR FACTURA A NOMBRE DE:</h3>
+        <p>${empNombre} &nbsp; RIF: ${empRif}</p>
+        <p>DIRECCIÓN FISCAL: ${empDir}</p>
+        ${empTel?`<p>TEL: ${empTel}</p>`:''}
+        <p>CORREO: ${empEmail}</p>
+      </div>
+
+      <!-- CONDICIONES GENERALES -->
+      <div class="cond-box">
+        <h3>CONDICIONES GENERALES PARA LA COMPRA:</h3>
+        <p>1._ NO SE RECIBIRÁN DESPACHOS DE MERCANCÍAS NI SE PROCESARÁN PAGOS DE COMPRAS QUE NO ESTÉN ACOMPAÑADOS DE SU CORRESPONDIENTE ORDEN DE COMPRA.</p>
+        <p>2._ HORARIO DE RECEPCIÓN DE MERCANCÍAS: LUNES A VIERNES DE 08:30 AM HASTA 4:00 PM.</p>
+        <p>3._ APLICARÁN RETENCIONES DE IVA/ISLR</p>
+        <p style="margin-top:5px"><strong>DIRECCIÓN DE DESPACHO: DOMICILIO FISCAL: ${empDir}</strong></p>
+      </div>
+
+      ${oc.observaciones?`<p style="margin-top:8px;font-size:8.5px;color:#64748b"><strong>Observaciones:</strong> ${oc.observaciones}</p>`:''}
+
+      <!-- FIRMAS -->
+      <div class="firmas">
+        <div><div class="firma">Elaborado por</div></div>
+        <div><div class="firma">Aprobado por / Autorizado</div></div>
+      </div>
+    </div>
+    <div class="footer-bar">
+      <span>${empNombre} — RIF: ${empRif}</span>
+      <span>OC N° ${oc.nroOC} · ${pDate2(oc.fechaEmision)}</span>
+      <span>Supply ERP · Módulo Procura</span>
+    </div>
+    <script>window.onload=()=>{window.print();}<\/script></body></html>`;
+
+    const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+  };
+
+
+  const statusList=['TODOS','BORRADOR','APROBADA','ENVIADA','RECIBIDA','CERRADA','ANULADA'];
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <div className="flex-1 relative min-w-48">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9`}/>
+        </div>
+        <div className="flex gap-1 flex-wrap">
+          {statusList.map(s=>(
+            <button key={s} onClick={()=>setFiltStatus(s)}
+              className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white bg-slate-900':'text-slate-500 bg-white border border-slate-200 hover:bg-slate-100'}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <PBg onClick={()=>{setForm(initForm());setItems([]);setModal('form');}}><Plus size={14}/> Nueva OC</PBg>
+      </div>
+
+      {/* Tabla */}
+      <PCard noPad>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr>
+              <PTh>N° OC</PTh><PTh>Proveedor</PTh><PTh>Emisión</PTh><PTh>Vencimiento</PTh><PTh>Forma Pago</PTh><PTh>Status</PTh><PTh right>Total</PTh><PTh>Acciones</PTh>
+            </tr></thead>
+            <tbody>
+              {filtradas.length===0?<tr><td colSpan={8} className="py-12"><PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/></td></tr>:
+              filtradas.map(oc=>{
+                const st=statusOC(oc.status);
+                return (
+                  <tr key={oc.id} className="hover:bg-slate-50">
+                    <PTd><span className="font-black text-orange-600 text-sm">{oc.nroOC}</span></PTd>
+                    <PTd><div className="font-black text-xs">{oc.proveedor||'—'}</div><div className="text-[10px] text-slate-400">{oc.rif||''}</div></PTd>
+                    <PTd>{pDate(oc.fechaEmision)}</PTd>
+                    <PTd>{pDate(oc.fechaVencimiento)||'—'}</PTd>
+                    <PTd><PBadge v={oc.formaPago==='CONTADO'?'green':'blue'}>{oc.formaPago||'—'}</PBadge></PTd>
+                    <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
+                    <PTd right mono><span className="font-black">{oc.moneda||'USD'} {pFmt(oc.total||0)}</span></PTd>
+                    <PTd>
+                      <div className="flex gap-1 flex-wrap">
+                        <PBp sm onClick={()=>imprimirOC(oc)}><Printer size={11}/></PBp>
+                        <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setModal('form');}}><Edit size={11}/></PBp>
+                        {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')}><Check size={11}/> Aprobar</PBg>}
+                        {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'ENVIADA')}><Send size={11}/> Enviar</PBo>}
+                        {oc.status==='ENVIADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'RECIBIDA')}><Truck size={11}/> Recibir</PBo>}
+                        {!['CERRADA','ANULADA'].includes(oc.status)&&<PBd sm onClick={()=>cambiarStatus(oc,'ANULADA')}><Ban size={11}/></PBd>}
+                      </div>
+                    </PTd>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </PCard>
+
+      {/* ── MODAL NUEVA OC ── */}
+      {modal==='form'&&(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-3" style={{background:'rgba(15,23,42,.92)'}}>
+          <div className="bg-white w-full rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{maxWidth:'98vw',maxHeight:'96vh'}}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'3px solid #f97316'}}>
+              <div>
+                <h2 className="font-black text-white uppercase tracking-widest text-sm">{form.id?`Editar ${form.nroOC}`:'Nueva Orden de Compra'}</h2>
+                <p className="text-[10px] text-orange-400 font-black mt-0.5">N° {form.nroOC}</p>
+              </div>
+              <button onClick={()=>setModal(null)} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={16} className="text-white"/></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {/* ── SECCIÓN 1: ENCABEZADO EN GRID ── */}
+              <div className="grid grid-cols-4 gap-4 mb-5">
+                {/* Proveedor */}
+                <div className="col-span-2 bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mb-3">Proveedor</p>
+                  <div className="space-y-3">
+                    <PFG label="Seleccionar proveedor *">
+                      <select className={sel} value={form.proveedorId||''} onChange={e=>{
+                        const p=proveedores.find(x=>x.id===e.target.value);
+                        if(p) setForm({...form,proveedorId:p.id,proveedor:p.nombre,rif:p.rif||'',
+                          direccion:p.direccion||'',contacto:p.contacto||'',telefono:p.telefono||'',
+                          diasCredito:p.condPago||'',moneda:p.moneda||'USD'});
+                      }}>
+                        <option value="">— Seleccionar —</option>
+                        {proveedores.filter(p=>p.activo!==false).map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+                      </select>
+                    </PFG>
+                    <div className="grid grid-cols-2 gap-2">
+                      <PFG label="RIF"><input className={`${inp} bg-slate-100`} readOnly value={form.rif||''}/></PFG>
+                      <PFG label="Teléfono"><input className={`${inp} bg-slate-100`} readOnly value={form.telefono||''}/></PFG>
+                    </div>
+                    <PFG label="Dirección"><input className={`${inp} bg-slate-100`} readOnly value={form.direccion||''}/></PFG>
+                    <PFG label="Persona de contacto"><input className={`${inp} bg-slate-100`} readOnly value={form.contacto||''}/></PFG>
+                  </div>
+                </div>
+
+                {/* Datos de la OC */}
+                <div className="col-span-2 bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mb-3">Datos de la orden</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <PFG label="N° OC"><input className={`${inp} bg-slate-100 font-black text-orange-600`} readOnly value={form.nroOC||''}/></PFG>
+                    <PFG label="Tasa Bs./$">
+                      <input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="Ej: 62.50"/>
+                    </PFG>
+                    <PFG label="Moneda">
+                      <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+                        {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+                      </select>
+                    </PFG>
+                    <PFG label="Forma de pago">
+                      <select className={sel} value={form.formaPago||'CREDITO'} onChange={e=>setForm({...form,formaPago:e.target.value})}>
+                        <option value="CREDITO">Crédito</option>
+                        <option value="CONTADO">Contado</option>
+                        <option value="ANTICIPADO">Anticipado</option>
+                      </select>
+                    </PFG>
+                    <PFG label="Fecha emisión">
+                      <input type="date" className={inp} value={form.fechaEmision||''} onChange={e=>{
+                        const fv=calcVencimiento(e.target.value,form.diasCredito);
+                        setForm({...form,fechaEmision:e.target.value,fechaVencimiento:fv});
+                      }}/>
+                    </PFG>
+                    <PFG label="Días de crédito">
+                      <input type="number" className={inp} value={form.diasCredito||''} onChange={e=>{
+                        const fv=calcVencimiento(form.fechaEmision,e.target.value);
+                        setForm({...form,diasCredito:e.target.value,fechaVencimiento:fv});
+                      }} placeholder="0 = contado"/>
+                    </PFG>
+                    <PFG label="Fecha vencimiento" full>
+                      <input type="date" className={`${inp} bg-amber-50 border-amber-200 font-black`} value={form.fechaVencimiento||''} onChange={e=>setForm({...form,fechaVencimiento:e.target.value})}/>
+                    </PFG>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── SECCIÓN 2: ÍTEMS ── */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 bg-slate-900">
+                  <span className="text-[10px] font-black text-white uppercase tracking-widest">Productos y Servicios</span>
+                  <PBg sm onClick={()=>{setItemForm({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und'});setItemModal(true);}}>
+                    <Plus size={12}/> Agregar ítem
+                  </PBg>
+                </div>
+
+                {/* Lista de ítems */}
+                <div className="p-3">
+                  {items.length===0?(
+                    <div className="text-center py-8 text-slate-400 text-xs font-medium">Sin ítems — haz clic en "Agregar ítem"</div>
+                  ):(
+                    <table className="w-full">
+                      <thead><tr>
+                        <PTh>#</PTh><PTh>Tipo</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh right>Cant.</PTh><PTh>Unidad</PTh><PTh right>Precio Unit.</PTh><PTh right>Total</PTh><PTh></PTh>
+                      </tr></thead>
+                      <tbody>
+                        {items.map((it,i)=>(
+                          <tr key={it.id} className="hover:bg-slate-50">
+                            <PTd>{i+1}</PTd>
+                            <PTd><PBadge v={it.tipo==='SERVICIO'?'blue':'green'}>{it.tipo||'PROD.'}</PBadge></PTd>
+                            <PTd><span className="font-black text-xs">{it.desc}</span></PTd>
+                            <PTd>{it.categoria||'—'}</PTd>
+                            <PTd right mono>{pFmt(it.cantidad)}</PTd>
+                            <PTd>{it.unidad||'Und'}</PTd>
+                            <PTd right mono>{pFmt(it.precioUnit)}</PTd>
+                            <PTd right mono><span className="font-black text-orange-600">{pFmt(it.total||0)}</span></PTd>
+                            <PTd>
+                              <button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                            </PTd>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {items.length>0&&(
+                    <div className="mt-3 flex justify-end">
+                      <div className="bg-slate-900 rounded-xl px-5 py-3 flex items-center gap-4">
+                        <span className="text-[10px] font-black text-slate-400 uppercase">TOTAL {form.moneda||'USD'}</span>
+                        <span className="font-black text-white text-xl">{pFmt(totalOC)}</span>
+                        {form.tasa&&<span className="text-[10px] text-slate-400">= Bs. {pFmt(totalOC*pNum(form.tasa))}</span>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Observaciones */}
+              <div className="mt-4">
+                <PFG label="Observaciones">
+                  <textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Condiciones especiales, instrucciones de entrega..."/>
+                </PFG>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 flex-shrink-0">
+              <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
+              <PBo onClick={()=>{if(items.length>0&&form.proveedor)imprimirOC({...form,items,total:totalOC});}}>
+                <Printer size={14}/> Vista previa
+              </PBo>
+              <PBg onClick={guardar}><Save size={14}/> {form.id?'Actualizar OC':'Crear OC'}</PBg>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL AGREGAR ÍTEM ── */}
+      {itemModal&&(
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(15,23,42,.92)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{maxWidth:'900px',maxHeight:'90vh',display:'flex',flexDirection:'column'}}>
+            <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'3px solid #f97316'}}>
+              <h2 className="font-black text-white uppercase tracking-widest text-sm">Agregar ítem a la OC</h2>
+              <button onClick={()=>setItemModal(false)} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={16} className="text-white"/></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {/* Selector tipo */}
+              <div className="flex gap-2 mb-4">
+                {['PRODUCTO','SERVICIO','MANUAL'].map(t=>(
+                  <button key={t} onClick={()=>setItemForm({...itemForm,tipo:t,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:t==='SERVICIO'?'Serv.':'Und'})}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${itemForm.tipo===t?'bg-slate-900 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                    {t==='PRODUCTO'?'🏭 Producto de inventario':t==='SERVICIO'?'⚙️ Servicio':'✏️ Ítem manual'}
+                  </button>
+                ))}
+              </div>
+
+              {/* PRODUCTO — selector de inventario */}
+              {itemForm.tipo==='PRODUCTO'&&(
+                <div className="mb-4">
+                  <div className="flex gap-2 flex-wrap mb-3">
+                    {invCats.map(c=>(
+                      <button key={c} onClick={()=>setInvTab(c)}
+                        className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase transition-all ${invTab===c?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden" style={{maxHeight:'220px',overflowY:'auto'}}>
+                    <table className="w-full">
+                      <thead className="sticky top-0"><tr style={{background:'#0f172a'}}>
+                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Código</th>
+                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Descripción</th>
+                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Categoría</th>
+                        <th className="px-3 py-2 text-right text-[9px] text-orange-400 font-black uppercase">Stock</th>
+                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Unidad</th>
+                        <th className="px-3 py-2 text-[9px] text-orange-400 font-black uppercase">Selec.</th>
+                      </tr></thead>
+                      <tbody>
+                        {invFiltrado.length===0?<tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400 text-xs">Sin productos en esta categoría</td></tr>:
+                        invFiltrado.slice(0,80).map(inv=>(
+                          <tr key={inv.id} className={`hover:bg-orange-50 cursor-pointer transition-colors ${itemForm.invId===inv.id?'bg-orange-50 border-l-2 border-orange-500':''}`}
+                            onClick={()=>seleccionarProductoInv(inv)}>
+                            <td className="px-3 py-2 text-[10px] font-mono text-slate-500">{inv.displayId||inv.id}</td>
+                            <td className="px-3 py-2 text-xs font-black text-slate-800">{inv.desc||'—'}</td>
+                            <td className="px-3 py-2 text-[10px] text-slate-500">{inv.subcategory||inv.category||'—'}</td>
+                            <td className="px-3 py-2 text-xs text-right font-black">{pFmt(inv.stock||0)}</td>
+                            <td className="px-3 py-2 text-[10px]">{inv.unit||'Und'}</td>
+                            <td className="px-3 py-2">
+                              <Check size={14} className={itemForm.invId===inv.id?'text-orange-500':'text-slate-200'}/>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* SERVICIO — lista de servicios registrados */}
+              {itemForm.tipo==='SERVICIO'&&(
+                <div className="mb-4">
+                  {servicios.length===0?(
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+                      <p className="text-xs font-black text-amber-700">No hay servicios registrados.</p>
+                      <p className="text-[10px] text-amber-600 mt-1">Ve a <strong>Catálogo de Servicios</strong> para agregar.</p>
+                    </div>
+                  ):(
+                    <div className="border border-slate-200 rounded-xl overflow-hidden" style={{maxHeight:'200px',overflowY:'auto'}}>
+                      <table className="w-full">
+                        <thead className="sticky top-0"><tr style={{background:'#0f172a'}}>
+                          <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Servicio</th>
+                          <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Categoría</th>
+                          <th className="px-3 py-2 text-right text-[9px] text-orange-400 font-black uppercase">Precio ref.</th>
+                          <th className="px-3 py-2 text-[9px] text-orange-400 font-black uppercase">Selec.</th>
+                        </tr></thead>
+                        <tbody>
+                          {servicios.map(srv=>(
+                            <tr key={srv.id} className={`hover:bg-blue-50 cursor-pointer ${itemForm.srvId===srv.id?'bg-blue-50 border-l-2 border-blue-500':''}`}
+                              onClick={()=>seleccionarServicio(srv)}>
+                              <td className="px-3 py-2 text-xs font-black text-slate-800">{srv.nombre||'—'}</td>
+                              <td className="px-3 py-2 text-[10px] text-slate-500">{srv.categoria||'—'}</td>
+                              <td className="px-3 py-2 text-xs text-right font-black">{srv.precio?`$${pFmt(srv.precio)}`:'—'}</td>
+                              <td className="px-3 py-2"><Check size={14} className={itemForm.srvId===srv.id?'text-blue-500':'text-slate-200'}/></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Campos comunes del ítem seleccionado */}
+              {(itemForm.desc||itemForm.tipo==='MANUAL')&&(
+                <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mb-3">
+                    {itemForm.tipo==='MANUAL'?'Ítem manual':'Ítem seleccionado — completa los datos'}
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <PFG label="Descripción" full={false}>
+                      <input className={inp} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder="Descripción del producto/servicio"/>
+                    </PFG>
+                    <PFG label="Categoría">
+                      <input className={inp} value={itemForm.categoria||''} onChange={e=>setItemForm({...itemForm,categoria:e.target.value})} placeholder="Categoría"/>
+                    </PFG>
+                    <PFG label="Unidad">
+                      <select className={sel} value={itemForm.unidad||'Und'} onChange={e=>setItemForm({...itemForm,unidad:e.target.value})}>
+                        {['Und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
+                      </select>
+                    </PFG>
+                    <PFG label="Cantidad *">
+                      <input type="number" className={inp} value={itemForm.cantidad||''} onChange={e=>setItemForm({...itemForm,cantidad:e.target.value})} placeholder="0"/>
+                    </PFG>
+                    <PFG label={`Precio unitario (${form.moneda||'USD'}) *`}>
+                      <input type="number" className={inp} value={itemForm.precioUnit||''} onChange={e=>setItemForm({...itemForm,precioUnit:e.target.value})} placeholder="0.00"/>
+                    </PFG>
+                    <div className="flex items-end">
+                      {itemForm.cantidad&&itemForm.precioUnit&&(
+                        <div className="w-full bg-slate-900 rounded-xl px-3 py-2.5 text-center">
+                          <p className="text-[9px] text-slate-400">Subtotal</p>
+                          <p className="font-black text-white">{form.moneda||'USD'} {pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit))}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex justify-end mt-3">
+                    <PBg onClick={agregarItem}><Plus size={14}/> Agregar a la OC</PBg>
+                  </div>
+                </div>
+              )}
+              {itemForm.tipo==='MANUAL'&&!itemForm.desc&&(
+                <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <PFG label="Descripción" full={false}>
+                      <input className={inp} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder="Descripción del ítem"/>
+                    </PFG>
+                    <PFG label="Categoría">
+                      <input className={inp} value={itemForm.categoria||''} onChange={e=>setItemForm({...itemForm,categoria:e.target.value})}/>
+                    </PFG>
+                    <PFG label="Unidad">
+                      <select className={sel} value={itemForm.unidad||'Und'} onChange={e=>setItemForm({...itemForm,unidad:e.target.value})}>
+                        {['Und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
+                      </select>
+                    </PFG>
+                    <PFG label="Cantidad *">
+                      <input type="number" className={inp} value={itemForm.cantidad||''} onChange={e=>setItemForm({...itemForm,cantidad:e.target.value})}/>
+                    </PFG>
+                    <PFG label="Precio unitario *">
+                      <input type="number" className={inp} value={itemForm.precioUnit||''} onChange={e=>setItemForm({...itemForm,precioUnit:e.target.value})}/>
+                    </PFG>
+                  </div>
+                  <div className="flex justify-end mt-3">
+                    <PBg onClick={agregarItem}><Plus size={14}/> Agregar</PBg>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
 const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
@@ -1527,11 +2181,12 @@ function ProcuraApp({fbUser,onBack}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV};
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings};
 
   const tabs=[
     {id:'dashboard',   label:'Dashboard',         icon:<LayoutDashboard size={13}/>},
     {id:'proveedores', label:'Proveedores',        icon:<Building2 size={13}/>, badge:proveedores.filter(p=>p.activo!==false).length||null},
+    {id:'catalogo',    label:'Catálogo Prod/Serv', icon:<Layers size={13}/>},
     {id:'ordenes',     label:'Órdenes de Compra',  icon:<ClipboardList size={13}/>, badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||null},
     {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>},
     {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
@@ -1543,6 +2198,7 @@ function ProcuraApp({fbUser,onBack}) {
     switch(sec){
       case 'dashboard':return <DashboardView {...sharedProps}/>;
       case 'proveedores':return <ProveedoresView {...sharedProps}/>;
+      case 'catalogo':return <CatalogoServiciosView {...sharedProps}/>;
       case 'ordenes':return <OrdenesCompraView {...sharedProps}/>;
       case 'facturas':return <FacturasCompraView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
