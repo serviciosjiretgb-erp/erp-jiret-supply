@@ -6,7 +6,8 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera} from 'lucide-react';
+  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera,
+  ArrowLeft, Ban, Check, ChevronRight, CreditCard, FileSpreadsheet, Send, Truck} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
@@ -5623,7 +5624,7 @@ function App() {
   // Solo tabs nativos del portal. Las vistas cross-portal viven DENTRO del módulo de Ventas.
   const NAV_PORTAL_TABS = {
     produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
-    administracion:      ['ventas','banco'],
+    administracion:      ['ventas','banco','procura'],
     finanzas:            [],
     contabilidad:        [],
     resena_portal:       ['resena'],
@@ -5819,7 +5820,7 @@ function App() {
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
-      administracion:      ['ventas','banco'],
+      administracion:      ['ventas','banco','procura'],
       finanzas:            [],
       contabilidad:        [],
       resena_portal:       ['resena'],
