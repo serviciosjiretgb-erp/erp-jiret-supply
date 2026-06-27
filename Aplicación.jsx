@@ -297,6 +297,12 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
   const [search,setSearch]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
+  const [planDeCuentas,setPlanDeCuentas]=useState([]);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
+    return()=>unsub();
+  },[]);
 
   const filtrados = proveedores.filter(p=>
     (p.nombre||'').toLowerCase().includes(search.toLowerCase())||
@@ -306,7 +312,9 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
   const initForm = () => ({
     nombre:'',rif:'',email:'',telefono:'',direccion:'',
     contacto:'',categoria:'INSUMOS',moneda:'USD',
-    condPago:'30 días',activo:true,observaciones:''
+    condPago:'',tipoContribuyente:'ORDINARIO',pctRetencion:'75',
+    cuentaContableId:'',cuentaContableNombre:'',
+    activo:true,observaciones:''
   });
 
   const guardar = async () => {
@@ -325,20 +333,78 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
   }});
 
   const exportPDF = () => {
-    let html=pdfOpen('DIRECTORIO DE PROVEEDORES',`Total: ${filtrados.length} proveedores`);
-    html+=`<table><thead><tr><th>Nombre / Razón Social</th><th>RIF</th><th>Categoría</th><th>Contacto</th><th>Teléfono</th><th>Moneda</th><th>Cond. Pago</th><th>Estado</th></tr></thead><tbody>`;
-    filtrados.forEach(p=>{
-      html+=`<tr><td><strong>${p.nombre||'—'}</strong></td><td>${p.rif||'—'}</td><td>${p.categoria||'—'}</td><td>${p.contacto||'—'}</td><td>${p.telefono||'—'}</td><td>${p.moneda||'USD'}</td><td>${p.condPago||'—'}</td><td>${p.activo!==false?'<span class="badge-apr">Activo</span>':'<span class="badge-pend">Inactivo</span>'}</td></tr>`;
+    let html=pdfOpen('DIRECTORIO DE PROVEEDORES',`Total: ${filtrados.length} proveedores · Generado: ${new Date().toLocaleDateString('es-VE')}`);
+    html+=`<table><thead><tr>
+      <th>#</th><th>Razón Social</th><th>RIF</th><th>Tipo</th><th>Ret.IVA</th>
+      <th>Categoría</th><th>Contacto</th><th>Teléfono</th><th>Email</th>
+      <th>Moneda</th><th>Cond.Pago</th><th>Dirección</th>
+      <th>Cuenta Contable</th><th>Observaciones</th><th>Fecha Registro</th><th>Estado</th>
+    </tr></thead><tbody>`;
+    filtrados.forEach((p,i)=>{
+      const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
+      const badge=p.activo!==false?'<span class="badge-apr">Activo</span>':'<span class="badge-pend">Inactivo</span>';
+      const ret=p.tipoContribuyente==='ESPECIAL'?`${p.pctRetencion||'75'}%`:'—';
+      html+=`<tr>
+        <td>${i+1}</td>
+        <td><strong>${p.nombre||'—'}</strong></td>
+        <td>${p.rif||'—'}</td>
+        <td>${p.tipoContribuyente||'ORDINARIO'}</td>
+        <td style="text-align:center">${ret}</td>
+        <td>${p.categoria||'—'}</td>
+        <td>${p.contacto||'—'}</td>
+        <td>${p.telefono||'—'}</td>
+        <td>${p.email||'—'}</td>
+        <td style="text-align:center">${p.moneda||'USD'}</td>
+        <td>${p.condPago||'—'}</td>
+        <td style="font-size:8px">${p.direccion||'—'}</td>
+        <td style="font-size:8px">${p.cuentaContableNombre||'—'}</td>
+        <td style="font-size:8px">${p.observaciones||'—'}</td>
+        <td>${fechaReg}</td>
+        <td>${badge}</td>
+      </tr>`;
     });
+    const activos=filtrados.filter(p=>p.activo!==false).length;
+    const especiales=filtrados.filter(p=>p.tipoContribuyente==='ESPECIAL').length;
+    html+=`<tr class="total-row"><td colspan="16">RESUMEN: ${filtrados.length} proveedores · ${activos} activos · ${especiales} contribuyentes especiales</td></tr>`;
     html+=`</tbody></table>`;
-    pdfPrint(html+pdfClose());
+    pdfPrint(html+pdfClose(`Directorio de Proveedores · ${new Date().toLocaleDateString('es-VE')}`));
   };
 
-  const exportXLS = () => {
-    const rows=[['Nombre','RIF','Categoría','Contacto','Teléfono','Email','Moneda','Cond.Pago','Estado'],...filtrados.map(p=>[p.nombre,p.rif,p.categoria,p.contacto,p.telefono,p.email,p.moneda,p.condPago,p.activo!==false?'Activo':'Inactivo'])];
-    let csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`proveedores_${getTodayDate()}.csv`;a.click();
+  const exportXLS = async () => {
+    if(!window.XLSX){
+      await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+    }
+    const XL=window.XLSX;
+    const aoa=[];
+    // Membrete
+    aoa.push(['SERVICIOS JIRET G&B, C.A.','','','','','','','','','','','','','','','']);
+    aoa.push(['RIF: J-412309374','','','','','','','','','','','','','','','']);
+    aoa.push(['DIRECTORIO DE PROVEEDORES','','','','','','','','','','','','','','Generado:',new Date().toLocaleDateString('es-VE')]);
+    aoa.push([`Total: ${filtrados.length} proveedores`,'','','','','','','','','','','','','','','']);
+    aoa.push([]);
+    // Encabezados
+    aoa.push(['#','Razón Social','RIF','Tipo Contribuyente','% Ret. IVA','Categoría','Persona Contacto','Teléfono','Email','Moneda','Condición Pago','Dirección','Cuenta Contable','Observaciones','Fecha Registro','Estado']);
+    // Datos
+    filtrados.forEach((p,i)=>{
+      const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
+      aoa.push([
+        i+1, p.nombre||'', p.rif||'', p.tipoContribuyente||'ORDINARIO',
+        p.tipoContribuyente==='ESPECIAL'?(p.pctRetencion||'75')+'%':'—',
+        p.categoria||'', p.contacto||'', p.telefono||'', p.email||'',
+        p.moneda||'USD', p.condPago||'', p.direccion||'',
+        p.cuentaContableNombre||'', p.observaciones||'',
+        fechaReg, p.activo!==false?'Activo':'Inactivo'
+      ]);
+    });
+    aoa.push([]);
+    aoa.push(['Total proveedores:',filtrados.length,'','Activos:',filtrados.filter(p=>p.activo!==false).length,'','Especiales:',filtrados.filter(p=>p.tipoContribuyente==='ESPECIAL').length]);
+
+    const ws=XL.utils.aoa_to_sheet(aoa);
+    ws['!cols']=[{wch:4},{wch:35},{wch:14},{wch:16},{wch:10},{wch:14},{wch:18},{wch:14},{wch:25},{wch:8},{wch:14},{wch:30},{wch:28},{wch:25},{wch:12},{wch:10}];
+    // Estilo membrete (negrita fila 1)
+    const wb=XL.utils.book_new();
+    XL.utils.book_append_sheet(wb,ws,'Proveedores');
+    XL.writeFile(wb,`directorio_proveedores_${getTodayDate()}.xlsx`);
   };
 
   return (
@@ -356,66 +422,156 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
 
       {/* Tabla */}
       <PCard noPad>
-        <table className="w-full">
-          <thead><tr>
-            <PTh>Proveedor</PTh><PTh>RIF</PTh><PTh>Categoría</PTh><PTh>Contacto</PTh><PTh>Moneda</PTh><PTh>Cond. Pago</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
-          </tr></thead>
-          <tbody>
-            {filtrados.length===0?<tr><td colSpan={8} className="py-12"><PEmpty icon={Building2} title="Sin proveedores" desc="Registra tu primer proveedor"/></td></tr>:
-            filtrados.map(p=>(
-              <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                <PTd><div className="font-black text-slate-800 text-xs">{p.nombre||'—'}</div><div className="text-[10px] text-slate-400">{p.email||'—'}</div></PTd>
-                <PTd mono>{p.rif||'—'}</PTd>
-                <PTd><PBadge v="blue">{p.categoria||'—'}</PBadge></PTd>
-                <PTd>{p.contacto||'—'}<br/><span className="text-[10px] text-slate-400">{p.telefono||''}</span></PTd>
-                <PTd><span className="font-black text-xs">{p.moneda||'USD'}</span></PTd>
-                <PTd>{p.condPago||'—'}</PTd>
-                <PTd><PBadge v={p.activo!==false?'green':'gray'}>{p.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
-                <PTd>
-                  <div className="flex gap-2">
-                    <PBp sm onClick={()=>{setForm({...p});setModal('form');}}><Edit size={11}/></PBp>
-                    <PBd sm onClick={()=>eliminar(p)}><Trash2 size={11}/></PBd>
-                  </div>
-                </PTd>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead><tr>
+              <PTh>Proveedor</PTh><PTh>RIF</PTh><PTh>Tipo</PTh><PTh>Ret.IVA</PTh><PTh>Categoría</PTh><PTh>Moneda</PTh><PTh>Cond. Pago</PTh><PTh>Cuenta Contable</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
+            </tr></thead>
+            <tbody>
+              {filtrados.length===0?<tr><td colSpan={10} className="py-12"><PEmpty icon={Building2} title="Sin proveedores" desc="Registra tu primer proveedor"/></td></tr>:
+              filtrados.map(p=>(
+                <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                  <PTd>
+                    <div className="font-black text-slate-800 text-xs">{p.nombre||'—'}</div>
+                    <div className="text-[10px] text-slate-400">{p.email||'—'} {p.telefono?`· ${p.telefono}`:''}</div>
+                  </PTd>
+                  <PTd mono>{p.rif||'—'}</PTd>
+                  <PTd><PBadge v={p.tipoContribuyente==='ESPECIAL'?'red':'blue'}>{p.tipoContribuyente||'ORDINARIO'}</PBadge></PTd>
+                  <PTd><span className="font-black text-xs">{p.tipoContribuyente==='ESPECIAL'?(p.pctRetencion||'75')+'%':'—'}</span></PTd>
+                  <PTd><PBadge v="gray">{p.categoria||'—'}</PBadge></PTd>
+                  <PTd><span className="font-black text-xs">{p.moneda||'USD'}</span></PTd>
+                  <PTd>{p.condPago||'—'}</PTd>
+                  <PTd><span className="text-[10px] text-slate-500">{p.cuentaContableNombre||'—'}</span></PTd>
+                  <PTd><PBadge v={p.activo!==false?'green':'gray'}>{p.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
+                  <PTd>
+                    <div className="flex gap-2">
+                      <PBp sm onClick={()=>{setForm({...p});setModal('form');}}><Edit size={11}/></PBp>
+                      <PBd sm onClick={()=>eliminar(p)}><Trash2 size={11}/></PBd>
+                    </div>
+                  </PTd>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </PCard>
 
-      {/* Modal Proveedor */}
-      <PModal open={modal==='form'} onClose={()=>setModal(null)} title={form.id?'Editar proveedor':'Nuevo proveedor'} wide
-        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardar}><Save size={14}/> Guardar</PBg></>}>
-        <div className="grid grid-cols-2 gap-4">
-          <PFG label="Razón Social *" full><input className={inp} value={form.nombre||''} onChange={e=>setForm({...form,nombre:e.target.value})}/></PFG>
-          <PFG label="RIF *"><input className={inp} value={form.rif||''} onChange={e=>setForm({...form,rif:e.target.value.toUpperCase()})}/></PFG>
-          <PFG label="Categoría">
-            <select className={sel} value={form.categoria||'INSUMOS'} onChange={e=>setForm({...form,categoria:e.target.value})}>
-              {['INSUMOS','MATERIA PRIMA','SERVICIOS','EQUIPOS','LOGÍSTICA','OTROS'].map(c=><option key={c}>{c}</option>)}
-            </select>
-          </PFG>
-          <PFG label="Persona de contacto"><input className={inp} value={form.contacto||''} onChange={e=>setForm({...form,contacto:e.target.value})}/></PFG>
-          <PFG label="Teléfono"><input className={inp} value={form.telefono||''} onChange={e=>setForm({...form,telefono:e.target.value})}/></PFG>
-          <PFG label="Email"><input className={inp} type="email" value={form.email||''} onChange={e=>setForm({...form,email:e.target.value})}/></PFG>
-          <PFG label="Moneda de facturación">
-            <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
-              {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
-            </select>
-          </PFG>
-          <PFG label="Condición de pago">
-            <select className={sel} value={form.condPago||'30 días'} onChange={e=>setForm({...form,condPago:e.target.value})}>
-              {['Contado','7 días','15 días','30 días','45 días','60 días','90 días'].map(c=><option key={c}>{c}</option>)}
-            </select>
-          </PFG>
-          <PFG label="Dirección" full><input className={inp} value={form.direccion||''} onChange={e=>setForm({...form,direccion:e.target.value})}/></PFG>
-          <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
-          <PFG label="Estado">
-            <select className={sel} value={form.activo!==false?'true':'false'} onChange={e=>setForm({...form,activo:e.target.value==='true'})}>
-              <option value="true">Activo</option><option value="false">Inactivo</option>
-            </select>
-          </PFG>
+      {/* Modal Proveedor — layout horizontal en 3 columnas */}
+      {modal==='form'&&(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{background:'rgba(15,23,42,.88)'}}>
+          <div className="bg-white w-full max-w-5xl rounded-2xl flex flex-col shadow-2xl overflow-hidden" style={{maxHeight:'92vh'}}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'3px solid #f97316'}}>
+              <h2 className="font-black text-white uppercase tracking-widest text-sm">{form.id?'Editar Proveedor':'Nuevo Proveedor'}</h2>
+              <button onClick={()=>setModal(null)} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={16} className="text-white"/></button>
+            </div>
+            {/* Body — 3 columnas */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="grid grid-cols-3 gap-6">
+
+                {/* COL 1 — Datos fiscales */}
+                <div className="space-y-4">
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest border-b border-orange-100 pb-1">Datos fiscales</p>
+                  <PFG label="Razón Social *">
+                    <input className={inp} value={form.nombre||''} onChange={e=>setForm({...form,nombre:e.target.value})} placeholder="Nombre completo o razón social"/>
+                  </PFG>
+                  <PFG label="RIF *">
+                    <input className={inp} value={form.rif||''} onChange={e=>setForm({...form,rif:e.target.value.toUpperCase()})} placeholder="J-12345678-9"/>
+                  </PFG>
+                  <PFG label="Tipo de contribuyente">
+                    <select className={sel} value={form.tipoContribuyente||'ORDINARIO'} onChange={e=>setForm({...form,tipoContribuyente:e.target.value,pctRetencion:e.target.value==='ESPECIAL'?'75':''})}>
+                      <option value="ORDINARIO">Ordinario</option>
+                      <option value="ESPECIAL">Especial</option>
+                    </select>
+                  </PFG>
+                  {form.tipoContribuyente==='ESPECIAL'&&(
+                    <PFG label="% Retención IVA">
+                      <select className={sel} value={form.pctRetencion||'75'} onChange={e=>setForm({...form,pctRetencion:e.target.value})}>
+                        <option value="75">75% del IVA</option>
+                        <option value="100">100% del IVA</option>
+                      </select>
+                    </PFG>
+                  )}
+                  <PFG label="Categoría">
+                    <select className={sel} value={form.categoria||'INSUMOS'} onChange={e=>setForm({...form,categoria:e.target.value})}>
+                      {['INSUMOS','MATERIA PRIMA','SERVICIOS','EQUIPOS','LOGÍSTICA','OTROS'].map(c=><option key={c}>{c}</option>)}
+                    </select>
+                  </PFG>
+                  <PFG label="Estado">
+                    <select className={sel} value={form.activo!==false?'true':'false'} onChange={e=>setForm({...form,activo:e.target.value==='true'})}>
+                      <option value="true">Activo</option>
+                      <option value="false">Inactivo</option>
+                    </select>
+                  </PFG>
+                </div>
+
+                {/* COL 2 — Contacto y condiciones */}
+                <div className="space-y-4">
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest border-b border-orange-100 pb-1">Contacto y condiciones</p>
+                  <PFG label="Persona de contacto">
+                    <input className={inp} value={form.contacto||''} onChange={e=>setForm({...form,contacto:e.target.value})} placeholder="Nombre del contacto"/>
+                  </PFG>
+                  <PFG label="Teléfono">
+                    <input className={inp} value={form.telefono||''} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="0414-0000000"/>
+                  </PFG>
+                  <PFG label="Email">
+                    <input className={inp} type="email" value={form.email||''} onChange={e=>setForm({...form,email:e.target.value})} placeholder="proveedor@email.com"/>
+                  </PFG>
+                  <PFG label="Moneda de facturación">
+                    <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+                      {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+                    </select>
+                  </PFG>
+                  <PFG label="Condición de pago (días o texto libre)">
+                    <input className={inp} value={form.condPago||''} onChange={e=>setForm({...form,condPago:e.target.value})} placeholder="Ej: 30 días, Contado, 45 días..."/>
+                  </PFG>
+                  <PFG label="Dirección">
+                    <textarea className={`${inp} resize-none`} rows={2} value={form.direccion||''} onChange={e=>setForm({...form,direccion:e.target.value})} placeholder="Dirección fiscal"/>
+                  </PFG>
+                </div>
+
+                {/* COL 3 — Contabilidad y notas */}
+                <div className="space-y-4">
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest border-b border-orange-100 pb-1">Contabilidad</p>
+                  <PFG label="Cuenta contable">
+                    <select className={sel} value={form.cuentaContableId||''} onChange={e=>{
+                      const cta=planDeCuentas.find(c=>c.id===e.target.value);
+                      setForm({...form,cuentaContableId:e.target.value,cuentaContableNombre:cta?`${cta.codigo} — ${cta.nombre}`:''});
+                    }}>
+                      <option value="">Seleccionar cuenta contable...</option>
+                      {planDeCuentas.map(c=>(
+                        <option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>
+                      ))}
+                    </select>
+                  </PFG>
+                  {form.cuentaContableNombre&&(
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-[10px] text-blue-700 font-medium">
+                      {form.cuentaContableNombre}
+                    </div>
+                  )}
+                  <PFG label="Observaciones">
+                    <textarea className={`${inp} resize-none`} rows={4} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Notas adicionales sobre este proveedor..."/>
+                  </PFG>
+
+                  {/* Resumen si es especial */}
+                  {form.tipoContribuyente==='ESPECIAL'&&(
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                      <p className="text-[9px] font-black text-red-600 uppercase mb-1">⚠️ Contribuyente Especial</p>
+                      <p className="text-[10px] text-red-700">Se aplicará retención del <strong>{form.pctRetencion||'75'}%</strong> sobre el IVA en cada factura de compra.</p>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 flex-shrink-0">
+              <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
+              <PBg onClick={guardar}><Save size={14}/> {form.id?'Actualizar proveedor':'Registrar proveedor'}</PBg>
+            </div>
+          </div>
         </div>
-      </PModal>
+      )}
     </div>
   );
 };
@@ -2033,7 +2189,7 @@ function App() {
   const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate() };
+  const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate(), cuentaContableId: '', cuentaContableNombre: '' };
 // ── Ciudades de Venezuela con su Estado ─────────────────────────────────────
   const VE_CIUDADES = [
     ['Acarigua','Portuguesa'],['Barinas','Barinas'],['Barcelona','Anzoátegui'],
@@ -14449,6 +14605,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400" placeholder="0 = contado"/>
                   </div>
                 </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Cuenta Contable</label>
+                    <select value={newClientForm.cuentaContableId||''} onChange={e=>{
+                      const cta=planDeCuentas.find(c=>c.id===e.target.value);
+                      // Auto-select CxC if empty
+                      setNewClientForm({...newClientForm,cuentaContableId:e.target.value,cuentaContableNombre:cta?`${cta.codigo} — ${cta.nombre}`:''});
+                    }} className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400">
+                      <option value="">— Seleccionar cuenta contable —</option>
+                      {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                    </select>
+                    {newClientForm.cuentaContableNombre&&<p className="text-[10px] text-blue-600 font-medium mt-1 px-1">{newClientForm.cuentaContableNombre}</p>}
+                  </div>
+                </div>
                 <div className="flex justify-end pt-4">
                   <button type="submit" className="bg-black text-white px-10 py-4 rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-slate-800 transition-all">GUARDAR DIRECTORIO</button>
                 </div>
@@ -14467,12 +14637,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span className="text-[10px] text-gray-500 font-bold">{totalCli} clientes registrados</span>
                     <PaginadorUI total={totalCli} pagina={pgCli} setPagina={setClientesPagina}/>
                   </div>
-                  <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/2">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">
-                  {pageCli.map(c=>(
+                  <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/3">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4">Cuenta Contable</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">
+                  {pageCli.map(c=>{
+                    // Auto-assign CxC account if not set
+                    const cuentaNombre=c?.cuentaContableNombre||(()=>{const cxc=planDeCuentas.find(p=>/(cuentas?\s+por\s+cobrar|cxc|clientes)/i.test(p.nombre||''));return cxc?`${cxc.codigo} — ${cxc.nombre}`:'CxC Clientes';})();
+                    return(
                     <tr key={c?.rif||c?.id}>
                       <td className="py-4 px-4 font-black">{c?.rif}</td>
                       <td className="py-4 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td>
                       <td className="py-4 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td>
+                      <td className="py-4 px-4"><span className="text-[10px] text-blue-600 font-medium">{cuentaNombre}</span></td>
                       <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2">
                          <button onClick={()=>{
                            const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
@@ -14507,6 +14681,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                <div class="field"><label>Vendedor Asignado</label><p>${c?.vendedor||'Sin asignar'}</p></div>
                                <div class="field"><label>Condiciones de Crédito</label><p>${condStr}</p></div>
                                <div class="field"><label>Cliente Desde</label><p>${c?.fechaCreacion||(c?.timestamp?new Date(c.timestamp).toLocaleDateString('es-VE'):'—')}</p></div>
+                               <div class="field full"><label>Cuenta Contable</label><p>${c?.cuentaContableNombre||cuentaNombre}</p></div>
                              </div>
                              <div class="footer">Generado por ${empresa} · ${new Date().toLocaleDateString('es-VE')}</div>
                            </body></html>`;
@@ -14516,7 +14691,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                          </button>
                          <button onClick={()=>{startEditClient(c);setShowAddClientForm(true);}} className="p-2.5 bg-blue-50 text-blue-500 rounded-xl hover:bg-blue-500 hover:text-white transition-all"><Edit size={16}/></button><button onClick={()=>handleDeleteClient(c?.id||c?.rif)} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></div></td>
                     </tr>
-                  ))}
+                  );})}
                   </tbody></table></div>
                   <div className="mt-4 flex justify-center"><PaginadorUI total={totalCli} pagina={pgCli} setPagina={setClientesPagina}/></div>
                 </>);
