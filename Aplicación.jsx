@@ -24,6 +24,24 @@ const pDate=(s)=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/$
 const pId=()=>Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,5).toUpperCase();
 const getMesActual=()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;};
 const P_ORANGE='#f97316';
+
+// Mapa automático: categoría de inventario → cuenta contable
+const P_CUENTA_MAP = {
+  'Materia Prima':      {id:'cta_mp',    codigo:'1.1.03.01.005', nombre:'MATERIA PRIMA (INV-INICIAL)'},
+  'Pigmento':           {id:'cta_cons',  codigo:'1.1.03.01.003', nombre:'INVENTARIO DE CONSUMIBLES'},
+  'Quimicos':           {id:'cta_cons',  codigo:'1.1.03.01.003', nombre:'INVENTARIO DE CONSUMIBLES'},
+  'Tintas':             {id:'cta_cons',  codigo:'1.1.03.01.003', nombre:'INVENTARIO DE CONSUMIBLES'},
+  'Stretch Film':       {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+  'Cintas':             {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+  'Papel Kraft':        {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+  'Dispensadores':      {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+  'Bolsas Plásticas':   {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+  'Empaques Flexibles': {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+  'Termoencogibles':    {id:'cta_merc',  codigo:'1.1.03.01.002', nombre:'MERCANCIA (INV-INICIAL)'},
+};
+const pGetCuenta=(cat)=>P_CUENTA_MAP[cat]||{id:'',codigo:'',nombre:''};
+const pCtaNombre=(cat)=>{const c=P_CUENTA_MAP[cat];return c?`${c.codigo} — ${c.nombre}`:''};
+
 const P_DARK='#0b1120';
 const P_CARD='#111827';
 // ── CSS para PDF / Impresión ──────────────────────────────────────────
@@ -727,11 +745,13 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   const [inventory,setInventory]=useState([]);
   const [invCat,setInvCat]=useState('TODOS');
   const [search,setSearch]=useState('');
+  const [planDeCuentas,setPlanDeCuentas]=useState([]);
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();};
+    const u3=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
+    return()=>{u1();u2();u3();};
   },[]);
 
   const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado','Otros Terminados'];
@@ -744,7 +764,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
 
   const srvFiltrado=servicios.filter(s=>!search||(s.nombre||'').toLowerCase().includes(search.toLowerCase())||(s.categoria||'').toLowerCase().includes(search.toLowerCase()));
 
-  const initSrv=()=>({nombre:'',descripcion:'',categoria:'MANTENIMIENTO',unidad:'Serv.',precio:'',activo:true});
+  const initSrv=()=>({nombre:'',descripcion:'',categoria:'MANTENIMIENTO',unidad:'Serv.',precio:'',cuentaContableId:'',cuentaContableNombre:'',activo:true});
 
   const guardarSrv=async()=>{
     if(!form.nombre){setDialog({title:'Aviso',text:'El nombre es obligatorio.',type:'alert'});return;}
@@ -782,7 +802,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
         <PCard noPad>
           <table className="w-full">
             <thead><tr>
-              <PTh>Servicio</PTh><PTh>Categoría</PTh><PTh>Descripción</PTh><PTh>Unidad</PTh><PTh right>Precio ref.</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
+              <PTh>Servicio</PTh><PTh>Categoría</PTh><PTh>Descripción</PTh><PTh>Unidad</PTh><PTh right>Precio ref.</PTh><PTh>Cuenta Contable</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
             </tr></thead>
             <tbody>
               {srvFiltrado.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={Truck} title="Sin servicios" desc="Registra tu primer servicio"/></td></tr>:
@@ -793,6 +813,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
                   <PTd><span className="text-[10px] text-slate-500">{s.descripcion||'—'}</span></PTd>
                   <PTd>{s.unidad||'Serv.'}</PTd>
                   <PTd right mono><span className="font-black">{s.precio?`$${pFmt(s.precio)}`:'—'}</span></PTd>
+                  <PTd><span className="text-[10px] text-blue-600">{s.cuentaContableNombre||'—'}</span></PTd>
                   <PTd><PBadge v={s.activo!==false?'green':'gray'}>{s.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
                   <PTd>
                     <div className="flex gap-2">
@@ -821,19 +842,22 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
           <PCard noPad>
             <table className="w-full">
               <thead><tr>
-                <PTh>Código</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh right>Stock</PTh><PTh>Unidad</PTh>
+                <PTh>Código</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh>Cuenta Contable</PTh><PTh>Unidad</PTh>
               </tr></thead>
               <tbody>
                 {invFiltrado.length===0?<tr><td colSpan={5} className="py-12"><PEmpty icon={Package} title="Sin productos" desc="No hay productos en esta categoría"/></td></tr>:
-                invFiltrado.slice(0,100).map(inv=>(
+                invFiltrado.slice(0,100).map(inv=>{
+                  const cat=inv.subcategory||inv.category||'';
+                  const cta=pCtaNombre(cat);
+                  return(
                   <tr key={inv.id} className="hover:bg-slate-50">
                     <PTd mono>{inv.displayId||inv.id}</PTd>
                     <PTd><span className="font-black text-xs">{inv.desc||'—'}</span></PTd>
-                    <PTd><PBadge v="gray">{inv.subcategory||inv.category||'—'}</PBadge></PTd>
-                    <PTd right mono><span className={`font-black ${pNum(inv.stock)>0?'text-emerald-600':'text-red-500'}`}>{pFmt(inv.stock||0)}</span></PTd>
+                    <PTd><PBadge v="gray">{cat||'—'}</PBadge></PTd>
+                    <PTd><span className="text-[10px] text-blue-600">{cta||<span className="text-slate-400">—</span>}</span></PTd>
                     <PTd>{inv.unit||'Und'}</PTd>
                   </tr>
-                ))}
+                );})}
               </tbody>
             </table>
           </PCard>
@@ -860,6 +884,16 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
           <PFG label="Precio de referencia ($)">
             <input type="number" className={inp} value={form.precio||''} onChange={e=>setForm({...form,precio:e.target.value})} placeholder="0.00"/>
           </PFG>
+          <PFG label="Cuenta contable" full>
+            <select className={sel} value={form.cuentaContableId||''} onChange={e=>{
+              const cta=planDeCuentas.find(c=>c.id===e.target.value);
+              setForm({...form,cuentaContableId:e.target.value,cuentaContableNombre:cta?`${cta.codigo} — ${cta.nombre}`:''});
+            }}>
+              <option value="">— Seleccionar cuenta contable —</option>
+              {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+            </select>
+            {form.cuentaContableNombre&&<p className="text-[10px] text-blue-600 font-medium mt-1">{form.cuentaContableNombre}</p>}
+          </PFG>
           <PFG label="Descripción" full>
             <textarea className={`${inp} resize-none`} rows={2} value={form.descripcion||''} onChange={e=>setForm({...form,descripcion:e.target.value})} placeholder="Descripción del servicio..."/>
           </PFG>
@@ -884,10 +918,12 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
   const [form,setForm]=useState({});
   const [items,setItems]=useState([]);
   const [itemModal,setItemModal]=useState(false);
-  const [itemForm,setItemForm]=useState({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und'});
+  const [itemForm,setItemForm]=useState({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und',iva:'GRAVADO'});
   const [inventory,setInventory]=useState([]);
   const [servicios,setServicios]=useState([]);
   const [invTab,setInvTab]=useState('TODOS');
+  const [invSearch,setInvSearch]=useState('');
+  const [srvSearch,setSrvSearch]=useState('');
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -895,12 +931,17 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
     return()=>{u1();u2();};
   },[]);
 
-  // Categorías del inventario
-  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado','Otros Terminados'];
+  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas'];
+
   const invFiltrado=inventory.filter(i=>{
-    if(invTab==='TODOS') return i.activo!==false;
-    return i.activo!==false&&(i.subcategory||i.category||'')===invTab;
+    const matchCat=invTab==='TODOS'||(i.subcategory||i.category||'')===invTab;
+    const matchSearch=!invSearch||(i.desc||'').toLowerCase().includes(invSearch.toLowerCase())||(i.displayId||i.id||'').toLowerCase().includes(invSearch.toLowerCase());
+    const cat2=(i.subcategory||i.category||'').toLowerCase();
+    const excluir=cat2.includes('semielaborado')||cat2.includes('otros terminados');
+    return i.activo!==false&&matchCat&&matchSearch&&!excluir;
   });
+
+  const srvFiltrado=servicios.filter(s=>!srvSearch||(s.nombre||'').toLowerCase().includes(srvSearch.toLowerCase())||(s.categoria||'').toLowerCase().includes(srvSearch.toLowerCase()));
 
   const filtradas=ordenesCompra.filter(o=>{
     const ms=(o.nroOC||'').toLowerCase().includes(search.toLowerCase())||(o.proveedor||'').toLowerCase().includes(search.toLowerCase());
@@ -914,8 +955,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
   };
 
   const initForm=(prov=null)=>({
-    nroOC:nextNroOC(),
-    proveedor:prov?.nombre||'',proveedorId:prov?.id||'',
+    nroOC:nextNroOC(),proveedor:prov?.nombre||'',proveedorId:prov?.id||'',
     rif:prov?.rif||'',direccion:prov?.direccion||'',
     contacto:prov?.contacto||'',telefono:prov?.telefono||'',
     fechaEmision:getTodayDate(),fechaVencimiento:'',
@@ -923,339 +963,238 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
     formaPago:'CREDITO',moneda:'USD',status:'BORRADOR',observaciones:''
   });
 
-  // Auto-calcular vencimiento cuando cambian diasCredito o fechaEmision
-  const calcVencimiento=(fechaEmision,dias)=>{
-    if(!fechaEmision||!dias) return '';
-    const d=new Date(fechaEmision);
-    d.setDate(d.getDate()+parseInt(dias)||0);
+  const calcVenc=(fecha,dias)=>{
+    if(!fecha||!dias||isNaN(parseInt(dias)))return'';
+    const d=new Date(fecha+'T00:00:00');
+    d.setDate(d.getDate()+parseInt(dias));
     return d.toISOString().slice(0,10);
   };
 
-  const totalOC=items.reduce((s,i)=>s+pNum(i.cantidad)*pNum(i.precioUnit),0);
+  // Calcular totales con IVA
+  const calcTotales=(its,tasa)=>{
+    const t=pNum(tasa||0);
+    const subtotalUSD=its.reduce((s,i)=>s+pNum(i.total||0),0);
+    const baseIvaUSD=its.filter(i=>i.iva!=='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const exentoUSD=its.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const iva16USD=baseIvaUSD*0.16;
+    const totalUSD=subtotalUSD+iva16USD;
+    return {subtotalUSD,baseIvaUSD,exentoUSD,iva16USD,totalUSD,
+      subtotalBs:t?subtotalUSD*t:0,baseIvaBs:t?baseIvaUSD*t:0,
+      exentoBs:t?exentoUSD*t:0,iva16Bs:t?iva16USD*t:0,totalBs:t?totalUSD*t:0};
+  };
+
+  const tot=calcTotales(items,form.tasa);
+  const hasTasa=pNum(form.tasa||0)>0;
 
   const agregarItem=()=>{
     if(!itemForm.desc||!itemForm.cantidad||!itemForm.precioUnit){
       setDialog({title:'Aviso',text:'Completa descripción, cantidad y precio.',type:'alert'});return;
     }
-    const sub={...itemForm,id:pId(),total:pNum(itemForm.cantidad)*pNum(itemForm.precioUnit)};
-    setItems([...items,sub]);
-    setItemForm({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und'});
+    const total=pNum(itemForm.cantidad)*pNum(itemForm.precioUnit);
+    setItems([...items,{...itemForm,id:pId(),total}]);
+    setItemForm({tipo:itemForm.tipo,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und',iva:'GRAVADO',invId:null,srvId:null});
     setItemModal(false);
-  };
-
-  const seleccionarProductoInv=(inv)=>{
-    setItemForm({
-      tipo:'PRODUCTO',
-      desc:inv.desc||inv.id||'',
-      categoria:inv.subcategory||inv.category||'',
-      cantidad:'',precioUnit:'',
-      unidad:inv.unit||'Und',
-      invId:inv.id
-    });
-  };
-
-  const seleccionarServicio=(srv)=>{
-    setItemForm({
-      tipo:'SERVICIO',
-      desc:srv.nombre||srv.descripcion||'',
-      categoria:srv.categoria||'Servicio',
-      cantidad:'1',precioUnit:srv.precio||'',
-      unidad:'Serv.',srvId:srv.id
-    });
   };
 
   const guardar=async()=>{
     if(!form.proveedor){setDialog({title:'Aviso',text:'Selecciona un proveedor.',type:'alert'});return;}
     if(items.length===0){setDialog({title:'Aviso',text:'Agrega al menos un ítem.',type:'alert'});return;}
     try{
+      const t=calcTotales(items,form.tasa);
       const id=form.id||`OC-${pId()}`;
       await setDoc(getDocRef('procura_ordenes_compra',id),{
-        ...form,id,items,total:totalOC,updatedAt:Date.now(),
-        creadoEn:form.creadoEn||Date.now()
+        ...form,id,items,total:t.totalUSD,totales:t,updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
       });
       setModal(null);
       setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
+  const eliminarOC=(oc)=>setDialog({title:'¿Eliminar OC?',text:`Se eliminará permanentemente la ${oc.nroOC}.`,type:'confirm',onConfirm:async()=>{
+    try{await deleteDoc(getDocRef('procura_ordenes_compra',oc.id));setDialog({title:'Eliminada',text:'OC eliminada.',type:'alert'});}
+    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  }});
+
   const cambiarStatus=async(oc,s)=>{
     try{await updateDoc(getDocRef('procura_ordenes_compra',oc.id),{status:s,updatedAt:Date.now()});}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
+  // ── PDF impresión ──────────────────────────────────────────────────
   const imprimirOC=(oc)=>{
-    // Datos empresa desde configuración
-    const s = settings || {};
-    const empNombre = s.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
-    const empRif    = s.empresaRif         || 'J-412309374';
-    const empDir    = s.empresaDireccion   || 'Av. C2. CC El Dividivi Nivel PB Local G-9, Sector El Trebol, Maracaibo';
-    const empTel    = s.empresaTelefono    || '';
-    const empEmail  = s.emailProcura       || 'procura@supplygyb.com';
-
-    // Totales
-    const subtotalUSD = (oc.items||[]).reduce((s,i)=>s+pNum(i.total||0),0);
-    const tasa        = pNum(oc.tasa||0);
-    const subtotalBs  = tasa>0 ? subtotalUSD*tasa : 0;
-    const baseIvaUSD  = (oc.items||[]).filter(i=>i.tipo!=='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
-    const baseIvaBs   = tasa>0 ? baseIvaUSD*tasa : 0;
-    const exentoUSD   = subtotalUSD - baseIvaUSD;
-    const exentoBs    = tasa>0 ? exentoUSD*tasa : 0;
-    const iva16USD    = baseIvaUSD*0.16;
-    const iva16Bs     = tasa>0 ? iva16USD*tasa : 0;
-    const totalUSD    = subtotalUSD + iva16USD;
-    const totalBs     = tasa>0 ? totalUSD*tasa : 0;
-
-    // Número en letras (simplificado)
-    const numLetras=(n)=>{
-      const un=['','UNO','DOS','TRES','CUATRO','CINCO','SEIS','SIETE','OCHO','NUEVE','DIEZ','ONCE','DOCE','TRECE','CATORCE','QUINCE','DIECISÉIS','DIECISIETE','DIECIOCHO','DIECINUEVE'];
-      const dec=['','','VEINTE','TREINTA','CUARENTA','CINCUENTA','SESENTA','SETENTA','OCHENTA','NOVENTA'];
-      const miles=['','MIL','MILLONES'];
-      if(n===0)return'CERO';
-      if(n<20)return un[Math.floor(n)];
-      if(n<100)return dec[Math.floor(n/10)]+(n%10?' Y '+un[n%10]:'');
-      if(n<1000)return(n===100?'CIEN':un[Math.floor(n/100)]+'CIENTOS')+(n%100?' '+numLetras(n%100):'');
-      if(n<1000000)return numLetras(Math.floor(n/1000))+' MIL'+(n%1000?' '+numLetras(n%1000):'');
-      return Math.floor(n)+'.';
+    const s2=settings||{};
+    const empNombre=s2.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const empRif=s2.empresaRif||'J-412309374';
+    const empDir=s2.empresaDireccion||'Av. C2. CC El Dividivi Nivel PB Local G-9, Sector El Trebol, Maracaibo';
+    const empTel=s2.empresaTelefono||'';
+    const empEmail=s2.empresaEmail||s2.emailProcura||'';
+    const ocItems=oc.items||[];
+    const t=oc.totales||calcTotales(ocItems,oc.tasa);
+    const ta=pNum(oc.tasa||0);
+    const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+    const pD2=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
+    const numLetras=n=>{
+      const u=['','UNO','DOS','TRES','CUATRO','CINCO','SEIS','SIETE','OCHO','NUEVE','DIEZ','ONCE','DOCE','TRECE','CATORCE','QUINCE','DIECISÉIS','DIECISIETE','DIECIOCHO','DIECINUEVE'];
+      const de=['','','VEINTE','TREINTA','CUARENTA','CINCUENTA','SESENTA','SETENTA','OCHENTA','NOVENTA'];
+      const fn=x=>{x=Math.floor(x);if(x===0)return'';if(x<20)return u[x];if(x<100)return de[Math.floor(x/10)]+(x%10?' Y '+u[x%10]:'');if(x<1000)return(x===100?'CIEN':u[Math.floor(x/100)]+(Math.floor(x/100)===1?'':'CIENTOS'))+(x%100?' '+fn(x%100):'');if(x<1000000)return fn(Math.floor(x/1000))+' MIL'+(x%1000?' '+fn(x%1000):'');return x;};
+      const w=Math.floor(n);const c=Math.round((n%1)*100);
+      return`${fn(w)||'CERO'} DÓLARES CON ${String(c).padStart(2,'0')}/100`;
     };
-    const cents=Math.round((totalUSD%1)*100);
-    const wholeUSD=Math.floor(totalUSD);
-    const enLetras=`${numLetras(wholeUSD)} DÓLARES CON ${String(cents).padStart(2,'0')}/100`;
-
-    const pDate2=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`;};
-    const fmtBs=n=>n>0?new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n):'—';
-    const fmtUSD=n=>n>0?new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n):'—';
-
-    const css=`
-      @page{size:A4;margin:1.5cm}
-      *{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:Arial,sans-serif;color:#1e293b;font-size:10px}
-      .hdr{background:#000;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
-      .brand{font-size:18px;font-weight:900;color:#f97316}
-      .emp-hdr{text-align:right;font-size:8.5px;color:#d1d5db;line-height:1.5}
-      .emp-hdr strong{color:#f97316;font-size:11px;display:block}
-      .oc-title{background:#0f172a;color:#f97316;padding:10px 20px;font-size:17px;font-weight:900;text-align:center;letter-spacing:4px;border-bottom:2px solid #f97316}
-      .body{padding:14px 20px}
-      .info-row{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;margin-bottom:10px}
-      .box{border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px}
-      .box-title{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:#f97316;margin-bottom:6px;border-bottom:1px solid #f97316;padding-bottom:3px}
-      .field{margin-bottom:5px}
-      .field label{font-size:7px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;display:block}
-      .field p{font-size:10px;font-weight:700;color:#1e293b}
-      .divider{height:1px;background:#e2e8f0;margin:8px 0}
-      table.items{width:100%;border-collapse:collapse;margin:8px 0}
-      table.items th{background:#0f172a;color:#f97316;border:1px solid #374151;padding:6px 7px;text-align:left;font-size:7.5px;text-transform:uppercase;letter-spacing:.5px}
-      table.items th.r{text-align:right}
-      table.items td{border:1px solid #e2e8f0;padding:5px 7px;font-size:9.5px}
-      table.items td.r{text-align:right;font-weight:700}
-      table.items tr:nth-child(even) td{background:#f8fafc}
-      table.totales{width:100%;border-collapse:collapse;margin-top:6px}
-      table.totales td{padding:4px 8px;font-size:9px;border:1px solid #e2e8f0}
-      table.totales .lbl{font-weight:900;text-transform:uppercase;font-size:8px;color:#64748b;background:#f8fafc}
-      table.totales .val{text-align:right;font-family:monospace;font-weight:700}
-      table.totales .total-row td{background:#0f172a!important;color:#f97316;font-weight:900;font-size:11px;border-color:#374151}
-      .letras{background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;padding:5px 10px;font-size:9px;font-weight:900;color:#92400e;margin-top:4px}
-      .factura-box{border:2px solid #0f172a;border-radius:6px;padding:10px 14px;margin-top:10px;text-align:center}
-      .factura-box h3{font-size:11px;font-weight:900;text-transform:uppercase;text-decoration:underline;margin-bottom:4px}
-      .factura-box p{font-size:10px;font-weight:700;line-height:1.5}
-      .cond-box{border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;margin-top:10px;font-size:9px}
-      .cond-box h3{font-weight:900;text-transform:uppercase;text-decoration:underline;margin-bottom:6px;font-size:10px}
-      .cond-box p{margin-bottom:3px;line-height:1.5}
-      .firmas{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:20px}
-      .firma{border-top:1px solid #000;margin-top:28px;padding-top:5px;text-align:center;font-size:8px;color:#64748b;font-weight:700;text-transform:uppercase}
-      .footer-bar{margin-top:14px;border-top:2px solid #f97316;padding:6px 20px;display:flex;justify-content:space-between;font-size:7px;color:#94a3b8}
-      .badge-s{background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:7px;font-weight:900}
-      .badge-p{background:#dcfce7;color:#166534;padding:1px 5px;border-radius:8px;font-size:7px;font-weight:900}
-      @media print{body{margin:0}@page{margin:1.5cm}}
-    `;
+    const css=`@page{size:A4;margin:1.5cm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#1e293b;font-size:10px}
+    .hdr{background:#000;color:#fff;padding:10px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
+    .brand{font-size:16px;font-weight:900;color:#f97316}.emp-h{text-align:right;font-size:8px;color:#d1d5db;line-height:1.5}.emp-h strong{color:#f97316;font-size:10px;display:block}
+    .oc-bar{background:#0f172a;color:#f97316;padding:8px 18px;font-size:15px;font-weight:900;text-align:center;letter-spacing:4px;border-bottom:2px solid #f97316}
+    .body{padding:12px 18px}
+    .ig{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;margin-bottom:8px}
+    .box{border:1px solid #e2e8f0;border-radius:5px;padding:8px 10px}
+    .bt{font-size:7.5px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:#f97316;margin-bottom:5px;border-bottom:1px solid #f97316;padding-bottom:2px}
+    .f{margin-bottom:4px}.f label{font-size:7px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;display:block}.f p{font-size:10px;font-weight:700}
+    .fg2{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px}
+    table.it{width:100%;border-collapse:collapse;margin:6px 0}
+    table.it th{background:#0f172a;color:#f97316;border:1px solid #374151;padding:5px 6px;text-align:left;font-size:7px;text-transform:uppercase}
+    table.it th.r{text-align:right}
+    table.it td{border:1px solid #e2e8f0;padding:4px 6px;font-size:9px}
+    table.it td.r{text-align:right;font-weight:700}
+    table.it tr:nth-child(even) td{background:#f8fafc}
+    table.tot{width:100%;border-collapse:collapse;margin-top:4px}
+    table.tot td{padding:3px 7px;font-size:8.5px;border:1px solid #e2e8f0}
+    table.tot .lbl{font-weight:900;text-transform:uppercase;font-size:7.5px;color:#64748b;background:#f8fafc}
+    table.tot .val{text-align:right;font-family:monospace;font-weight:700}
+    table.tot .tr td{background:#0f172a!important;color:#f97316;font-weight:900;font-size:11px;border-color:#374151}
+    .letras{background:#fef3c7;border:1px solid #f59e0b;border-radius:3px;padding:4px 8px;font-size:8.5px;font-weight:900;color:#92400e;margin-top:3px}
+    .fac{border:2px solid #0f172a;border-radius:5px;padding:8px 12px;margin-top:8px;text-align:center}
+    .fac h3{font-size:10px;font-weight:900;text-transform:uppercase;text-decoration:underline;margin-bottom:3px}
+    .fac p{font-size:9.5px;font-weight:700;line-height:1.5}
+    .cond{border:1px solid #e2e8f0;border-radius:5px;padding:8px 12px;margin-top:8px;font-size:8.5px}
+    .cond h3{font-weight:900;text-transform:uppercase;text-decoration:underline;margin-bottom:4px}
+    .cond p{margin-bottom:2px;line-height:1.5}
+    .firmas{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:16px}
+    .firma{border-top:1px solid #000;margin-top:26px;padding-top:4px;text-align:center;font-size:7.5px;color:#64748b;font-weight:700;text-transform:uppercase}
+    .foot{margin-top:10px;border-top:2px solid #f97316;padding:5px 18px;display:flex;justify-content:space-between;font-size:7px;color:#94a3b8}
+    .bs{background:#dbeafe;color:#1d4ed8;padding:1px 4px;border-radius:7px;font-size:6.5px;font-weight:900}
+    .bp{background:#dcfce7;color:#166534;padding:1px 4px;border-radius:7px;font-size:6.5px;font-weight:900}
+    .bx{background:#fef3c7;color:#b45309;padding:1px 4px;border-radius:7px;font-size:6.5px;font-weight:900}
+    @media print{body{margin:0}@page{margin:1.5cm}}`;
 
     let html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>OC ${oc.nroOC}</title><style>${css}</style></head><body>
-    <div class="hdr">
-      <div class="brand">Supply G&amp;B</div>
-      <div class="emp-hdr">
-        <strong>${empNombre}</strong>
-        RIF: ${empRif}<br>
-        ${empDir}<br>
-        ${empTel?'Tel: '+empTel+'&nbsp;&nbsp;':''}${empEmail}
-      </div>
-    </div>
-    <div class="oc-title">ORDEN DE COMPRA N° ${oc.nroOC}</div>
+    <div class="hdr"><div class="brand">Supply G&amp;B</div><div class="emp-h"><strong>${empNombre}</strong>RIF: ${empRif}<br>${empDir}${empTel?'<br>Tel: '+empTel:''}<br>${empEmail}</div></div>
+    <div class="oc-bar">ORDEN DE COMPRA N° ${oc.nroOC}</div>
     <div class="body">
-
-      <!-- INFO PROVEEDOR Y OC -->
-      <div class="info-row">
-        <div class="box">
-          <div class="box-title">Proveedor</div>
-          <div class="field"><label>Razón Social</label><p>${oc.proveedor||'—'}</p></div>
-          <div class="field"><label>RIF</label><p>${oc.rif||'—'}</p></div>
-          <div class="field"><label>Dirección</label><p>${oc.direccion||'—'}</p></div>
-          <div class="field"><label>Persona de contacto</label><p>${oc.contacto||'—'}</p></div>
-          <div class="field"><label>Teléfono</label><p>${oc.telefono||'—'}</p></div>
-        </div>
-        <div class="box">
-          <div class="box-title">Datos de la orden</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
-            <div class="field"><label>N° Orden</label><p style="font-size:14px;color:#f97316;font-weight:900">${oc.nroOC}</p></div>
-            <div class="field"><label>Status</label><p>${oc.status||'BORRADOR'}</p></div>
-            <div class="field"><label>Fecha emisión</label><p>${pDate2(oc.fechaEmision)}</p></div>
-            <div class="field"><label>Fecha vencimiento</label><p>${pDate2(oc.fechaVencimiento)}</p></div>
-            <div class="field"><label>Días de crédito</label><p>${oc.diasCredito||'—'}</p></div>
-            <div class="field"><label>Forma de pago</label><p>${oc.formaPago||'—'}</p></div>
-            <div class="field"><label>Moneda</label><p>${oc.moneda||'USD'}</p></div>
-            <div class="field"><label>Tasa Bs./$</label><p>${oc.tasa||'—'}</p></div>
-          </div>
+    <div class="ig">
+      <div class="box"><div class="bt">Proveedor</div>
+        <div class="f"><label>Razón Social</label><p>${oc.proveedor||'—'}</p></div>
+        <div class="f"><label>RIF</label><p>${oc.rif||'—'}</p></div>
+        <div class="f"><label>Dirección</label><p>${oc.direccion||'—'}</p></div>
+        <div class="f"><label>Contacto</label><p>${oc.contacto||'—'}&nbsp;&nbsp;${oc.telefono?'Tel: '+oc.telefono:''}</p></div>
+      </div>
+      <div class="box"><div class="bt">Datos de la orden</div>
+        <div class="fg2">
+          <div class="f"><label>N° Orden</label><p style="font-size:13px;color:#f97316;font-weight:900">${oc.nroOC}</p></div>
+          <div class="f"><label>Status</label><p>${oc.status||'—'}</p></div>
+          <div class="f"><label>Fecha emisión</label><p>${pD2(oc.fechaEmision)}</p></div>
+          <div class="f"><label>Fecha vencimiento</label><p>${pD2(oc.fechaVencimiento)}</p></div>
+          <div class="f"><label>Días crédito</label><p>${oc.diasCredito||'—'}</p></div>
+          <div class="f"><label>Forma de pago</label><p>${oc.formaPago||'—'}</p></div>
+          <div class="f"><label>Moneda</label><p>${oc.moneda||'USD'}</p></div>
+          <div class="f"><label>Tasa Bs./$</label><p>${ta>0?fmtN(ta):'Sin tasa'}</p></div>
         </div>
       </div>
-
-      <!-- TABLA DE ÍTEMS -->
-      <table class="items">
-        <thead><tr>
-          <th style="width:4%">#</th>
-          <th style="width:7%">Tipo</th>
-          <th>Descripción</th>
-          <th style="width:12%">Categoría</th>
-          <th style="width:5%" class="r">Cant.</th>
-          <th style="width:6%">Unidad</th>
-          <th style="width:11%" class="r">P. Unit. USD</th>
-          <th style="width:11%" class="r">Total USD</th>
-          ${tasa>0?'<th style="width:11%" class="r">Total Bs.</th>':''}
-        </tr></thead>
-        <tbody>`;
-
-    (oc.items||[]).forEach((it,i)=>{
-      const totBs=tasa>0?pNum(it.total||0)*tasa:0;
-      html+=`<tr>
-        <td style="text-align:center">${i+1}</td>
-        <td><span class="${it.tipo==='SERVICIO'?'badge-s':'badge-p'}">${it.tipo||'PROD.'}</span></td>
-        <td><strong>${it.desc||'—'}</strong></td>
-        <td>${it.categoria||'—'}</td>
-        <td class="r">${pFmt(it.cantidad)}</td>
-        <td>${it.unidad||'Und'}</td>
-        <td class="r">${fmtUSD(pNum(it.precioUnit))}</td>
-        <td class="r">${fmtUSD(pNum(it.total||0))}</td>
-        ${tasa>0?`<td class="r">${fmtBs(totBs)}</td>`:''}
-      </tr>`;
+    </div>
+    <table class="it"><thead><tr>
+      <th style="width:3%">#</th><th style="width:6%">Tipo</th><th>Descripción</th><th style="width:10%">Categoría</th>
+      <th style="width:5%" class="r">Cant.</th><th style="width:5%">Und.</th>
+      <th style="width:5%">IVA</th>
+      <th style="width:10%" class="r">P.Unit USD</th><th style="width:10%" class="r">Total USD</th>
+      ${ta>0?'<th style="width:10%" class="r">Total Bs.</th>':''}
+    </tr></thead><tbody>`;
+    ocItems.forEach((it,i)=>{
+      const totBs=ta>0?pNum(it.total||0)*ta:0;
+      const ivaBadge=it.iva==='EXENTO'?'<span class="bx">EXENTO</span>':'<span class="bp">GRAV.</span>';
+      html+=`<tr><td style="text-align:center">${i+1}</td>
+      <td><span class="${it.tipo==='SERVICIO'?'bs':'bp'}">${it.tipo==='SERVICIO'?'SERV.':'PROD.'}</span></td>
+      <td><strong>${it.desc||'—'}</strong></td><td>${it.categoria||'—'}</td>
+      <td class="r">${fmtN(it.cantidad)}</td><td>${it.unidad||'Und'}</td><td>${ivaBadge}</td>
+      <td class="r">${fmtN(pNum(it.precioUnit))}</td><td class="r">${fmtN(pNum(it.total||0))}</td>
+      ${ta>0?`<td class="r">${fmtN(totBs)}</td>`:''}</tr>`;
     });
-
     html+=`</tbody></table>
-
-      <!-- TOTALES -->
-      <div style="display:flex;justify-content:flex-end;margin-top:6px">
-        <table class="totales" style="width:${tasa>0?'55%':'35%'}">
-          <tr>
-            <td class="lbl">Sub-Total</td>
-            ${tasa>0?`<td class="val">Bs. ${fmtBs(subtotalBs)}</td>`:''}
-            <td class="val">USD ${fmtUSD(subtotalUSD)}</td>
-          </tr>
-          <tr>
-            <td class="lbl">Exento</td>
-            ${tasa>0?`<td class="val">Bs. ${fmtBs(exentoBs)}</td>`:''}
-            <td class="val">USD ${exentoUSD>0?fmtUSD(exentoUSD):'—'}</td>
-          </tr>
-          <tr>
-            <td class="lbl">Base IVA</td>
-            ${tasa>0?`<td class="val">Bs. ${fmtBs(baseIvaBs)}</td>`:''}
-            <td class="val">USD ${fmtUSD(baseIvaUSD)}</td>
-          </tr>
-          <tr>
-            <td class="lbl">IVA 16%</td>
-            ${tasa>0?`<td class="val">Bs. ${fmtBs(iva16Bs)}</td>`:''}
-            <td class="val">USD ${fmtUSD(iva16USD)}</td>
-          </tr>
-          <tr class="total-row">
-            <td class="lbl" style="color:#f97316">TOTAL A PAGAR</td>
-            ${tasa>0?`<td class="val" style="color:#f97316">Bs. ${fmtBs(totalBs)}</td>`:''}
-            <td class="val" style="color:#f97316">USD ${fmtUSD(totalUSD)}</td>
-          </tr>
-        </table>
-      </div>
-      <div class="letras">${enLetras}</div>
-
-      <!-- FAVOR EMITIR FACTURA -->
-      <div class="factura-box">
-        <h3>FAVOR EMITIR FACTURA A NOMBRE DE:</h3>
-        <p>${empNombre} &nbsp; RIF: ${empRif}</p>
-        <p>DIRECCIÓN FISCAL: ${empDir}</p>
-        ${empTel?`<p>TEL: ${empTel}</p>`:''}
-        <p>CORREO: ${empEmail}</p>
-      </div>
-
-      <!-- CONDICIONES GENERALES -->
-      <div class="cond-box">
-        <h3>CONDICIONES GENERALES PARA LA COMPRA:</h3>
-        <p>1._ NO SE RECIBIRÁN DESPACHOS DE MERCANCÍAS NI SE PROCESARÁN PAGOS DE COMPRAS QUE NO ESTÉN ACOMPAÑADOS DE SU CORRESPONDIENTE ORDEN DE COMPRA.</p>
-        <p>2._ HORARIO DE RECEPCIÓN DE MERCANCÍAS: LUNES A VIERNES DE 08:30 AM HASTA 4:00 PM.</p>
-        <p>3._ APLICARÁN RETENCIONES DE IVA/ISLR</p>
-        <p style="margin-top:5px"><strong>DIRECCIÓN DE DESPACHO: DOMICILIO FISCAL: ${empDir}</strong></p>
-      </div>
-
-      ${oc.observaciones?`<p style="margin-top:8px;font-size:8.5px;color:#64748b"><strong>Observaciones:</strong> ${oc.observaciones}</p>`:''}
-
-      <!-- FIRMAS -->
-      <div class="firmas">
-        <div><div class="firma">Elaborado por</div></div>
-        <div><div class="firma">Aprobado por / Autorizado</div></div>
-      </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:4px">
+      <table class="tot" style="width:${ta>0?'52%':'30%'}">
+        <tr><td class="lbl">Sub-Total</td>${ta>0?`<td class="val">Bs. ${fmtN(t.subtotalBs)}</td>`:''}<td class="val">USD ${fmtN(t.subtotalUSD)}</td></tr>
+        <tr><td class="lbl">Exento</td>${ta>0?`<td class="val">Bs. ${fmtN(t.exentoBs)}</td>`:''}<td class="val">USD ${t.exentoUSD>0?fmtN(t.exentoUSD):'—'}</td></tr>
+        <tr><td class="lbl">Base IVA</td>${ta>0?`<td class="val">Bs. ${fmtN(t.baseIvaBs)}</td>`:''}<td class="val">USD ${fmtN(t.baseIvaUSD)}</td></tr>
+        <tr><td class="lbl">IVA 16%</td>${ta>0?`<td class="val">Bs. ${fmtN(t.iva16Bs)}</td>`:''}<td class="val">USD ${fmtN(t.iva16USD)}</td></tr>
+        <tr class="tr"><td class="lbl" style="color:#f97316">TOTAL A PAGAR</td>${ta>0?`<td class="val" style="color:#f97316">Bs. ${fmtN(t.totalBs)}</td>`:''}<td class="val" style="color:#f97316">USD ${fmtN(t.totalUSD)}</td></tr>
+      </table>
     </div>
-    <div class="footer-bar">
-      <span>${empNombre} — RIF: ${empRif}</span>
-      <span>OC N° ${oc.nroOC} · ${pDate2(oc.fechaEmision)}</span>
-      <span>Supply ERP · Módulo Procura</span>
+    <div class="letras">${numLetras(t.totalUSD)}</div>
+    <div class="fac"><h3>FAVOR EMITIR FACTURA A NOMBRE DE:</h3>
+      <p>${empNombre} &nbsp; RIF: ${empRif}</p><p>DIRECCIÓN FISCAL: ${empDir}</p>
+      ${empTel?`<p>TEL: ${empTel}</p>`:''}<p>CORREO: ${empEmail}</p></div>
+    <div class="cond"><h3>CONDICIONES GENERALES PARA LA COMPRA:</h3>
+      <p>1._ NO SE RECIBIRÁN DESPACHOS DE MERCANCÍAS NI SE PROCESARÁN PAGOS DE COMPRAS QUE NO ESTÉN ACOMPAÑADOS DE SU CORRESPONDIENTE ORDEN DE COMPRA.</p>
+      <p>2._ HORARIO DE RECEPCIÓN DE MERCANCÍAS: LUNES A VIERNES DE 08:30 AM HASTA 4:00 PM.</p>
+      <p>3._ APLICARÁN RETENCIONES DE IVA/ISLR</p>
+      <p style="margin-top:4px"><strong>DIRECCIÓN DE DESPACHO: DOMICILIO FISCAL: ${empDir}</strong></p>
     </div>
+    ${oc.observaciones?`<p style="margin-top:6px;font-size:8px;color:#64748b"><strong>Observaciones:</strong> ${oc.observaciones}</p>`:''}
+
+    </div>
+    <div class="foot"><span>${empNombre} — RIF: ${empRif}</span><span>OC N° ${oc.nroOC} · ${pD2(oc.fechaEmision)}</span><span>Supply ERP · Procura</span></div>
     <script>window.onload=()=>{window.print();}<\/script></body></html>`;
-
-    const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
   };
 
-
   const statusList=['TODOS','BORRADOR','APROBADA','ENVIADA','RECIBIDA','CERRADA','ANULADA'];
+
+  // Íconos badge
+  const ivaColor=v=>v==='EXENTO'?'bg-amber-50 text-amber-700 border border-amber-200':'bg-emerald-50 text-emerald-700 border border-emerald-200';
 
   return (
     <div>
       {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex-1 relative min-w-48">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9`}/>
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="relative" style={{minWidth:'200px',flex:1}}>
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9 text-xs py-2`}/>
         </div>
         <div className="flex gap-1 flex-wrap">
           {statusList.map(s=>(
-            <button key={s} onClick={()=>setFiltStatus(s)}
-              className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white bg-slate-900':'text-slate-500 bg-white border border-slate-200 hover:bg-slate-100'}`}>
-              {s}
-            </button>
+            <button key={s} onClick={()=>setFiltStatus(s)} className={`text-[9px] font-black uppercase px-2.5 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white bg-slate-900':'text-slate-500 bg-white border border-slate-200 hover:bg-slate-100'}`}>{s}</button>
           ))}
         </div>
-        <PBg onClick={()=>{setForm(initForm());setItems([]);setModal('form');}}><Plus size={14}/> Nueva OC</PBg>
+        <PBg onClick={()=>{setForm(initForm());setItems([]);setModal('form');}}><Plus size={13}/> Nueva OC</PBg>
       </div>
 
-      {/* Tabla */}
+      {/* Tabla OC */}
       <PCard noPad>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead><tr>
-              <PTh>N° OC</PTh><PTh>Proveedor</PTh><PTh>Emisión</PTh><PTh>Vencimiento</PTh><PTh>Forma Pago</PTh><PTh>Status</PTh><PTh right>Total</PTh><PTh>Acciones</PTh>
+              <PTh>N° OC</PTh><PTh>Proveedor</PTh><PTh>Emisión</PTh><PTh>Vencimiento</PTh><PTh>Pago</PTh><PTh>Status</PTh><PTh right>Total USD</PTh><PTh>Acciones</PTh>
             </tr></thead>
             <tbody>
-              {filtradas.length===0?<tr><td colSpan={8} className="py-12"><PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/></td></tr>:
+              {filtradas.length===0?<tr><td colSpan={8} className="py-10"><PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/></td></tr>:
               filtradas.map(oc=>{
                 const st=statusOC(oc.status);
                 return (
                   <tr key={oc.id} className="hover:bg-slate-50">
-                    <PTd><span className="font-black text-orange-600 text-sm">{oc.nroOC}</span></PTd>
-                    <PTd><div className="font-black text-xs">{oc.proveedor||'—'}</div><div className="text-[10px] text-slate-400">{oc.rif||''}</div></PTd>
+                    <PTd><span className="font-black text-orange-600">{oc.nroOC}</span></PTd>
+                    <PTd><div className="font-black text-xs">{oc.proveedor||'—'}</div><div className="text-[9px] text-slate-400">{oc.rif||''}</div></PTd>
                     <PTd>{pDate(oc.fechaEmision)}</PTd>
                     <PTd>{pDate(oc.fechaVencimiento)||'—'}</PTd>
                     <PTd><PBadge v={oc.formaPago==='CONTADO'?'green':'blue'}>{oc.formaPago||'—'}</PBadge></PTd>
                     <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
-                    <PTd right mono><span className="font-black">{oc.moneda||'USD'} {pFmt(oc.total||0)}</span></PTd>
+                    <PTd right mono><span className="font-black text-sm">{pFmt(oc.total||0)}</span></PTd>
                     <PTd>
                       <div className="flex gap-1 flex-wrap">
                         <PBp sm onClick={()=>imprimirOC(oc)}><Printer size={11}/></PBp>
                         <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setModal('form');}}><Edit size={11}/></PBp>
-                        {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')}><Check size={11}/> Aprobar</PBg>}
-                        {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'ENVIADA')}><Send size={11}/> Enviar</PBo>}
-                        {oc.status==='ENVIADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'RECIBIDA')}><Truck size={11}/> Recibir</PBo>}
-                        {!['CERRADA','ANULADA'].includes(oc.status)&&<PBd sm onClick={()=>cambiarStatus(oc,'ANULADA')}><Ban size={11}/></PBd>}
+                        {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')}><Check size={11}/></PBg>}
+                        {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'ENVIADA')}><Send size={11}/></PBo>}
+                        {oc.status==='ENVIADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'RECIBIDA')}><Truck size={11}/></PBo>}
+                        {!['CERRADA','ANULADA'].includes(oc.status)&&<PBo sm onClick={()=>cambiarStatus(oc,'ANULADA')}><Ban size={11}/></PBo>}
+                        <PBd sm onClick={()=>eliminarOC(oc)}><Trash2 size={11}/></PBd>
                       </div>
                     </PTd>
                   </tr>
@@ -1266,208 +1205,214 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
         </div>
       </PCard>
 
-      {/* ── MODAL NUEVA OC ── */}
+      {/* ── MODAL OC — COMPACTO ── */}
       {modal==='form'&&(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-3" style={{background:'rgba(15,23,42,.92)'}}>
-          <div className="bg-white w-full rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{maxWidth:'98vw',maxHeight:'96vh'}}>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-2" style={{background:'rgba(15,23,42,.92)'}}>
+          <div className="bg-white w-full rounded-xl shadow-2xl flex flex-col" style={{maxWidth:'1100px',maxHeight:'95vh'}}>
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'3px solid #f97316'}}>
+            <div className="flex items-center justify-between px-5 py-3 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'2px solid #f97316'}}>
               <div>
-                <h2 className="font-black text-white uppercase tracking-widest text-sm">{form.id?`Editar ${form.nroOC}`:'Nueva Orden de Compra'}</h2>
-                <p className="text-[10px] text-orange-400 font-black mt-0.5">N° {form.nroOC}</p>
+                <span className="font-black text-white uppercase tracking-widest text-xs">{form.id?`Editar ${form.nroOC}`:'Nueva Orden de Compra'}</span>
+                <span className="ml-3 text-[10px] text-orange-400 font-black">N° {form.nroOC}</span>
               </div>
-              <button onClick={()=>setModal(null)} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={16} className="text-white"/></button>
+              <button onClick={()=>setModal(null)} className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={14} className="text-white"/></button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5">
-              {/* ── SECCIÓN 1: ENCABEZADO EN GRID ── */}
-              <div className="grid grid-cols-4 gap-4 mb-5">
+            <div className="flex-1 overflow-y-auto p-4">
+              {/* ENCABEZADO — 2 columnas compactas */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
                 {/* Proveedor */}
-                <div className="col-span-2 bg-slate-50 rounded-xl p-4 border border-slate-200">
-                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mb-3">Proveedor</p>
-                  <div className="space-y-3">
-                    <PFG label="Seleccionar proveedor *">
-                      <select className={sel} value={form.proveedorId||''} onChange={e=>{
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                  <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">Proveedor</p>
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Seleccionar *</label>
+                      <select className={`${sel} text-xs py-1.5`} value={form.proveedorId||''} onChange={e=>{
                         const p=proveedores.find(x=>x.id===e.target.value);
                         if(p) setForm({...form,proveedorId:p.id,proveedor:p.nombre,rif:p.rif||'',
                           direccion:p.direccion||'',contacto:p.contacto||'',telefono:p.telefono||'',
-                          diasCredito:p.condPago||'',moneda:p.moneda||'USD'});
+                          diasCredito:parseInt(p.condPago)||'',moneda:p.moneda||'USD'});
                       }}>
                         <option value="">— Seleccionar —</option>
                         {proveedores.filter(p=>p.activo!==false).map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
                       </select>
-                    </PFG>
-                    <div className="grid grid-cols-2 gap-2">
-                      <PFG label="RIF"><input className={`${inp} bg-slate-100`} readOnly value={form.rif||''}/></PFG>
-                      <PFG label="Teléfono"><input className={`${inp} bg-slate-100`} readOnly value={form.telefono||''}/></PFG>
                     </div>
-                    <PFG label="Dirección"><input className={`${inp} bg-slate-100`} readOnly value={form.direccion||''}/></PFG>
-                    <PFG label="Persona de contacto"><input className={`${inp} bg-slate-100`} readOnly value={form.contacto||''}/></PFG>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">RIF</label><div className="text-xs font-black text-slate-700 bg-slate-100 rounded px-2 py-1">{form.rif||'—'}</div></div>
+                      <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Teléfono</label><div className="text-xs font-black text-slate-700 bg-slate-100 rounded px-2 py-1">{form.telefono||'—'}</div></div>
+                    </div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Dirección</label><div className="text-xs text-slate-600 bg-slate-100 rounded px-2 py-1 truncate">{form.direccion||'—'}</div></div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Contacto</label><div className="text-xs text-slate-600 bg-slate-100 rounded px-2 py-1">{form.contacto||'—'}</div></div>
                   </div>
                 </div>
 
-                {/* Datos de la OC */}
-                <div className="col-span-2 bg-slate-50 rounded-xl p-4 border border-slate-200">
-                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mb-3">Datos de la orden</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <PFG label="N° OC"><input className={`${inp} bg-slate-100 font-black text-orange-600`} readOnly value={form.nroOC||''}/></PFG>
-                    <PFG label="Tasa Bs./$">
-                      <input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="Ej: 62.50"/>
-                    </PFG>
-                    <PFG label="Moneda">
-                      <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+                {/* Datos OC */}
+                <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                  <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">Datos de la orden</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">N° OC</label><div className="text-sm font-black text-orange-600 bg-slate-100 rounded px-2 py-1">{form.nroOC}</div></div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Tasa Bs./$</label>
+                      <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="0 = sin tasa"/></div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Moneda</label>
+                      <select className={`${sel} text-xs py-1.5`} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
                         {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
-                      </select>
-                    </PFG>
-                    <PFG label="Forma de pago">
-                      <select className={sel} value={form.formaPago||'CREDITO'} onChange={e=>setForm({...form,formaPago:e.target.value})}>
-                        <option value="CREDITO">Crédito</option>
-                        <option value="CONTADO">Contado</option>
-                        <option value="ANTICIPADO">Anticipado</option>
-                      </select>
-                    </PFG>
-                    <PFG label="Fecha emisión">
-                      <input type="date" className={inp} value={form.fechaEmision||''} onChange={e=>{
-                        const fv=calcVencimiento(e.target.value,form.diasCredito);
+                      </select></div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Forma de pago</label>
+                      <select className={`${sel} text-xs py-1.5`} value={form.formaPago||'CREDITO'} onChange={e=>setForm({...form,formaPago:e.target.value})}>
+                        <option value="CREDITO">Crédito</option><option value="CONTADO">Contado</option><option value="ANTICIPADO">Anticipado</option>
+                      </select></div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">F. Emisión</label>
+                      <input type="date" className={`${inp} text-xs py-1.5`} value={form.fechaEmision||''} onChange={e=>{
+                        const fv=calcVenc(e.target.value,form.diasCredito);
                         setForm({...form,fechaEmision:e.target.value,fechaVencimiento:fv});
-                      }}/>
-                    </PFG>
-                    <PFG label="Días de crédito">
-                      <input type="number" className={inp} value={form.diasCredito||''} onChange={e=>{
-                        const fv=calcVencimiento(form.fechaEmision,e.target.value);
+                      }}/></div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Días crédito</label>
+                      <input type="number" className={`${inp} text-xs py-1.5`} value={form.diasCredito||''} onChange={e=>{
+                        const fv=calcVenc(form.fechaEmision,e.target.value);
                         setForm({...form,diasCredito:e.target.value,fechaVencimiento:fv});
-                      }} placeholder="0 = contado"/>
-                    </PFG>
-                    <PFG label="Fecha vencimiento" full>
-                      <input type="date" className={`${inp} bg-amber-50 border-amber-200 font-black`} value={form.fechaVencimiento||''} onChange={e=>setForm({...form,fechaVencimiento:e.target.value})}/>
-                    </PFG>
+                      }} placeholder="0=contado"/></div>
+                    <div className="col-span-3"><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">F. Vencimiento (auto)</label>
+                      <input type="date" className={`${inp} text-xs py-1.5`} style={{background:'#fefce8',borderColor:'#f59e0b'}} value={form.fechaVencimiento||''} onChange={e=>setForm({...form,fechaVencimiento:e.target.value})}/></div>
                   </div>
                 </div>
               </div>
 
-              {/* ── SECCIÓN 2: ÍTEMS ── */}
-              <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 bg-slate-900">
-                  <span className="text-[10px] font-black text-white uppercase tracking-widest">Productos y Servicios</span>
-                  <PBg sm onClick={()=>{setItemForm({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und'});setItemModal(true);}}>
-                    <Plus size={12}/> Agregar ítem
+              {/* ÍTEMS */}
+              <div className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden mb-3">
+                <div className="flex items-center justify-between px-3 py-2 bg-slate-900">
+                  <span className="text-[9px] font-black text-white uppercase tracking-widest">Productos y Servicios</span>
+                  <PBg sm onClick={()=>{setItemForm({tipo:'PRODUCTO',desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und',iva:'GRAVADO'});setInvSearch('');setSrvSearch('');setItemModal(true);}}>
+                    <Plus size={11}/> Agregar ítem
                   </PBg>
                 </div>
-
-                {/* Lista de ítems */}
-                <div className="p-3">
+                <div className="p-2">
                   {items.length===0?(
-                    <div className="text-center py-8 text-slate-400 text-xs font-medium">Sin ítems — haz clic en "Agregar ítem"</div>
+                    <div className="text-center py-5 text-slate-400 text-xs">Sin ítems — haz clic en "Agregar ítem"</div>
                   ):(
-                    <table className="w-full">
-                      <thead><tr>
-                        <PTh>#</PTh><PTh>Tipo</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh right>Cant.</PTh><PTh>Unidad</PTh><PTh right>Precio Unit.</PTh><PTh right>Total</PTh><PTh></PTh>
+                    <>
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-100">
+                        <th className="px-2 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase">#</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase">Tipo</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase">Descripción</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase">Cat.</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase">IVA</th>
+                        <th className="px-2 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase">Cant.</th>
+                        <th className="px-2 py-1.5 text-left text-[9px] font-black text-slate-400 uppercase">Und.</th>
+                        <th className="px-2 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase">P.Unit</th>
+                        <th className="px-2 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase">Total USD</th>
+                        {hasTasa&&<th className="px-2 py-1.5 text-right text-[9px] font-black text-slate-400 uppercase">Total Bs.</th>}
+                        <th className="px-2 py-1.5"></th>
                       </tr></thead>
                       <tbody>
                         {items.map((it,i)=>(
-                          <tr key={it.id} className="hover:bg-slate-50">
-                            <PTd>{i+1}</PTd>
-                            <PTd><PBadge v={it.tipo==='SERVICIO'?'blue':'green'}>{it.tipo||'PROD.'}</PBadge></PTd>
-                            <PTd><span className="font-black text-xs">{it.desc}</span></PTd>
-                            <PTd>{it.categoria||'—'}</PTd>
-                            <PTd right mono>{pFmt(it.cantidad)}</PTd>
-                            <PTd>{it.unidad||'Und'}</PTd>
-                            <PTd right mono>{pFmt(it.precioUnit)}</PTd>
-                            <PTd right mono><span className="font-black text-orange-600">{pFmt(it.total||0)}</span></PTd>
-                            <PTd>
-                              <button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button>
-                            </PTd>
+                          <tr key={it.id} className="border-b border-slate-100 hover:bg-white">
+                            <td className="px-2 py-1.5 text-slate-500">{i+1}</td>
+                            <td className="px-2 py-1.5"><PBadge v={it.tipo==='SERVICIO'?'blue':'green'}>{it.tipo==='SERVICIO'?'SERV.':'PROD.'}</PBadge></td>
+                            <td className="px-2 py-1.5 font-black text-slate-800">{it.desc}</td>
+                            <td className="px-2 py-1.5 text-slate-500 text-[10px]">{it.categoria||'—'}</td>
+                            <td className="px-2 py-1.5"><span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${ivaColor(it.iva)}`}>{it.iva||'GRAV.'}</span></td>
+                            <td className="px-2 py-1.5 text-right font-mono">{pFmt(it.cantidad)}</td>
+                            <td className="px-2 py-1.5 text-slate-500">{it.unidad||'Und'}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">{pFmt(it.precioUnit)}</td>
+                            <td className="px-2 py-1.5 text-right font-black text-orange-600">{pFmt(it.total||0)}</td>
+                            {hasTasa&&<td className="px-2 py-1.5 text-right font-mono text-slate-500">{pFmt(pNum(it.total||0)*pNum(form.tasa||0))}</td>}
+                            <td className="px-2 py-1.5"><button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                  )}
-                  {items.length>0&&(
-                    <div className="mt-3 flex justify-end">
-                      <div className="bg-slate-900 rounded-xl px-5 py-3 flex items-center gap-4">
-                        <span className="text-[10px] font-black text-slate-400 uppercase">TOTAL {form.moneda||'USD'}</span>
-                        <span className="font-black text-white text-xl">{pFmt(totalOC)}</span>
-                        {form.tasa&&<span className="text-[10px] text-slate-400">= Bs. {pFmt(totalOC*pNum(form.tasa))}</span>}
+                    {/* Totales */}
+                    <div className="flex justify-end mt-2">
+                      <div className="bg-slate-900 rounded-lg px-4 py-2 text-[10px]">
+                        <div className="grid gap-1" style={{gridTemplateColumns:hasTasa?'auto auto auto':'auto auto'}}>
+                          <span className="text-slate-400 font-black uppercase">Sub-Total</span>
+                          {hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.subtotalBs)}</span>}
+                          <span className="text-right text-white font-mono">USD {pFmt(tot.subtotalUSD)}</span>
+                          <span className="text-slate-400 font-black uppercase">IVA 16%</span>
+                          {hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.iva16Bs)}</span>}
+                          <span className="text-right text-white font-mono">USD {pFmt(tot.iva16USD)}</span>
+                          <span className="text-orange-400 font-black uppercase">TOTAL</span>
+                          {hasTasa&&<span className="text-right text-orange-300 font-black font-mono">Bs. {pFmt(tot.totalBs)}</span>}
+                          <span className="text-right text-orange-400 font-black text-sm font-mono">USD {pFmt(tot.totalUSD)}</span>
+                        </div>
                       </div>
                     </div>
+                    </>
                   )}
                 </div>
               </div>
 
               {/* Observaciones */}
-              <div className="mt-4">
-                <PFG label="Observaciones">
-                  <textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Condiciones especiales, instrucciones de entrega..."/>
-                </PFG>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Observaciones</label>
+                <textarea className={`${inp} resize-none text-xs`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Condiciones especiales, instrucciones de entrega..."/>
               </div>
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50 flex-shrink-0">
+            <div className="px-4 py-3 border-t border-slate-100 flex justify-end gap-2 bg-slate-50 flex-shrink-0">
               <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
-              <PBo onClick={()=>{if(items.length>0&&form.proveedor)imprimirOC({...form,items,total:totalOC});}}>
-                <Printer size={14}/> Vista previa
-              </PBo>
-              <PBg onClick={guardar}><Save size={14}/> {form.id?'Actualizar OC':'Crear OC'}</PBg>
+              <PBo sm onClick={()=>{if(items.length>0&&form.proveedor)imprimirOC({...form,items,total:tot.totalUSD,totales:tot});}}><Printer size={13}/> Vista previa</PBo>
+              <PBg onClick={guardar}><Save size={13}/> {form.id?'Actualizar OC':'Crear OC'}</PBg>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── MODAL AGREGAR ÍTEM ── */}
+      {/* ── MODAL AGREGAR ÍTEM — COMPACTO ── */}
       {itemModal&&(
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(15,23,42,.92)'}}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{maxWidth:'900px',maxHeight:'90vh',display:'flex',flexDirection:'column'}}>
-            <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'3px solid #f97316'}}>
-              <h2 className="font-black text-white uppercase tracking-widest text-sm">Agregar ítem a la OC</h2>
-              <button onClick={()=>setItemModal(false)} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={16} className="text-white"/></button>
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-2" style={{background:'rgba(15,23,42,.92)'}}>
+          <div className="bg-white rounded-xl shadow-2xl flex flex-col" style={{width:'820px',maxHeight:'88vh'}}>
+            <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'2px solid #f97316'}}>
+              <span className="font-black text-white uppercase tracking-widest text-xs">Agregar ítem a la OC</span>
+              <button onClick={()=>setItemModal(false)} className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={14} className="text-white"/></button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5">
-              {/* Selector tipo */}
-              <div className="flex gap-2 mb-4">
-                {['PRODUCTO','SERVICIO','MANUAL'].map(t=>(
-                  <button key={t} onClick={()=>setItemForm({...itemForm,tipo:t,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:t==='SERVICIO'?'Serv.':'Und'})}
-                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${itemForm.tipo===t?'bg-slate-900 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                    {t==='PRODUCTO'?'🏭 Producto de inventario':t==='SERVICIO'?'⚙️ Servicio':'✏️ Ítem manual'}
-                  </button>
+            <div className="flex-1 overflow-y-auto p-4">
+              {/* Tipo */}
+              <div className="flex gap-2 mb-3">
+                {[['PRODUCTO','🏭 Producto inventario'],['SERVICIO','⚙️ Servicio'],['MANUAL','✏️ Manual']].map(([t,l])=>(
+                  <button key={t} onClick={()=>setItemForm({...itemForm,tipo:t,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:t==='SERVICIO'?'Serv.':'Und',iva:'GRAVADO',invId:null,srvId:null})}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${itemForm.tipo===t?'bg-slate-900 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{l}</button>
                 ))}
               </div>
 
-              {/* PRODUCTO — selector de inventario */}
+              {/* PRODUCTO */}
               {itemForm.tipo==='PRODUCTO'&&(
-                <div className="mb-4">
-                  <div className="flex gap-2 flex-wrap mb-3">
+                <div className="mb-3">
+                  {/* Buscador */}
+                  <div className="relative mb-2">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                    <input value={invSearch} onChange={e=>setInvSearch(e.target.value)} placeholder="Buscar producto por nombre o código..." className={`${inp} pl-8 text-xs py-1.5`}/>
+                  </div>
+                  {/* Filtro categorías */}
+                  <div className="flex gap-1 flex-wrap mb-2">
                     {invCats.map(c=>(
                       <button key={c} onClick={()=>setInvTab(c)}
-                        className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase transition-all ${invTab===c?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
-                        {c}
-                      </button>
+                        className={`text-[8px] px-2 py-0.5 rounded font-black uppercase transition-all ${invTab===c?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{c}</button>
                     ))}
                   </div>
-                  <div className="border border-slate-200 rounded-xl overflow-hidden" style={{maxHeight:'220px',overflowY:'auto'}}>
+                  <div className="border border-slate-200 rounded-lg overflow-hidden" style={{maxHeight:'200px',overflowY:'auto'}}>
                     <table className="w-full">
                       <thead className="sticky top-0"><tr style={{background:'#0f172a'}}>
-                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Código</th>
-                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Descripción</th>
-                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Categoría</th>
-                        <th className="px-3 py-2 text-right text-[9px] text-orange-400 font-black uppercase">Stock</th>
-                        <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Unidad</th>
-                        <th className="px-3 py-2 text-[9px] text-orange-400 font-black uppercase">Selec.</th>
+                        <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Código</th>
+                        <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Descripción</th>
+                        <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Categoría</th>
+                        <th className="px-2 py-1.5 text-[8px] text-orange-400 font-black uppercase">Und</th>
                       </tr></thead>
                       <tbody>
-                        {invFiltrado.length===0?<tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400 text-xs">Sin productos en esta categoría</td></tr>:
-                        invFiltrado.slice(0,80).map(inv=>(
-                          <tr key={inv.id} className={`hover:bg-orange-50 cursor-pointer transition-colors ${itemForm.invId===inv.id?'bg-orange-50 border-l-2 border-orange-500':''}`}
-                            onClick={()=>seleccionarProductoInv(inv)}>
-                            <td className="px-3 py-2 text-[10px] font-mono text-slate-500">{inv.displayId||inv.id}</td>
-                            <td className="px-3 py-2 text-xs font-black text-slate-800">{inv.desc||'—'}</td>
-                            <td className="px-3 py-2 text-[10px] text-slate-500">{inv.subcategory||inv.category||'—'}</td>
-                            <td className="px-3 py-2 text-xs text-right font-black">{pFmt(inv.stock||0)}</td>
-                            <td className="px-3 py-2 text-[10px]">{inv.unit||'Und'}</td>
-                            <td className="px-3 py-2">
-                              <Check size={14} className={itemForm.invId===inv.id?'text-orange-500':'text-slate-200'}/>
-                            </td>
+                        {invFiltrado.length===0?<tr><td colSpan={5} className="px-3 py-4 text-center text-slate-400 text-xs">Sin productos</td></tr>:
+                        invFiltrado.slice(0,100).map(inv=>(
+                          <tr key={inv.id} className={`hover:bg-orange-50 cursor-pointer text-xs transition-colors ${itemForm.invId===inv.id?'bg-orange-50 border-l-2 border-orange-500':''}`}
+                            onClick={()=>{
+                              const cat=inv.subcategory||inv.category||'';
+                              const cta=pGetCuenta(cat);
+                              setItemForm({...itemForm,desc:inv.desc||inv.id||'',categoria:cat,unidad:inv.unit||'Und',invId:inv.id,cantidad:itemForm.cantidad,precioUnit:itemForm.precioUnit,cuentaContableId:cta.id,cuentaContableNombre:cta.codigo?`${cta.codigo} — ${cta.nombre}`:''});
+                            }}>
+                            <td className="px-2 py-1 font-mono text-[9px] text-slate-500">{inv.displayId||inv.id}</td>
+                            <td className="px-2 py-1 font-black text-slate-800">{inv.desc||'—'}</td>
+                            <td className="px-2 py-1 text-[9px] text-slate-500">{inv.subcategory||inv.category||'—'}</td>
+                            <td className="px-2 py-1 text-[9px]">{inv.unit||'Und'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1476,31 +1421,30 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
                 </div>
               )}
 
-              {/* SERVICIO — lista de servicios registrados */}
+              {/* SERVICIO */}
               {itemForm.tipo==='SERVICIO'&&(
-                <div className="mb-4">
-                  {servicios.length===0?(
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-                      <p className="text-xs font-black text-amber-700">No hay servicios registrados.</p>
-                      <p className="text-[10px] text-amber-600 mt-1">Ve a <strong>Catálogo de Servicios</strong> para agregar.</p>
-                    </div>
+                <div className="mb-3">
+                  <div className="relative mb-2">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                    <input value={srvSearch} onChange={e=>setSrvSearch(e.target.value)} placeholder="Buscar servicio..." className={`${inp} pl-8 text-xs py-1.5`}/>
+                  </div>
+                  {srvFiltrado.length===0?(
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center text-xs text-amber-700">No hay servicios. Ve a <strong>Catálogo Prod/Serv</strong> para agregar.</div>
                   ):(
-                    <div className="border border-slate-200 rounded-xl overflow-hidden" style={{maxHeight:'200px',overflowY:'auto'}}>
+                    <div className="border border-slate-200 rounded-lg overflow-hidden" style={{maxHeight:'200px',overflowY:'auto'}}>
                       <table className="w-full">
                         <thead className="sticky top-0"><tr style={{background:'#0f172a'}}>
-                          <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Servicio</th>
-                          <th className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Categoría</th>
-                          <th className="px-3 py-2 text-right text-[9px] text-orange-400 font-black uppercase">Precio ref.</th>
-                          <th className="px-3 py-2 text-[9px] text-orange-400 font-black uppercase">Selec.</th>
+                          <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Servicio</th>
+                          <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Categoría</th>
+                          <th className="px-2 py-1.5 text-right text-[8px] text-orange-400 font-black uppercase">Precio ref.</th>
                         </tr></thead>
                         <tbody>
-                          {servicios.map(srv=>(
-                            <tr key={srv.id} className={`hover:bg-blue-50 cursor-pointer ${itemForm.srvId===srv.id?'bg-blue-50 border-l-2 border-blue-500':''}`}
-                              onClick={()=>seleccionarServicio(srv)}>
-                              <td className="px-3 py-2 text-xs font-black text-slate-800">{srv.nombre||'—'}</td>
-                              <td className="px-3 py-2 text-[10px] text-slate-500">{srv.categoria||'—'}</td>
-                              <td className="px-3 py-2 text-xs text-right font-black">{srv.precio?`$${pFmt(srv.precio)}`:'—'}</td>
-                              <td className="px-3 py-2"><Check size={14} className={itemForm.srvId===srv.id?'text-blue-500':'text-slate-200'}/></td>
+                          {srvFiltrado.map(srv=>(
+                            <tr key={srv.id} className={`hover:bg-blue-50 cursor-pointer text-xs ${itemForm.srvId===srv.id?'bg-blue-50 border-l-2 border-blue-500':''}`}
+                              onClick={()=>setItemForm({...itemForm,desc:srv.nombre||'',categoria:srv.categoria||'',unidad:srv.unidad||'Serv.',precioUnit:srv.precio||'',srvId:srv.id,cantidad:itemForm.cantidad})}>
+                              <td className="px-2 py-1.5 font-black text-slate-800">{srv.nombre||'—'}</td>
+                              <td className="px-2 py-1.5 text-[9px] text-slate-500">{srv.categoria||'—'}</td>
+                              <td className="px-2 py-1.5 text-right font-black">{srv.precio?`$${pFmt(srv.precio)}`:'—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1510,70 +1454,62 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
                 </div>
               )}
 
-              {/* Campos comunes del ítem seleccionado */}
-              {(itemForm.desc||itemForm.tipo==='MANUAL')&&(
-                <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
-                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest mb-3">
-                    {itemForm.tipo==='MANUAL'?'Ítem manual':'Ítem seleccionado — completa los datos'}
-                  </p>
-                  <div className="grid grid-cols-3 gap-3">
-                    <PFG label="Descripción" full={false}>
-                      <input className={inp} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder="Descripción del producto/servicio"/>
-                    </PFG>
-                    <PFG label="Categoría">
-                      <input className={inp} value={itemForm.categoria||''} onChange={e=>setItemForm({...itemForm,categoria:e.target.value})} placeholder="Categoría"/>
-                    </PFG>
-                    <PFG label="Unidad">
-                      <select className={sel} value={itemForm.unidad||'Und'} onChange={e=>setItemForm({...itemForm,unidad:e.target.value})}>
-                        {['Und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
-                      </select>
-                    </PFG>
-                    <PFG label="Cantidad *">
-                      <input type="number" className={inp} value={itemForm.cantidad||''} onChange={e=>setItemForm({...itemForm,cantidad:e.target.value})} placeholder="0"/>
-                    </PFG>
-                    <PFG label={`Precio unitario (${form.moneda||'USD'}) *`}>
-                      <input type="number" className={inp} value={itemForm.precioUnit||''} onChange={e=>setItemForm({...itemForm,precioUnit:e.target.value})} placeholder="0.00"/>
-                    </PFG>
-                    <div className="flex items-end">
-                      {itemForm.cantidad&&itemForm.precioUnit&&(
-                        <div className="w-full bg-slate-900 rounded-xl px-3 py-2.5 text-center">
-                          <p className="text-[9px] text-slate-400">Subtotal</p>
-                          <p className="font-black text-white">{form.moneda||'USD'} {pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit))}</p>
-                        </div>
-                      )}
-                    </div>
+              {/* Campos del ítem — siempre visibles */}
+              <div className="bg-orange-50 border border-orange-100 rounded-lg p-3">
+                <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">
+                  {itemForm.tipo==='MANUAL'?'Datos del ítem':'Completar datos del ítem seleccionado'}
+                </p>
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="col-span-2">
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Descripción *</label>
+                    <input className={`${inp} text-xs py-1.5`} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder="Descripción"/>
                   </div>
-                  <div className="flex justify-end mt-3">
-                    <PBg onClick={agregarItem}><Plus size={14}/> Agregar a la OC</PBg>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Categoría</label>
+                    <input className={`${inp} text-xs py-1.5`} value={itemForm.categoria||''} onChange={e=>setItemForm({...itemForm,categoria:e.target.value})}/>
                   </div>
-                </div>
-              )}
-              {itemForm.tipo==='MANUAL'&&!itemForm.desc&&(
-                <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
-                  <div className="grid grid-cols-3 gap-3">
-                    <PFG label="Descripción" full={false}>
-                      <input className={inp} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder="Descripción del ítem"/>
-                    </PFG>
-                    <PFG label="Categoría">
-                      <input className={inp} value={itemForm.categoria||''} onChange={e=>setItemForm({...itemForm,categoria:e.target.value})}/>
-                    </PFG>
-                    <PFG label="Unidad">
-                      <select className={sel} value={itemForm.unidad||'Und'} onChange={e=>setItemForm({...itemForm,unidad:e.target.value})}>
-                        {['Und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
-                      </select>
-                    </PFG>
-                    <PFG label="Cantidad *">
-                      <input type="number" className={inp} value={itemForm.cantidad||''} onChange={e=>setItemForm({...itemForm,cantidad:e.target.value})}/>
-                    </PFG>
-                    <PFG label="Precio unitario *">
-                      <input type="number" className={inp} value={itemForm.precioUnit||''} onChange={e=>setItemForm({...itemForm,precioUnit:e.target.value})}/>
-                    </PFG>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Unidad</label>
+                    <select className={`${sel} text-xs py-1.5`} value={itemForm.unidad||'Und'} onChange={e=>setItemForm({...itemForm,unidad:e.target.value})}>
+                      {['Und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
+                    </select>
                   </div>
-                  <div className="flex justify-end mt-3">
-                    <PBg onClick={agregarItem}><Plus size={14}/> Agregar</PBg>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">IVA</label>
+                    <select className={`${sel} text-xs py-1.5`} value={itemForm.iva||'GRAVADO'} onChange={e=>setItemForm({...itemForm,iva:e.target.value})}>
+                      <option value="GRAVADO">Gravado 16%</option>
+                      <option value="EXENTO">Exento</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Cantidad *</label>
+                    <input type="number" className={`${inp} text-xs py-1.5`} value={itemForm.cantidad||''} onChange={e=>setItemForm({...itemForm,cantidad:e.target.value})} placeholder="0"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Precio unit. ({form.moneda||'USD'}) *</label>
+                    <input type="number" className={`${inp} text-xs py-1.5`} value={itemForm.precioUnit||''} onChange={e=>setItemForm({...itemForm,precioUnit:e.target.value})} placeholder="0.00"/>
+                  </div>
+                  <div className="flex items-end">
+                    {itemForm.cantidad&&itemForm.precioUnit&&(
+                      <div className="w-full bg-slate-900 rounded-lg px-2 py-1.5 text-center">
+                        <p className="text-[8px] text-slate-400">Subtotal</p>
+                        <p className="font-black text-white text-sm">{pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit))}</p>
+                        {hasTasa&&<p className="text-[8px] text-slate-400">Bs. {pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit)*pNum(form.tasa))}</p>}
+                      </div>
+                    )}
                   </div>
                 </div>
-              )}
+                {/* Cuenta contable auto-asignada */}
+                {itemForm.cuentaContableNombre&&(
+                  <div className="mt-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5 flex items-center gap-2">
+                    <span className="text-[9px] font-black text-blue-400 uppercase">Cuenta Contable:</span>
+                    <span className="text-[10px] font-black text-blue-700">{itemForm.cuentaContableNombre}</span>
+                  </div>
+                )}
+                <div className="flex justify-end mt-2">
+                  <PBg sm onClick={agregarItem}><Plus size={12}/> Agregar a la OC</PBg>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -27887,6 +27823,13 @@ ${resumenHtml}
                 onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{empresaTelefono:e.target.value.trim()},{merge:true}); }}
                 className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"
                 placeholder="0261-0000000"/>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Correo Empresa (aparece en OC y documentos)</label>
+              <input type="email" defaultValue={settings.empresaEmail||''}
+                onBlur={async e=>{ await setDoc(getDocRef('settings','general'),{empresaEmail:e.target.value.trim()},{merge:true}); }}
+                className="w-full border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-400"
+                placeholder="info@empresa.com"/>
             </div>
             <div className="md:col-span-2">
               <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Dirección Fiscal</label>
