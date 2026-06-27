@@ -15,6 +15,12 @@ import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDo
 import BancoApp from './BancoApp';
 
 // ══ PROCURA MODULE (incrustado) ══
+// Utilidades propias del módulo Procura
+const pFmt = (n) => new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0);
+const pNum = (v) => parseFloat(String(v||0).replace(/[^0-9.-]/g,''))||0;
+const pDate = (s) => { if(!s)return'—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; };
+const pId = () => Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,5).toUpperCase();
+const getMesActual = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
 // ── CSS para PDF / Impresión ──────────────────────────────────────────
 const PDF_CSS = `
   body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px}
@@ -129,11 +135,11 @@ const PSidebarLayout = ({navGroups,activeId,onNav,children,headerContent,onBack}
   return (
     <div className="flex h-screen overflow-hidden w-full">
       {/* Sidebar */}
-      <aside className="w-64 flex flex-col h-screen flex-shrink-0" style={{background:DARK}}>
+      <aside className="w-64 flex flex-col h-screen flex-shrink-0" style={{background:'#0b1120'}}>
         {/* Brand */}
         <div className="flex-shrink-0 px-5 pt-5 pb-4">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg" style={{background:`linear-gradient(135deg,${ORANGE},${ORANGE}99)`}}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg" style={{background:`linear-gradient(135deg,${'#f97316'},${'#f97316'}99)`}}>
               <ShoppingCart size={16} className="text-white"/>
             </div>
             <div>
@@ -158,10 +164,10 @@ const PSidebarLayout = ({navGroups,activeId,onNav,children,headerContent,onBack}
                 return (
                   <button key={item.id} onClick={()=>onNav(item.id)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all mb-0.5 ${active?'text-white':'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                    style={active?{background:`linear-gradient(135deg,${gc||ORANGE}22,${gc||ORANGE}11)`,border:`1px solid ${gc||ORANGE}44`}:{}}>
-                    <item.icon size={15} style={active?{color:gc||ORANGE}:{}}/>
+                    style={active?{background:`linear-gradient(135deg,${gc||'#f97316'}22,${gc||'#f97316'}11)`,border:`1px solid ${gc||'#f97316'}44`}:{}}>
+                    <item.icon size={15} style={active?{color:gc||'#f97316'}:{}}/>
                     <span className={`text-[11px] font-black uppercase tracking-wide ${active?'text-white':'text-slate-400'}`}>{item.label}</span>
-                    {item.badge&&<span className="ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-full" style={{background:`${gc||ORANGE}22`,color:gc||ORANGE}}>{item.badge}</span>}
+                    {item.badge&&<span className="ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-full" style={{background:`${gc||'#f97316'}22`,color:gc||'#f97316'}}>{item.badge}</span>}
                   </button>
                 );
               })}
@@ -213,10 +219,10 @@ const DashboardView = ({proveedores,ordenesCompra,facturasCompra,pagosCxP}) => {
   return (
     <div className="space-y-6">
       {/* Hero KPI */}
-      <div className="rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between" style={{background:CARD,color:'white'}}>
+      <div className="rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between" style={{background:'#111827',color:'white'}}>
         <div>
           <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Total Cuentas por Pagar</p>
-          <h2 className="text-4xl font-black mt-1 tracking-tight" style={{color:ORANGE}}>${pFmt(totalCxP)}</h2>
+          <h2 className="text-4xl font-black mt-1 tracking-tight" style={{color:'#f97316'}}>${pFmt(totalCxP)}</h2>
         </div>
         <div className="mt-4 flex gap-6">
           <div><p className="text-[10px] text-slate-400">OC Abiertas</p><p className="font-black text-white text-lg">{ocAbiertas}</p></div>
@@ -497,7 +503,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog}) => {
           {statusList.map(s=>(
             <button key={s} onClick={()=>setFiltStatus(s)}
               className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white':' text-slate-500 hover:bg-slate-100'}`}
-              style={filtStatus===s?{background:CARD}:{background:'white',border:'1.5px solid #e2e8f0'}}>
+              style={filtStatus===s?{background:'#111827'}:{background:'white',border:'1.5px solid #e2e8f0'}}>
               {s}
             </button>
           ))}
@@ -837,7 +843,7 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
       const saldoActual=pNum(factSel.saldoPendiente||factSel.total);
       const nuevoSaldo=Math.max(0,saldoActual-monto);
       const nuevoStatus=nuevoSaldo<0.01?'PAGADA':'PARCIAL';
-      const batch=writeBatch(_procuraDB);
+      const batch=writeBatch(db);
       const pagoId=`PAGO-${pId()}`;
       batch.set(getDocRef('procura_pagos_cxp',pagoId),{
         id:pagoId,facturaId:factSel.id,nroFactura:factSel.nroFactura,
@@ -878,9 +884,9 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
     <div>
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4 mb-5">
-        <div className="rounded-2xl p-5 text-white shadow-xl" style={{background:CARD}}>
+        <div className="rounded-2xl p-5 text-white shadow-xl" style={{background:'#111827'}}>
           <p className="text-[9px] font-black uppercase text-slate-400">Total por pagar</p>
-          <p className="font-black text-3xl mt-1" style={{color:ORANGE}}>${pFmt(totalPendiente)}</p>
+          <p className="font-black text-3xl mt-1" style={{color:'#f97316'}}>${pFmt(totalPendiente)}</p>
           <p className="text-[10px] text-slate-400 mt-2">{filtradas.length} facturas pendientes</p>
         </div>
         <div className="bg-red-50 rounded-2xl p-5 border border-red-100">
@@ -1116,7 +1122,7 @@ const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra
       {provSel&&prov&&(
         <div className="space-y-5">
           {/* Header proveedor */}
-          <div className="rounded-2xl p-6 text-white shadow-xl" style={{background:CARD}}>
+          <div className="rounded-2xl p-6 text-white shadow-xl" style={{background:'#111827'}}>
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Estado de Cuenta</p>
@@ -1181,7 +1187,7 @@ const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra
                       <PTd right mono><span className="font-black text-emerald-600">${pFmt(p.monto)}</span></PTd>
                     </tr>
                   ))}
-                  <tr style={{background:CARD}}>
+                  <tr style={{background:'#111827'}}>
                     <td colSpan={5} className="px-4 py-2 text-right text-[10px] font-black text-slate-400 uppercase">Saldo {saldo>0?'por pagar':'a favor'}</td>
                     <td className={`px-4 py-2 text-right font-black ${saldo>0?'text-orange-400':'text-emerald-400'}`}>${pFmt(Math.abs(saldo))}</td>
                   </tr>
@@ -1222,7 +1228,7 @@ function ProcuraApp({fbUser,onBack}) {
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
 
   const navGroups=[
-    {group:'Principal',color:ORANGE,items:[
+    {group:'Principal',color:'#f97316',items:[
       {id:'dashboard',label:'Dashboard',icon:LayoutDashboard},
     ]},
     {group:'Gestión',color:'#3b82f6',items:[
@@ -1263,7 +1269,7 @@ function ProcuraApp({fbUser,onBack}) {
       {dialog&&(
         <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:`3px solid ${ORANGE}`}}>
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:`3px solid ${'#f97316'}`}}>
               <h3 className="font-black text-white text-sm uppercase tracking-widest">{dialog.title}</h3>
             </div>
             <div className="p-6">
@@ -1690,6 +1696,7 @@ function App() {
   const [selectedPortal, setSelectedPortal] = useState(null); // 'produccion' | 'administracion' | 'finanzas'
   const [portalDenied, setPortalDenied] = useState(''); // aviso "no posee permiso" en pantalla de portales
   const [ventasView, setVentasView] = useState('facturacion');
+  const [formulasView, setFormulasView] = useState('formulas');
   const [pvFilter, setPvFilter] = useState('general');
   const [pvAlmacenFilter, setPvAlmacenFilter] = useState('TODOS');
   const [pvCategoriaFilter, setPvCategoriaFilter] = useState('TODAS');
