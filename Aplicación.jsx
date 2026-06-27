@@ -314,6 +314,8 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     contacto:'',categoria:'INSUMOS',moneda:'USD',
     condPago:'',tipoContribuyente:'ORDINARIO',pctRetencion:'75',
     cuentaContableId:'',cuentaContableNombre:'',
+    pais:'Venezuela',ciudad:'',estadoProv:'',
+    fechaCreacion:getTodayDate(),
     activo:true,observaciones:''
   });
 
@@ -333,41 +335,75 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
   }});
 
   const exportPDF = () => {
-    let html=pdfOpen('DIRECTORIO DE PROVEEDORES',`Total: ${filtrados.length} proveedores · Generado: ${new Date().toLocaleDateString('es-VE')}`);
-    html+=`<table><thead><tr>
-      <th>#</th><th>Razón Social</th><th>RIF</th><th>Tipo</th><th>Ret.IVA</th>
-      <th>Categoría</th><th>Contacto</th><th>Teléfono</th><th>Email</th>
-      <th>Moneda</th><th>Cond.Pago</th><th>Dirección</th>
-      <th>Cuenta Contable</th><th>Observaciones</th><th>Fecha Registro</th><th>Estado</th>
-    </tr></thead><tbody>`;
+    const CSS = `
+      body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px}
+      .lh-header{background:#000;color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
+      .lh-title{text-align:center;padding:12px 24px;border-bottom:2px solid #f97316}
+      .lh-title h2{font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin:0;color:#000}
+      .lh-title p{font-size:9px;color:#64748b;margin:3px 0 0;letter-spacing:1px;text-transform:uppercase}
+      .body{padding:16px 24px}
+      .card{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid}
+      .card-header{background:#0f172a;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-left:4px solid #f97316}
+      .card-header h3{margin:0;font-size:13px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:1px}
+      .card-header span{font-size:10px;color:#94a3b8;font-weight:700}
+      .card-body{padding:12px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 16px;background:#fff}
+      .field label{font-size:7.5px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;display:block;margin-bottom:2px}
+      .field p{font-size:10px;font-weight:700;color:#1e293b;margin:0;border-bottom:1px solid #f1f5f9;padding-bottom:4px}
+      .field.full{grid-column:1/-1}
+      .field.half{grid-column:span 1}
+      .badge-esp{background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
+      .badge-ord{background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
+      .badge-act{background:#dcfce7;color:#166534;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
+      .badge-ina{background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
+      .summary{background:#0f172a;color:#f97316;padding:10px 16px;font-size:10px;font-weight:900;text-align:center;margin-top:16px;border-radius:6px}
+      .lh-footer{margin-top:20px;border-top:2px solid #f97316;padding:10px 24px;display:flex;justify-content:space-between;font-size:8px;color:#94a3b8}
+      @media print{@page{margin:1cm}.card{page-break-inside:avoid}}
+    `;
+    let html=`<html><head><meta charset="utf-8"><title>Directorio de Proveedores</title><style>${CSS}</style></head><body>
+    <div class="lh-header">
+      <div style="font-size:20px;font-weight:900">Supply G&B</div>
+      <div style="text-align:right;font-size:9px;color:#9ca3af"><strong style="color:#f97316;font-size:11px;display:block">SERVICIOS JIRET G&B, C.A.</strong>RIF: J-412309374</div>
+    </div>
+    <div class="lh-title"><h2>Directorio de Proveedores</h2><p>${filtrados.length} proveedores · Generado: ${new Date().toLocaleDateString('es-VE')}</p></div>
+    <div class="body">`;
+
     filtrados.forEach((p,i)=>{
-      const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
-      const badge=p.activo!==false?'<span class="badge-apr">Activo</span>':'<span class="badge-pend">Inactivo</span>';
-      const ret=p.tipoContribuyente==='ESPECIAL'?`${p.pctRetencion||'75'}%`:'—';
-      html+=`<tr>
-        <td>${i+1}</td>
-        <td><strong>${p.nombre||'—'}</strong></td>
-        <td>${p.rif||'—'}</td>
-        <td>${p.tipoContribuyente||'ORDINARIO'}</td>
-        <td style="text-align:center">${ret}</td>
-        <td>${p.categoria||'—'}</td>
-        <td>${p.contacto||'—'}</td>
-        <td>${p.telefono||'—'}</td>
-        <td>${p.email||'—'}</td>
-        <td style="text-align:center">${p.moneda||'USD'}</td>
-        <td>${p.condPago||'—'}</td>
-        <td style="font-size:8px">${p.direccion||'—'}</td>
-        <td style="font-size:8px">${p.cuentaContableNombre||'—'}</td>
-        <td style="font-size:8px">${p.observaciones||'—'}</td>
-        <td>${fechaReg}</td>
-        <td>${badge}</td>
-      </tr>`;
+      const fechaReg = p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
+      const tipoBadge = p.tipoContribuyente==='ESPECIAL'?`<span class="badge-esp">Especial · Ret. ${p.pctRetencion||'75'}% IVA</span>`:`<span class="badge-ord">Ordinario</span>`;
+      const statBadge = p.activo!==false?`<span class="badge-act">Activo</span>`:`<span class="badge-ina">Inactivo</span>`;
+      const ubicacion = [p.ciudad,p.estadoProv,p.pais||'Venezuela'].filter(Boolean).join(', ');
+      html+=`
+      <div class="card">
+        <div class="card-header">
+          <h3>${i+1}. ${p.nombre||'—'}</h3>
+          <span>${p.rif||'—'}</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Tipo contribuyente</label><p>${tipoBadge}</p></div>
+          <div class="field"><label>Categoría</label><p>${p.categoria||'—'}</p></div>
+          <div class="field"><label>Estado</label><p>${statBadge}</p></div>
+          <div class="field"><label>Persona de contacto</label><p>${p.contacto||'—'}</p></div>
+          <div class="field"><label>Teléfono</label><p>${p.telefono||'—'}</p></div>
+          <div class="field"><label>Email</label><p>${p.email||'—'}</p></div>
+          <div class="field"><label>País</label><p>${p.pais||'Venezuela'}</p></div>
+          <div class="field"><label>Ciudad</label><p>${p.ciudad||'—'}</p></div>
+          <div class="field"><label>Estado / Provincia</label><p>${p.estadoProv||'—'}</p></div>
+          <div class="field full"><label>Dirección fiscal</label><p>${p.direccion||'—'}</p></div>
+          <div class="field"><label>Moneda</label><p>${p.moneda||'USD'}</p></div>
+          <div class="field"><label>Condición de pago</label><p>${p.condPago||'—'}</p></div>
+          <div class="field"><label>Fecha de registro</label><p>${fechaReg}</p></div>
+          <div class="field full"><label>Cuenta contable</label><p>${p.cuentaContableNombre||'—'}</p></div>
+          ${p.observaciones?`<div class="field full"><label>Observaciones</label><p>${p.observaciones}</p></div>`:''}
+        </div>
+      </div>`;
     });
+
     const activos=filtrados.filter(p=>p.activo!==false).length;
     const especiales=filtrados.filter(p=>p.tipoContribuyente==='ESPECIAL').length;
-    html+=`<tr class="total-row"><td colspan="16">RESUMEN: ${filtrados.length} proveedores · ${activos} activos · ${especiales} contribuyentes especiales</td></tr>`;
-    html+=`</tbody></table>`;
-    pdfPrint(html+pdfClose(`Directorio de Proveedores · ${new Date().toLocaleDateString('es-VE')}`));
+    html+=`<div class="summary">TOTAL: ${filtrados.length} PROVEEDORES &nbsp;·&nbsp; ${activos} ACTIVOS &nbsp;·&nbsp; ${especiales} CONTRIBUYENTES ESPECIALES</div>`;
+    html+=`</div><div class="lh-footer"><span>SERVICIOS JIRET G&B, C.A. — RIF: J-412309374</span><span>Directorio de Proveedores</span><span>Supply ERP</span></div>
+    <script>window.onload=()=>{window.print();}<\/script></body></html>`;
+    pdfPrint(html);
   };
 
   const exportXLS = async () => {
@@ -383,7 +419,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     aoa.push([`Total: ${filtrados.length} proveedores`,'','','','','','','','','','','','','','','']);
     aoa.push([]);
     // Encabezados
-    aoa.push(['#','Razón Social','RIF','Tipo Contribuyente','% Ret. IVA','Categoría','Persona Contacto','Teléfono','Email','Moneda','Condición Pago','Dirección','Cuenta Contable','Observaciones','Fecha Registro','Estado']);
+    aoa.push(['#','Razón Social','RIF','Tipo Contribuyente','% Ret. IVA','Categoría','Persona Contacto','Teléfono','Email','País','Ciudad','Estado/Prov.','Moneda','Condición Pago','Dirección Fiscal','Cuenta Contable','Observaciones','Fecha Registro','Status']);
     // Datos
     filtrados.forEach((p,i)=>{
       const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
@@ -391,6 +427,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
         i+1, p.nombre||'', p.rif||'', p.tipoContribuyente||'ORDINARIO',
         p.tipoContribuyente==='ESPECIAL'?(p.pctRetencion||'75')+'%':'—',
         p.categoria||'', p.contacto||'', p.telefono||'', p.email||'',
+        p.pais||'Venezuela', p.ciudad||'', p.estadoProv||'',
         p.moneda||'USD', p.condPago||'', p.direccion||'',
         p.cuentaContableNombre||'', p.observaciones||'',
         fechaReg, p.activo!==false?'Activo':'Inactivo'
@@ -400,7 +437,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     aoa.push(['Total proveedores:',filtrados.length,'','Activos:',filtrados.filter(p=>p.activo!==false).length,'','Especiales:',filtrados.filter(p=>p.tipoContribuyente==='ESPECIAL').length]);
 
     const ws=XL.utils.aoa_to_sheet(aoa);
-    ws['!cols']=[{wch:4},{wch:35},{wch:14},{wch:16},{wch:10},{wch:14},{wch:18},{wch:14},{wch:25},{wch:8},{wch:14},{wch:30},{wch:28},{wch:25},{wch:12},{wch:10}];
+    ws['!cols']=[{wch:4},{wch:35},{wch:14},{wch:16},{wch:10},{wch:14},{wch:18},{wch:14},{wch:25},{wch:14},{wch:18},{wch:16},{wch:8},{wch:14},{wch:35},{wch:28},{wch:25},{wch:12},{wch:10}];
     // Estilo membrete (negrita fila 1)
     const wb=XL.utils.book_new();
     XL.utils.book_append_sheet(wb,ws,'Proveedores');
@@ -425,20 +462,22 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead><tr>
-              <PTh>Proveedor</PTh><PTh>RIF</PTh><PTh>Tipo</PTh><PTh>Ret.IVA</PTh><PTh>Categoría</PTh><PTh>Moneda</PTh><PTh>Cond. Pago</PTh><PTh>Cuenta Contable</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
+              <PTh>Proveedor</PTh><PTh>RIF</PTh><PTh>Tipo</PTh><PTh>Ret.IVA</PTh><PTh>Categoría</PTh><PTh>País</PTh><PTh>Ciudad / Estado</PTh><PTh>Moneda</PTh><PTh>Cond. Pago</PTh><PTh>Cuenta Contable</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
             </tr></thead>
             <tbody>
-              {filtrados.length===0?<tr><td colSpan={10} className="py-12"><PEmpty icon={Building2} title="Sin proveedores" desc="Registra tu primer proveedor"/></td></tr>:
+              {filtrados.length===0?<tr><td colSpan={12} className="py-12"><PEmpty icon={Building2} title="Sin proveedores" desc="Registra tu primer proveedor"/></td></tr>:
               filtrados.map(p=>(
                 <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                   <PTd>
                     <div className="font-black text-slate-800 text-xs">{p.nombre||'—'}</div>
-                    <div className="text-[10px] text-slate-400">{p.email||'—'} {p.telefono?`· ${p.telefono}`:''}</div>
+                    <div className="text-[10px] text-slate-400">{p.email||'—'}{p.telefono?` · ${p.telefono}`:''}</div>
                   </PTd>
                   <PTd mono>{p.rif||'—'}</PTd>
                   <PTd><PBadge v={p.tipoContribuyente==='ESPECIAL'?'red':'blue'}>{p.tipoContribuyente||'ORDINARIO'}</PBadge></PTd>
                   <PTd><span className="font-black text-xs">{p.tipoContribuyente==='ESPECIAL'?(p.pctRetencion||'75')+'%':'—'}</span></PTd>
                   <PTd><PBadge v="gray">{p.categoria||'—'}</PBadge></PTd>
+                  <PTd><span className="text-[10px]">{p.pais||'Venezuela'}</span></PTd>
+                  <PTd><span className="text-[10px]">{p.ciudad||'—'}{p.estadoProv?` · ${p.estadoProv}`:''}</span></PTd>
                   <PTd><span className="font-black text-xs">{p.moneda||'USD'}</span></PTd>
                   <PTd>{p.condPago||'—'}</PTd>
                   <PTd><span className="text-[10px] text-slate-500">{p.cuentaContableNombre||'—'}</span></PTd>
@@ -505,28 +544,68 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
                   </PFG>
                 </div>
 
-                {/* COL 2 — Contacto y condiciones */}
+                {/* COL 2 — Contacto, ubicación y condiciones */}
                 <div className="space-y-4">
                   <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest border-b border-orange-100 pb-1">Contacto y condiciones</p>
                   <PFG label="Persona de contacto">
                     <input className={inp} value={form.contacto||''} onChange={e=>setForm({...form,contacto:e.target.value})} placeholder="Nombre del contacto"/>
                   </PFG>
-                  <PFG label="Teléfono">
-                    <input className={inp} value={form.telefono||''} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="0414-0000000"/>
-                  </PFG>
-                  <PFG label="Email">
-                    <input className={inp} type="email" value={form.email||''} onChange={e=>setForm({...form,email:e.target.value})} placeholder="proveedor@email.com"/>
-                  </PFG>
-                  <PFG label="Moneda de facturación">
-                    <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
-                      {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+                  <div className="grid grid-cols-2 gap-3">
+                    <PFG label="Teléfono">
+                      <input className={inp} value={form.telefono||''} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="0414-0000000"/>
+                    </PFG>
+                    <PFG label="Email">
+                      <input className={inp} type="email" value={form.email||''} onChange={e=>setForm({...form,email:e.target.value})} placeholder="proveedor@email.com"/>
+                    </PFG>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <PFG label="Moneda">
+                      <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+                        {['USD','Bs','EUR','COP','BRL','MXN'].map(m=><option key={m}>{m}</option>)}
+                      </select>
+                    </PFG>
+                    <PFG label="Condición de pago">
+                      <input className={inp} value={form.condPago||''} onChange={e=>setForm({...form,condPago:e.target.value})} placeholder="Contado, 30 días..."/>
+                    </PFG>
+                  </div>
+
+                  <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest border-b border-orange-100 pb-1 pt-2">Ubicación</p>
+                  {/* País */}
+                  <PFG label="País">
+                    <select className={sel} value={form.pais||'Venezuela'} onChange={e=>setForm({...form,pais:e.target.value,ciudad:'',estadoProv:''})}>
+                      {['Venezuela','Colombia','Brasil','Perú','Ecuador','Bolivia','Paraguay','Uruguay','Argentina','Chile','México','Panamá','Costa Rica','Guatemala','Honduras','El Salvador','Nicaragua','República Dominicana','Cuba','Puerto Rico','Estados Unidos','España','Portugal','Italia','Alemania','Francia','China','India','Turquía','Otro'].map(p=><option key={p}>{p}</option>)}
                     </select>
                   </PFG>
-                  <PFG label="Condición de pago (días o texto libre)">
-                    <input className={inp} value={form.condPago||''} onChange={e=>setForm({...form,condPago:e.target.value})} placeholder="Ej: 30 días, Contado, 45 días..."/>
-                  </PFG>
-                  <PFG label="Dirección">
-                    <textarea className={`${inp} resize-none`} rows={2} value={form.direccion||''} onChange={e=>setForm({...form,direccion:e.target.value})} placeholder="Dirección fiscal"/>
+                  {/* Ciudad dependiente del país */}
+                  {(form.pais==='Venezuela'||!form.pais)?(
+                    <div className="grid grid-cols-2 gap-3">
+                      <PFG label="Ciudad">
+                        <select className={sel} value={form.ciudad||''} onChange={e=>{
+                          const ciudadesVE=[['Acarigua','Portuguesa'],['Barinas','Barinas'],['Barcelona','Anzoátegui'],['Barquisimeto','Lara'],['Cabimas','Zulia'],['Cabudare','Lara'],['Cagua','Aragua'],['Calabozo','Guárico'],['Caracas','Distrito Capital'],['Carúpano','Sucre'],['Charallave','Miranda'],['Ciudad Guayana','Bolívar'],['Ciudad Ojeda','Zulia'],['Coro','Falcón'],['Cumaná','Sucre'],['Cúa','Miranda'],['El Tigre','Anzoátegui'],['El Vigía','Mérida'],['Guacara','Carabobo'],['Guanare','Portuguesa'],['Guarenas','Miranda'],['Guatire','Miranda'],['La Guaira','La Guaira'],['La Victoria','Aragua'],['Lagunillas','Zulia'],['Maiquetía','La Guaira'],['Maracaibo','Zulia'],['Maracay','Aragua'],['Maturín','Monagas'],['Mérida','Mérida'],['Naguanagua','Carabobo'],['Ocumare del Tuy','Miranda'],['Porlamar','Nueva Esparta'],['Puerto Cabello','Carabobo'],['Puerto La Cruz','Anzoátegui'],['Puerto Ordaz','Bolívar'],['Punto Fijo','Falcón'],['San Cristóbal','Táchira'],['San Francisco','Zulia'],['Trujillo','Trujillo'],['Turmero','Aragua'],['Valencia','Carabobo'],['Valera','Trujillo'],['Villa de Cura','Aragua']];
+                          const found=ciudadesVE.find(([c])=>c===e.target.value);
+                          setForm({...form,ciudad:e.target.value,estadoProv:found?found[1]:''});
+                        }}>
+                          <option value="">— Seleccionar —</option>
+                          {[['Acarigua','Portuguesa'],['Barinas','Barinas'],['Barcelona','Anzoátegui'],['Barquisimeto','Lara'],['Cabimas','Zulia'],['Cabudare','Lara'],['Cagua','Aragua'],['Calabozo','Guárico'],['Caracas','Distrito Capital'],['Carúpano','Sucre'],['Charallave','Miranda'],['Ciudad Guayana','Bolívar'],['Ciudad Ojeda','Zulia'],['Coro','Falcón'],['Cumaná','Sucre'],['Cúa','Miranda'],['El Tigre','Anzoátegui'],['El Vigía','Mérida'],['Guacara','Carabobo'],['Guanare','Portuguesa'],['Guarenas','Miranda'],['Guatire','Miranda'],['La Guaira','La Guaira'],['La Victoria','Aragua'],['Lagunillas','Zulia'],['Maiquetía','La Guaira'],['Maracaibo','Zulia'],['Maracay','Aragua'],['Maturín','Monagas'],['Mérida','Mérida'],['Naguanagua','Carabobo'],['Ocumare del Tuy','Miranda'],['Porlamar','Nueva Esparta'],['Puerto Cabello','Carabobo'],['Puerto La Cruz','Anzoátegui'],['Puerto Ordaz','Bolívar'],['Punto Fijo','Falcón'],['San Cristóbal','Táchira'],['San Francisco','Zulia'],['Trujillo','Trujillo'],['Turmero','Aragua'],['Valencia','Carabobo'],['Valera','Trujillo'],['Villa de Cura','Aragua']].map(([c])=><option key={c}>{c}</option>)}
+                        </select>
+                      </PFG>
+                      <PFG label="Estado">
+                        <input className={`${inp} bg-slate-50`} readOnly value={form.estadoProv||''} placeholder="Auto al elegir ciudad"/>
+                      </PFG>
+                    </div>
+                  ):(
+                    <div className="grid grid-cols-2 gap-3">
+                      <PFG label="Ciudad">
+                        <input className={inp} value={form.ciudad||''} onChange={e=>setForm({...form,ciudad:e.target.value})} placeholder="Ciudad"/>
+                      </PFG>
+                      <PFG label="Estado / Provincia">
+                        <input className={inp} value={form.estadoProv||''} onChange={e=>setForm({...form,estadoProv:e.target.value})} placeholder="Estado o provincia"/>
+                      </PFG>
+                    </div>
+                  )}
+                  {/* Dirección amplia */}
+                  <PFG label="Dirección fiscal completa">
+                    <textarea className={`${inp} resize-none`} rows={3} value={form.direccion||''} onChange={e=>setForm({...form,direccion:e.target.value})} placeholder="Calle, Avenida, Edificio, Piso, Local, Urbanización, Municipio..."/>
                   </PFG>
                 </div>
 
@@ -549,8 +628,11 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
                       {form.cuentaContableNombre}
                     </div>
                   )}
-                  <PFG label="Observaciones">
-                    <textarea className={`${inp} resize-none`} rows={4} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Notas adicionales sobre este proveedor..."/>
+                  <PFG label="Fecha de registro">
+                    <input type="date" className={inp} value={form.fechaCreacion||getTodayDate()} onChange={e=>setForm({...form,fechaCreacion:e.target.value})}/>
+                  </PFG>
+                  <PFG label="Observaciones (opcional)">
+                    <textarea className={`${inp} resize-none`} rows={3} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Notas adicionales..."/>
                   </PFG>
 
                   {/* Resumen si es especial */}
