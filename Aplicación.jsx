@@ -336,74 +336,134 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
 
   const exportPDF = () => {
     const CSS = `
-      body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px}
-      .lh-header{background:#000;color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
-      .lh-title{text-align:center;padding:12px 24px;border-bottom:2px solid #f97316}
-      .lh-title h2{font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin:0;color:#000}
-      .lh-title p{font-size:9px;color:#64748b;margin:3px 0 0;letter-spacing:1px;text-transform:uppercase}
-      .body{padding:16px 24px}
-      .card{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid}
-      .card-header{background:#0f172a;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-left:4px solid #f97316}
-      .card-header h3{margin:0;font-size:13px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:1px}
-      .card-header span{font-size:10px;color:#94a3b8;font-weight:700}
-      .card-body{padding:12px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 16px;background:#fff}
-      .field label{font-size:7.5px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;display:block;margin-bottom:2px}
-      .field p{font-size:10px;font-weight:700;color:#1e293b;margin:0;border-bottom:1px solid #f1f5f9;padding-bottom:4px}
-      .field.full{grid-column:1/-1}
-      .field.half{grid-column:span 1}
-      .badge-esp{background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
-      .badge-ord{background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
-      .badge-act{background:#dcfce7;color:#166534;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
-      .badge-ina{background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900}
-      .summary{background:#0f172a;color:#f97316;padding:10px 16px;font-size:10px;font-weight:900;text-align:center;margin-top:16px;border-radius:6px}
-      .lh-footer{margin-top:20px;border-top:2px solid #f97316;padding:10px 24px;display:flex;justify-content:space-between;font-size:8px;color:#94a3b8}
-      @media print{@page{margin:1cm}.card{page-break-inside:avoid}}
+      @page{size:A4 landscape;margin:1cm}
+      body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:8px}
+      .header{background:#000;color:#fff;padding:10px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #f97316}
+      .header .brand{font-size:16px;font-weight:900}
+      .header .info{text-align:right;font-size:8px;color:#9ca3af}
+      .header .info strong{color:#f97316;font-size:10px;display:block}
+      .title{text-align:center;padding:8px 18px;border-bottom:2px solid #f97316}
+      .title h2{font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin:0}
+      .title p{font-size:8px;color:#64748b;margin:2px 0 0;text-transform:uppercase;letter-spacing:1px}
+      .body{padding:10px 18px}
+      table{width:100%;border-collapse:collapse;margin-top:6px}
+      th{background:#0f172a;color:#f97316;border:1px solid #374151;padding:5px 6px;text-align:left;font-size:7px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+      td{border:1px solid #e2e8f0;padding:4px 6px;font-size:7.5px;vertical-align:top}
+      tr:nth-child(even) td{background:#f8fafc}
+      .badge-esp{background:#fee2e2;color:#dc2626;padding:1px 5px;border-radius:10px;font-size:7px;font-weight:900;white-space:nowrap}
+      .badge-ord{background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:10px;font-size:7px;font-weight:900;white-space:nowrap}
+      .badge-act{background:#dcfce7;color:#166534;padding:1px 5px;border-radius:10px;font-size:7px;font-weight:900}
+      .badge-ina{background:#f1f5f9;color:#64748b;padding:1px 5px;border-radius:10px;font-size:7px;font-weight:900}
+      .total-row td{font-weight:900;background:#0f172a!important;color:#f97316;border-color:#374151;font-size:8px}
+      .footer{margin-top:12px;border-top:2px solid #f97316;padding:6px 18px;display:flex;justify-content:space-between;font-size:7px;color:#94a3b8}
+      @media print{@page{size:A4 landscape;margin:1cm}}
     `;
     let html=`<html><head><meta charset="utf-8"><title>Directorio de Proveedores</title><style>${CSS}</style></head><body>
-    <div class="lh-header">
-      <div style="font-size:20px;font-weight:900">Supply G&B</div>
-      <div style="text-align:right;font-size:9px;color:#9ca3af"><strong style="color:#f97316;font-size:11px;display:block">SERVICIOS JIRET G&B, C.A.</strong>RIF: J-412309374</div>
+    <div class="header">
+      <div class="brand">Supply G&B</div>
+      <div class="info"><strong>SERVICIOS JIRET G&B, C.A.</strong>RIF: J-412309374</div>
     </div>
-    <div class="lh-title"><h2>Directorio de Proveedores</h2><p>${filtrados.length} proveedores · Generado: ${new Date().toLocaleDateString('es-VE')}</p></div>
-    <div class="body">`;
-
+    <div class="title"><h2>Directorio de Proveedores</h2><p>${filtrados.length} proveedores · Generado: ${new Date().toLocaleDateString('es-VE')}</p></div>
+    <div class="body">
+    <table><thead><tr>
+      <th>#</th>
+      <th>Razón Social</th>
+      <th>RIF</th>
+      <th>Tipo</th>
+      <th>Ret.IVA</th>
+      <th>Categoría</th>
+      <th>Contacto</th>
+      <th>Teléfono</th>
+      <th>Email</th>
+      <th>País</th>
+      <th>Ciudad</th>
+      <th>Estado/Prov.</th>
+      <th>Dirección Fiscal</th>
+      <th>Moneda</th>
+      <th>Cond.Pago</th>
+      <th>Cuenta Contable</th>
+      <th>F.Registro</th>
+      <th>Status</th>
+    </tr></thead><tbody>`;
     filtrados.forEach((p,i)=>{
-      const fechaReg = p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
-      const tipoBadge = p.tipoContribuyente==='ESPECIAL'?`<span class="badge-esp">Especial · Ret. ${p.pctRetencion||'75'}% IVA</span>`:`<span class="badge-ord">Ordinario</span>`;
-      const statBadge = p.activo!==false?`<span class="badge-act">Activo</span>`:`<span class="badge-ina">Inactivo</span>`;
-      const ubicacion = [p.ciudad,p.estadoProv,p.pais||'Venezuela'].filter(Boolean).join(', ');
-      html+=`
-      <div class="card">
-        <div class="card-header">
-          <h3>${i+1}. ${p.nombre||'—'}</h3>
-          <span>${p.rif||'—'}</span>
-        </div>
-        <div class="card-body">
-          <div class="field"><label>Tipo contribuyente</label><p>${tipoBadge}</p></div>
-          <div class="field"><label>Categoría</label><p>${p.categoria||'—'}</p></div>
-          <div class="field"><label>Estado</label><p>${statBadge}</p></div>
-          <div class="field"><label>Persona de contacto</label><p>${p.contacto||'—'}</p></div>
-          <div class="field"><label>Teléfono</label><p>${p.telefono||'—'}</p></div>
-          <div class="field"><label>Email</label><p>${p.email||'—'}</p></div>
-          <div class="field"><label>País</label><p>${p.pais||'Venezuela'}</p></div>
-          <div class="field"><label>Ciudad</label><p>${p.ciudad||'—'}</p></div>
-          <div class="field"><label>Estado / Provincia</label><p>${p.estadoProv||'—'}</p></div>
-          <div class="field full"><label>Dirección fiscal</label><p>${p.direccion||'—'}</p></div>
-          <div class="field"><label>Moneda</label><p>${p.moneda||'USD'}</p></div>
-          <div class="field"><label>Condición de pago</label><p>${p.condPago||'—'}</p></div>
-          <div class="field"><label>Fecha de registro</label><p>${fechaReg}</p></div>
-          <div class="field full"><label>Cuenta contable</label><p>${p.cuentaContableNombre||'—'}</p></div>
-          ${p.observaciones?`<div class="field full"><label>Observaciones</label><p>${p.observaciones}</p></div>`:''}
-        </div>
-      </div>`;
+      const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
+      const tipoBadge=p.tipoContribuyente==='ESPECIAL'
+        ?`<span class="badge-esp">Especial</span>`
+        :`<span class="badge-ord">Ordinario</span>`;
+      const ret=p.tipoContribuyente==='ESPECIAL'?`${p.pctRetencion||'75'}%`:'—';
+      const statBadge=p.activo!==false
+        ?`<span class="badge-act">Activo</span>`
+        :`<span class="badge-ina">Inactivo</span>`;
+      html+=`<tr>
+        <td style="text-align:center;font-weight:900">${i+1}</td>
+        <td><strong>${p.nombre||'—'}</strong></td>
+        <td style="font-family:monospace">${p.rif||'—'}</td>
+        <td>${tipoBadge}</td>
+        <td style="text-align:center;font-weight:900">${ret}</td>
+        <td>${p.categoria||'—'}</td>
+        <td>${p.contacto||'—'}</td>
+        <td>${p.telefono||'—'}</td>
+        <td>${p.email||'—'}</td>
+        <td>${p.pais||'Venezuela'}</td>
+        <td>${p.ciudad||'—'}</td>
+        <td>${p.estadoProv||'—'}</td>
+        <td style="max-width:120px;word-break:break-word">${p.direccion||'—'}</td>
+        <td style="text-align:center;font-weight:900">${p.moneda||'USD'}</td>
+        <td>${p.condPago||'—'}</td>
+        <td style="font-size:7px">${p.cuentaContableNombre||'—'}</td>
+        <td>${fechaReg}</td>
+        <td>${statBadge}</td>
+      </tr>`;
     });
-
     const activos=filtrados.filter(p=>p.activo!==false).length;
     const especiales=filtrados.filter(p=>p.tipoContribuyente==='ESPECIAL').length;
-    html+=`<div class="summary">TOTAL: ${filtrados.length} PROVEEDORES &nbsp;·&nbsp; ${activos} ACTIVOS &nbsp;·&nbsp; ${especiales} CONTRIBUYENTES ESPECIALES</div>`;
-    html+=`</div><div class="lh-footer"><span>SERVICIOS JIRET G&B, C.A. — RIF: J-412309374</span><span>Directorio de Proveedores</span><span>Supply ERP</span></div>
+    html+=`<tr class="total-row"><td colspan="18">TOTAL: ${filtrados.length} PROVEEDORES &nbsp;·&nbsp; ${activos} ACTIVOS &nbsp;·&nbsp; ${especiales} CONTRIBUYENTES ESPECIALES</td></tr>`;
+    html+=`</tbody></table></div>
+    <div class="footer"><span>SERVICIOS JIRET G&B, C.A. — RIF: J-412309374</span><span>Directorio de Proveedores</span><span>Supply ERP · ${new Date().toLocaleDateString('es-VE')}</span></div>
     <script>window.onload=()=>{window.print();}<\/script></body></html>`;
     pdfPrint(html);
+  };
+
+  // Ficha individual de un proveedor
+  const fichaProvPDF = (p) => {
+    const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
+    const tipoBadge=p.tipoContribuyente==='ESPECIAL'
+      ?`<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900">ESPECIAL · RET. ${p.pctRetencion||'75'}% IVA</span>`
+      :`<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:900">ORDINARIO</span>`;
+    const css=`body{font-family:Arial,sans-serif;padding:28px;color:#111;font-size:11px}
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:10px;margin-bottom:16px}
+    .brand{font-size:22px;font-weight:900;color:#f97316}.emp{text-align:right;font-size:8px;color:#555}
+    h1{font-size:15px;font-weight:900;text-transform:uppercase;margin:0 0 4px}
+    .rif{display:inline-block;background:#0f172a;color:#f97316;padding:3px 12px;border-radius:20px;font-size:10px;font-weight:900;margin-bottom:14px}
+    .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px 18px;margin-bottom:12px}
+    .f label{font-size:7.5px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;display:block;margin-bottom:2px}
+    .f p{font-size:11px;font-weight:700;color:#111;padding-bottom:5px;border-bottom:1px solid #eee;margin:0}
+    .f.full{grid-column:1/-1}.footer{margin-top:20px;padding-top:8px;border-top:1px solid #eee;font-size:7px;color:#aaa;text-align:center}
+    @media print{body{padding:18px}@page{margin:1cm}}`;
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>
+    <div class="hdr"><div class="brand">G&B</div><div class="emp"><strong>SERVICIOS JIRET G&amp;B, C.A.</strong><br>RIF: J-412309374</div></div>
+    <h1>${p.nombre||'—'}</h1>
+    <div class="rif">${p.rif||'—'}</div>
+    <div class="grid">
+      <div class="f"><label>Tipo contribuyente</label><p>${tipoBadge}</p></div>
+      <div class="f"><label>Categoría</label><p>${p.categoria||'—'}</p></div>
+      <div class="f"><label>Status</label><p>${p.activo!==false?'✅ Activo':'⛔ Inactivo'}</p></div>
+      <div class="f"><label>Persona de contacto</label><p>${p.contacto||'—'}</p></div>
+      <div class="f"><label>Teléfono</label><p>${p.telefono||'—'}</p></div>
+      <div class="f"><label>Email</label><p>${p.email||'—'}</p></div>
+      <div class="f"><label>País</label><p>${p.pais||'Venezuela'}</p></div>
+      <div class="f"><label>Ciudad</label><p>${p.ciudad||'—'}</p></div>
+      <div class="f"><label>Estado / Provincia</label><p>${p.estadoProv||'—'}</p></div>
+      <div class="f full"><label>Dirección fiscal</label><p>${p.direccion||'—'}</p></div>
+      <div class="f"><label>Moneda</label><p>${p.moneda||'USD'}</p></div>
+      <div class="f"><label>Condición de pago</label><p>${p.condPago||'—'}</p></div>
+      <div class="f"><label>Fecha de registro</label><p>${fechaReg}</p></div>
+      <div class="f full"><label>Cuenta contable</label><p>${p.cuentaContableNombre||'—'}</p></div>
+      ${p.observaciones?`<div class="f full"><label>Observaciones</label><p>${p.observaciones}</p></div>`:''}
+    </div>
+    <div class="footer">SERVICIOS JIRET G&amp;B, C.A. — RIF: J-412309374 · Generado: ${new Date().toLocaleDateString('es-VE')} · Supply ERP</div>
+    <script>window.onload=()=>{window.print();}<\/script></body></html>`;
+    const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
   };
 
   const exportXLS = async () => {
@@ -419,7 +479,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     aoa.push([`Total: ${filtrados.length} proveedores`,'','','','','','','','','','','','','','','']);
     aoa.push([]);
     // Encabezados
-    aoa.push(['#','Razón Social','RIF','Tipo Contribuyente','% Ret. IVA','Categoría','Persona Contacto','Teléfono','Email','País','Ciudad','Estado/Prov.','Moneda','Condición Pago','Dirección Fiscal','Cuenta Contable','Observaciones','Fecha Registro','Status']);
+    aoa.push(['#','Razón Social','RIF','Tipo Contribuyente','% Ret. IVA','Categoría','Persona Contacto','Teléfono','Email','País','Ciudad','Estado/Prov.','Dirección Fiscal','Moneda','Condición Pago','Cuenta Contable','Fecha Registro','Status']);
     // Datos
     filtrados.forEach((p,i)=>{
       const fechaReg=p.fechaCreacion||p.createdAt||(p.updatedAt?new Date(p.updatedAt).toLocaleDateString('es-VE'):'—');
@@ -428,8 +488,8 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
         p.tipoContribuyente==='ESPECIAL'?(p.pctRetencion||'75')+'%':'—',
         p.categoria||'', p.contacto||'', p.telefono||'', p.email||'',
         p.pais||'Venezuela', p.ciudad||'', p.estadoProv||'',
-        p.moneda||'USD', p.condPago||'', p.direccion||'',
-        p.cuentaContableNombre||'', p.observaciones||'',
+        p.direccion||'', p.moneda||'USD', p.condPago||'',
+        p.cuentaContableNombre||'',
         fechaReg, p.activo!==false?'Activo':'Inactivo'
       ]);
     });
@@ -437,7 +497,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     aoa.push(['Total proveedores:',filtrados.length,'','Activos:',filtrados.filter(p=>p.activo!==false).length,'','Especiales:',filtrados.filter(p=>p.tipoContribuyente==='ESPECIAL').length]);
 
     const ws=XL.utils.aoa_to_sheet(aoa);
-    ws['!cols']=[{wch:4},{wch:35},{wch:14},{wch:16},{wch:10},{wch:14},{wch:18},{wch:14},{wch:25},{wch:14},{wch:18},{wch:16},{wch:8},{wch:14},{wch:35},{wch:28},{wch:25},{wch:12},{wch:10}];
+    ws['!cols']=[{wch:4},{wch:35},{wch:14},{wch:16},{wch:10},{wch:14},{wch:18},{wch:14},{wch:25},{wch:14},{wch:18},{wch:16},{wch:35},{wch:8},{wch:14},{wch:28},{wch:12},{wch:10}];
     // Estilo membrete (negrita fila 1)
     const wb=XL.utils.book_new();
     XL.utils.book_append_sheet(wb,ws,'Proveedores');
@@ -483,7 +543,8 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
                   <PTd><span className="text-[10px] text-slate-500">{p.cuentaContableNombre||'—'}</span></PTd>
                   <PTd><PBadge v={p.activo!==false?'green':'gray'}>{p.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
                   <PTd>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1.5">
+                      <PBp sm onClick={()=>fichaProvPDF(p)} title="Ficha PDF"><FileText size={11}/></PBp>
                       <PBp sm onClick={()=>{setForm({...p});setModal('form');}}><Edit size={11}/></PBp>
                       <PBd sm onClick={()=>eliminar(p)}><Trash2 size={11}/></PBd>
                     </div>
@@ -630,9 +691,6 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
                   )}
                   <PFG label="Fecha de registro">
                     <input type="date" className={inp} value={form.fechaCreacion||getTodayDate()} onChange={e=>setForm({...form,fechaCreacion:e.target.value})}/>
-                  </PFG>
-                  <PFG label="Observaciones (opcional)">
-                    <textarea className={`${inp} resize-none`} rows={3} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})} placeholder="Notas adicionales..."/>
                   </PFG>
 
                   {/* Resumen si es especial */}
