@@ -1,4 +1,3 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { 
   LayoutDashboard, Package, Factory, TrendingUp, TrendingDown, AlertTriangle, 
@@ -14,7 +13,1277 @@ import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, d
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
-import ProcuraApp from './ProcuraApp';
+
+// ══ PROCURA MODULE (incrustado) ══
+// ── CSS para PDF / Impresión ──────────────────────────────────────────
+const PDF_CSS = `
+  body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px}
+  .lh-header{background:#000;color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
+  .lh-title{text-align:center;padding:14px 24px;border-bottom:2px solid #f97316}
+  .lh-title h2{font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:2px;margin:0;color:#000}
+  .lh-title p{font-size:9px;color:#64748b;margin:3px 0 0;letter-spacing:1px;text-transform:uppercase}
+  .lh-body{padding:20px 24px}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th{background:#000;color:#f97316;border:1px solid #333;padding:7px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:1px}
+  td{border:1px solid #e2e8f0;padding:5px 10px;font-size:10px}
+  tr:nth-child(even) td{background:#f8fafc}
+  .lh-footer{margin-top:30px;border-top:2px solid #f97316;padding:12px 24px;display:flex;justify-content:space-between;font-size:8px;color:#94a3b8}
+  .badge-pend{background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900}
+  .badge-pag{background:#dcfce7;color:#166534;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900}
+  .badge-apr{background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:900}
+  .total-row td{font-weight:900;background:#000!important;color:#f97316;border-color:#333}
+  @media print{@page{margin:1cm}}
+`;
+const pdfOpen = (titulo, subtitulo='') => `<html><head><meta charset="utf-8"><title>${titulo}</title><style>${PDF_CSS}</style></head><body>
+  <div class="lh-header"><div style="font-size:20px;font-weight:900;">Supply G&B</div>
+  <div style="text-align:right;font-size:9px;color:#9ca3af"><strong style="color:#f97316;font-size:11px;display:block">SERVICIOS JIRET G&B, C.A.</strong>RIF: J-412309374</div></div>
+  <div class="lh-title"><h2>${titulo}</h2><p>${subtitulo||'Generado: '+new Date().toLocaleDateString('es-VE')}</p></div>
+  <div class="lh-body">`;
+const pdfClose = (extra='') => `</div><div class="lh-footer"><span>SERVICIOS JIRET G&B, C.A. — RIF: J-412309374</span><span>${extra}</span><span>Supply ERP · Procura</span></div>
+  <script>window.onload=()=>{window.print();}<\/script></body></html>`;
+const pdfPrint = (html) => { const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();} };
+
+// ── Componentes base ─────────────────────────────────────────────────
+const PBadge = ({children,v='green'}) => {
+  const s={green:'bg-emerald-50 text-emerald-700 border border-emerald-200',red:'bg-red-50 text-red-600 border border-red-200',gold:'bg-amber-50 text-amber-700 border border-amber-200',blue:'bg-blue-50 text-blue-700 border border-blue-200',gray:'bg-slate-100 text-slate-500 border border-slate-200',orange:'bg-orange-50 text-orange-700 border border-orange-200',purple:'bg-purple-50 text-purple-700 border border-purple-200'};
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wide ${s[v]||s.gray}`}>{children}</span>;
+};
+
+const PKPI = ({label,value,sub,accent='green',Icon}) => {
+  const borders={green:'border-t-emerald-500',gold:'border-t-orange-500',blue:'border-t-blue-500',red:'border-t-red-500',purple:'border-t-purple-500',orange:'border-t-orange-400'};
+  const icons={green:'text-emerald-500 bg-emerald-50',gold:'text-orange-500 bg-orange-50',blue:'text-blue-500 bg-blue-50',red:'text-red-500 bg-red-50',purple:'text-purple-500 bg-purple-50',orange:'text-orange-500 bg-orange-50'};
+  return (
+    <div className={`bg-white rounded-2xl border border-slate-100 border-t-4 ${borders[accent]} p-5 shadow-sm`}>
+      <div className="flex items-start justify-between mb-3">
+        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+        {Icon&&<div className={`w-8 h-8 rounded-xl flex items-center justify-center ${icons[accent]}`}><Icon size={14}/></div>}
+      </div>
+      <p className="font-black text-2xl text-slate-900 font-mono leading-none">{value}</p>
+      {sub&&<p className="text-[10px] text-slate-400 mt-2 font-medium">{sub}</p>}
+    </div>
+  );
+};
+
+const PCard = ({title,subtitle,action,children,noPad}) => (
+  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden mb-5">
+    {(title||action)&&(
+      <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
+        <div>{title&&<h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">{title}</h3>}{subtitle&&<p className="text-[10px] text-slate-400 mt-0.5 font-medium">{subtitle}</p>}</div>
+        {action}
+      </div>
+    )}
+    <div className={noPad?'':'p-6'}>{children}</div>
+  </div>
+);
+
+const PModal = ({open,onClose,title,children,footer,wide,xlwide}) => {
+  if(!open)return null;
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{background:'rgba(15,23,42,.88)'}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className={`bg-white w-full ${xlwide?'max-w-[92vw] max-h-[92vh]':wide?'max-w-3xl max-h-[90vh]':'max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl overflow-hidden`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'3px solid #f97316'}}>
+          <h2 className="font-black text-white uppercase tracking-widest text-sm">{title}</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={16} className="text-white"/></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-7">{children}</div>
+        {footer&&<div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">{footer}</div>}
+      </div>
+    </div>
+  );
+};
+
+const PFG = ({label,children,full}) => <div className={full?'col-span-2':''}><label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">{label}</label>{children}</div>;
+const inp = "w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-xs font-semibold outline-none focus:border-orange-500 transition-colors bg-white text-slate-900 placeholder:text-slate-300";
+const sel = "w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-xs font-semibold outline-none focus:border-orange-500 transition-colors bg-white text-slate-900";
+
+const PBp = ({onClick,children,sm,disabled}) => <button disabled={disabled} onClick={onClick} className={`bg-slate-900 text-white font-black uppercase tracking-widest ${sm?'text-[9px] px-3 py-1.5':'text-[10px] px-5 py-2.5'} rounded-xl hover:bg-slate-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50`}>{children}</button>;
+const PBg = ({onClick,children,sm,disabled}) => <button disabled={disabled} onClick={onClick} className={`bg-orange-500 text-white font-black uppercase tracking-widest ${sm?'text-[9px] px-3 py-1.5':'text-[10px] px-5 py-2.5'} rounded-xl hover:bg-orange-600 transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50`}>{children}</button>;
+const PBo = ({onClick,children,sm}) => <button onClick={onClick} className={`border-2 border-slate-200 bg-white text-slate-600 font-black uppercase tracking-widest ${sm?'text-[9px] px-3 py-1.5':'text-[10px] px-5 py-2.5'} rounded-xl hover:bg-slate-50 transition-all flex items-center justify-center gap-2`}>{children}</button>;
+const PBd = ({onClick,children,sm}) => <button onClick={onClick} className={`border-2 border-red-200 bg-white text-red-500 font-black uppercase tracking-widest ${sm?'text-[9px] px-3 py-1.5':'text-[10px] px-5 py-2.5'} rounded-xl hover:bg-red-50 transition-all flex items-center justify-center gap-2`}>{children}</button>;
+
+const PTh = ({children,right}) => <th className={`px-4 py-3 text-[9px] font-black uppercase tracking-widest text-slate-400 border-b-2 border-slate-100 bg-slate-50 ${right?'text-right':'text-left'} whitespace-nowrap`}>{children}</th>;
+const PTd = ({children,right,mono,className=''}) => <td className={`px-4 py-3 text-xs border-b border-slate-50 ${right?'text-right':''} ${mono?'font-mono':'font-medium'} text-slate-700 ${className}`}>{children}</td>;
+
+const PEmpty = ({icon:Icon,title,desc}) => (
+  <div className="flex flex-col items-center justify-center py-14 text-center">
+    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mb-4"><Icon size={28} className="text-slate-300"/></div>
+    <p className="font-black text-slate-700 text-sm uppercase tracking-wide mb-1">{title}</p>
+    <p className="text-[11px] text-slate-400 font-medium max-w-xs">{desc}</p>
+  </div>
+);
+
+// ── Status helpers ────────────────────────────────────────────────────
+const statusOC = (s) => {
+  const map={BORRADOR:{label:'Borrador',v:'gray'},APROBADA:{label:'Aprobada',v:'blue'},ENVIADA:{label:'Enviada',v:'purple'},RECIBIDA:{label:'Recibida',v:'green'},CERRADA:{label:'Cerrada',v:'gold'},ANULADA:{label:'Anulada',v:'red'}};
+  return map[s]||{label:s,v:'gray'};
+};
+
+const statusCxP = (s) => {
+  const map={PENDIENTE:{label:'Pendiente',v:'gold'},PARCIAL:{label:'Pago parcial',v:'blue'},PAGADA:{label:'Pagada',v:'green'},VENCIDA:{label:'Vencida',v:'red'},ANULADA:{label:'Anulada',v:'gray'}};
+  return map[s]||{label:s,v:'gray'};
+};
+
+// ── Sidebar Layout ────────────────────────────────────────────────────
+const PSidebarLayout = ({navGroups,activeId,onNav,children,headerContent,onBack}) => {
+  const activeGroup = navGroups.find(g=>g.items.find(i=>i.id===activeId));
+  return (
+    <div className="flex h-screen overflow-hidden w-full">
+      {/* Sidebar */}
+      <aside className="w-64 flex flex-col h-screen flex-shrink-0" style={{background:DARK}}>
+        {/* Brand */}
+        <div className="flex-shrink-0 px-5 pt-5 pb-4">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg" style={{background:`linear-gradient(135deg,${ORANGE},${ORANGE}99)`}}>
+              <ShoppingCart size={16} className="text-white"/>
+            </div>
+            <div>
+              <p className="font-black text-white text-sm leading-none tracking-wide">Procura</p>
+              <p className="text-[9px] text-slate-500 uppercase tracking-[2px] font-bold mt-0.5">Supply G&B</p>
+            </div>
+          </div>
+          {onBack&&(
+            <button onClick={onBack} className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white hover:bg-white/5 transition-all mt-1">
+              <ArrowLeft size={12}/> Volver al ERP
+            </button>
+          )}
+        </div>
+        <div className="w-full h-px bg-white/5 mb-3"/>
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto px-3 pb-4 space-y-4">
+          {navGroups.map(({group,items,color:gc})=>(
+            <div key={group}>
+              <p className="text-[8px] font-black uppercase tracking-[2px] px-3 mb-2" style={{color:gc||'#64748b'}}>{group}</p>
+              {items.map(item=>{
+                const active=activeId===item.id;
+                return (
+                  <button key={item.id} onClick={()=>onNav(item.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all mb-0.5 ${active?'text-white':'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                    style={active?{background:`linear-gradient(135deg,${gc||ORANGE}22,${gc||ORANGE}11)`,border:`1px solid ${gc||ORANGE}44`}:{}}>
+                    <item.icon size={15} style={active?{color:gc||ORANGE}:{}}/>
+                    <span className={`text-[11px] font-black uppercase tracking-wide ${active?'text-white':'text-slate-400'}`}>{item.label}</span>
+                    {item.badge&&<span className="ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-full" style={{background:`${gc||ORANGE}22`,color:gc||ORANGE}}>{item.badge}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
+        {/* Footer */}
+        <div className="flex-shrink-0 px-4 pb-4">
+          <div className="rounded-xl p-3" style={{background:'#1e293b'}}>
+            <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-0.5">Servicios Jiret G&B</p>
+            <p className="text-[8px] text-slate-600">RIF: J-412309374</p>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* Top bar */}
+        <header className="flex-shrink-0 flex items-center justify-between px-6 py-3 bg-white border-b border-slate-100 shadow-sm">
+          <div>
+            <h1 className="font-black text-slate-800 text-sm uppercase tracking-wide">
+              {navGroups.flatMap(g=>g.items).find(i=>i.id===activeId)?.label||'Panel'}
+            </h1>
+            <p className="text-[9px] text-slate-400 font-medium uppercase tracking-widest">
+              Procura <ChevronRight size={8} className="inline"/> {activeGroup?.group||''}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">{headerContent}</div>
+        </header>
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto p-6 bg-slate-50">{children}</main>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 1: DASHBOARD
+// ══════════════════════════════════════════════════════════════════════
+const DashboardView = ({proveedores,ordenesCompra,facturasCompra,pagosCxP}) => {
+  const totalCxP = facturasCompra.filter(f=>f.status!=='ANULADA').reduce((s,f)=>s+pNum(f.saldoPendiente||f.total||0),0);
+  const ocAbiertas = ordenesCompra.filter(o=>['APROBADA','ENVIADA'].includes(o.status)).length;
+  const facMes = facturasCompra.filter(f=>(f.fecha||'').startsWith(getMesActual())).length;
+  const pagMes = pagosCxP.filter(p=>(p.fecha||'').startsWith(getMesActual())).reduce((s,p)=>s+pNum(p.monto||0),0);
+
+  const ultOC = [...ordenesCompra].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).slice(0,5);
+  const urgentes = facturasCompra.filter(f=>f.status==='PENDIENTE'&&f.fechaVencimiento&&f.fechaVencimiento<getTodayDate()).slice(0,5);
+
+  return (
+    <div className="space-y-6">
+      {/* Hero KPI */}
+      <div className="rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between" style={{background:CARD,color:'white'}}>
+        <div>
+          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Total Cuentas por Pagar</p>
+          <h2 className="text-4xl font-black mt-1 tracking-tight" style={{color:ORANGE}}>${pFmt(totalCxP)}</h2>
+        </div>
+        <div className="mt-4 flex gap-6">
+          <div><p className="text-[10px] text-slate-400">OC Abiertas</p><p className="font-black text-white text-lg">{ocAbiertas}</p></div>
+          <div><p className="text-[10px] text-slate-400">Facturas este mes</p><p className="font-black text-white text-lg">{facMes}</p></div>
+          <div><p className="text-[10px] text-slate-400">Pagado este mes</p><p className="font-black text-white text-lg">${pFmt(pagMes)}</p></div>
+        </div>
+        <div className="absolute right-6 top-1/2 -translate-y-1/2 opacity-10"><ShoppingCart size={80}/></div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-4 gap-4">
+        <PKPI label="Proveedores activos" value={proveedores.filter(p=>p.activo!==false).length} accent="blue" Icon={Building2}/>
+        <PKPI label="OC pendientes aprob." value={ordenesCompra.filter(o=>o.status==='BORRADOR').length} accent="gold" Icon={ClipboardList}/>
+        <PKPI label="CxP vencidas" value={facturasCompra.filter(f=>f.status==='PENDIENTE'&&f.fechaVencimiento<getTodayDate()).length} accent="red" Icon={AlertTriangle}/>
+        <PKPI label="Facturas mes" value={facMes} accent="orange" Icon={FileText}/>
+      </div>
+
+      <div className="grid grid-cols-2 gap-5">
+        {/* Últimas OC */}
+        <PCard title="Últimas órdenes de compra" subtitle={`${ordenesCompra.length} órdenes en total`}>
+          {ultOC.length===0?<PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/>:(
+            <div className="space-y-2">
+              {ultOC.map(oc=>{
+                const st=statusOC(oc.status);
+                return (
+                  <div key={oc.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                    <div>
+                      <p className="font-black text-xs text-slate-800">{oc.nroOC||oc.id}</p>
+                      <p className="text-[10px] text-slate-400">{oc.proveedor||'—'} · {pDate(oc.fecha)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-xs text-slate-800">${pFmt(oc.total||0)}</p>
+                      <PBadge v={st.v}>{st.label}</PBadge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </PCard>
+
+        {/* CxP vencidas */}
+        <PCard title="⚠️ Facturas vencidas" subtitle="Requieren atención inmediata">
+          {urgentes.length===0?<PEmpty icon={CheckCircle} title="Al día" desc="No hay facturas vencidas"/>:(
+            <div className="space-y-2">
+              {urgentes.map(f=>(
+                <div key={f.id} className="flex items-center justify-between p-3 bg-red-50 rounded-xl border border-red-100">
+                  <div>
+                    <p className="font-black text-xs text-red-800">{f.nroFactura||f.id}</p>
+                    <p className="text-[10px] text-red-400">{f.proveedor||'—'} · Vence: {pDate(f.fechaVencimiento)}</p>
+                  </div>
+                  <p className="font-black text-sm text-red-600">${pFmt(f.saldoPendiente||f.total||0)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </PCard>
+      </div>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 2: PROVEEDORES
+// ══════════════════════════════════════════════════════════════════════
+const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
+  const [search,setSearch]=useState('');
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+
+  const filtrados = proveedores.filter(p=>
+    (p.nombre||'').toLowerCase().includes(search.toLowerCase())||
+    (p.rif||'').toLowerCase().includes(search.toLowerCase())
+  );
+
+  const initForm = () => ({
+    nombre:'',rif:'',email:'',telefono:'',direccion:'',
+    contacto:'',categoria:'INSUMOS',moneda:'USD',
+    condPago:'30 días',activo:true,observaciones:''
+  });
+
+  const guardar = async () => {
+    if(!form.nombre||!form.rif){setDialog({title:'Aviso',text:'Nombre y RIF son obligatorios.',type:'alert'});return;}
+    try{
+      const id=form.id||`PROV-${pId()}`;
+      await setDoc(getDocRef('procura_proveedores',id),{...form,id,updatedAt:Date.now()});
+      setModal(null);
+      setDialog({title:'✅ Guardado',text:'Proveedor guardado correctamente.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const eliminar = (p) => setDialog({title:'¿Eliminar proveedor?',text:`Se eliminará "${p.nombre}". Esta acción no se puede deshacer.`,type:'confirm',onConfirm:async()=>{
+    try{await deleteDoc(getDocRef('procura_proveedores',p.id));setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'});}
+    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  }});
+
+  const exportPDF = () => {
+    let html=pdfOpen('DIRECTORIO DE PROVEEDORES',`Total: ${filtrados.length} proveedores`);
+    html+=`<table><thead><tr><th>Nombre / Razón Social</th><th>RIF</th><th>Categoría</th><th>Contacto</th><th>Teléfono</th><th>Moneda</th><th>Cond. Pago</th><th>Estado</th></tr></thead><tbody>`;
+    filtrados.forEach(p=>{
+      html+=`<tr><td><strong>${p.nombre||'—'}</strong></td><td>${p.rif||'—'}</td><td>${p.categoria||'—'}</td><td>${p.contacto||'—'}</td><td>${p.telefono||'—'}</td><td>${p.moneda||'USD'}</td><td>${p.condPago||'—'}</td><td>${p.activo!==false?'<span class="badge-apr">Activo</span>':'<span class="badge-pend">Inactivo</span>'}</td></tr>`;
+    });
+    html+=`</tbody></table>`;
+    pdfPrint(html+pdfClose());
+  };
+
+  const exportXLS = () => {
+    const rows=[['Nombre','RIF','Categoría','Contacto','Teléfono','Email','Moneda','Cond.Pago','Estado'],...filtrados.map(p=>[p.nombre,p.rif,p.categoria,p.contacto,p.telefono,p.email,p.moneda,p.condPago,p.activo!==false?'Activo':'Inactivo'])];
+    let csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`proveedores_${getTodayDate()}.csv`;a.click();
+  };
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 mb-5">
+        <div className="flex-1 relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o RIF..." className={`${inp} pl-9`}/>
+        </div>
+        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
+        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
+        <PBg onClick={()=>{setForm(initForm());setModal('form');}}><Plus size={14}/> Nuevo proveedor</PBg>
+      </div>
+
+      {/* Tabla */}
+      <PCard noPad>
+        <table className="w-full">
+          <thead><tr>
+            <PTh>Proveedor</PTh><PTh>RIF</PTh><PTh>Categoría</PTh><PTh>Contacto</PTh><PTh>Moneda</PTh><PTh>Cond. Pago</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
+          </tr></thead>
+          <tbody>
+            {filtrados.length===0?<tr><td colSpan={8} className="py-12"><PEmpty icon={Building2} title="Sin proveedores" desc="Registra tu primer proveedor"/></td></tr>:
+            filtrados.map(p=>(
+              <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                <PTd><div className="font-black text-slate-800 text-xs">{p.nombre||'—'}</div><div className="text-[10px] text-slate-400">{p.email||'—'}</div></PTd>
+                <PTd mono>{p.rif||'—'}</PTd>
+                <PTd><PBadge v="blue">{p.categoria||'—'}</PBadge></PTd>
+                <PTd>{p.contacto||'—'}<br/><span className="text-[10px] text-slate-400">{p.telefono||''}</span></PTd>
+                <PTd><span className="font-black text-xs">{p.moneda||'USD'}</span></PTd>
+                <PTd>{p.condPago||'—'}</PTd>
+                <PTd><PBadge v={p.activo!==false?'green':'gray'}>{p.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
+                <PTd>
+                  <div className="flex gap-2">
+                    <PBp sm onClick={()=>{setForm({...p});setModal('form');}}><Edit size={11}/></PBp>
+                    <PBd sm onClick={()=>eliminar(p)}><Trash2 size={11}/></PBd>
+                  </div>
+                </PTd>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </PCard>
+
+      {/* Modal Proveedor */}
+      <PModal open={modal==='form'} onClose={()=>setModal(null)} title={form.id?'Editar proveedor':'Nuevo proveedor'} wide
+        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardar}><Save size={14}/> Guardar</PBg></>}>
+        <div className="grid grid-cols-2 gap-4">
+          <PFG label="Razón Social *" full><input className={inp} value={form.nombre||''} onChange={e=>setForm({...form,nombre:e.target.value})}/></PFG>
+          <PFG label="RIF *"><input className={inp} value={form.rif||''} onChange={e=>setForm({...form,rif:e.target.value.toUpperCase()})}/></PFG>
+          <PFG label="Categoría">
+            <select className={sel} value={form.categoria||'INSUMOS'} onChange={e=>setForm({...form,categoria:e.target.value})}>
+              {['INSUMOS','MATERIA PRIMA','SERVICIOS','EQUIPOS','LOGÍSTICA','OTROS'].map(c=><option key={c}>{c}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Persona de contacto"><input className={inp} value={form.contacto||''} onChange={e=>setForm({...form,contacto:e.target.value})}/></PFG>
+          <PFG label="Teléfono"><input className={inp} value={form.telefono||''} onChange={e=>setForm({...form,telefono:e.target.value})}/></PFG>
+          <PFG label="Email"><input className={inp} type="email" value={form.email||''} onChange={e=>setForm({...form,email:e.target.value})}/></PFG>
+          <PFG label="Moneda de facturación">
+            <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+              {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Condición de pago">
+            <select className={sel} value={form.condPago||'30 días'} onChange={e=>setForm({...form,condPago:e.target.value})}>
+              {['Contado','7 días','15 días','30 días','45 días','60 días','90 días'].map(c=><option key={c}>{c}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Dirección" full><input className={inp} value={form.direccion||''} onChange={e=>setForm({...form,direccion:e.target.value})}/></PFG>
+          <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
+          <PFG label="Estado">
+            <select className={sel} value={form.activo!==false?'true':'false'} onChange={e=>setForm({...form,activo:e.target.value==='true'})}>
+              <option value="true">Activo</option><option value="false">Inactivo</option>
+            </select>
+          </PFG>
+        </div>
+      </PModal>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 3: ÓRDENES DE COMPRA
+// ══════════════════════════════════════════════════════════════════════
+const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog}) => {
+  const [search,setSearch]=useState('');
+  const [filtStatus,setFiltStatus]=useState('TODOS');
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [items,setItems]=useState([]);
+  const [itemActual,setItemActual]=useState({desc:'',cantidad:'',precioUnit:'',unidad:'Und'});
+
+  const filtradas=ordenesCompra.filter(o=>{
+    const matchSearch=(o.nroOC||'').toLowerCase().includes(search.toLowerCase())||(o.proveedor||'').toLowerCase().includes(search.toLowerCase());
+    const matchStatus=filtStatus==='TODOS'||o.status===filtStatus;
+    return matchSearch&&matchStatus;
+  });
+
+  const nextNroOC = () => {
+    const nums=ordenesCompra.map(o=>parseInt((o.nroOC||'OC-0000').replace(/[^0-9]/g,''))||0);
+    return `OC-${String(Math.max(0,...nums)+1).padStart(4,'0')}`;
+  };
+
+  const initForm = () => ({
+    nroOC:nextNroOC(),proveedor:'',proveedorId:'',fecha:getTodayDate(),
+    fechaEntrega:'',moneda:'USD',tasa:'',status:'BORRADOR',
+    condPago:'30 días',observaciones:''
+  });
+
+  const totalOC = items.reduce((s,i)=>s+pNum(i.cantidad)*pNum(i.precioUnit),0);
+
+  const agregarItem = () => {
+    if(!itemActual.desc||!itemActual.cantidad||!itemActual.precioUnit)return;
+    setItems([...items,{...itemActual,id:pId(),total:pNum(itemActual.cantidad)*pNum(itemActual.precioUnit)}]);
+    setItemActual({desc:'',cantidad:'',precioUnit:'',unidad:'Und'});
+  };
+
+  const guardar = async () => {
+    if(!form.proveedor){setDialog({title:'Aviso',text:'Selecciona un proveedor.',type:'alert'});return;}
+    if(items.length===0){setDialog({title:'Aviso',text:'Agrega al menos un ítem.',type:'alert'});return;}
+    try{
+      const id=form.id||`OC-${pId()}`;
+      await setDoc(getDocRef('procura_ordenes_compra',id),{
+        ...form,id,items,total:totalOC,
+        updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
+      });
+      setModal(null);
+      setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const cambiarStatus = async(oc,nuevoStatus) => {
+    try{await updateDoc(getDocRef('procura_ordenes_compra',oc.id),{status:nuevoStatus,updatedAt:Date.now()});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const exportPDF = (oc) => {
+    const prv=proveedores.find(p=>p.id===oc.proveedorId)||{};
+    let html=pdfOpen(`ORDEN DE COMPRA N° ${oc.nroOC}`,`Fecha: ${pDate(oc.fecha)} · Entrega: ${pDate(oc.fechaEntrega)}`);
+    html+=`<table style="margin-bottom:12px"><tr><td style="width:50%;border:none;vertical-align:top"><strong>PROVEEDOR:</strong><br>${oc.proveedor||'—'}<br>RIF: ${prv.rif||'—'}<br>${prv.direccion||''}</td>
+    <td style="width:50%;border:none;vertical-align:top;text-align:right"><strong>OC N°:</strong> ${oc.nroOC}<br><strong>Fecha:</strong> ${pDate(oc.fecha)}<br><strong>Entrega:</strong> ${pDate(oc.fechaEntrega)}<br><strong>Moneda:</strong> ${oc.moneda||'USD'}</td></tr></table>`;
+    html+=`<table><thead><tr><th>#</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th><th>Precio Unit.</th><th>Total</th></tr></thead><tbody>`;
+    (oc.items||[]).forEach((it,i)=>{html+=`<tr><td>${i+1}</td><td>${it.desc||'—'}</td><td>${it.unidad||'Und'}</td><td>${pFmt(it.cantidad)}</td><td>${pFmt(it.precioUnit)}</td><td>${pFmt(it.total||pNum(it.cantidad)*pNum(it.precioUnit))}</td></tr>`;});
+    html+=`<tr class="total-row"><td colspan="5" style="text-align:right">TOTAL ${oc.moneda||'USD'}</td><td>${pFmt(oc.total||0)}</td></tr></tbody></table>`;
+    html+=`<p style="margin-top:16px;font-size:10px;color:#64748b">Condición de pago: ${oc.condPago||'—'} · Observaciones: ${oc.observaciones||'Ninguna'}</p>`;
+    pdfPrint(html+pdfClose(`OC-${oc.nroOC}`));
+  };
+
+  const exportXLSAll = () => {
+    const rows=[['N° OC','Proveedor','Fecha','Fecha Entrega','Status','Moneda','Total','Condición Pago'],
+      ...filtradas.map(o=>[o.nroOC,o.proveedor,o.fecha,o.fechaEntrega,o.status,o.moneda,pFmt(o.total),o.condPago])];
+    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`ordenes_compra_${getTodayDate()}.csv`;a.click();
+  };
+
+  const statusList=['TODOS','BORRADOR','APROBADA','ENVIADA','RECIBIDA','CERRADA','ANULADA'];
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <div className="flex-1 relative min-w-48">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9`}/>
+        </div>
+        <div className="flex gap-1">
+          {statusList.map(s=>(
+            <button key={s} onClick={()=>setFiltStatus(s)}
+              className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white':' text-slate-500 hover:bg-slate-100'}`}
+              style={filtStatus===s?{background:CARD}:{background:'white',border:'1.5px solid #e2e8f0'}}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <PBo onClick={exportXLSAll} sm><FileSpreadsheet size={13}/> Excel</PBo>
+        <PBg onClick={()=>{setForm(initForm());setItems([]);setModal('form');}}><Plus size={14}/> Nueva OC</PBg>
+      </div>
+
+      <PCard noPad>
+        <table className="w-full">
+          <thead><tr>
+            <PTh>N° OC</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>F. Entrega</PTh><PTh>Status</PTh><PTh right>Total</PTh><PTh>Acciones</PTh>
+          </tr></thead>
+          <tbody>
+            {filtradas.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/></td></tr>:
+            filtradas.map(oc=>{
+              const st=statusOC(oc.status);
+              return (
+                <tr key={oc.id} className="hover:bg-slate-50">
+                  <PTd><span className="font-black text-orange-600">{oc.nroOC}</span></PTd>
+                  <PTd>{oc.proveedor||'—'}</PTd>
+                  <PTd>{pDate(oc.fecha)}</PTd>
+                  <PTd>{pDate(oc.fechaEntrega)||'—'}</PTd>
+                  <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
+                  <PTd right mono><span className="font-black">{oc.moneda||'USD'} {pFmt(oc.total||0)}</span></PTd>
+                  <PTd>
+                    <div className="flex gap-1.5 flex-wrap">
+                      <PBp sm onClick={()=>exportPDF(oc)}><Printer size={11}/></PBp>
+                      <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setModal('form');}}><Edit size={11}/></PBp>
+                      {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')}><Check size={11}/> Aprobar</PBg>}
+                      {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'ENVIADA')}><Send size={11}/> Enviar</PBo>}
+                      {oc.status==='ENVIADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'RECIBIDA')}><Truck size={11}/> Recibir</PBo>}
+                      {!['CERRADA','ANULADA'].includes(oc.status)&&<PBd sm onClick={()=>cambiarStatus(oc,'ANULADA')}><Ban size={11}/></PBd>}
+                    </div>
+                  </PTd>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </PCard>
+
+      {/* Modal OC */}
+      <PModal open={modal==='form'} onClose={()=>setModal(null)} title={form.id?`Editar ${form.nroOC}`:'Nueva Orden de Compra'} xlwide>
+        <div className="grid grid-cols-2 gap-5">
+          {/* Col izq — datos */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <PFG label="N° OC"><input className={inp} value={form.nroOC||''} readOnly style={{background:'#f8fafc'}}/></PFG>
+              <PFG label="Fecha *"><input type="date" className={inp} value={form.fecha||''} onChange={e=>setForm({...form,fecha:e.target.value})}/></PFG>
+              <PFG label="Proveedor *" full>
+                <select className={sel} value={form.proveedorId||''} onChange={e=>{const p=proveedores.find(x=>x.id===e.target.value);setForm({...form,proveedorId:e.target.value,proveedor:p?.nombre||'',condPago:p?.condPago||form.condPago,moneda:p?.moneda||form.moneda});}}>
+                  <option value="">Seleccionar proveedor...</option>
+                  {proveedores.filter(p=>p.activo!==false).map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+                </select>
+              </PFG>
+              <PFG label="Fecha de entrega"><input type="date" className={inp} value={form.fechaEntrega||''} onChange={e=>setForm({...form,fechaEntrega:e.target.value})}/></PFG>
+              <PFG label="Moneda">
+                <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+                  {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+                </select>
+              </PFG>
+              <PFG label="Tasa Bs/$"><input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="Ej: 62,50"/></PFG>
+              <PFG label="Condición de pago">
+                <select className={sel} value={form.condPago||'30 días'} onChange={e=>setForm({...form,condPago:e.target.value})}>
+                  {['Contado','7 días','15 días','30 días','45 días','60 días','90 días'].map(c=><option key={c}>{c}</option>)}
+                </select>
+              </PFG>
+              <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
+            </div>
+          </div>
+
+          {/* Col der — ítems */}
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Ítems de la orden</p>
+            {/* Formulario ítem */}
+            <div className="bg-slate-50 rounded-xl p-3 mb-3 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <input className={inp} placeholder="Descripción del producto/servicio" value={itemActual.desc} onChange={e=>setItemActual({...itemActual,desc:e.target.value})}/>
+                <select className={sel} value={itemActual.unidad} onChange={e=>setItemActual({...itemActual,unidad:e.target.value})}>
+                  {['Und','KG','Millares','LT','MT','GL','Caja','Rollo'].map(u=><option key={u}>{u}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" className={inp} placeholder="Cantidad" value={itemActual.cantidad} onChange={e=>setItemActual({...itemActual,cantidad:e.target.value})}/>
+                <input type="number" className={inp} placeholder={`Precio unit. (${form.moneda||'USD'})`} value={itemActual.precioUnit} onChange={e=>setItemActual({...itemActual,precioUnit:e.target.value})}/>
+              </div>
+              {itemActual.cantidad&&itemActual.precioUnit&&<p className="text-xs font-black text-orange-600">= {form.moneda||'USD'} {pFmt(pNum(itemActual.cantidad)*pNum(itemActual.precioUnit))}</p>}
+              <PBg onClick={agregarItem} sm><Plus size={12}/> Agregar ítem</PBg>
+            </div>
+            {/* Lista ítems */}
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {items.map((it,i)=>(
+                <div key={it.id} className="flex items-center gap-2 bg-white rounded-lg p-2.5 border border-slate-100">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-black text-slate-800 truncate">{it.desc}</p>
+                    <p className="text-[10px] text-slate-400">{pFmt(it.cantidad)} {it.unidad} × {pFmt(it.precioUnit)}</p>
+                  </div>
+                  <span className="text-xs font-black text-orange-600 whitespace-nowrap">{pFmt(it.total||0)}</span>
+                  <button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                </div>
+              ))}
+            </div>
+            {items.length>0&&(
+              <div className="mt-3 p-3 bg-slate-900 rounded-xl flex justify-between items-center">
+                <span className="text-[10px] font-black text-slate-400 uppercase">TOTAL {form.moneda||'USD'}</span>
+                <span className="font-black text-white text-lg">{pFmt(totalOC)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
+          <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
+          <PBg onClick={guardar}><Save size={14}/> {form.id?'Actualizar OC':'Crear OC'}</PBg>
+        </div>
+      </PModal>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 4: FACTURAS DE COMPRA
+// ══════════════════════════════════════════════════════════════════════
+const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog}) => {
+  const [search,setSearch]=useState('');
+  const [filtStatus,setFiltStatus]=useState('TODOS');
+  const [filtMes,setFiltMes]=useState('');
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+
+  const filtradas=facturasCompra.filter(f=>{
+    const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
+    const st=filtStatus==='TODOS'||f.status===filtStatus;
+    const mes=!filtMes||(f.fecha||'').startsWith(filtMes);
+    return ms&&st&&mes;
+  });
+
+  const initForm = () => ({
+    nroFactura:'',proveedor:'',proveedorId:'',ocId:'',
+    fecha:getTodayDate(),fechaVencimiento:'',
+    moneda:'USD',tasa:'',
+    montoBase:0,iva:0,total:0,
+    status:'PENDIENTE',observaciones:''
+  });
+
+  const calcTotales = (f) => {
+    const base=pNum(f.montoBase);
+    const ivaAmt=f.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
+    return {...f,iva:ivaAmt,total:parseFloat((base+ivaAmt).toFixed(2)),saldoPendiente:parseFloat((base+ivaAmt).toFixed(2))};
+  };
+
+  const guardar = async () => {
+    if(!form.nroFactura||!form.proveedor){setDialog({title:'Aviso',text:'N° Factura y proveedor son obligatorios.',type:'alert'});return;}
+    try{
+      const id=form.id||`FC-${pId()}`;
+      const data=calcTotales(form);
+      await setDoc(getDocRef('procura_facturas_compra',id),{...data,id,updatedAt:Date.now()});
+      setModal(null);
+      setDialog({title:'✅ Factura registrada',text:`Factura ${form.nroFactura} registrada.`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const exportPDF = () => {
+    let html=pdfOpen('REGISTRO DE FACTURAS DE COMPRA',`Período: ${filtMes||'Todos'} · ${filtradas.length} facturas`);
+    html+=`<table><thead><tr><th>N° Factura</th><th>Proveedor</th><th>Fecha</th><th>Vencimiento</th><th>Moneda</th><th>Base</th><th>IVA</th><th>Total</th><th>Saldo</th><th>Status</th></tr></thead><tbody>`;
+    filtradas.forEach(f=>{
+      const badg=f.status==='PAGADA'?'badge-pag':f.status==='PENDIENTE'?'badge-pend':'badge-apr';
+      html+=`<tr><td><strong>${f.nroFactura||'—'}</strong></td><td>${f.proveedor||'—'}</td><td>${pDate(f.fecha)}</td><td>${pDate(f.fechaVencimiento)}</td><td>${f.moneda||'USD'}</td><td>${pFmt(f.montoBase)}</td><td>${pFmt(f.iva)}</td><td>${pFmt(f.total)}</td><td>${pFmt(f.saldoPendiente||0)}</td><td><span class="${badg}">${f.status}</span></td></tr>`;
+    });
+    const totBase=filtradas.reduce((s,f)=>s+pNum(f.montoBase),0);
+    const totIva=filtradas.reduce((s,f)=>s+pNum(f.iva),0);
+    const totTotal=filtradas.reduce((s,f)=>s+pNum(f.total),0);
+    const totSaldo=filtradas.reduce((s,f)=>s+pNum(f.saldoPendiente||0),0);
+    html+=`<tr class="total-row"><td colspan="5">TOTAL</td><td>${pFmt(totBase)}</td><td>${pFmt(totIva)}</td><td>${pFmt(totTotal)}</td><td>${pFmt(totSaldo)}</td><td></td></tr>`;
+    html+=`</tbody></table>`;
+    pdfPrint(html+pdfClose());
+  };
+
+  const exportXLS = () => {
+    const rows=[['N° Factura','Proveedor','Fecha','Vencimiento','OC Vinculada','Moneda','Base','IVA','Total','Saldo','Status'],
+      ...filtradas.map(f=>[f.nroFactura,f.proveedor,f.fecha,f.fechaVencimiento,f.ocId||'—',f.moneda,pFmt(f.montoBase),pFmt(f.iva),pFmt(f.total),pFmt(f.saldoPendiente||0),f.status])];
+    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`facturas_compra_${getTodayDate()}.csv`;a.click();
+  };
+
+  const meses=[];
+  for(let i=0;i<12;i++){const d=new Date();d.setMonth(d.getMonth()-i);meses.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <div className="flex-1 relative min-w-48">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar factura o proveedor..." className={`${inp} pl-9`}/>
+        </div>
+        <select className={`${sel} w-auto`} value={filtMes} onChange={e=>setFiltMes(e.target.value)}>
+          <option value="">Todos los meses</option>
+          {meses.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+        <select className={`${sel} w-auto`} value={filtStatus} onChange={e=>setFiltStatus(e.target.value)}>
+          {['TODOS','PENDIENTE','PARCIAL','PAGADA','ANULADA'].map(s=><option key={s}>{s}</option>)}
+        </select>
+        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
+        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
+        <PBg onClick={()=>{setForm(initForm());setModal('form');}}><Plus size={14}/> Registrar factura</PBg>
+      </div>
+
+      {/* Totales rápidos */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="bg-white rounded-xl p-4 border border-slate-100">
+          <p className="text-[9px] font-black uppercase text-slate-400">Total facturas filtradas</p>
+          <p className="font-black text-xl text-slate-800">${pFmt(filtradas.reduce((s,f)=>s+pNum(f.total),0))}</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-amber-100">
+          <p className="text-[9px] font-black uppercase text-amber-600">Saldo pendiente</p>
+          <p className="font-black text-xl text-amber-700">${pFmt(filtradas.filter(f=>f.status!=='PAGADA').reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-emerald-100">
+          <p className="text-[9px] font-black uppercase text-emerald-600">IVA crédito fiscal</p>
+          <p className="font-black text-xl text-emerald-700">${pFmt(filtradas.reduce((s,f)=>s+pNum(f.iva),0))}</p>
+        </div>
+      </div>
+
+      <PCard noPad>
+        <table className="w-full">
+          <thead><tr>
+            <PTh>N° Factura</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh>OC</PTh><PTh right>Base</PTh><PTh right>IVA</PTh><PTh right>Total</PTh><PTh right>Saldo</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
+          </tr></thead>
+          <tbody>
+            {filtradas.length===0?<tr><td colSpan={11} className="py-12"><PEmpty icon={FileText} title="Sin facturas" desc="Registra tu primera factura de compra"/></td></tr>:
+            filtradas.map(f=>{
+              const st=statusCxP(f.status);
+              const vencida=f.status==='PENDIENTE'&&f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
+              return (
+                <tr key={f.id} className={`hover:bg-slate-50 ${vencida?'bg-red-50/30':''}`}>
+                  <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
+                  <PTd>{f.proveedor||'—'}</PTd>
+                  <PTd>{pDate(f.fecha)}</PTd>
+                  <PTd><span className={vencida?'text-red-600 font-black':''}>{pDate(f.fechaVencimiento)||'—'}</span></PTd>
+                  <PTd><span className="text-[10px] text-blue-600">{f.ocId||'—'}</span></PTd>
+                  <PTd right mono>{pFmt(f.montoBase)}</PTd>
+                  <PTd right mono>{pFmt(f.iva)}</PTd>
+                  <PTd right mono><span className="font-black">{f.moneda||'USD'} {pFmt(f.total)}</span></PTd>
+                  <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600 font-black'}>{pFmt(f.saldoPendiente||0)}</span></PTd>
+                  <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
+                  <PTd>
+                    <div className="flex gap-1.5">
+                      <PBp sm onClick={()=>{setForm({...f});setModal('form');}}><Edit size={11}/></PBp>
+                    </div>
+                  </PTd>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </PCard>
+
+      {/* Modal Factura */}
+      <PModal open={modal==='form'} onClose={()=>setModal(null)} title={form.id?'Editar factura':'Registrar factura de compra'} wide
+        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardar}><Save size={14}/> Guardar</PBg></>}>
+        <div className="grid grid-cols-2 gap-4">
+          <PFG label="N° Factura proveedor *"><input className={inp} value={form.nroFactura||''} onChange={e=>setForm({...form,nroFactura:e.target.value.toUpperCase()})}/></PFG>
+          <PFG label="Proveedor *">
+            <select className={sel} value={form.proveedorId||''} onChange={e=>{const p=proveedores.find(x=>x.id===e.target.value);setForm({...form,proveedorId:e.target.value,proveedor:p?.nombre||''});}}>
+              <option value="">Seleccionar...</option>
+              {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Fecha factura"><input type="date" className={inp} value={form.fecha||''} onChange={e=>setForm({...form,fecha:e.target.value})}/></PFG>
+          <PFG label="Fecha vencimiento"><input type="date" className={inp} value={form.fechaVencimiento||''} onChange={e=>setForm({...form,fechaVencimiento:e.target.value})}/></PFG>
+          <PFG label="OC vinculada">
+            <select className={sel} value={form.ocId||''} onChange={e=>setForm({...form,ocId:e.target.value})}>
+              <option value="">Sin OC vinculada</option>
+              {ordenesCompra.filter(o=>o.proveedorId===form.proveedorId).map(o=><option key={o.id} value={o.nroOC}>{o.nroOC}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Moneda">
+            <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
+              {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Tasa Bs/$"><input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="Ej: 62,50"/></PFG>
+          <PFG label="Aplica IVA 16%">
+            <select className={sel} value={form.aplicaIva||'SI'} onChange={e=>setForm({...form,aplicaIva:e.target.value})}>
+              <option value="SI">Sí — 16%</option><option value="NO">No</option>
+            </select>
+          </PFG>
+          <PFG label="Base imponible (monto neto)">
+            <input type="number" className={inp} value={form.montoBase||''} onChange={e=>{const base=pNum(e.target.value);const iva=form.aplicaIva==='NO'?0:parseFloat((base*0.16).toFixed(2));setForm({...form,montoBase:base,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))});}}/>
+          </PFG>
+          <PFG label="IVA 16%"><input className={`${inp} bg-slate-50`} readOnly value={pFmt(form.iva||0)}/></PFG>
+          <PFG label="Total factura" full>
+            <div className="bg-slate-900 rounded-xl px-4 py-3 flex justify-between items-center">
+              <span className="text-[10px] font-black text-slate-400 uppercase">Total {form.moneda||'USD'}</span>
+              <span className="font-black text-white text-xl">{pFmt(form.total||0)}</span>
+            </div>
+          </PFG>
+          <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
+        </div>
+      </PModal>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 5: CUENTAS POR PAGAR (CxP)
+// ══════════════════════════════════════════════════════════════════════
+const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog}) => {
+  const [search,setSearch]=useState('');
+  const [filtProv,setFiltProv]=useState('TODOS');
+  const [modal,setModal]=useState(null);
+  const [factSel,setFactSel]=useState(null);
+  const [formPago,setFormPago]=useState({});
+
+  const pendientes=facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA'&&pNum(f.saldoPendiente||f.total)>0);
+  const filtradas=pendientes.filter(f=>{
+    const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
+    const pv=filtProv==='TODOS'||f.proveedorId===filtProv;
+    return ms&&pv;
+  });
+
+  const totalPendiente=filtradas.reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0);
+  const vencidas=filtradas.filter(f=>f.fechaVencimiento&&f.fechaVencimiento<getTodayDate());
+  const proxVencer=filtradas.filter(f=>f.fechaVencimiento&&f.fechaVencimiento>=getTodayDate()&&f.fechaVencimiento<=new Date(Date.now()+7*864e5).toISOString().slice(0,10));
+
+  const abrirPago = (fact) => {
+    setFactSel(fact);
+    setFormPago({monto:pFmt(fact.saldoPendiente||fact.total),metodo:'Transferencia',fecha:getTodayDate(),banco:'',referencia:'',moneda:fact.moneda||'USD',tasa:String(tasaBCV||0),concepto:`Pago factura ${fact.nroFactura}`});
+    setModal('pago');
+  };
+
+  const registrarPago = async () => {
+    if(!formPago.monto||pNum(formPago.monto)<=0){setDialog({title:'Aviso',text:'El monto debe ser mayor a 0.',type:'alert'});return;}
+    try{
+      const monto=pNum(formPago.monto);
+      const saldoActual=pNum(factSel.saldoPendiente||factSel.total);
+      const nuevoSaldo=Math.max(0,saldoActual-monto);
+      const nuevoStatus=nuevoSaldo<0.01?'PAGADA':'PARCIAL';
+      const batch=writeBatch(_procuraDB);
+      const pagoId=`PAGO-${pId()}`;
+      batch.set(getDocRef('procura_pagos_cxp',pagoId),{
+        id:pagoId,facturaId:factSel.id,nroFactura:factSel.nroFactura,
+        proveedor:factSel.proveedor,proveedorId:factSel.proveedorId||'',
+        ...formPago,monto,timestamp:Date.now()
+      });
+      batch.update(getDocRef('procura_facturas_compra',factSel.id),{
+        saldoPendiente:nuevoSaldo,status:nuevoStatus,
+        montoCobrado:(pNum(factSel.montoCobrado)||0)+monto,
+        updatedAt:Date.now()
+      });
+      await batch.commit();
+      setModal(null);
+      setDialog({title:'✅ Pago registrado',text:`Pago de $${pFmt(monto)} registrado. Saldo: $${pFmt(nuevoSaldo)}`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const exportPDF = () => {
+    let html=pdfOpen('REPORTE CUENTAS POR PAGAR',`Pendientes: ${filtradas.length} facturas · Total: $${pFmt(totalPendiente)}`);
+    html+=`<table><thead><tr><th>N° Factura</th><th>Proveedor</th><th>Fecha</th><th>Vencimiento</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Status</th></tr></thead><tbody>`;
+    filtradas.forEach(f=>{
+      const venc=f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
+      html+=`<tr${venc?' style="background:#fef2f2"':''}><td><strong>${f.nroFactura||'—'}</strong></td><td>${f.proveedor||'—'}</td><td>${pDate(f.fecha)}</td><td style="${venc?'color:#dc2626;font-weight:bold':''}">${pDate(f.fechaVencimiento)||'—'}</td><td>$${pFmt(f.total)}</td><td>$${pFmt(f.montoCobrado||0)}</td><td><strong>$${pFmt(f.saldoPendiente||f.total)}</strong></td><td><span class="${f.status==='PARCIAL'?'badge-apr':'badge-pend'}">${f.status}</span></td></tr>`;
+    });
+    html+=`<tr class="total-row"><td colspan="6" style="text-align:right">TOTAL PENDIENTE</td><td>$${pFmt(totalPendiente)}</td><td></td></tr></tbody></table>`;
+    pdfPrint(html+pdfClose());
+  };
+
+  const exportXLS = () => {
+    const rows=[['N° Factura','Proveedor','Fecha','Vencimiento','Total','Pagado','Saldo Pendiente','Status'],
+      ...filtradas.map(f=>[f.nroFactura,f.proveedor,f.fecha,f.fechaVencimiento,pFmt(f.total),pFmt(f.montoCobrado||0),pFmt(f.saldoPendiente||f.total),f.status])];
+    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`cxp_${getTodayDate()}.csv`;a.click();
+  };
+
+  return (
+    <div>
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-4 mb-5">
+        <div className="rounded-2xl p-5 text-white shadow-xl" style={{background:CARD}}>
+          <p className="text-[9px] font-black uppercase text-slate-400">Total por pagar</p>
+          <p className="font-black text-3xl mt-1" style={{color:ORANGE}}>${pFmt(totalPendiente)}</p>
+          <p className="text-[10px] text-slate-400 mt-2">{filtradas.length} facturas pendientes</p>
+        </div>
+        <div className="bg-red-50 rounded-2xl p-5 border border-red-100">
+          <p className="text-[9px] font-black uppercase text-red-600">Vencidas</p>
+          <p className="font-black text-3xl mt-1 text-red-600">${pFmt(vencidas.reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
+          <p className="text-[10px] text-red-400 mt-2">{vencidas.length} facturas vencidas</p>
+        </div>
+        <div className="bg-amber-50 rounded-2xl p-5 border border-amber-100">
+          <p className="text-[9px] font-black uppercase text-amber-600">Próximas a vencer (7 días)</p>
+          <p className="font-black text-3xl mt-1 text-amber-600">${pFmt(proxVencer.reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
+          <p className="text-[10px] text-amber-400 mt-2">{proxVencer.length} facturas</p>
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 mb-5 flex-wrap">
+        <div className="flex-1 relative min-w-48">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar factura o proveedor..." className={`${inp} pl-9`}/>
+        </div>
+        <select className={`${sel} w-auto`} value={filtProv} onChange={e=>setFiltProv(e.target.value)}>
+          <option value="TODOS">Todos los proveedores</option>
+          {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+        </select>
+        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
+        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
+      </div>
+
+      <PCard noPad>
+        <table className="w-full">
+          <thead><tr>
+            <PTh>N° Factura</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh right>Total</PTh><PTh right>Pagado</PTh><PTh right>Saldo</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
+          </tr></thead>
+          <tbody>
+            {filtradas.length===0?<tr><td colSpan={9} className="py-12"><PEmpty icon={CreditCard} title="Sin pendientes" desc="No hay facturas pendientes de pago"/></td></tr>:
+            filtradas.map(f=>{
+              const venc=f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
+              const st=statusCxP(f.status);
+              return (
+                <tr key={f.id} className={`hover:bg-slate-50 ${venc?'bg-red-50/40':''}`}>
+                  <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
+                  <PTd>{f.proveedor||'—'}</PTd>
+                  <PTd>{pDate(f.fecha)}</PTd>
+                  <PTd><span className={venc?'text-red-600 font-black':''}>{pDate(f.fechaVencimiento)||'—'}{venc&&' ⚠️'}</span></PTd>
+                  <PTd right mono>{pFmt(f.total)}</PTd>
+                  <PTd right mono className="text-emerald-600">{pFmt(f.montoCobrado||0)}</PTd>
+                  <PTd right mono><span className="font-black text-amber-600">{pFmt(f.saldoPendiente||f.total)}</span></PTd>
+                  <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
+                  <PTd>
+                    <PBg sm onClick={()=>abrirPago(f)}><CreditCard size={11}/> Pagar</PBg>
+                  </PTd>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </PCard>
+
+      {/* Modal Pago */}
+      <PModal open={modal==='pago'} onClose={()=>setModal(null)} title="Registrar pago a proveedor"
+        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={registrarPago}><CreditCard size={14}/> Registrar pago</PBg></>}>
+        {factSel&&(
+          <div className="space-y-4">
+            <div className="bg-slate-50 rounded-xl p-4">
+              <p className="text-[10px] font-black uppercase text-slate-400">Factura</p>
+              <p className="font-black text-slate-800">{factSel.nroFactura} — {factSel.proveedor}</p>
+              <p className="text-xs text-slate-500 mt-1">Saldo pendiente: <span className="font-black text-orange-600">${pFmt(factSel.saldoPendiente||factSel.total)}</span></p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <PFG label="Monto a pagar *">
+                <input type="number" className={inp} value={formPago.monto||''} onChange={e=>setFormPago({...formPago,monto:e.target.value})}/>
+              </PFG>
+              <PFG label="Moneda">
+                <select className={sel} value={formPago.moneda||'USD'} onChange={e=>setFormPago({...formPago,moneda:e.target.value})}>
+                  {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+                </select>
+              </PFG>
+              <PFG label="Tasa Bs/$"><input type="number" className={inp} value={formPago.tasa||''} onChange={e=>setFormPago({...formPago,tasa:e.target.value})} placeholder={String(tasaBCV||0)}/></PFG>
+              <PFG label="Método de pago">
+                <select className={sel} value={formPago.metodo||'Transferencia'} onChange={e=>setFormPago({...formPago,metodo:e.target.value})}>
+                  {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(m=><option key={m}>{m}</option>)}
+                </select>
+              </PFG>
+              <PFG label="Banco / Cuenta"><input className={inp} value={formPago.banco||''} onChange={e=>setFormPago({...formPago,banco:e.target.value})} placeholder="Ej: Banesco 0134"/></PFG>
+              <PFG label="N° Referencia"><input className={inp} value={formPago.referencia||''} onChange={e=>setFormPago({...formPago,referencia:e.target.value.toUpperCase()})}/></PFG>
+              <PFG label="Fecha de pago"><input type="date" className={inp} value={formPago.fecha||''} onChange={e=>setFormPago({...formPago,fecha:e.target.value})}/></PFG>
+              <PFG label="Concepto"><input className={inp} value={formPago.concepto||''} onChange={e=>setFormPago({...formPago,concepto:e.target.value})}/></PFG>
+            </div>
+            {formPago.monto&&(
+              <div className="bg-slate-900 rounded-xl p-3 flex justify-between items-center">
+                <span className="text-[10px] font-black text-slate-400 uppercase">Saldo tras pago</span>
+                <span className={`font-black text-lg ${Math.max(0,pNum(factSel.saldoPendiente||factSel.total)-pNum(formPago.monto))<0.01?'text-emerald-400':'text-orange-400'}`}>
+                  ${pFmt(Math.max(0,pNum(factSel.saldoPendiente||factSel.total)-pNum(formPago.monto)))}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </PModal>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 6: HISTORIAL DE PAGOS
+// ══════════════════════════════════════════════════════════════════════
+const HistorialPagosView = ({pagosCxP,dialog,setDialog}) => {
+  const [search,setSearch]=useState('');
+  const [filtMes,setFiltMes]=useState(getMesActual());
+
+  const filtrados=pagosCxP.filter(p=>{
+    const ms=(p.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(p.proveedor||'').toLowerCase().includes(search.toLowerCase())||(p.referencia||'').toLowerCase().includes(search.toLowerCase());
+    const mes=!filtMes||(p.fecha||'').startsWith(filtMes);
+    return ms&&mes;
+  });
+
+  const totalFiltrado=filtrados.reduce((s,p)=>s+pNum(p.monto),0);
+  const meses=[];
+  for(let i=0;i<12;i++){const d=new Date();d.setMonth(d.getMonth()-i);meses.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
+
+  const exportPDF = () => {
+    let html=pdfOpen('HISTORIAL DE PAGOS A PROVEEDORES',`Período: ${filtMes||'Todos'} · Total: $${pFmt(totalFiltrado)}`);
+    html+=`<table><thead><tr><th>Fecha</th><th>Proveedor</th><th>N° Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th>Monto</th></tr></thead><tbody>`;
+    filtrados.forEach(p=>{html+=`<tr><td>${pDate(p.fecha)}</td><td>${p.proveedor||'—'}</td><td>${p.nroFactura||'—'}</td><td>${p.metodo||'—'}</td><td>${p.banco||'—'}</td><td>${p.referencia||'—'}</td><td><strong>$${pFmt(p.monto)}</strong></td></tr>`;});
+    html+=`<tr class="total-row"><td colspan="6" style="text-align:right">TOTAL PAGADO</td><td>$${pFmt(totalFiltrado)}</td></tr></tbody></table>`;
+    pdfPrint(html+pdfClose());
+  };
+
+  const exportXLS = () => {
+    const rows=[['Fecha','Proveedor','N° Factura','Método','Banco','Referencia','Moneda','Monto','Tasa'],
+      ...filtrados.map(p=>[p.fecha,p.proveedor,p.nroFactura,p.metodo,p.banco,p.referencia,p.moneda,pFmt(p.monto),p.tasa||''])];
+    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`pagos_proveedores_${getTodayDate()}.csv`;a.click();
+  };
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-5">
+        <div className="flex-1 relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pago, proveedor o referencia..." className={`${inp} pl-9`}/>
+        </div>
+        <select className={`${sel} w-auto`} value={filtMes} onChange={e=>setFiltMes(e.target.value)}>
+          <option value="">Todos los meses</option>
+          {meses.map(m=><option key={m} value={m}>{m}</option>)}
+        </select>
+        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
+        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
+      </div>
+
+      <div className="bg-slate-900 rounded-xl p-4 mb-5 flex items-center justify-between">
+        <div><p className="text-[9px] font-black uppercase text-slate-400">Total pagado — {filtrados.length} registros</p></div>
+        <p className="font-black text-white text-2xl">${pFmt(totalFiltrado)}</p>
+      </div>
+
+      <PCard noPad>
+        <table className="w-full">
+          <thead><tr>
+            <PTh>Fecha</PTh><PTh>Proveedor</PTh><PTh>Factura</PTh><PTh>Método</PTh><PTh>Banco / Cuenta</PTh><PTh>Referencia</PTh><PTh right>Monto</PTh>
+          </tr></thead>
+          <tbody>
+            {filtrados.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={Receipt} title="Sin pagos" desc="No se encontraron pagos con los filtros actuales"/></td></tr>:
+            filtrados.map(p=>(
+              <tr key={p.id} className="hover:bg-slate-50">
+                <PTd>{pDate(p.fecha)}</PTd>
+                <PTd><span className="font-black text-slate-800">{p.proveedor||'—'}</span></PTd>
+                <PTd><span className="text-orange-600 font-black">{p.nroFactura||'—'}</span></PTd>
+                <PTd><PBadge v="blue">{p.metodo||'—'}</PBadge></PTd>
+                <PTd>{p.banco||'—'}</PTd>
+                <PTd mono>{p.referencia||'—'}</PTd>
+                <PTd right mono><span className="font-black text-emerald-600">${pFmt(p.monto)}</span></PTd>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </PCard>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO 7: ESTADO DE CUENTA POR PROVEEDOR
+// ══════════════════════════════════════════════════════════════════════
+const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra}) => {
+  const [provSel,setProvSel]=useState('');
+  const [corte,setCorte]=useState('');
+  const [expandido,setExpandido]=useState({});
+
+  const provActivos=proveedores.filter(p=>p.activo!==false);
+  const prov=proveedores.find(p=>p.id===provSel);
+
+  const factsProv=facturasCompra.filter(f=>f.proveedorId===provSel&&(!corte||f.fecha<=corte));
+  const pagosProv=pagosCxP.filter(p=>p.proveedorId===provSel&&(!corte||p.fecha<=corte));
+  const ocProv=ordenesCompra.filter(o=>o.proveedorId===provSel);
+
+  const totalFacturado=factsProv.reduce((s,f)=>s+pNum(f.total),0);
+  const totalPagado=pagosProv.reduce((s,p)=>s+pNum(p.monto),0);
+  const saldo=totalFacturado-totalPagado;
+
+  const exportPDF = () => {
+    if(!prov)return;
+    let html=pdfOpen(`ESTADO DE CUENTA — ${prov.nombre}`,`RIF: ${prov.rif||'—'} · Corte: ${corte?pDate(corte):'Actual'}`);
+    html+=`<table style="margin-bottom:16px"><tr><td style="border:none"><strong>Proveedor:</strong> ${prov.nombre}<br>RIF: ${prov.rif||'—'}<br>Contacto: ${prov.contacto||'—'}</td>
+    <td style="border:none;text-align:right"><strong>Total facturado:</strong> $${pFmt(totalFacturado)}<br><strong>Total pagado:</strong> $${pFmt(totalPagado)}<br><strong style="color:${saldo>0?'#dc2626':'#16a34a'}">Saldo: $${pFmt(Math.abs(saldo))} ${saldo>0?'por pagar':'a favor'}</strong></td></tr></table>`;
+    html+=`<h3 style="margin:12px 0 6px;font-size:11px;text-transform:uppercase;color:#000">Facturas</h3>`;
+    html+=`<table><thead><tr><th>N° Factura</th><th>Fecha</th><th>Vencimiento</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Status</th></tr></thead><tbody>`;
+    factsProv.forEach(f=>{html+=`<tr><td>${f.nroFactura||'—'}</td><td>${pDate(f.fecha)}</td><td>${pDate(f.fechaVencimiento)}</td><td>$${pFmt(f.total)}</td><td>$${pFmt(f.montoCobrado||0)}</td><td>$${pFmt(f.saldoPendiente||f.total)}</td><td><span class="${f.status==='PAGADA'?'badge-pag':'badge-pend'}">${f.status}</span></td></tr>`;});
+    html+=`</tbody></table>`;
+    html+=`<h3 style="margin:16px 0 6px;font-size:11px;text-transform:uppercase;color:#000">Pagos realizados</h3>`;
+    html+=`<table><thead><tr><th>Fecha</th><th>Factura</th><th>Método</th><th>Referencia</th><th>Monto</th></tr></thead><tbody>`;
+    pagosProv.forEach(p=>{html+=`<tr><td>${pDate(p.fecha)}</td><td>${p.nroFactura||'—'}</td><td>${p.metodo||'—'}</td><td>${p.referencia||'—'}</td><td>$${pFmt(p.monto)}</td></tr>`;});
+    html+=`<tr class="total-row"><td colspan="4" style="text-align:right">SALDO ACTUAL</td><td style="color:${saldo>0?'#f97316':'#4ade80'}">$${pFmt(Math.abs(saldo))} ${saldo>0?'POR PAGAR':'A FAVOR'}</td></tr></tbody></table>`;
+    pdfPrint(html+pdfClose());
+  };
+
+  return (
+    <div>
+      {/* Selector */}
+      <div className="flex gap-3 mb-5">
+        <select className={`${sel} flex-1`} value={provSel} onChange={e=>setProvSel(e.target.value)}>
+          <option value="">Seleccionar proveedor...</option>
+          {provActivos.map(p=><option key={p.id} value={p.id}>{p.nombre} — {p.rif||'—'}</option>)}
+        </select>
+        <div className="relative">
+          <label className="absolute -top-4 left-0 text-[9px] font-black text-slate-400 uppercase">Corte de fecha</label>
+          <input type="date" className={inp} value={corte} onChange={e=>setCorte(e.target.value)}/>
+        </div>
+        {provSel&&<PBo onClick={exportPDF}><Printer size={13}/> PDF</PBo>}
+        {!provSel&&<div className="px-4 py-2.5 text-xs text-slate-400 font-medium flex items-center">Selecciona un proveedor para ver su estado de cuenta</div>}
+      </div>
+
+      {provSel&&prov&&(
+        <div className="space-y-5">
+          {/* Header proveedor */}
+          <div className="rounded-2xl p-6 text-white shadow-xl" style={{background:CARD}}>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Estado de Cuenta</p>
+                <h2 className="font-black text-xl">{prov.nombre}</h2>
+                <p className="text-[11px] text-slate-400 mt-1">RIF: {prov.rif||'—'} · {prov.contacto||''} · {prov.condPago||''}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] text-slate-400 uppercase">Saldo actual</p>
+                <p className={`font-black text-3xl mt-1 ${saldo>0?'text-orange-400':'text-emerald-400'}`}>${pFmt(Math.abs(saldo))}</p>
+                <p className="text-[10px] text-slate-400 mt-1">{saldo>0?'por pagar':'saldo a favor'}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* KPIs */}
+          <div className="grid grid-cols-4 gap-3">
+            <PKPI label="OC emitidas" value={ocProv.length} accent="blue" Icon={ClipboardList}/>
+            <PKPI label="Facturas" value={factsProv.length} accent="gold" Icon={FileText}/>
+            <PKPI label="Total facturado" value={`$${pFmt(totalFacturado)}`} accent="orange" Icon={DollarSign}/>
+            <PKPI label="Total pagado" value={`$${pFmt(totalPagado)}`} accent="green" Icon={CheckCircle}/>
+          </div>
+
+          {/* Facturas */}
+          <PCard title="Facturas" subtitle={`${factsProv.length} facturas en total`}>
+            {factsProv.length===0?<PEmpty icon={FileText} title="Sin facturas" desc="No hay facturas para este proveedor"/>:(
+              <table className="w-full">
+                <thead><tr><PTh>N° Factura</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh right>Total</PTh><PTh right>Pagado</PTh><PTh right>Saldo</PTh><PTh>Status</PTh></tr></thead>
+                <tbody>
+                  {factsProv.map(f=>{
+                    const st=statusCxP(f.status);
+                    const venc=f.fechaVencimiento&&f.fechaVencimiento<getTodayDate()&&f.status!=='PAGADA';
+                    return (
+                      <tr key={f.id} className={`hover:bg-slate-50 ${venc?'bg-red-50/30':''}`}>
+                        <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
+                        <PTd>{pDate(f.fecha)}</PTd>
+                        <PTd><span className={venc?'text-red-600 font-black':''}>{pDate(f.fechaVencimiento)||'—'}</span></PTd>
+                        <PTd right mono>{pFmt(f.total)}</PTd>
+                        <PTd right mono className="text-emerald-600">{pFmt(f.montoCobrado||0)}</PTd>
+                        <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600'}>{pFmt(f.saldoPendiente||0)}</span></PTd>
+                        <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </PCard>
+
+          {/* Pagos */}
+          <PCard title="Pagos realizados" subtitle={`${pagosProv.length} pagos · $${pFmt(totalPagado)} total`}>
+            {pagosProv.length===0?<PEmpty icon={CreditCard} title="Sin pagos" desc="No se han registrado pagos"/>:(
+              <table className="w-full">
+                <thead><tr><PTh>Fecha</PTh><PTh>Factura</PTh><PTh>Método</PTh><PTh>Banco</PTh><PTh>Referencia</PTh><PTh right>Monto</PTh></tr></thead>
+                <tbody>
+                  {pagosProv.map(p=>(
+                    <tr key={p.id} className="hover:bg-slate-50">
+                      <PTd>{pDate(p.fecha)}</PTd>
+                      <PTd><span className="text-orange-600 font-black">{p.nroFactura||'—'}</span></PTd>
+                      <PTd><PBadge v="blue">{p.metodo||'—'}</PBadge></PTd>
+                      <PTd>{p.banco||'—'}</PTd>
+                      <PTd mono>{p.referencia||'—'}</PTd>
+                      <PTd right mono><span className="font-black text-emerald-600">${pFmt(p.monto)}</span></PTd>
+                    </tr>
+                  ))}
+                  <tr style={{background:CARD}}>
+                    <td colSpan={5} className="px-4 py-2 text-right text-[10px] font-black text-slate-400 uppercase">Saldo {saldo>0?'por pagar':'a favor'}</td>
+                    <td className={`px-4 py-2 text-right font-black ${saldo>0?'text-orange-400':'text-emerald-400'}`}>${pFmt(Math.abs(saldo))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+          </PCard>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// COMPONENTE PRINCIPAL
+// ══════════════════════════════════════════════════════════════════════
+function ProcuraApp({fbUser,onBack}) {
+  const [sec,setSec]=useState('dashboard');
+  const [proveedores,setProveedores]=useState([]);
+  const [ordenesCompra,setOrdenesCompra]=useState([]);
+  const [facturasCompra,setFacturasCompra]=useState([]);
+  const [pagosCxP,setPagosCxP]=useState([]);
+  const [tasas,setTasas]=useState([]);
+  const [dialog,setDialog]=useState(null);
+
+  useEffect(()=>{
+    if(!fbUser)return;
+    const subs=[
+      onSnapshot(getColRef('procura_proveedores'),s=>setProveedores(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('procura_ordenes_compra'),orderBy('fecha','desc')),s=>setOrdenesCompra(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('procura_facturas_compra'),orderBy('fecha','desc')),s=>setFacturasCompra(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('procura_pagos_cxp'),orderBy('fecha','desc')),s=>setPagosCxP(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('banco_tasas'),orderBy('fecha','desc')),s=>setTasas(s.docs.map(d=>d.data()))),
+    ];
+    return()=>subs.forEach(u=>u());
+  },[fbUser]);
+
+  const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
+
+  const navGroups=[
+    {group:'Principal',color:ORANGE,items:[
+      {id:'dashboard',label:'Dashboard',icon:LayoutDashboard},
+    ]},
+    {group:'Gestión',color:'#3b82f6',items:[
+      {id:'proveedores',label:'Proveedores',icon:Building2,badge:proveedores.filter(p=>p.activo!==false).length||undefined},
+      {id:'ordenes',label:'Órdenes de Compra',icon:ClipboardList,badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||undefined},
+      {id:'facturas',label:'Facturas de Compra',icon:FileText},
+    ]},
+    {group:'Financiero',color:'#22c55e',items:[
+      {id:'cxp',label:'Cuentas por Pagar',icon:CreditCard,badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||undefined},
+      {id:'historial',label:'Historial de Pagos',icon:Receipt},
+      {id:'estado_cuenta',label:'Estado de Cuenta',icon:BarChart3},
+    ]},
+  ];
+
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV};
+
+  const renderView=()=>{
+    switch(sec){
+      case 'dashboard':return <DashboardView {...sharedProps}/>;
+      case 'proveedores':return <ProveedoresView {...sharedProps}/>;
+      case 'ordenes':return <OrdenesCompraView {...sharedProps}/>;
+      case 'facturas':return <FacturasCompraView {...sharedProps}/>;
+      case 'cxp':return <CxPView {...sharedProps}/>;
+      case 'historial':return <HistorialPagosView {...sharedProps}/>;
+      case 'estado_cuenta':return <EstadoCuentaProvView {...sharedProps}/>;
+      default:return null;
+    }
+  };
+
+  return (
+    <>
+      <PSidebarLayout navGroups={navGroups} activeId={sec} onNav={setSec} onBack={onBack}
+        headerContent={<div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Módulo Procura · Supply G&B</div>}>
+        {renderView()}
+      </PSidebarLayout>
+
+      {/* Dialog global */}
+      {dialog&&(
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:`3px solid ${ORANGE}`}}>
+              <h3 className="font-black text-white text-sm uppercase tracking-widest">{dialog.title}</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-600 font-medium">{dialog.text}</p>
+              <div className="flex justify-end gap-3 mt-6">
+                {dialog.type==='confirm'&&<PBo onClick={()=>setDialog(null)}>Cancelar</PBo>}
+                <PBg onClick={()=>{if(dialog.onConfirm)dialog.onConfirm();else setDialog(null);}}>
+                  {dialog.type==='confirm'?'Confirmar':'Aceptar'}
+                </PBg>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+
+// ══ FIN PROCURA ══
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
@@ -114,16 +1383,6 @@ const getTodayDate = () => {
 };
 
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
-
-const getUnidadCorrecta = (it) => {
-  if(it?.esTermo || /TERMO|THERMO|ENCOG/i.test(it?.desc||it?.invCode||'')) return 'KG';
-  const esBolsa = it?.esBolsa || it?.tipoProducto==='BOLSAS' ||
-    /BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|PAÑAL/i.test(it?.desc||it?.invCode||'');
-  if(esBolsa) return 'Millares';
-  const u = it?.unidad||it?.unit||'';
-  if(u && u!=='Millares' && u!=='Mill.') return u;
-  return 'Und';
-};
 // Tasa de cambio: hasta 4 decimales (mínimo 2)
 const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num || 0);
 
@@ -455,12 +1714,10 @@ function App() {
   const [ecEstado, setEcEstado] = useState('TODOS');
   const [ecDesde, setEcDesde] = useState('');
   const [ecHasta, setEcHasta] = useState('');
-  const [ecExpanded, setEcExpanded] = useState({});  const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
+  const [ecExpanded, setEcExpanded] = useState({});
+  const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
-  const [ecFechaRef, setEcFechaRef] = useState(getTodayDate());
-  const [ecModo, setEcModo] = useState('actual'); // 'actual' | 'fecha'
-  const [cxcEditModal, setCxcEditModal] = useState(null); // cobro a editar
   const [showNewCotizPanel, setShowNewCotizPanel] = useState(false);
   const [editingCotizId, setEditingCotizId] = useState(null);
   const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '', condicionPago: 'CONTADO', diasCredito: '', porcentajeAnticipo: '', tiempoEntrega: '', formaPago: 'BS A TASA BCV' };
@@ -3095,21 +4352,13 @@ function App() {
       const cantNum = parseNum(it.cantidad)||1;
       const totalFacturado = parseNum(it.totalUSD||it.totalRenglon||0);
       const precioUnitVenta = totalFacturado > 0 ? totalFacturado/cantNum : parseNum(it.precioUnit||0);
-      const esBolsa = it.esBolsa ?? (fg?.tipoProducto==='BOLSAS') ?? /BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|LAMINA|PAÑAL/i.test(it.desc||fg?.producto||it.invCode||'');
-      const getUnidadItem = () => {
-        if(it.unidad && it.unidad!=='Millares' && it.unidad!=='Mill.') return it.unidad; // respetar si ya tiene unidad explícita
-        if(esTermo) return 'KG';
-        if(esBolsa) return 'Millares';
-        return 'Und'; // Stretch film, Cinta, Kraft, Fleje, etc.
-      };
       return {
         fgId: it.fgId,
         invCode: (it.invCode || '').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim() || '',
         cantidad: it.cantidad,
         desc: it.desc || fg?.producto || '',
-        unidad: getUnidadItem(),
+        unidad: it.unidad || (esTermo?'KG':'Millares'),
         esTermo,
-        esBolsa,
         precioUnit: precioUnitVenta,
         costoUnit: costoCapturado,
         costoTotal: parseNum(it.cantidad) * costoCapturado
@@ -3297,7 +4546,7 @@ function App() {
             precioUnit: parseNum(it.precioUnit||0),
             totalUSD: parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),
             desc: it.desc || formatFGLabel(fg)||fg.producto||fg.id,
-            unidad: it.unidad||(esTermo?'KG':((fg?.tipoProducto==='BOLSAS'||/BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|PAÑAL/i.test(it.desc||fg?.producto||''))?'Millares':'Und')),
+            unidad: it.unidad||(esTermo?'KG':'Mill.'),
             maxCant: parseNum(it.cantidad||0) + currentStock,
             esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false, _origCantidad: parseNum(it.cantidad||0)
           });
@@ -4546,11 +5795,11 @@ function App() {
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
         chart:null
       },
+
       (hasPerm('procura')||appUser?.role==='Master') && { tab:'procura', icon:<ShoppingCart size={20}/>, title:'Procura & Compras', color:'#f97316',
         stats: ()=>({ s1:'Proveedores, OC, CxP, Estado de Cuenta', s2:'Módulo de Procura'}),
         chart:null
-      },
-    ].filter(Boolean);
+      },    ].filter(Boolean);
 
     // ── FILTRO POR PORTAL ──────────────────────────────────────────────────────
     // Define qué tarjetas pertenecen a cada portal. Los módulos que no están
@@ -9752,16 +11001,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     {it.invCode && <span className="block text-[9px] font-black text-indigo-700 mb-1 tracking-wide">{it.invCode.split('___')[0]}</span>}
                     {it.desc||inv.productoMaquilado||'MAQUILA / SERVICIO'}
                   </td>
-                  <td className="p-4 border-r border-black text-center font-black">{formatNum(it.cantidad)} {(()=>{
-                    // Corregir unidad según tipo de producto
-                    const u=it.unidad||'';
-                    if(it.esTermo) return 'KG';
-                    const esBolsaDesc=/BOL-|BOLSA|VENILAC|EMBUTID|EMPAQUE|PAÑAL/i.test(it.desc||it.invCode||'');
-                    const esBolsa=it.esBolsa||it.tipoProducto==='BOLSAS'||esBolsaDesc;
-                    if(esBolsa) return 'Millares';
-                    if(u==='Millares'||u==='Mill.') return 'Und'; // corregir facturas viejas incorrectas
-                    return u||'Und';
-                  })()}</td>
+                  <td className="p-4 border-r border-black text-center font-black">{formatNum(it.cantidad)} {it.unidad||''}</td>
                   <td className="p-4 border-r border-black text-right font-bold">{it.precioUnit>0?`$${formatNum(it.precioUnit)}`:'—'}</td>
                   <td className="p-4 text-right font-black">${formatNum(parseNum(it.precioUnit||0)*parseNum(it.cantidad||1)||parseNum(inv.montoBase)/Math.max((inv.itemsFacturados||[]).length,1))}</td>
                 </tr>
@@ -9936,7 +11176,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     fecha: ne.fecha||'',
                     cliente: ne.clientName||ne.clientRif||'—',
                     producto: it.desc||it.invCode||it.fgId||'—',
-                    medida: getUnidadCorrecta(it),
+                    medida: it.unit||it.unidad||'und',
                     cantidad, costoUnd: costoUnit,
                     totalCosto: cantidad*costoUnit,
                     precioVenta: precioUnit,
@@ -9957,7 +11197,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   fecha: ne.fecha||'',
                   cliente: ne.clientName||ne.clientRif||'—',
                   producto: it.desc||it.invCode||it.fgId||'—',
-                  medida: getUnidadCorrecta(it),
+                  medida: it.unit||it.unidad||'und',
                   cantidad, costoUnd: costoUnit,
                   totalCosto: cantidad*costoUnit,
                   precioVenta: precioUnit,
@@ -12880,7 +14120,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">FIRMA AUTORIZADA / VENDEDOR</div></div>
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
   </div>
-</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all"><Printer size={11}/></button>
+</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -14609,8 +15849,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Helpers de saldo con fecha de corte ────────────────────────
           const getSaldoNEAtFecha = (ne, fRef) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            // No usar Math.max — permitir saldo negativo (saldo a favor del cliente)
-            return parseNum(ne.total||ne.totalUSD||0)-cobrado-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
+            return Math.max(0, parseNum(ne.total||ne.totalUSD||0)-cobrado-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne));
           };
           // Encontrar invoice vinculado a NE usando mapas pre-computados
           const findInvForNE=(ne)=>{
@@ -14812,7 +16051,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const retCompPDF=retsNEPDF.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ')||'';
                   // Sub-filas: factura fiscal, NCs, retenciones, cobros
                   const detalles=[
-                    ...(invVincPDF?[`<div style="display:grid;${cols9};background:#eef2ff;border-left:3px solid #6366f1;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#4338ca;font-weight:bold;font-size:9px">↳ Fac. ${invVincPDF.nroFiscal||invVincPDF.documento||'—'}${invVincPDF.nroControl?' · Ctrl.'+invVincPDF.nroControl:''}</span><span style="font-size:9px;color:#6366f1">${invVincPDF.fecha||'—'}</span><span style="font-size:8px;color:#4338ca;grid-column:span 9">${parseNum(invVincPDF.baseGravableBs||invVincPDF.baseImponible||0)>0?'Base Bs.'+formatNum(parseNum(invVincPDF.baseGravableBs||invVincPDF.baseImponible||0))+' · ':''}${parseNum(invVincPDF.ivaBs||invVincPDF.montoIVA||0)>0?'IVA Bs.'+formatNum(parseNum(invVincPDF.ivaBs||invVincPDF.montoIVA||0))+' · ':''}${parseNum(invVincPDF.tasa||0)>0?'Tasa: '+formatNum(parseNum(invVincPDF.tasa))+' Bs/$':''}</span></div>`]:[]),
+                    ...(invVincPDF?[`<div style="display:grid;${cols9};background:#eef2ff;border-left:3px solid #6366f1;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#4338ca;font-weight:bold;font-size:9px">↳ Fac. ${invVincPDF.nroFiscal||invVincPDF.documento||'—'}${invVincPDF.nroControl?' · Ctrl.'+invVincPDF.nroControl:''}</span><span style="font-size:9px;color:#6366f1">${invVincPDF.fecha||'—'}</span><span style="font-size:8px;color:#4338ca;grid-column:span 9">${parseNum(invVincPDF.baseImponible||invVincPDF.montoBase||0)>0?'Base Bs.'+formatNum(parseNum(invVincPDF.baseImponible||invVincPDF.montoBase||0))+' · ':''}${parseNum(invVincPDF.montoIVA||invVincPDF.iva||0)>0?'IVA Bs.'+formatNum(parseNum(invVincPDF.montoIVA||invVincPDF.iva||0))+' · ':''}${parseNum(invVincPDF.tasa||0)>0?'Tasa: '+formatNum(parseNum(invVincPDF.tasa))+' Bs/$':''}</span></div>`]:[]),
                     ...ncsNE.map(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);return`<div style="display:grid;${cols9};background:#faf5ff;border-left:3px solid #9333ea;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#7c3aed;font-weight:bold;font-size:9px">↳ ${nc.tipo||'NC'} · ${nc.nroDocumento||'—'}</span><span style="font-size:9px;color:#7c3aed">${nc.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 7">${nc.descripcion||'—'}${b>0?' · Bs.'+formatNum(b)+' / Tasa '+formatNum(t):''}</span><span style="text-align:right;color:#7c3aed;font-weight:bold">-$${formatNum(u)}</span><span></span></div>`;}),
                     ...retsNE.map(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||1;const ru=rt>1?rb/rt:0;return`<div style="display:grid;${cols9};background:#fffbeb;border-left:3px solid #d97706;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#92400e;font-weight:bold;font-size:9px">↳ Ret. IVA</span><span style="font-size:9px;color:#b45309">${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:8px;color:#b45309;grid-column:span 6">Comp. ${r.nroRetencion||r.nroComprobante||'—'} · ${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}${invVincPDF?' · Fac. '+(invVincPDF.nroFiscal||'—'):''}</span><span></span><span style="text-align:right;color:#b45309;font-weight:bold">${ru>0?'$'+formatNum(ru):'Bs.'+formatNum(rb)}</span><span></span></div>`;}),
                     ...cobrosNE.map(cb=>`<div style="display:grid;${cols9};background:#f0fdf4;border-left:3px solid #16a34a;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#15803d;font-weight:bold;font-size:9px">↳ Pago · ${cb.fecha}</span><span style="font-size:9px;color:#64748b">${cb.referencia||'—'}</span><span style="font-size:9px;color:#15803d;grid-column:span 4">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</span><span style="text-align:right;color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</span><span style="font-size:8px;color:#64748b">${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</span><span></span><span></span></div>`),
@@ -14913,7 +16152,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE)+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(cx=>cx.neId===ne.id&&(!fechaRef||(cx.fecha||'')<=fechaRef));
                   // Factura fiscal
-                  if(invVinc){const baseBsA=parseNum(invVinc.baseGravableBs||invVinc.baseImponible||0);const ivaA=parseNum(invVinc.ivaBs||invVinc.montoIVA||0);const totalBsA=parseNum(invVinc.totalBs||0);const tasaA=parseNum(invVinc.tasa||0);detRows+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:16px;color:#4338ca;font-weight:bold">📋 Fac. ${invVinc.nroFiscal||invVinc.documento||'—'}</td><td class="left">${invVinc.fecha||'—'}</td><td class="left" colspan="2">${invVinc.nroControl?'Ctrl. '+invVinc.nroControl:''}</td><td colspan="3"></td><td class="left" style="color:#4338ca">${baseBsA>0?'Base: Bs.'+formatNum(baseBsA):''}${ivaA>0?' IVA: Bs.'+formatNum(ivaA):''}${totalBsA>0?' Tot: Bs.'+formatNum(totalBsA):''}${tasaA>0?' Tasa: '+formatNum(tasaA):''}  </td><td colspan="3"></td></tr>`;}
+                  if(invVinc){const baseBsA=parseNum(invVinc.baseImponible||invVinc.montoBase||0);const ivaA=parseNum(invVinc.montoIVA||invVinc.iva||0);const totalBsA=parseNum(invVinc.totalBs||0);const tasaA=parseNum(invVinc.tasa||0);detRows+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:16px;color:#4338ca;font-weight:bold">📋 Fac. ${invVinc.nroFiscal||invVinc.documento||'—'}</td><td class="left">${invVinc.fecha||'—'}</td><td class="left" colspan="2">${invVinc.nroControl?'Ctrl. '+invVinc.nroControl:''}</td><td colspan="3"></td><td class="left" style="color:#4338ca">${baseBsA>0?'Base: Bs.'+formatNum(baseBsA):''}${ivaA>0?' IVA: Bs.'+formatNum(ivaA):''}${totalBsA>0?' Tot: Bs.'+formatNum(totalBsA):''}${tasaA>0?' Tasa: '+formatNum(tasaA):''}  </td><td colspan="3"></td></tr>`;}
                   cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">💰 Pago · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}${parseNum(cb.montoBs||0)>0?' / Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td colspan="3"></td></tr>`;});
                   retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||1;const ru=rt>1?rb/rt:0;detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 Ret. IVA · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td class="left">${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}</td><td colspan="6"></td><td class="a">${ru>0?'$'+formatNum(ru):'Bs.'+formatNum(rb)}</td><td></td></tr>`;});
                 });
@@ -14942,7 +16181,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                   // Factura fiscal
-                  if(invVincXLS){const bBs=parseNum(invVincXLS.baseGravableBs||invVincXLS.baseImponible||0);const ivaD=parseNum(invVincXLS.ivaBs||invVincXLS.montoIVA||0);const tBs=parseNum(invVincXLS.totalBs||0);const tD=parseNum(invVincXLS.tasa||0);body+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:20px;color:#4338ca;font-weight:bold">📋 Fac. ${invVincXLS.nroFiscal||invVincXLS.documento||'—'}</td><td class="left">${invVincXLS.fecha||'—'}</td><td class="left" colspan="3">${bBs>0?'Base Bs.'+formatNum(bBs)+' · ':''}${ivaD>0?'IVA Bs.'+formatNum(ivaD)+' · ':''}${tBs>0?'Total Bs.'+formatNum(tBs)+' · ':''}${tD>0?'Tasa: '+formatNum(tD):''}  </td><td colspan="7"></td></tr>`;}
+                  if(invVincXLS){const bBs=parseNum(invVincXLS.baseImponible||invVincXLS.montoBase||0);const ivaD=parseNum(invVincXLS.montoIVA||invVincXLS.iva||0);const tBs=parseNum(invVincXLS.totalBs||0);const tD=parseNum(invVincXLS.tasa||0);body+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:20px;color:#4338ca;font-weight:bold">📋 Fac. ${invVincXLS.nroFiscal||invVincXLS.documento||'—'}</td><td class="left">${invVincXLS.fecha||'—'}</td><td class="left" colspan="3">${bBs>0?'Base Bs.'+formatNum(bBs)+' · ':''}${ivaD>0?'IVA Bs.'+formatNum(ivaD)+' · ':''}${tBs>0?'Total Bs.'+formatNum(tBs)+' · ':''}${tD>0?'Tasa: '+formatNum(tD):''}  </td><td colspan="7"></td></tr>`;}
                   cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">💰 Pago</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td></td></tr>`;});
                   const ncsNEd=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return (ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
                   ncsNEd.forEach(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${nc.tipo||'NC'}</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed;font-style:italic">${nc.descripcion||'—'}</td><td class="b">-$${formatNum(u)}</td><td class="left">${b>0?'Bs.'+formatNum(b):''}</td><td colspan="5"></td></tr>`;});
@@ -14975,216 +16214,67 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(!m.clientRif){setDialog({title:'Sin cliente',text:'Selecciona un cliente.',type:'alert'});return;}
             const lineas=(m.lineasPago||[]);
             if(lineas.length===0){setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});return;}
-
-            // ── MODO EDICIÓN ─────────────────────────────────────────────
-            if(m._editMode){
-              try{
-                // PASO 1: identificar cobros originales y NEs afectadas
-                const allCobsGrupo=(cobrosCxc||[]).filter(c=>c.grupoCobroId===m._grupoId||lineas.some(l=>l._cobId===c.id));
-                const neIdsOriginales=[...new Set([
-                  ...allCobsGrupo.map(c=>c.neId),
-                  ...lineas.map(l=>l._neId)
-                ].filter(Boolean))];
-                const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
-                const grupoId=m._grupoId;
-
-                // PASO 2: calcular montos previos por NE ANTES de tocar nada
-                const cobPrevMap={};
-                for(const neId of neIdsOriginales){
-                  cobPrevMap[neId]=allCobsGrupo.filter(c=>c.neId===neId).reduce((s,c)=>s+parseNum(c.monto||0),0);
-                }
-
-                // PASO 3: batch único — borrar cobros viejos + crear nuevos + actualizar NE
-                const batch=writeBatch(db);
-
-                // Borrar cobros anteriores
-                allCobsGrupo.forEach(c=>batch.delete(getDocRef('cobros_cxc',c.id)));
-
-                // Crear nuevos cobros para cada NE original
-                for(const neId of neIdsOriginales){
-                  const ne=(notasEntrega||[]).find(n=>n.id===neId);
-                  if(!ne) continue;
-                  const cobPrev=cobPrevMap[neId]||0;
-                  const cobActual=getCobradoNEAtFecha(ne,null)||0;
-                  const totalNE=parseNum(ne.total||ne.totalUSD||0);
-                  const ncs=getNCUSDNEAtFecha(ne,null);
-                  const rets=getRetUSDNE(ne);
-                  // Saldo real = total - (cobrado sin contar el cobro que borramos) - NCs - Rets
-                  const saldoBase=totalNE-(cobActual-cobPrev)-ncs-rets;
-                  const montoNE=totalUSD;
-                  const nuevoSaldo=saldoBase-montoNE;
-                  const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
-
-                  for(const linea of lineas){
-                    const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
-                    const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
-                    const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
-                    if(montoLineaNE<0.001) continue;
-                    const cobId='COB-'+grupoId+'-'+Math.random().toString(36).slice(2,6).toUpperCase();
-                    const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
-                    const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>'CAJA::'+c.id===linea.cuentaId):null;
-                    const tasa=parseNum(linea.tasa||tasaBCV);
-                    batch.set(getDocRef('cobros_cxc',cobId),{
-                      id:cobId,neId:ne.id,neDocumento:ne.id,
-                      clientName:ne.clientName||m.clientName,
-                      clientRif:ne.clientRif||m.clientRif||'',
-                      monto:montoLineaNE,montoUSD:montoLineaNE,
-                      montoBs:montoLineaNE*tasa,tasa,
-                      moneda:linea.moneda,metodo:linea.metodo,
-                      referencia:linea.referencia,
-                      concepto:linea.concepto||'Cobro CxC',
-                      fecha:linea.fecha,
-                      cuentaBancariaId:linea.cuentaId,
-                      cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
-                      vendedor:ne.vendedor||'',
-                      grupoCobroId:grupoId,
-                      timestamp:Date.now()
-                    });
-                  }
-
-                  // Actualizar NE con saldo correcto
-                  batch.update(getDocRef('notasEntrega',ne.id),{
-                    statusCxC:nuevoStatus,
-                    montoCobrado:(cobActual-cobPrev)+montoNE,
-                    saldoPendiente:nuevoSaldo,
-                    fechaUltimoCobro:lineas[0]?.fecha,
-                    refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
-                  });
-                }
-
-                await batch.commit();
-                setCxcPagoModal(null);
-                setDialog({title:'✅ Cobro actualizado',text:'Cobro actualizado correctamente.',type:'alert'});
-              }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-              return;
-            }
-
-            // ── MODO NUEVO ───────────────────────────────────────────────
             try{
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
-              const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
-              const batch=writeBatch(db);
-              const grupoId=Date.now().toString(36).toUpperCase();
               const allNesCliente=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
               const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
+              const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
+              const batch=writeBatch(db);
               let restante=totalUSD;
               const cobrosGenerados=[];
+              const grupoId=Date.now().toString(36).toUpperCase();
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
                 const saldoNE=getSaldoNEAtFecha(ne,null);
-                if(saldoNE<=0.001) continue;
-                const montoNE=restante;
-                restante=0;
-                const nuevoSaldo=saldoNE-montoNE;
-                const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
+                const montoNE=Math.min(restante,saldoNE);
+                if(montoNE<=0.001) continue;
+                restante-=montoNE;
+                const nuevoSaldo=Math.max(0,saldoNE-montoNE);
+                const nuevoStatus=nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
                 for(const linea of lineas){
                   const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
                   const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
                   const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
                   if(montoLineaNE<0.001) continue;
-                  const cobId='COB-'+grupoId+'-'+Math.random().toString(36).slice(2,6).toUpperCase();
+                  const cobId=`COB-${grupoId}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
                   const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
-                  const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>'CAJA::'+c.id===linea.cuentaId):null;
+                  const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
                   const tasa=parseNum(linea.tasa||tasaBCV);
                   batch.set(getDocRef('cobros_cxc',cobId),{
-                    id:cobId,neId:ne.id,neDocumento:ne.id,
-                    clientName:ne.clientName||m.clientName,
-                    clientRif:ne.clientRif||m.clientRif||'',
-                    monto:montoLineaNE,montoUSD:montoLineaNE,
-                    montoBs:montoLineaNE*tasa,tasa,
-                    moneda:linea.moneda,metodo:linea.metodo,
-                    referencia:linea.referencia,
-                    concepto:linea.concepto||'Cobro CxC',
-                    fecha:linea.fecha,
-                    cuentaBancariaId:linea.cuentaId,
-                    cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
-                    vendedor:ne.vendedor||'',
-                    grupoCobroId:grupoId,
-                    timestamp:Date.now()
+                    id:cobId,neId:ne.id,neDocumento:ne.id,clientName:ne.clientName||m.clientName,
+                    monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
+                    moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
+                    concepto:linea.concepto||'Cobro CxC',fecha:linea.fecha,
+                    cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
+                    vendedor:ne.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
                   });
                   if(cta){
-                    const mvId='MV-'+grupoId+'-'+Math.random().toString(36).slice(2,4).toUpperCase();
+                    const mvId=`MV-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
                     batch.set(getDocRef('banco_movimientos',mvId),{
                       id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Cobro CxC',
-                      concepto:(linea.concepto||'Cobro CxC')+' — '+m.clientName+' — '+ne.id,
-                      referencia:linea.referencia,clientName:m.clientName,
-                      clientRif:m.clientRif||'',
+                      concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
+                      referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
                       cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
-                      montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
-                      moneda:linea.moneda,metodo:linea.metodo,
+                      montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
                       estatus:'No Conciliado',timestamp:Date.now()
                     });
                     batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoLineaNE});
                   }
                 }
                 batch.update(getDocRef('notasEntrega',ne.id),{
-                  statusCxC:nuevoStatus,
-                  montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
-                  saldoPendiente:nuevoSaldo,
-                  fechaUltimoCobro:lineas[0]?.fecha,
+                  statusCxC:nuevoStatus,montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
+                  saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
                   refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
                 });
-                cobrosGenerados.push({ne,montoNE,nuevoStatus,nuevoSaldo});
+                cobrosGenerados.push({ne,montoNE,nuevoStatus});
               }
               await batch.commit();
               setCxcPagoModal(null);
-              setDialog({title:'✅ Cobro registrado',text:'Cobro de $'+formatNum(totalUSD)+' registrado.',type:'alert'});
-            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-          };
-          // ── REVERSAR COBRO ─────────────────────────────────────────────
-          // ── EDITAR COBRO ────────────────────────────────────────────
-          const editarCobro=async(cobro,nuevosDatos)=>{
-            try{
-              const batch=writeBatch(db);
-              const montoAnterior=parseNum(cobro.monto||0);
-              const montoNuevo=parseNum(nuevosDatos.monto||0);
-              const diferencia=montoNuevo-montoAnterior;
-              // Actualizar el cobro existente (no duplicar)
-              batch.update(getDocRef('cobros_cxc',cobro.id),{
-                monto:montoNuevo,
-                montoUSD:montoNuevo,
-                montoBs:montoNuevo*parseNum(nuevosDatos.tasa||cobro.tasa||1),
-                metodo:nuevosDatos.metodo||cobro.metodo,
-                referencia:nuevosDatos.referencia||cobro.referencia,
-                concepto:nuevosDatos.concepto||cobro.concepto||'',
-                fecha:nuevosDatos.fecha||cobro.fecha,
-                cuentaBancariaId:nuevosDatos.cuentaId||cobro.cuentaBancariaId||'',
-                cuentaBancoNombre:nuevosDatos.cuentaNombre||cobro.cuentaBancoNombre||'',
-                _editado:true,_editadoTs:Date.now()
-              });
-              // Actualizar saldo en NE
-              const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
-              if(ne&&diferencia!==0){
-                const saldoActual=getSaldoNEAtFecha(ne,null);
-                const nuevoSaldo=saldoActual-diferencia;
-                const nuevoStatus=nuevoSaldo<=-0.01?'COBRADA_FAVOR':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
-                batch.update(getDocRef('notasEntrega',ne.id),{
-                  statusCxC:nuevoStatus,
-                  montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+diferencia,
-                  saldoPendiente:nuevoSaldo
-                });
-              }
-              // Buscar movimiento bancario vinculado directamente en Firestore
-              if(diferencia!==0){
-                try{
-                  const movsSnap=await getDocs(getColRef('banco_movimientos'));
-                  const mvBanco=movsSnap.docs.map(d=>d.data()).find(mv=>mv.referencia===cobro.referencia&&mv.clientName===cobro.clientName);
-                  if(mvBanco){
-                    batch.update(getDocRef('banco_movimientos',mvBanco.id),{
-                      montoUSD:montoNuevo,
-                      montoBs:montoNuevo*parseNum(nuevosDatos.tasa||cobro.tasa||1)
-                    });
-                    const cta=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
-                    if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+diferencia});
-                  }
-                }catch(_){}
-              }
-              await batch.commit();
-              setCxcEditModal(null);
-              setDialog({title:'✅ Cobro actualizado',text:'Cobro actualizado a $'+formatNum(montoNuevo)+'.',type:'alert'});
+              setDialog({title:'✅ Cobro registrado',text:`$${formatNum(totalUSD)} en ${lineas.length} método(s). ${cobrosGenerados.length} NE(s) actualizadas.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
+          // ── REVERSAR COBRO ─────────────────────────────────────────────
           const reversarCobro=async(cobro)=>{
             setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento bancario también será eliminado. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
               try{
@@ -15247,72 +16337,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           };
 
           // ── MODAL COBRO MASIVO — pantalla completa horizontal ────────
-          // ── MODAL EDITAR COBRO ─────────────────────────────────────
-          if(cxcEditModal){
-            const ec=cxcEditModal;
-            return(
-            <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-                <div className="px-6 py-4 flex justify-between items-center" style={{background:'#1d4ed8'}}>
-                  <h3 className="text-white font-black text-sm uppercase flex items-center gap-2">✏️ Editar Cobro</h3>
-                  <button onClick={()=>setCxcEditModal(null)} className="text-white/70 hover:text-white"><X size={18}/></button>
-                </div>
-                <div className="p-6 space-y-4">
-                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700">
-                    <span className="font-black">NE:</span> {ec.neDocumento||ec.neId} · <span className="font-black">Cliente:</span> {ec.clientName}
-                  </div>
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto USD</label>
-                    <input type="number" step="0.01" value={ec._monto}
-                      onChange={e=>setCxcEditModal(m=>({...m,_monto:e.target.value}))}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-black outline-none focus:border-blue-500"/>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método</label>
-                      <select value={ec._metodo} onChange={e=>setCxcEditModal(m=>({...m,_metodo:e.target.value}))}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] outline-none focus:border-blue-500">
-                        {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                      <input type="date" value={ec._fecha} onChange={e=>setCxcEditModal(m=>({...m,_fecha:e.target.value}))}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] outline-none focus:border-blue-500"/>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia</label>
-                    <input type="text" value={ec._referencia} onChange={e=>setCxcEditModal(m=>({...m,_referencia:e.target.value.toUpperCase()}))}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] font-mono outline-none focus:border-blue-500 uppercase"/>
-                  </div>
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción</label>
-                    <input type="text" value={ec._concepto} onChange={e=>setCxcEditModal(m=>({...m,_concepto:e.target.value}))}
-                      placeholder="Descripción del cobro..."
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-[11px] outline-none focus:border-blue-500"/>
-                  </div>
-                  {parseNum(ec._monto)!==parseNum(ec.monto)&&(
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700">
-                      ⚠️ Cambiando de <b>${formatNum(parseNum(ec.monto))}</b> → <b>${formatNum(parseNum(ec._monto))}</b>
-                      {parseNum(ec._monto)>parseNum(ec.monto)&&<span className="ml-1">(diferencia: +${formatNum(parseNum(ec._monto)-parseNum(ec.monto))})</span>}
-                    </div>
-                  )}
-                  <div className="flex gap-3 pt-2">
-                    <button onClick={()=>editarCobro(ec,{monto:ec._monto,metodo:ec._metodo,referencia:ec._referencia,fecha:ec._fecha,concepto:ec._concepto,tasa:ec.tasa,cuentaId:ec._cuentaId,cuentaNombre:ec._cuentaNombre})}
-                      className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-black text-[11px] uppercase hover:bg-blue-700 transition-all">
-                      ✅ Guardar cambios
-                    </button>
-                    <button onClick={()=>setCxcEditModal(null)}
-                      className="px-4 py-3 border border-gray-200 rounded-xl text-gray-500 font-black text-[11px] hover:bg-gray-50">
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>);
-          }
-
           if(cxcPagoModal){
             const pm=cxcPagoModal;
             // Construir lista de clientes con saldo independiente de filtros
@@ -15337,7 +16361,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const montoBs=pm.moneda==='Bs'?parseNum(pm.monto):parseNum(pm.monto)*parseNum(pm.tasa||1);
             // Multicobro totals
             const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
-            const saldoTrasPago=saldoTotalCliente-totalLineasUSD;
+            const saldoTrasPago=Math.max(0,saldoTotalCliente-totalLineasUSD);
 
             // Distribución automática del monto entre NEs (más antigua primero)
             const nesParaDistribuir = nesSelecIds.length>0
@@ -15479,9 +16503,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                           <div style={{fontSize:8,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:3}}>Pagando ahora</div>
                           <div style={{fontSize:15,fontWeight:900,color:'#16a34a'}}>${formatNum(totalLineasUSD)}</div>
                         </div>
-                        <div style={{background:saldoTrasPago<=-0.01?'#eff6ff':saldoTrasPago<0.01?'#f0fdf4':'#fffbeb',borderRadius:10,padding:'10px 12px',textAlign:'center',border:`1px solid ${saldoTrasPago<=-0.01?'#93c5fd':saldoTrasPago<0.01?'#86efac':'#fed7aa'}`}}>
-                          <div style={{fontSize:8,fontWeight:900,color:saldoTrasPago<=-0.01?'#1d4ed8':saldoTrasPago<0.01?'#15803d':'#92400e',textTransform:'uppercase',marginBottom:3}}>Saldo tras pago</div>
-                          <div style={{fontSize:15,fontWeight:900,color:saldoTrasPago<=-0.01?'#2563eb':saldoTrasPago<0.01?'#16a34a':'#f97316'}}>{saldoTrasPago<=-0.01?'Saldo a favor: -':'$'}{formatNum(Math.abs(saldoTrasPago))}</div>
+                        <div style={{background:saldoTrasPago<0.01?'#f0fdf4':'#fffbeb',borderRadius:10,padding:'10px 12px',textAlign:'center',border:`1px solid ${saldoTrasPago<0.01?'#86efac':'#fed7aa'}`}}>
+                          <div style={{fontSize:8,fontWeight:900,color:saldoTrasPago<0.01?'#15803d':'#92400e',textTransform:'uppercase',marginBottom:3}}>Saldo tras pago</div>
+                          <div style={{fontSize:15,fontWeight:900,color:saldoTrasPago<0.01?'#16a34a':'#f97316'}}>${formatNum(saldoTrasPago)}</div>
                         </div>
                       </div>
                     )}
@@ -15542,21 +16566,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         {pm.lineaActual?.moneda==='Bs'&&parseNum(pm.lineaActual?.monto)>0&&parseNum(pm.lineaActual?.tasa)>0&&(
                           <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= ${formatNum(parseNum(pm.lineaActual.monto)/parseNum(pm.lineaActual.tasa))} USD</div>
                         )}
-                        {pm.lineaActual?.moneda==='USD'&&parseNum(pm.lineaActual?.monto)>0&&parseNum(pm.lineaActual?.tasa)>0&&(
-                          <div style={{fontSize:10,color:'#2563eb',fontWeight:700,marginTop:4}}>= Bs. {formatNum(parseNum(pm.lineaActual.monto)*parseNum(pm.lineaActual.tasa))}</div>
-                        )}
                       </div>
 
-                      {/* Tasa — siempre visible para ambas monedas */}
-                      <div style={{marginBottom:10}}>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>
-                          Tasa Bs/$ {pm.lineaActual?.moneda==='Bs'?'(divide Bs ÷ tasa = USD)':'(multiplica USD × tasa = Bs)'}
-                        </label>
-                        <input type="number" step="0.01" placeholder={String(tasaBCV)}
-                          value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
-                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
-                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
-                      </div>
+                      {pm.lineaActual?.moneda==='Bs'&&(
+                        <div style={{marginBottom:10}}>
+                          <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                          <input type="number" step="0.01"
+                            value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                            style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
+                            onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                        </div>
+                      )}
 
                       {/* Método */}
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
@@ -15576,20 +16596,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       </div>
 
                       {/* Referencia */}
-                      <div style={{marginBottom:10}}>
+                      <div style={{marginBottom:12}}>
                         <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>N° Referencia</label>
                         <input type="text" placeholder="REF-0000000"
                           value={pm.lineaActual?.referencia||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,referencia:e.target.value.toUpperCase()}}))}
                           style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box',textTransform:'uppercase'}}
-                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
-                      </div>
-
-                      {/* Descripción */}
-                      <div style={{marginBottom:12}}>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Descripción (opcional)</label>
-                        <input type="text" placeholder="Ej: Abono parcial, Saldo factura..."
-                          value={pm.lineaActual?.concepto||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,concepto:e.target.value}}))}
-                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',boxSizing:'border-box'}}
                           onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
                       </div>
 
@@ -15689,8 +16700,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       )}
                       <button onClick={guardarPagoMasivo}
                         disabled={!pm.clientRif||(pm.lineasPago||[]).length===0}
-                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#e5e7eb':pm._editMode?'linear-gradient(135deg,#1d4ed8,#1e40af)':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
-                        <CheckCircle size={15}/> {pm._editMode?'Actualizar Cobro':'Confirmar y Registrar'}
+                        style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#e5e7eb':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.clientRif||(pm.lineasPago||[]).length===0)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
+                        <CheckCircle size={15}/> Confirmar y Registrar
                       </button>
                       <button onClick={()=>setCxcPagoModal(null)}
                         style={{width:'100%',padding:'10px',borderRadius:12,border:'2px solid #e5e7eb',background:'transparent',color:'#9ca3af',fontWeight:900,fontSize:11,textTransform:'uppercase',cursor:'pointer',letterSpacing:1}}>
@@ -15820,23 +16831,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <button onClick={()=>setCxcSelectedClient('')} className="text-[9px] text-gray-400 hover:text-red-500 font-black ml-1">✕ Ver todos</button>
                   </div>
                 )}
-                {(()=>{
-                  const totalCobradoHist=clienteActivoData
-                    ?(cobrosCxc||[]).filter(c=>c.clientName===clienteActivoData.clientName).reduce((s,c)=>s+parseNum(c.monto||0),0)
-                    :(cobrosCxc||[]).reduce((s,c)=>s+parseNum(c.monto||0),0);
-                  return[
-                    {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
-                    {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
-                    {l:'Total cobrado',v:`$${formatNum(totalCobradoHist)}`,s:`Bs. ${formatNum(totalCobradoHist*tasaBCV)}`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
-                    {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
-                  ].map((m,i)=>(
-                    <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
-                      <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
-                      <p className={`text-xl font-black ${m.c}`}>{m.v}</p>
-                      <p className="text-[8px] text-gray-400">{m.s}</p>
-                    </div>
-                  ));
-                })()}
+                {[
+                  {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
+                  {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
+                  {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
+                ].map((m,i)=>(
+                  <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
+                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
+                    <p className={`text-xl font-black ${m.c}`}>{m.v}</p>
+                    <p className="text-[8px] text-gray-400">{m.s}</p>
+                  </div>
+                ))}
               </div>
 
               {/* Tabla clientes */}
@@ -16017,8 +17022,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={4}>—</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
-                                                    {parseNum(invVinc.baseGravableBs||invVinc.baseImponible||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invVinc.baseGravableBs||invVinc.baseImponible||0))}</b></span>}
-                                                    {parseNum(invVinc.ivaBs||invVinc.montoIVA||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invVinc.ivaBs||invVinc.montoIVA||0))}</b></span>}
+                                                    {parseNum(invVinc.baseImponible||invVinc.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invVinc.baseImponible||invVinc.montoBase||0))}</b></span>}
+                                                    {parseNum(invVinc.montoIVA||invVinc.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invVinc.montoIVA||invVinc.iva||0))}</b></span>}
                                                     {parseNum(invVinc.totalBs||0)>0&&<span className="ml-2">Total: <b className="text-indigo-700">Bs.{formatNum(parseNum(invVinc.totalBs||0))}</b></span>}
                                                     {parseNum(invVinc.tasa||0)>0&&<span className="ml-2 text-gray-400">· Tasa: {formatNum(parseNum(invVinc.tasa))} Bs/$</span>}
                                                   </td>
@@ -16262,42 +17267,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                   className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                                   🖨 PDF
                                 </button>
-                                <button onClick={()=>{
-                                  // Agrupar todas las líneas del mismo grupo
-                                  const grupoId=cb.grupoCobroId;
-                                  const lineasGrupo=grupoId?(cobrosCxc||[]).filter(c=>c.grupoCobroId===grupoId):[cb];
-                                  // Reconstruir lineasPago desde los cobros del grupo
-                                  const lineasPago=lineasGrupo.map(c=>({
-                                    moneda:c.moneda||'USD',
-                                    monto:String(c.monto||''),
-                                    tasa:String(c.tasa||tasaBCV),
-                                    metodo:c.metodo||'Transferencia',
-                                    cuentaId:c.cuentaBancariaId||'',
-                                    cuentaNombre:c.cuentaBancoNombre||'',
-                                    referencia:c.referencia||'',
-                                    concepto:c.concepto||'',
-                                    fecha:c.fecha||getTodayDate(),
-                                    _cobId:c.id,
-                                    _neId:c.neId // guardar neId original
-                                  }));
-                                  // Buscar NEs del cliente
-                                  const nesSelec={};
-                                  lineasGrupo.forEach(c=>{if(c.neId)nesSelec[c.neId]=true;});
-                                  setCxcPagoModal({
-                                    clientSearch:cb.clientName||'',
-                                    clientRif:cb.clientRif||(notasEntrega||[]).find(ne=>ne.id===cb.neId)?.clientRif||'',
-                                    clientName:cb.clientName||'',
-                                    nesSelec,
-                                    lineasPago,
-                                    lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:getTodayDate()},
-                                    distribucion:{},
-                                    _editMode:true, // flag para saber que es edición
-                                    _grupoId:grupoId||cb.id
-                                  });
-                                }} title="Editar cobro"
-                                  className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
-                                  ✏️ Editar
-                                </button>
                                 <button onClick={()=>reversarCobro(cb)} title="Reversar cobro"
                                   className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                                   ↩ Reversar
@@ -16349,270 +17318,39 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
         {ventasView === 'estado_cuenta' && (() => {
           const tasaBCVec = parseNum(settings?.tasaBCV||0)||1;
-          const corteEC = ecModo==='fecha' ? ecFechaRef : null;
-
-          // ── Mismos mapas que CxC para cálculo idéntico ──────────────
-          const _invMapEC = new Map();
-          for(const inv of (invoices||[])){
-            if(inv.id) _invMapEC.set(inv.id,inv);
-            if(inv.nroFiscal) _invMapEC.set(inv.nroFiscal,inv);
-            if(inv.documento) _invMapEC.set(inv.documento,inv);
-          }
-          const findInvEC=(key)=>key?_invMapEC.get(key):null;
-          const _invsByNeEC = new Map();
-          for(const inv of (invoices||[])){if(inv.neOrigen){if(!_invsByNeEC.has(inv.neOrigen))_invsByNeEC.set(inv.neOrigen,[]);_invsByNeEC.get(inv.neOrigen).push(inv);}}
-          const _retsByFactEC = new Map();
-          for(const r of (retenciones||[])){const k=r.facturaId||'';if(k){if(!_retsByFactEC.has(k))_retsByFactEC.set(k,[]);_retsByFactEC.get(k).push(r);}if(r.neId){if(!_retsByFactEC.has(r.neId))_retsByFactEC.set(r.neId,[]);_retsByFactEC.get(r.neId).push(r);}}
-          const _ncsByNeEC = new Map();
-          for(const n of (notasVentaCD||[])){for(const k of [n.neId,n.neOrigen,n.facturaId].filter(Boolean)){if(!_ncsByNeEC.has(k))_ncsByNeEC.set(k,[]);_ncsByNeEC.get(k).push(n);}}
-
-          const findInvForNEEC=(ne)=>{
-            const neId=ne.id||'',neDoc=ne.documento||'';
-            return (_invsByNeEC.get(neId)||_invsByNeEC.get(neDoc)||[])[0]||(ne.facturaId?findInvEC(ne.facturaId):null)||null;
+          const getSaldoNE = (ne) => {
+            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
+            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
+            return Math.max(0,parseNum(ne.total||ne.montoBase||0)-cobrado-nc-ret);
           };
-          const getNCUSDEC=(ne,fRef)=>{
-            const neId=ne.id||'',neDoc=ne.documento||'';
-            const invLinked=findInvForNEEC(ne);
-            const keys=[neId,neDoc,invLinked?.id,invLinked?.nroFiscal,invLinked?.documento,ne.facturaId].filter(Boolean);
-            const seen=new Set(),ncs=[];
-            for(const k of keys){for(const n of (_ncsByNeEC.get(k)||[])){if(!seen.has(n.id)){seen.add(n.id);ncs.push(n);}}}
-            return ncs.filter(n=>!fRef||(n.fecha||'')<=fRef).reduce((s,n)=>{
-              const t=parseNum(n.tasaFactura||0)||tasaBCVec;
-              if(!t||t<2) return s;
-              const baseBs=parseNum(n.monto||0);
-              return s+((n.tieneIva===false?baseBs:baseBs*1.16)/t);
-            },0);
-          };
-          const getRetUSDEC=(ne)=>{
-            const neId=ne.id||'',neDoc=ne.documento||'';
-            const invLinked=findInvForNEEC(ne);
-            const factKeys=[invLinked?.id,invLinked?.nroFiscal,invLinked?.documento,ne.facturaId,ne.nroFiscal,neId,neDoc].filter(Boolean);
-            const seen=new Set(),rets=[];
-            for(const k of factKeys){for(const r of (_retsByFactEC.get(k)||[])){const rk=r.nroComprobante||r.nroRetencion||r.facturaId+(r.montoRetenido||'');if(!seen.has(rk)){seen.add(rk);rets.push(r);}}}
-            return rets.reduce((s,r)=>{
-              let t=parseNum(invLinked?.tasa||invLinked?.tasaBCV||0);
-              if(!t&&r.facturaId){const invR=findInvEC(r.facturaId);t=parseNum(invR?.tasa||invR?.tasaBCV||0);}
-              t=t||tasaBCVec; if(!t||t<1.5) return s;
-              return s+parseNum(r.montoRetenido||r.montoIVARetenido||0)/t;
-            },0);
-          };
-
-          // ── Saldo real idéntico a CxC ──────────────────────────────
-          const getSaldoEC = (ne) => {
-            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            return parseNum(ne.total||ne.totalUSD||ne.montoBase||0)-cobrado-getNCUSDEC(ne,corteEC)-getRetUSDEC(ne);
-          };
-
           const allNEs=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
-            if(corteEC&&(ne.fecha||'')>corteEC) return false;
+            if(ecDesde&&(ne.fecha||'')<ecDesde) return false;
+            if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
             return true;
           });
-
-          // Filtrar NEs por vendedor ANTES de agrupar
-          const nesParaEC = ecVendedor!=='TODOS'
-            ? allNEs.filter(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor)
-            : allNEs;
-
           const porCli={};
-          nesParaEC.forEach(ne=>{
+          allNEs.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
             if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
             porCli[k].nes.push(ne);
           });
-
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
-          if(ecEstado==='SALDADO')   cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0)<0.01);
-          if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0)>=0.01);
-
+          if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
+          if(ecEstado==='SALDADO') cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)<0.01);
+          if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)>=0.01);
           const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
-          const totalFact  = cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.totalUSD||ne.montoBase||0),0),0);
-          const totalSaldo = cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoEC(ne),0),0);
-          const totalCobrado = totalFact-totalSaldo;
-          const allExpanded = cliList.length>0&&cliList.every(cl=>ecExpanded[cl.clientRif]);
-
-          // ── PDF Estado de Cuenta ─────────────────────────────────────
-          const exportarEcPDF = () => {
-            const fecha = getTodayDate();
-            let body='';
-            cliList.forEach(cl=>{
-              const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0);
-              const factCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
-              const cobCli=factCli-saldoCli;
-              const saldado=saldoCli<0.01;
-              body+=`<div style="margin-bottom:20px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
-                <div style="background:#0f172a;padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
-                  <span style="color:#f97316;font-weight:900;font-size:11px">${cl.clientName}</span>
-                  <span style="color:#94a3b8;font-size:9px">${cl.clientRif} · ${cl.vendedor}</span>
-                  <span style="color:${saldado?'#4ade80':'#f87171'};font-weight:900;font-size:11px">Saldo: $${formatNum(saldoCli)}</span>
-                </div>
-                <table style="width:100%;border-collapse:collapse;font-size:9px">
-                  <thead><tr style="background:#f1f5f9">
-                    <th style="padding:5px 8px;text-align:left">Documento</th>
-                    <th style="padding:5px 8px;text-align:left">Fecha</th>
-                    <th style="padding:5px 8px;text-align:left">Tipo</th>
-                    <th style="padding:5px 8px;text-align:left">Detalle</th>
-                    <th style="padding:5px 8px;text-align:right">Cargo USD</th>
-                    <th style="padding:5px 8px;text-align:right">NC/Ret.</th>
-                    <th style="padding:5px 8px;text-align:right">Abono</th>
-                    <th style="padding:5px 8px;text-align:right">Saldo</th>
-                  </tr></thead>
-                  <tbody>`;
-              cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne,ni)=>{
-                const sNE=getSaldoEC(ne);
-                const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC));
-                const ncsNE=(notasVentaCD||[]).filter(n=>{const a=n.neId||'',b2=n.neOrigen||'';return a===ne.id||b2===ne.id||a===ne.documento||b2===ne.documento;});
-                const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
-                const retsNE=(()=>{
-                  const factKeys=[invV?.id,invV?.nroFiscal,invV?.documento,ne.facturaId,ne.nroFiscal,ne.id,ne.documento].filter(Boolean);
-                  const seen=new Set();const result=[];
-                  for(const r of (retenciones||[])){
-                    const rk=r.nroComprobante||r.nroRetencion||r.id;
-                    if(seen.has(rk)) continue;
-                    if(factKeys.some(k=>r.facturaId===k||r.neId===k||r.neOrigen===k)){seen.add(rk);result.push(r);}
-                  }
-                  return result;
-                })();
-                const bg=ni%2===0?'#fff':'#f8fafc';
-                body+=`<tr style="background:${bg};border-bottom:1px solid #f1f5f9">
-                  <td style="padding:5px 8px;font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
-                  <td style="padding:5px 8px;color:#64748b">${ne.fecha||'—'}</td>
-                  <td style="padding:5px 8px"><span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-size:8px">NE</span></td>
-                  <td style="padding:5px 8px;color:#64748b">${(ne.items||[])[0]?.desc||'—'}</td>
-                  <td style="padding:5px 8px;text-align:right;font-weight:bold">$${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
-                  <td style="padding:5px 8px;text-align:right">—</td>
-                  <td style="padding:5px 8px;text-align:right">—</td>
-                  <td style="padding:5px 8px;text-align:right;font-weight:bold;color:${sNE<0.01?'#16a34a':'#dc2626'}">$${formatNum(sNE)}</td>
-                </tr>`;
-                if(invV){
-                  const bBs=parseNum(invV.baseGravableBs||invV.baseImponible||0);
-                  const ivaV=parseNum(invV.ivaBs||invV.montoIVA||0);
-                  const tV=parseNum(invV.tasa||0);
-                  body+=`<tr style="background:#eef2ff;border-bottom:1px solid #e0e7ff">
-                    <td style="padding:4px 8px 4px 18px;color:#4338ca;font-weight:bold;font-size:8px">↳ Fac. ${invV.nroFiscal||invV.documento||'—'}</td>
-                    <td style="padding:4px 8px;color:#6366f1;font-size:8px">${invV.fecha||'—'}</td>
-                    <td style="padding:4px 8px"><span style="background:#e0e7ff;color:#4338ca;padding:1px 5px;border-radius:3px;font-size:7px">Fac. Fiscal</span></td>
-                    <td style="padding:4px 8px;color:#4338ca;font-size:8px">${bBs>0?'Base Bs.'+formatNum(bBs):''}${ivaV>0?' · IVA Bs.'+formatNum(ivaV):''}${tV>0?' · Tasa '+formatNum(tV):'  '}</td>
-                    <td colspan="4"></td>
-                  </tr>`;
-                }
-                ncsNE.forEach(nc=>{
-                  const t=parseNum(nc.tasaFactura||0)||tasaBCVec;
-                  const b=parseNum(nc.monto||0);
-                  const u=t>1?b/t:parseNum(nc.montoUSD||0);
-                  body+=`<tr style="background:#faf5ff;border-bottom:1px solid #f3e8ff">
-                    <td style="padding:4px 8px 4px 18px;color:#7c3aed;font-weight:bold;font-size:8px">↳ ${nc.tipo||'NC'} · ${nc.nroDocumento||'—'}</td>
-                    <td style="padding:4px 8px;color:#7c3aed;font-size:8px">${nc.fecha||'—'}</td>
-                    <td style="padding:4px 8px"><span style="background:#f3e8ff;color:#7c3aed;padding:1px 5px;border-radius:3px;font-size:7px">NC</span></td>
-                    <td style="padding:4px 8px;color:#9ca3af;font-size:8px;font-style:italic">${nc.descripcion||'—'}${b>0?' · Bs.'+formatNum(b):''}</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                    <td style="padding:4px 8px;text-align:right;color:#7c3aed;font-weight:bold">-$${formatNum(u)}</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                  </tr>`;
-                });
-                retsNE.forEach((r,ri)=>{
-                  const rb=parseNum(r.montoRetenido||r.monto||0);
-                  const rtRet=parseNum(r.tasa||r.tasaFactura||0);
-                  const rtInvV=parseNum(invV?.tasa||invV?.tasaBCV||0);
-                  const rtFact=r.facturaId?(()=>{const fi=(invoices||[]).find(inv=>inv.id===r.facturaId||inv.nroFiscal===r.facturaId||inv.documento===r.facturaId);return parseNum(fi?.tasa||fi?.tasaBCV||0);})():0;
-                  const rt=(rtRet>1?rtRet:rtInvV>1?rtInvV:rtFact>1?rtFact:0)||tasaBCVec;
-                  const ru=rt>1?rb/rt:0;
-                  body+=`<tr style="background:#fffbeb;border-bottom:1px solid #fef3c7">
-                    <td style="padding:4px 8px 4px 18px;color:#b45309;font-weight:bold;font-size:8px">↳ ${r.nroRetencion||r.nroComprobante||'RET'}</td>
-                    <td style="padding:4px 8px;color:#b45309;font-size:8px">${r.fechaComprobante||r.fecha||'—'}</td>
-                    <td style="padding:4px 8px"><span style="background:#fef3c7;color:#b45309;padding:1px 5px;border-radius:3px;font-size:7px">Ret. IVA</span></td>
-                    <td style="padding:4px 8px;color:#64748b;font-size:8px">${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}${rb>0?' · Bs.'+formatNum(rb):''}${invV?' · Fac.'+(invV.nroFiscal||'—'):''}</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                    <td style="padding:4px 8px;text-align:right;color:#b45309;font-weight:bold">${ru>0?'-$'+formatNum(ru):'-Bs.'+formatNum(rb)}</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                  </tr>`;
-                });
-                cobNE.forEach((cb,ci)=>{
-                  body+=`<tr style="background:#f0fdf4;border-bottom:1px solid #dcfce7">
-                    <td style="padding:4px 8px 4px 18px;color:#15803d;font-weight:bold;font-size:8px">↳ Pago${cobNE.length>1?' '+(ci+1):''}</td>
-                    <td style="padding:4px 8px;color:#16a34a;font-size:8px">${cb.fecha||'—'}</td>
-                    <td style="padding:4px 8px"><span style="background:#dcfce7;color:#15803d;padding:1px 5px;border-radius:3px;font-size:7px">Pago</span></td>
-                    <td style="padding:4px 8px;color:#64748b;font-size:8px">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'} · Ref. ${cb.referencia||'—'}${parseNum(cb.montoBs||0)>0?' · Bs.'+formatNum(parseNum(cb.montoBs)):''}</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                    <td style="padding:4px 8px;text-align:right;color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</td>
-                    <td style="padding:4px 8px;text-align:right">—</td>
-                  </tr>`;
-                });
-              });
-              body+=`</tbody><tfoot><tr style="background:#0f172a">
-                <td colspan="4" style="padding:6px 8px;color:#94a3b8;font-weight:bold;font-size:9px">Subtotal · ${cl.nes.length} doc${cl.nes.length>1?'s':''}</td>
-                <td style="padding:6px 8px;text-align:right;color:#fff;font-weight:bold">$${formatNum(factCli)}</td>
-                <td style="padding:6px 8px;text-align:right;color:#a78bfa;font-weight:bold">—</td>
-                <td style="padding:6px 8px;text-align:right;color:#4ade80;font-weight:bold">$${formatNum(cobCli)}</td>
-                <td style="padding:6px 8px;text-align:right;font-weight:bold;color:${saldado?'#4ade80':'#f87171'}">$${formatNum(saldoCli)}</td>
-              </tr></tfoot></table></div>`;
-            });
-            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Estado de Cuenta</title>
-            <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10px;color:#111;}
-            @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
-            <div style="background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-              <div><p style="color:#f97316;font-size:18px;font-weight:900;margin:0">Supply G&B</p><p style="color:#94a3b8;font-size:10px;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p></div>
-              <div style="text-align:right"><p style="color:#fff;font-weight:900;font-size:13px;margin:0">ESTADO DE CUENTA</p>
-              <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corteEC||'Saldo actual'} · ${cliList.length} clientes · Saldo total: $${formatNum(totalSaldo)}</p></div>
-            </div>
-            <div style="padding:0 16px">${body}</div>
-            <div style="text-align:center;font-size:8px;color:#94a3b8;margin-top:12px;padding:8px 0;border-top:1px solid #e2e8f0">Supply ERP · Generado: ${fecha}</div>
-            <script>window.onload=()=>window.print();</script></body></html>`;
-            const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
-          };
-
-          // ── Excel Estado de Cuenta ────────────────────────────────────
-          const exportarEcExcel = () => {
-            const fecha=getTodayDate();
-            const XH=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;font-size:9pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;padding:4px 6px;border:1px solid #334155;font-size:8pt;text-align:left}td{padding:4px 6px;border:1px solid #cbd5e1;font-size:9pt}.alt{background:#f8fafc}.hdr{background:#1e293b;color:#fff;font-weight:bold}.tot{background:#0f172a;color:#fff;font-weight:bold}.nc{background:#faf5ff}.ret{background:#fffbeb}.pago{background:#f0fdf4}.fac{background:#eef2ff}</style></head><body>`;
-            const EMPRESA=`<p style="font-size:13pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:11pt">Estado de Cuenta · Generado: ${fecha}</h3>`;
-            let rows='';
-            cliList.forEach(cl=>{
-              const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0);
-              const factCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
-              const cobCli=factCli-saldoCli;
-              rows+=`<tr class="hdr"><td colspan="8">${cl.clientName} · ${cl.clientRif} · ${cl.vendedor}</td></tr>`;
-              rows+=`<tr style="background:#f1f5f9;font-size:8pt"><td>Documento</td><td>Fecha</td><td>Tipo</td><td>Detalle</td><td>Cargo USD</td><td>NC/Ret.</td><td>Abono</td><td>Saldo</td></tr>`;
-              cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne,ni)=>{
-                const sNE=getSaldoEC(ne);
-                const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC));
-                const ncsNE=(notasVentaCD||[]).filter(n=>{const a=n.neId||'',b2=n.neOrigen||'';return a===ne.id||b2===ne.id||a===ne.documento||b2===ne.documento;});
-                const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
-                const retsNE=(()=>{
-                  const factKeys=[invV?.id,invV?.nroFiscal,invV?.documento,ne.facturaId,ne.nroFiscal,ne.id,ne.documento].filter(Boolean);
-                  const seen=new Set();const result=[];
-                  for(const r of (retenciones||[])){
-                    const rk=r.nroComprobante||r.nroRetencion||r.id;
-                    if(seen.has(rk)) continue;
-                    if(factKeys.some(k=>r.facturaId===k||r.neId===k||r.neOrigen===k)){seen.add(rk);result.push(r);}
-                  }
-                  return result;
-                })();
-                rows+=`<tr class="${ni%2===0?'':'alt'}"><td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td>${ne.fecha||'—'}</td><td>Nota Entrega</td><td>${(ne.items||[])[0]?.desc||'—'}</td><td style="text-align:right">$${formatNum(parseNum(ne.total||ne.montoBase||0))}</td><td>—</td><td>—</td><td style="text-align:right;font-weight:bold;color:${sNE<0.01?'#16a34a':'#dc2626'}">$${formatNum(sNE)}</td></tr>`;
-                if(invV){const bBs=parseNum(invV.baseGravableBs||invV.baseImponible||0);const ivaV=parseNum(invV.ivaBs||invV.montoIVA||0);const tV=parseNum(invV.tasa||0);rows+=`<tr class="fac"><td style="padding-left:16px;color:#4338ca;font-weight:bold">↳ Fac. ${invV.nroFiscal||invV.documento||'—'}</td><td style="color:#6366f1">${invV.fecha||'—'}</td><td>Fac. Fiscal</td><td style="color:#4338ca">${bBs>0?'Base Bs.'+formatNum(bBs):''}${ivaV>0?' IVA Bs.'+formatNum(ivaV):''}${tV>0?' Tasa '+formatNum(tV):''}</td><td colspan="4"></td></tr>`;}
-                ncsNE.forEach(nc=>{const t=parseNum(nc.tasaFactura||0)||tasaBCVec;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);rows+=`<tr class="nc"><td style="padding-left:16px;color:#7c3aed;font-weight:bold">↳ ${nc.tipo||'NC'} · ${nc.nroDocumento||'—'}</td><td style="color:#7c3aed">${nc.fecha||'—'}</td><td>Nota Crédito</td><td style="color:#9ca3af;font-style:italic">${nc.descripcion||'—'}${b>0?' · Bs.'+formatNum(b):''}</td><td>—</td><td style="text-align:right;color:#7c3aed;font-weight:bold">-$${formatNum(u)}</td><td>—</td><td>—</td></tr>`;});
-                retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rtRet=parseNum(r.tasa||r.tasaFactura||0);const rtInvV=parseNum(invV?.tasa||invV?.tasaBCV||0);const rtFact=r.facturaId?(()=>{const fi=(invoices||[]).find(inv=>inv.id===r.facturaId||inv.nroFiscal===r.facturaId||inv.documento===r.facturaId);return parseNum(fi?.tasa||fi?.tasaBCV||0);})():0;const rt=(rtRet>1?rtRet:rtInvV>1?rtInvV:rtFact>1?rtFact:0)||tasaBCVec;const ru=rt>1?rb/rt:0;rows+=`<tr class="ret"><td style="padding-left:16px;color:#b45309;font-weight:bold">↳ ${r.nroRetencion||r.nroComprobante||'RET'}</td><td style="color:#b45309">${r.fechaComprobante||r.fecha||'—'}</td><td>Ret. IVA</td><td>${r.porcentaje||r.pct?r.porcentaje||r.pct+'%':'75%'}${rb>0?' · Bs.'+formatNum(rb):''}${invV?' · Fac.'+(invV.nroFiscal||'—'):''}</td><td>—</td><td style="text-align:right;color:#b45309;font-weight:bold">${ru>0?'-$'+formatNum(ru):'-Bs.'+formatNum(rb)}</td><td>—</td><td>—</td></tr>`;});
-                cobNE.forEach((cb,ci)=>{rows+=`<tr class="pago"><td style="padding-left:16px;color:#15803d;font-weight:bold">↳ Pago${cobNE.length>1?' '+(ci+1):''}</td><td style="color:#16a34a">${cb.fecha||'—'}</td><td>Pago</td><td>${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'} · Ref. ${cb.referencia||'—'}${parseNum(cb.montoBs||0)>0?' · Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td>—</td><td>—</td><td style="text-align:right;color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>—</td></tr>`;});
-              });
-              rows+=`<tr class="tot"><td colspan="4">Subtotal ${cl.clientName}</td><td style="text-align:right">$${formatNum(factCli)}</td><td>—</td><td style="text-align:right">$${formatNum(cobCli)}</td><td style="text-align:right;color:${saldoCli<0.01?'#4ade80':'#f87171'}">$${formatNum(saldoCli)}</td></tr><tr><td colspan="8"></td></tr>`;
-            });
-            rows+=`<tr class="tot"><td colspan="4">TOTAL · ${cliList.length} clientes</td><td style="text-align:right">$${formatNum(totalFact)}</td><td>—</td><td style="text-align:right">$${formatNum(totalCobrado)}</td><td style="text-align:right;color:#f97316">$${formatNum(totalSaldo)}</td></tr>`;
-            const html=XH+EMPRESA+`<table><thead><tr><th>Documento</th><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Cargo USD</th><th>NC/Ret.</th><th>Abono</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
-            const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
-            const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`EstadoCuenta_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
-          };
-
+          const totalFact=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
+          const totalSaldo=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoNE(ne),0),0);
+          const totalCobrado=totalFact-totalSaldo;
           return (
             <div className="p-4 space-y-4">
-              {/* Filtros */}
               <div className="bg-white rounded-2xl border border-gray-100 p-4">
                 <div className="flex flex-wrap gap-2 items-center">
                   <input value={ecSearch} onChange={e=>setEcSearch(e.target.value)} placeholder="🔍 Buscar cliente o RIF..."
-                    className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[160px]"/>
+                    className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[180px]"/>
                   <select value={ecVendedor} onChange={e=>setEcVendedor(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none">
                     {vendedoresEc.map(v=><option key={v} value={v}>{v==='TODOS'?'Todos los vendedores':v}</option>)}
                   </select>
@@ -16621,36 +17359,16 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <option value="PENDIENTE">Con saldo</option>
                     <option value="SALDADO">Saldados</option>
                   </select>
-                  <div className="flex items-center gap-1 border border-gray-200 rounded-xl overflow-hidden">
-                    <select value={ecModo} onChange={e=>setEcModo(e.target.value)}
-                      className="border-none outline-none text-[10px] font-bold bg-transparent px-3 py-2 cursor-pointer">
-                      <option value="actual">Saldo actual</option>
-                      <option value="fecha">A la fecha de corte</option>
-                    </select>
-                    {ecModo==='fecha'&&(
-                      <input type="date" value={ecFechaRef} onChange={e=>setEcFechaRef(e.target.value)}
-                        className="border-l border-gray-200 outline-none text-[10px] font-bold bg-transparent px-3 py-2"/>
-                    )}
+                  <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
+                    <span className="text-[9px] text-gray-400 font-bold">Desde</span>
+                    <input type="date" value={ecDesde} onChange={e=>setEcDesde(e.target.value)} className="border-none outline-none text-[10px] font-bold bg-transparent"/>
+                    <span className="text-[9px] text-gray-400 font-bold">hasta</span>
+                    <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border-none outline-none text-[10px] font-bold bg-transparent"/>
                   </div>
-                  {(ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS'||(ecModo==='fecha'&&ecFechaRef!==getTodayDate()))&&
-                    <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcModo('actual');setEcFechaRef(getTodayDate());}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
-                  {/* Expandir/Contraer todo + PDF + Excel */}
-                  <div className="flex items-center gap-2 ml-auto">
-                    <button onClick={()=>{const next=!allExpanded;const m={};cliList.forEach(cl=>m[cl.clientRif]=next);setEcExpanded(m);}}
-                      className="flex items-center gap-1 px-3 py-2 border border-gray-200 rounded-xl text-[10px] font-black hover:bg-gray-50">
-                      {allExpanded?'⬆ Contraer todo':'⬇ Expandir todo'}
-                    </button>
-                    <button onClick={exportarEcPDF} className="flex items-center gap-1 px-3 py-2 bg-gray-900 text-white rounded-xl text-[10px] font-black hover:bg-gray-700">
-                      🖨 PDF
-                    </button>
-                    <button onClick={exportarEcExcel} className="flex items-center gap-1 px-3 py-2 bg-green-700 text-white rounded-xl text-[10px] font-black hover:bg-green-800">
-                      📊 Excel
-                    </button>
-                  </div>
+                  {(ecDesde||ecHasta||ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS')&&
+                    <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
                 </div>
               </div>
-
-              {/* KPIs */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[{l:'Clientes',v:cliList.length,c:'text-gray-800'},{l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},{l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},{l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'}].map(k=>(
                   <div key={k.l} className="bg-white rounded-2xl border border-gray-100 p-4">
@@ -16659,20 +17377,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   </div>
                 ))}
               </div>
-
-              {/* Clientes */}
               {cliList.map(cl=>{
-                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoEC(ne),0);
+                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
                 const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoCli=facturadoCli-saldoCli;
                 const saldado=saldoCli<0.01;
                 const exp=!!ecExpanded[cl.clientRif];
                 return(
                 <div key={cl.clientRif} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 select-none"
+                  <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
                     onClick={()=>setEcExpanded(p=>({...p,[cl.clientRif]:!p[cl.clientRif]}))}>
                     <div className="flex items-center gap-3">
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs flex-shrink-0 ${saldado?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs ${saldado?'bg-green-100 text-green-700':'bg-orange-100 text-orange-700'}`}>
                         {(cl.clientName||'?').slice(0,2).toUpperCase()}
                       </div>
                       <div>
@@ -16683,135 +17399,103 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <div className="flex items-center gap-4">
                       <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Facturado</div><div className="text-sm font-black text-gray-700">${formatNum(facturadoCli)}</div></div>
                       <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Cobrado</div><div className="text-sm font-black text-green-700">${formatNum(cobradoCli)}</div></div>
-                      <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldoCli<=-0.01?'text-blue-600':saldado?'text-green-700':'text-red-600'}`}>{saldoCli<=-0.01?'-':''}\${formatNum(Math.abs(saldoCli))}</div></div>
-                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldoCli<=-0.01?'bg-blue-100 text-blue-700':saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldoCli<=-0.01?'A favor':saldado?'Saldado':'Con saldo'}</span>
-                      <ChevronDown size={14} className={`text-gray-400 transition-transform flex-shrink-0 ${exp?'rotate-180':''}`}/>
+                      <div className="text-right"><div className="text-[9px] text-gray-400">Saldo</div><div className={`text-sm font-black ${saldado?'text-green-700':'text-red-600'}`}>${formatNum(saldoCli)}</div></div>
+                      <span className={`text-[8px] font-black px-2 py-0.5 rounded-full ${saldado?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado?'Saldado':'Con saldo'}</span>
+                      <ChevronDown size={14} className={`text-gray-400 transition-transform ${exp?'rotate-180':''}`}/>
                     </div>
                   </div>
                   {exp&&(
                     <div className="border-t border-gray-100 overflow-x-auto">
-                      <table className="w-full text-[9px]" style={{minWidth:860}}>
+                      <table className="w-full text-[9px]" style={{minWidth:900}}>
                         <thead style={{background:'#0f172a'}}>
-                          <tr className="text-gray-400 font-black uppercase text-[8px]">
-                            <th className="py-2 px-3 text-left whitespace-nowrap">Documento</th>
-                            <th className="py-2 px-3 text-left whitespace-nowrap">Fecha</th>
-                            <th className="py-2 px-3 text-left whitespace-nowrap">Tipo</th>
+                          <tr className="text-gray-400 font-black uppercase">
+                            <th className="py-2 px-3 text-left">Documento</th>
+                            <th className="py-2 px-3 text-left">Fecha</th>
+                            <th className="py-2 px-3 text-left">Tipo</th>
                             <th className="py-2 px-3 text-left">Detalle</th>
-                            <th className="py-2 px-3 text-right whitespace-nowrap">Cargo USD</th>
-                            <th className="py-2 px-3 text-right whitespace-nowrap">NC / Ret. USD</th>
-                            <th className="py-2 px-3 text-right whitespace-nowrap">Abono USD</th>
-                            <th className="py-2 px-3 text-right whitespace-nowrap">Saldo</th>
+                            <th className="py-2 px-3 text-right">Cargo USD</th>
+                            <th className="py-2 px-3 text-right">NC/Ret.</th>
+                            <th className="py-2 px-3 text-right">Abono</th>
+                            <th className="py-2 px-3 text-right">Saldo</th>
+                            <th className="py-2 px-3 text-center">Estado</th>
                           </tr>
                         </thead>
                         <tbody>
                           {cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map((ne,ni)=>{
-                            const sNE=getSaldoEC(ne);
-                            const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!corteEC||(c.fecha||'')<=corteEC));
-                            const ncsNE=(notasVentaCD||[]).filter(n=>{const a=n.neId||'',b2=n.neOrigen||'';return a===ne.id||b2===ne.id||a===ne.documento||b2===ne.documento;});
-                            const invV=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
-                            const retsNE=(()=>{
-                              const factKeys=[invV?.id,invV?.nroFiscal,invV?.documento,ne.facturaId,ne.nroFiscal,ne.id,ne.documento].filter(Boolean);
-                              const seen=new Set();const result=[];
-                              for(const r of (retenciones||[])){
-                                const rk=r.nroComprobante||r.nroRetencion||r.id;
-                                if(seen.has(rk)) continue;
-                                if(factKeys.some(k=>r.facturaId===k||r.neId===k||r.neOrigen===k)){seen.add(rk);result.push(r);}
-                              }
-                              return result;
-                            })();
-                            const saldado2=sNE<0.01; // incluye negativo (saldo a favor)
-                            const bg=ni%2===0?'bg-white':'bg-gray-50';
+                            const sNE=getSaldoNE(ne);
+                            const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
+                            const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
+                            const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
+                            const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                            const saldado2=sNE<0.01;
+                            const rowBg=ni%2===0?'bg-white':'bg-gray-50';
                             return(
                             <React.Fragment key={ne.id}>
-                              <tr className={`border-b border-gray-100 ${bg}`}>
-                                <td className="py-2 px-3 font-black text-orange-600 whitespace-nowrap">{ne.documento||ne.id}</td>
-                                <td className="py-2 px-3 text-gray-500 whitespace-nowrap">{ne.fecha||'—'}</td>
-                                <td className="py-2 px-3 whitespace-nowrap"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span></td>
-                                <td className="py-2 px-3 text-gray-500">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
-                                <td className="py-2 px-3 text-right font-black text-gray-800 whitespace-nowrap">${formatNum(parseNum(ne.total||ne.totalUSD||ne.montoBase||0))}</td>
+                              <tr className={`border-b border-gray-100 ${rowBg}`}>
+                                <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
+                                <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
+                                <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span></td>
+                                <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
+                                <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
-                                <td className={`py-2 px-3 text-right font-black whitespace-nowrap ${sNE<=-0.01?'text-blue-600':saldado2?'text-green-600':'text-red-600'}`}>{sNE<=-0.01?'-':''}\${formatNum(Math.abs(sNE))}{sNE<=-0.01&&<span className="text-[7px] ml-1 font-normal">a favor</span>}</td>
+                                <td className="py-2 px-3 text-right font-black text-red-600">${formatNum(sNE)}</td>
+                                <td className="py-2 px-3 text-center"><span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${saldado2?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado2?'Saldado':'Pendiente'}</span></td>
                               </tr>
-                              {invV&&(()=>{
-                                const bBs=parseNum(invV.baseGravableBs||invV.baseImponible||0);
-                                const iBs=parseNum(invV.ivaBs||invV.montoIVA||0);
-                                const tBs=parseNum(invV.totalBs||0);
-                                const tasa=parseNum(invV.tasa||0);
-                                return<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
-                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700 whitespace-nowrap">↳ {invV.nroFiscal||invV.documento||'—'}</td>
-                                  <td className="py-1.5 px-3 text-[8px] text-indigo-600 whitespace-nowrap">{invV.fecha||'—'}</td>
-                                  <td className="py-1.5 px-3 whitespace-nowrap"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
-                                  <td className="py-1.5 px-3 text-[8px] text-indigo-700" style={{lineHeight:1.8}}>
-                                    {invV.nroControl&&<span><span className="text-gray-400">N° Control:</span> <b>{invV.nroControl}</b><span className="text-gray-300 mx-2">·</span></span>}
-                                    {bBs>0&&<span><span className="text-gray-400">Base:</span> <b>Bs.{formatNum(bBs)}</b><span className="text-gray-300 mx-2">·</span></span>}
-                                    {iBs>0&&<span><span className="text-gray-400">IVA 16%:</span> <b>Bs.{formatNum(iBs)}</b><span className="text-gray-300 mx-2">·</span></span>}
-                                    {tBs>0&&<span><span className="text-gray-400">Total:</span> <b>Bs.{formatNum(tBs)}</b><span className="text-gray-300 mx-2">·</span></span>}
-                                    {tasa>0&&<span><span className="text-gray-400">Tasa:</span> <b>{formatNum(tasa)} Bs/$</b></span>}
-                                  </td>
-                                  <td colSpan={4} className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                </tr>;
-                              })()}
-                              {ncsNE.map(nc=>{
-                                const t=parseNum(nc.tasaFactura||0)||tasaBCVec;
-                                const b=parseNum(nc.monto||0);
-                                const u=t>1?b/t:parseNum(nc.montoUSD||0);
-                                return<tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
-                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700 whitespace-nowrap">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
-                                  <td className="py-1.5 px-3 text-[8px] text-purple-600 whitespace-nowrap">{nc.fecha||'—'}</td>
-                                  <td className="py-1.5 px-3 whitespace-nowrap"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
-                                  <td className="py-1.5 px-3 text-[8px] text-purple-700" style={{lineHeight:1.8}}>
-                                    {nc.descripcion&&<span><span className="text-gray-400 italic">{nc.descripcion}</span><span className="text-gray-300 mx-2">·</span></span>}
-                                    {b>0&&<span><span className="text-gray-400">Monto:</span> <b>Bs.{formatNum(b)}</b><span className="text-gray-300 mx-2">·</span></span>}
-                                    {t>1&&<span><span className="text-gray-400">Tasa:</span> <b>{formatNum(t)} Bs/$</b></span>}
-                                  </td>
+                              {invV2&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ {invV2.nroFiscal||invV2.documento||'—'}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
+                                <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500 col-span-2">
+                                  {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
+                                  {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
+                                  {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
+                                </td>
+                                <td className="py-1.5 px-3 text-right text-gray-300" colSpan={4}>—</td>
+                                <td className="py-1.5 px-3 text-center"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Emitida</span></td>
+                              </tr>}
+                              {ncsNE2.map(nc=>{const t=parseNum(nc.tasaFactura||0)||tasaBCVec;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);return(
+                                <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-600">{nc.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}</span>}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right font-black text-purple-700 whitespace-nowrap">-${formatNum(u)}</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-purple-700">-${formatNum(u)}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                </tr>;
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">NC</span></td>
+                                </tr>);
                               })}
-                              {retsNE.map((r,ri)=>{
-                                const rb=parseNum(r.montoRetenido||r.monto||0);
-                                const rtRet=parseNum(r.tasa||r.tasaFactura||0);
-                                const rtInvV=parseNum(invV?.tasa||invV?.tasaBCV||0);
-                                const rtFact=r.facturaId?(()=>{const fi=(invoices||[]).find(inv=>inv.id===r.facturaId||inv.nroFiscal===r.facturaId||inv.documento===r.facturaId);return parseNum(fi?.tasa||fi?.tasaBCV||0);})():0;
-                                const rt=(rtRet>1?rtRet:rtInvV>1?rtInvV:rtFact>1?rtFact:0)||tasaBCVec;
-                                const ru=rt>1?rb/rt:0;
-                                return<tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
-                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700 whitespace-nowrap">↳ {r.nroRetencion||r.nroComprobante||'RET'}</td>
-                                  <td className="py-1.5 px-3 text-[8px] text-amber-600 whitespace-nowrap">{r.fechaComprobante||r.fecha||'—'}</td>
-                                  <td className="py-1.5 px-3 whitespace-nowrap"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret. IVA</span></td>
-                                  <td className="py-1.5 px-3 text-[8px] text-amber-800" style={{lineHeight:1.8}}>
-                                    <span className="text-gray-400">N° Comprobante:</span> <b>{r.nroRetencion||r.nroComprobante||'—'}</b>
-                                    <span className="text-gray-300 mx-2">·</span>
-                                    <span className="text-gray-400">IVA retenido:</span> <b>Bs.{formatNum(rb)}</b>
-                                    <span className="text-gray-300 mx-2">·</span>
-                                    <span className="text-gray-400">%:</span> <b>{r.porcentaje||r.pct||'75'}%</b>
-                                    {rt>1&&<span><span className="text-gray-300 mx-2">·</span><span className="text-gray-400">Tasa:</span> <b>{formatNum(rt)} Bs/$</b></span>}
-                                    {invV&&<span><span className="text-gray-300 mx-2">·</span><span className="text-gray-400">Fac.:</span> <b>{invV.nroFiscal||'—'}</b></span>}
-                                  </td>
+                              {retsNE2.map((r,ri)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;const ru=rt>1?rb/rt:0;return(
+                                <tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700">↳ {r.nroRetencion||r.nroComprobante||'—'}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-amber-600">{r.fechaComprobante||r.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Retención IVA</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">{r.porcentaje||r.pct?`${r.porcentaje||r.pct}%`:'75%'}{rb>0&&<span className="ml-1 text-gray-400">· Bs.{formatNum(rb)}</span>}{invV2&&<span className="ml-1 text-gray-400">· Fac. {invV2.nroFiscal||'—'}</span>}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right font-black text-amber-700 whitespace-nowrap">{ru>0?`-$${formatNum(ru)}`:`-Bs.${formatNum(rb)}`}</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-amber-700">{ru>0?`$${formatNum(ru)}`:`Bs.${formatNum(rb)}`}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                </tr>;
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret.</span></td>
+                                </tr>);
                               })}
                               {cobNE.map((cb,ci)=>(
                                 <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
-                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700 whitespace-nowrap">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
-                                  <td className="py-1.5 px-3 text-[8px] text-green-600 whitespace-nowrap">{cb.fecha||'—'}</td>
-                                  <td className="py-1.5 px-3 whitespace-nowrap"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
-                                  <td className="py-1.5 px-3 text-[8px]" style={{lineHeight:1.8}}>
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-green-600">{cb.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">
                                     <span className="font-bold text-green-700">{cb.metodo||'—'}</span>
-                                    {cb.cuentaBancoNombre&&<span><span className="text-gray-300 mx-2">·</span><span className="text-gray-400">Cuenta:</span> <b>{cb.cuentaBancoNombre}</b></span>}
-                                    {cb.referencia&&<span><span className="text-gray-300 mx-2">·</span><span className="text-gray-400">Ref.:</span> <b className="font-mono">{cb.referencia}</b></span>}
-                                    {parseNum(cb.montoBs||0)>0&&<span><span className="text-gray-300 mx-2">·</span><span className="text-gray-400">Monto Bs.:</span> <b className="text-blue-600">Bs.{formatNum(parseNum(cb.montoBs))}</b></span>}
+                                    {cb.cuentaBancoNombre&&<span className="ml-1">· {cb.cuentaBancoNombre}</span>}
+                                    {cb.referencia&&<span className="ml-1 font-mono text-gray-400">· {cb.referencia}</span>}
+                                    {parseNum(cb.montoBs||0)>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
                                   </td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right font-black text-green-700 whitespace-nowrap">${formatNum(parseNum(cb.monto))}</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Cobrado</span></td>
                                 </tr>
                               ))}
                             </React.Fragment>);
@@ -16823,7 +17507,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
                             <td className="py-2 px-3 text-right text-purple-400 font-black">—</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
-                            <td className={`py-2 px-3 text-right font-black ${saldoCli<=-0.01?'text-blue-400':saldado?'text-green-400':'text-orange-400'}`}>{saldoCli<=-0.01?'-':''}\${formatNum(Math.abs(saldoCli))}</td>
+                            <td className="py-2 px-3 text-right text-orange-400 font-black">${formatNum(saldoCli)}</td>
+                            <td></td>
                           </tr>
                         </tfoot>
                       </table>
@@ -16835,8 +17520,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             </div>
           );
         })()}
-
-                {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
+        {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
           const fmtVen = n => {
             const parts = Math.abs(parseNum(n)||0).toFixed(2).split('.');
             return (n<0?'-':'')+parts[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+parts[1];
@@ -16862,20 +17546,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
           // ── Retenciones del período — filtra por rango de fechas del período ──
           const retPeriodo=(retenciones||[]).filter(r=>{
-            // ── CORRECCIÓN FISCAL: filtrar por quincena ASIGNADA, no por fecha ──
-            // Una retención del día 4 asignada a "2da quincena" DEBE aparecer en Q2
             const f=r.fechaComprobante||r.fecha||'';
-            const fMes=(f||'').substring(0,7); // YYYY-MM
-            const mesFiltro=`${libroAnio}-${mes2}`;
-            if(fMes!==mesFiltro) return false; // mismo mes siempre
-            // Filtrar por quincena ASIGNADA (r.quincena), no por el día de la fecha
-            if(r.quincena&&(r.quincena==='1'||r.quincena==='2')){
-              return r.quincena===libroQuincena;
-            }
-            // Si no tiene quincena guardada, inferir por fecha (compatibilidad hacia atrás)
-            const dia=parseInt(f.substring(8,10)||'0');
-            const qInferida=dia<=15?'1':'2';
-            return qInferida===libroQuincena;
+            return f>=periodoDesde&&f<=periodoHasta;
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
@@ -30486,7 +31158,7 @@ ${resumenHtml}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
 
           {/* ── PROCURA & COMPRAS ── */}
-          {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>}
+           {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
              <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
