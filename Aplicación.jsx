@@ -985,11 +985,12 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
 
   const imprimirOC=(oc)=>{
     // Datos empresa desde configuración
-    const empNombre = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
-    const empRif    = settings?.empresaRif         || 'J-412309374';
-    const empDir    = settings?.empresaDireccion   || 'Av. C2. CC El Dividivi Nivel PB Local G-9, Sector El Trebol, Maracaibo';
-    const empTel    = settings?.empresaTelefono    || '';
-    const empEmail  = settings?.emailProcura       || 'procura@supplygyb.com';
+    const s = settings || {};
+    const empNombre = s.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const empRif    = s.empresaRif         || 'J-412309374';
+    const empDir    = s.empresaDireccion   || 'Av. C2. CC El Dividivi Nivel PB Local G-9, Sector El Trebol, Maracaibo';
+    const empTel    = s.empresaTelefono    || '';
+    const empEmail  = s.emailProcura       || 'procura@supplygyb.com';
 
     // Totales
     const subtotalUSD = (oc.items||[]).reduce((s,i)=>s+pNum(i.total||0),0);
@@ -2159,7 +2160,7 @@ const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra
 // ══════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════
-function ProcuraApp({fbUser,onBack}) {
+function ProcuraApp({fbUser,onBack,settings}) {
   const [sec,setSec]=useState('dashboard');
   const [proveedores,setProveedores]=useState([]);
   const [ordenesCompra,setOrdenesCompra]=useState([]);
@@ -32166,7 +32167,7 @@ ${resumenHtml}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
 
           {/* ── PROCURA & COMPRAS ── */}
-           {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>}
+           {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
              <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
