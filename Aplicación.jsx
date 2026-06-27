@@ -14,6 +14,7 @@ import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, d
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
+import ProcuraApp from './ProcuraApp';
 
 // ============================================================================
 // ESCUDO DE ERRORES EXTREMO
@@ -4543,6 +4544,10 @@ function App() {
       },
       hasPerm('banco') && { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
+        chart:null
+      },
+      (hasPerm('procura')||appUser?.role==='Master') && { tab:'procura', icon:<ShoppingCart size={20}/>, title:'Procura & Compras', color:'#f97316',
+        stats: ()=>({ s1:'Proveedores, OC, CxP, Estado de Cuenta', s2:'Módulo de Procura'}),
         chart:null
       },
     ].filter(Boolean);
@@ -28654,6 +28659,7 @@ ${resumenHtml}
                     <button onClick={() => {clearAllReports(); setActiveTab('home');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'home' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Home size={14}/> Inicio</button>
                     {hasPerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('banco') && navInPortal('banco') && <button onClick={() => {clearAllReports(); setActiveTab('banco');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'banco' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Building2 size={14}/> Bancos</button>}
+                    {(hasPerm('procura')||appUser?.role==='Master') && <button onClick={() => {clearAllReports(); setActiveTab('procura');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'procura' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShoppingCart size={14}/> Procura</button>}
                     {hasPerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
@@ -30478,6 +30484,9 @@ ${resumenHtml}
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
+
+          {/* ── PROCURA & COMPRAS ── */}
+          {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
              <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
