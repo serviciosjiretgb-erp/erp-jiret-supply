@@ -12880,7 +12880,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">FIRMA AUTORIZADA / VENDEDOR</div></div>
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
   </div>
-</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
+</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all"><Printer size={11}/></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
