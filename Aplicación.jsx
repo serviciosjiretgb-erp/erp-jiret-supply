@@ -202,7 +202,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
             <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4 flex items-center justify-between">
               <div>
                 <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Decreto 1.808 — Tabla de Retenciones ISLR — UT: Bs. {valorUT}</p>
-                <p className="text-xs text-orange-700 mt-0.5">Sustraendo general: <strong>Bs. {(83.3334*(valorUT||43)).toFixed(2)}</strong> · Factor: 83,3334 · G.O. 43.140 del 02/06/2025</p>
+                <p className="text-xs text-orange-700 mt-0.5">Factor: 83,3334 · <strong>Sustraendo solo para PNR/PNNR (Persona Natural)</strong> — PJD y PJND no tienen sustraendo · G.O. 43.140 del 02/06/2025</p>
               </div>
               <div className="flex gap-3 text-[10px]">
                 <span className="px-2 py-1 bg-slate-900 text-white rounded font-black">PJD = Persona Jurídica Domiciliada</span>
@@ -243,7 +243,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
                       <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                         <td className="px-2 py-1.5 text-slate-400 text-[9px] whitespace-nowrap">{c.num}</td>
                         <td className="px-2 py-1.5 font-black text-slate-800">{c.concepto}
-                          {c.sustraendoUT>0&&<div className="text-[8px] text-slate-400 font-normal">Sustraendo: Bs. {(c.sustraendoUT*(valorUT||43)).toFixed(2)}</div>}
+                          {c.sustraendoUT>0&&<div className="text-[8px] text-amber-600 font-normal">PNR Sustraendo: Bs. {(c.sustraendoUT*(valorUT||43)).toFixed(2)}</div>}
                         </td>
                         {row(c.codPNNR,c.basePNNR,c.pctPNNR,'pnnr')}
                         {row(c.codPNR,c.basePNR,c.pctPNR,'pnr')}
@@ -374,8 +374,9 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
                 <p className="text-[10px] text-slate-400 mt-1.5">G.O. 43.140 del 02/06/2025 — Factor Dec.1808 Art.9 Par.2°: 83,3334</p>
                 <div className="mt-3 bg-orange-50 border border-orange-100 rounded-xl p-3">
                   <p className="text-[10px] font-black text-orange-600">Con UT = Bs. {valorUT}:</p>
-                  <p className="text-[11px] text-orange-700 mt-1">Sustraendo servicios/fletes: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
-                  <p className="text-[11px] text-orange-700">Sustraendo honorarios/arrendamiento: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
+                  <p className="text-[11px] text-orange-700 mt-1">Sustraendo PNR servicios/fletes (Cod 053,071): <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
+                  <p className="text-[11px] text-orange-700">Sustraendo PNR honorarios/comisiones/arrend.: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
+                  <p className="text-[11px] text-slate-500 mt-1">PJD (Jurídica domiciliada): <strong>Sin sustraendo</strong></p>
                 </div>
               </div>
             </div>
@@ -2034,52 +2035,60 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       exentoBs:tasa?(f.aplicaIva==='NO'?base:0)*tasa:0,totalBs:tasa?totalUSD*tasa:0};
   };
 
-  // Calcular retención IVA — BASE EN Bs., equivalente USD
+  // ── Retención IVA: se calcula EN Bs., USD es solo referencia ──────
   const calcRetIVA=(f,tot)=>{
-    if(!f.aplicaRetIVA||f.pctRetIVA===0)return{monto:0,montoBs:0};
+    if(!f.aplicaRetIVA||f.pctRetIVA===0)return{monto:0,montoBs:0,ivaBaseBs:0,ivaBaseUSD:0};
     const tasa=pNum(f.tasa||0);
     const pct=pNum(f.pctRetIVA||75)/100;
     const ivaBaseUSD=tot.iva16+tot.iva8;
-    // Calcular en Bs si hay tasa, sino en USD
-    if(tasa>0){
-      const ivaBaseBs=ivaBaseUSD*tasa;
-      const montoBs=parseFloat((ivaBaseBs*pct).toFixed(2));
-      const monto=parseFloat((montoBs/tasa).toFixed(2));
-      return{monto,montoBs,ivaBaseUSD,ivaBaseBs,pct:pNum(f.pctRetIVA||75)};
-    }
-    const monto=parseFloat((ivaBaseUSD*pct).toFixed(2));
-    return{monto,montoBs:0,ivaBaseUSD,ivaBaseBs:0,pct:pNum(f.pctRetIVA||75)};
+    const ivaBaseBs=tasa>0?ivaBaseUSD*tasa:0;
+    // Cálculo SIEMPRE en Bs
+    const montoBs=parseFloat((ivaBaseBs*pct).toFixed(2));
+    const monto=tasa>0?parseFloat((montoBs/tasa).toFixed(2)):0;
+    return{montoBs,monto,ivaBaseBs,ivaBaseUSD,pct:pNum(f.pctRetIVA||75)};
   };
 
-  // Calcular lista de retenciones ISLR — múltiples, en Bs.
+  // ── Retenciones ISLR múltiples: base imponible EDITABLE, en Bs. ───
+  // Sustraendo SOLO para personas naturales (PNR, PNNR). Para PJD y PJND = 0.
   const calcRetISLRLista=(f,tot)=>{
     const lista=f.islrRetenciones||[];
     if(lista.length===0)return[];
     const tasa=pNum(f.tasa||0);
-    return lista.map(r=>{
-      if(!r.codigo||!r.activo)return{...r,monto:0,montoBs:0,baseImponibleBs:0};
-      const c=ISLR_CONCEPTOS.find(x=>x.codPJD===r.codigo||x.codPNR===r.codigo||x.codPJND===r.codigo||x.codPNNR===r.codigo);
-      if(!c)return{...r,monto:0,montoBs:0,baseImponibleBs:0};
+    const totalBs=tasa>0?tot.totalUSD*tasa:0;
+    return lista.filter(r=>r.activo&&r.codigo).map(r=>{
+      const c=ISLR_CONCEPTOS.find(x=>
+        x.codPJD===r.codigo||x.codPNR===r.codigo||
+        x.codPJND===r.codigo||x.codPNNR===r.codigo
+      );
+      if(!c)return{...r,monto:0,montoBs:0,baseImponibleBs:0,error:'Concepto no encontrado'};
       const tc=r.tipoContrib||'PJD';
-      let pct,base;
-      if(tc==='PNR'){pct=c.pctPNR;base=c.basePNR;}
-      else if(tc==='PJND'){pct=c.pctPJND;base=c.basePJND;}
-      else if(tc==='PNNR'){pct=c.pctPNNR;base=c.basePNNR;}
-      else{pct=c.pctPJD;base=c.basePJD;}
-      if(!pct||pct==='T2'||!base)return{...r,monto:0,montoBs:0,baseImponibleBs:0,pct:pct||'T2',concepto:c.concepto};
-      const sustraendoBs=(c.sustraendoUT||0)*valorUT;
-      // Base: total factura en Bs × % base imponible del concepto
-      const totalBs=tasa>0?tot.totalUSD*tasa:tot.totalUSD;
-      const baseImponibleBs=totalBs*(base/100);
-      const retencionBs=Math.max(0,baseImponibleBs*(pct/100)-sustraendoBs);
-      const retencionUSD=tasa>0?parseFloat((retencionBs/tasa).toFixed(2)):parseFloat(retencionBs.toFixed(2));
+      let pct,basePorc;
+      if(tc==='PNR'){pct=c.pctPNR;basePorc=c.basePNR;}
+      else if(tc==='PJND'){pct=c.pctPJND;basePorc=c.basePJND;}
+      else if(tc==='PNNR'){pct=c.pctPNNR;basePorc=c.basePNNR;}
+      else{pct=c.pctPJD;basePorc=c.basePJD;} // PJD
+      if(!pct||pct==='T2'||!basePorc)
+        return{...r,monto:0,montoBs:0,baseImponibleBs:0,pct:pct||'T2',concepto:c.concepto,error:pct==='T2'?'Tarifa N°2 — cálculo manual':'Sin datos'};
+      // Base imponible: si el usuario la editó, usarla; si no, calcularla
+      const baseImponibleBs=r.baseImponibleBsManual!=null
+        ? pNum(r.baseImponibleBsManual)
+        : parseFloat((totalBs*(basePorc/100)).toFixed(2));
+      // Sustraendo: SOLO personas naturales (PNR / PNNR)
+      const esPNatural=(tc==='PNR'||tc==='PNNR');
+      const sustraendoBs=esPNatural?parseFloat(((c.sustraendoUT||0)*valorUT).toFixed(2)):0;
+      const retencionBs=parseFloat(Math.max(0,baseImponibleBs*(pct/100)-sustraendoBs).toFixed(2));
+      const retencionUSD=tasa>0?parseFloat((retencionBs/tasa).toFixed(2)):0;
       return{...r,
-        pct,base,sustraendoBs,baseImponibleBs:parseFloat(baseImponibleBs.toFixed(2)),
-        montoBs:parseFloat(retencionBs.toFixed(2)),
+        pct,basePorc,
+        baseImponibleBs,
+        sustraendoBs,
+        esPNatural,
+        montoBs:retencionBs,
         monto:retencionUSD,
-        concepto:c.concepto
+        concepto:c.concepto,
+        totalBs,
       };
-    }).filter(r=>r.activo);
+    });
   };
 
   // Calcular neto a pagar
@@ -2585,15 +2594,25 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                           </select>
                         </div>
                         <div>
-                          <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base (IVA total)</label>
-                          <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`USD ${fmtN(fTot.ivaTotal)}`}/>
+                          <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base IVA (en Bs.)</label>
+                          <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={hasTasa?`Bs. ${fmtN(fRetIVA.ivaBaseBs)}`:`IVA USD ${fmtN(fRetIVA.ivaBaseUSD)}`}/>
                         </div>
                       </div>
-                      <div className="bg-orange-900 rounded-xl p-3 flex justify-between items-center">
-                        <span className="text-[9px] text-orange-300 font-black uppercase">Monto a retener</span>
-                        <div className="text-right">
-                          <div className="font-black text-orange-300 text-lg">USD {fmtN(fRetIVA.monto)}</div>
-                          {hasTasa&&<div className="text-[10px] text-orange-400">Bs. {fmtN(fRetIVA.montoBs)}</div>}
+                      <div className="bg-orange-900 rounded-xl p-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-[8px] text-orange-400 font-black uppercase">IVA base Bs.</p>
+                            <p className="text-orange-300 font-mono">Bs. {fmtN(fRetIVA.ivaBaseBs)}</p>
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[8px] text-orange-400 font-black uppercase">×</p>
+                            <p className="text-white font-black">{form.pctRetIVA||75}%</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[8px] text-orange-400 font-black uppercase">Retención en Bs.</p>
+                            <p className="text-orange-300 font-black font-mono text-lg">Bs. {fmtN(fRetIVA.montoBs)}</p>
+                            {hasTasa&&<p className="text-orange-500 text-[9px] font-mono">≈ USD {fmtN(fRetIVA.monto)}</p>}
+                          </div>
                         </div>
                       </div>
                       <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
@@ -2621,7 +2640,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                       ):(
                         <div className="space-y-3">
                           {(form.islrRetenciones||[]).map((r,idx)=>{
-                            const calcd=fRetISLRLista.find(x=>x.id===r.id)||{monto:0,montoBs:0,pct:0,baseImponibleBs:0,sustraendoBs:0};
+                            const calcd=fRetISLRLista.find(x=>x.id===r.id)||{};
                             return(
                               <div key={r.id||idx} className="border border-purple-100 rounded-xl p-3 bg-purple-50/30">
                                 <div className="flex items-center justify-between mb-2">
@@ -2662,22 +2681,55 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                                     </select>
                                   </div>
                                 </div>
-                                {r.codigo&&(
-                                  <div className="bg-purple-900 rounded-lg p-2.5 mt-2">
-                                    <div className="grid grid-cols-3 gap-2 text-[9px] mb-1.5">
-                                      <div><span className="text-purple-400 block">Base en Bs.</span><span className="text-white font-mono font-black">Bs. {fmtN(calcd.baseImponibleBs)}</span></div>
-                                      <div><span className="text-purple-400 block">Sustraendo Bs.</span><span className="text-white font-mono">Bs. {fmtN(calcd.sustraendoBs)}</span></div>
-                                      <div><span className="text-purple-400 block">% aplicado</span><span className="text-white font-black">{calcd.pct}%</span></div>
+                                {r.codigo&&(()=>{
+                                  const calcd2=fRetISLRLista.find(x=>x.id===r.id)||{};
+                                  const esPNat=(r.tipoContrib==='PNR'||r.tipoContrib==='PNNR');
+                                  return(
+                                  <div className="bg-purple-900 rounded-lg p-2.5 mt-2 space-y-2">
+                                    {calcd2.error&&<div className="text-amber-300 text-[9px] font-black">⚠️ {calcd2.error}</div>}
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="text-[8px] text-purple-300 font-black uppercase block mb-0.5">
+                                          Base imponible Bs.{calcd2.basePorc?` (${calcd2.basePorc}% del total)`:''}
+                                          <span className="text-purple-400 ml-1 font-normal normal-case">(editable)</span>
+                                        </label>
+                                        <input type="number"
+                                          className="w-full bg-purple-800 border border-purple-600 rounded px-2 py-1 text-white text-[10px] font-mono outline-none focus:border-orange-400"
+                                          value={r.baseImponibleBsManual!=null?r.baseImponibleBsManual:''}
+                                          placeholder={String(calcd2.baseImponibleBs||0)}
+                                          onChange={e=>setForm(f=>({...f,islrRetenciones:f.islrRetenciones.map((x,i2)=>i2===idx?{...x,baseImponibleBsManual:e.target.value===''?null:e.target.value}:x)}))}
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="text-[8px] text-purple-300 font-black uppercase block mb-0.5">% retención</label>
+                                        <div className="bg-purple-800 border border-purple-600 rounded px-2 py-1 text-white text-[10px] font-black font-mono">{calcd2.pct||'—'}%</div>
+                                      </div>
                                     </div>
-                                    <div className="border-t border-purple-700 pt-2 flex justify-between items-center">
-                                      <span className="text-purple-300 text-[8px] font-black uppercase">Retención calculada en Bs.</span>
-                                      <div className="text-right">
-                                        <div className="text-purple-300 font-black font-mono">Bs. {fmtN(calcd.montoBs)}</div>
-                                        <div className="text-purple-400 text-[9px] font-mono">≈ USD {fmtN(calcd.monto)}</div>
+                                    {esPNat&&(calcd2.sustraendoBs>0)&&(
+                                      <div className="bg-purple-800/60 rounded px-2 py-1.5 flex items-center justify-between">
+                                        <span className="text-[8px] text-purple-300 font-black uppercase">Sustraendo (persona natural)</span>
+                                        <div className="text-right">
+                                          <span className="text-white font-mono text-[10px]">Bs. {fmtN(calcd2.sustraendoBs)}</span>
+                                          <span className="text-purple-400 text-[8px] ml-1">= {valorUT} UT × 83,3334</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                    <div className="border-t border-purple-700 pt-2 grid grid-cols-2 gap-2">
+                                      <div>
+                                        <p className="text-[8px] text-purple-300 font-black uppercase">Retención en Bs.</p>
+                                        <p className="text-white font-black font-mono">Bs. {fmtN(calcd2.montoBs||0)}</p>
+                                        <p className="text-[8px] text-purple-400 mt-0.5">
+                                          {esPNat?`(Base × ${calcd2.pct}%) − Sustraendo`:`Base × ${calcd2.pct}%`}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <p className="text-[8px] text-purple-300 font-black uppercase">Equiv. USD (referencia)</p>
+                                        <p className="text-purple-300 font-mono">≈ USD {fmtN(calcd2.monto||0)}</p>
                                       </div>
                                     </div>
                                   </div>
-                                )}
+                                  );
+                                })()}
                               </div>
                             );
                           })}
