@@ -16,6 +16,323 @@ import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDo
 
 import BancoApp from './BancoApp';
 
+// ══ MÓDULO IMPUESTOS — Tabla ISLR y utilidades ══
+const ISLR_CONCEPTOS = [
+  {num:'9.1.b', concepto:'Honorarios profesionales',           codPJD:'004', basePJD:100, pctPJD:5,  codPNR:'002', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.2.b', concepto:'Comisiones mercantiles y otras',     codPJD:'020', basePJD:100, pctPJD:5,  codPNR:'018', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.3.c', concepto:'Intereses',                          codPJD:'027', basePJD:100, pctPJD:5,  codPNR:'025', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.11',  concepto:'Servicios',                          codPJD:'055', basePJD:100, pctPJD:2,  codPNR:'053', basePNR:100, pctPNR:1, sustraendoUT:83.3334},
+  {num:'9.12',  concepto:'Arrendamiento bienes inmuebles',     codPJD:'059', basePJD:100, pctPJD:5,  codPNR:'057', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.13',  concepto:'Arrendamiento bienes muebles',       codPJD:'063', basePJD:100, pctPJD:5,  codPNR:'061', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.15',  concepto:'Fletes y transporte nacional',       codPJD:'072', basePJD:100, pctPJD:3,  codPNR:'071', basePNR:100, pctPNR:1, sustraendoUT:83.3334},
+  {num:'9.19',  concepto:'Publicidad y propaganda',            codPJD:'084', basePJD:100, pctPJD:5,  codPNR:'083', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.18',  concepto:'Adquisición fondos de comercio',     codPJD:'081', basePJD:100, pctPJD:5,  codPNR:'079', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.2.a', concepto:'Comisiones enajenación inmuebles',   codPJD:'016', basePJD:100, pctPJD:5,  codPNR:'014', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
+  {num:'9.7a',  concepto:'Regalías Art.27 #16',                codPJD:'035', basePJD:90,  pctPJD:34, codPNR:null,  basePNR:null,pctPNR:null,sustraendoUT:0},
+  {num:'9.7b',  concepto:'Asistencia técnica Art.27 #16',      codPJD:'037', basePJD:30,  pctPJD:34, codPNR:null,  basePNR:null,pctPNR:null,sustraendoUT:0},
+  {num:'9.7c',  concepto:'Servicios tecnológicos Art.27 #16',  codPJD:'039', basePJD:50,  pctPJD:34, codPNR:null,  basePNR:null,pctPNR:null,sustraendoUT:0},
+];
+const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
+  const c=ISLR_CONCEPTOS.find(x=>x.codPJD===conceptoCod||x.codPNR===conceptoCod);
+  if(!c)return{monto:0,montoBs:0,base:0,pct:0,sustraendo:0,baseImponible:0};
+  const esPJD=tipoContrib!=='PNR';
+  const pct=esPJD?c.pctPJD:c.pctPNR;
+  const base=esPJD?c.basePJD:c.basePNR;
+  if(!pct||!base)return{monto:0,montoBs:0,base:0,pct:0,sustraendo:0,baseImponible:0};
+  const sustraendoBs=c.sustraendoUT*valorUT;
+  const montoBruto=montoUSD*(tasaBCV||0);
+  const baseImponible=montoBruto*(base/100);
+  const retencionBs=Math.max(0,baseImponible*(pct/100)-sustraendoBs);
+  const retencionUSD=tasaBCV>0?retencionBs/tasaBCV:0;
+  return{monto:parseFloat(retencionUSD.toFixed(2)),montoBs:parseFloat(retencionBs.toFixed(2)),
+    base,pct,sustraendo:sustraendoBs,baseImponible:parseFloat((tasaBCV>0?baseImponible/tasaBCV:0).toFixed(2))};
+};
+
+// ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
+function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
+  const [sec,setSec]=useState('tabla');
+  const [valorUT,setValorUT]=useState(settings?.valorUT||43);
+  const [retIVA,setRetIVA]=useState([]);
+  const [retISLR,setRetISLR]=useState([]);
+  const [search,setSearch]=useState('');
+
+  useEffect(()=>{
+    if(!fbUser)return;
+    const u1=onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVA(s.docs.map(d=>d.data())));
+    const u2=onSnapshot(query(getColRef('procura_ret_islr'),orderBy('fecha','desc')),s=>setRetISLR(s.docs.map(d=>d.data())));
+    return()=>{u1();u2();};
+  },[fbUser]);
+
+  const guardarUT=async(val)=>{
+    setValorUT(val);
+    await setDoc(getDocRef('settings','general'),{valorUT:parseFloat(val)},{merge:true});
+  };
+
+  const sustraendo=(ut)=>(83.3334*ut).toFixed(2);
+  const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+  const pD=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
+
+  const tabs=[
+    {id:'tabla',    label:'Tabla ISLR',          icon:<BookOpen size={13}/>},
+    {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null},
+    {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null},
+    {id:'config',   label:'Configuración',        icon:<Settings size={13}/>},
+  ];
+
+  const imprimirComprobante=(ret,tipo)=>{
+    const css=`@page{size:A4;margin:2cm}body{font-family:Arial,sans-serif;font-size:10px;color:#1e293b}
+    .hdr{background:#000;color:#fff;padding:10px 18px;display:flex;justify-content:space-between;border-bottom:3px solid #f97316}
+    .title{text-align:center;padding:10px;border-bottom:2px solid #f97316}
+    .title h2{font-size:14px;font-weight:900;text-transform:uppercase;letter-spacing:2px}
+    .body{padding:16px 18px}.fg{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:12px}
+    .f label{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;display:block}
+    .f p{font-size:11px;font-weight:700;border-bottom:1px solid #e2e8f0;padding-bottom:3px;margin:1px 0 0}
+    .tot{background:#0f172a;padding:10px 16px;border-radius:6px;display:flex;justify-content:space-between;margin-top:12px}
+    .tot span{color:#94a3b8;font-size:9px;text-transform:uppercase}.tot strong{color:#f97316;font-size:16px;font-family:monospace}
+    .foot{margin-top:16px;border-top:2px solid #f97316;padding:8px 18px;font-size:8px;color:#94a3b8;display:flex;justify-content:space-between}
+    @media print{@page{margin:2cm}}`;
+    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>
+    <div class="hdr"><div style="font-size:16px;font-weight:900">Supply G&B</div>
+    <div style="text-align:right;font-size:8px;color:#9ca3af"><strong style="color:#f97316">SERVICIOS JIRET G&B, C.A.</strong><br>RIF: J-412309374</div></div>
+    <div class="title"><h2>Comprobante de Retención ${tipo==='IVA'?'IVA':'ISLR'}</h2>
+    <p style="font-size:9px;color:#64748b">N° ${ret.nroComprobante||'—'} · ${pD(ret.fecha)}</p></div>
+    <div class="body">
+    <div class="fg">
+      <div class="f"><label>Agente de retención</label><p>SERVICIOS JIRET G&B, C.A.</p></div>
+      <div class="f"><label>RIF agente</label><p>J-412309374</p></div>
+      <div class="f"><label>Proveedor retenido</label><p>${ret.proveedor||'—'}</p></div>
+      <div class="f"><label>RIF proveedor</label><p>${ret.rifProveedor||'—'}</p></div>
+      <div class="f"><label>N° Factura</label><p>${ret.nroFactura||'—'}</p></div>
+      <div class="f"><label>Fecha factura</label><p>${pD(ret.fechaFactura)}</p></div>
+      ${tipo==='IVA'?`
+      <div class="f"><label>Base IVA</label><p>USD ${fmtN(ret.baseIVA)} / Bs. ${fmtN(ret.baseIVABs)}</p></div>
+      <div class="f"><label>% Retención IVA</label><p>${ret.pctRetencion||75}%</p></div>
+      `:`
+      <div class="f"><label>Concepto SENIAT</label><p>${ret.codConcepto||'—'} — ${ret.concepto||'—'}</p></div>
+      <div class="f"><label>% Retención ISLR</label><p>${ret.pct||0}%</p></div>
+      <div class="f"><label>Base imponible</label><p>USD ${fmtN(ret.baseImponible)} / Bs. ${fmtN(ret.baseImponibleBs)}</p></div>
+      <div class="f"><label>Valor UT</label><p>Bs. ${ret.valorUT||43}</p></div>
+      `}
+      <div class="f"><label>Tasa BCV</label><p>Bs. ${fmtN(ret.tasa)}</p></div>
+      <div class="f"><label>Período</label><p>${ret.periodo||'—'}</p></div>
+    </div>
+    <div class="tot">
+      <div><span>Monto retenido</span><br><strong>USD ${fmtN(ret.monto)}</strong></div>
+      <div style="text-align:right"><span>Equivalente Bs.</span><br><strong>Bs. ${fmtN(ret.montoBs)}</strong></div>
+    </div>
+    </div>
+    <div class="foot"><span>SERVICIOS JIRET G&B, C.A. · RIF J-412309374</span><span>Supply ERP · Módulo Impuestos</span></div>
+    <script>window.onload=()=>{window.print();}<\/script></body></html>`;
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  const retFiltIVA=retIVA.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase()));
+  const retFiltISLR=retISLR.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase()));
+
+  return(
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Top bar */}
+      <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5 print:hidden" style={{background:'#111827',borderBottom:'2px solid #f97316'}}>
+        <button onClick={onBack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase text-gray-400 hover:text-white hover:bg-white/10 transition-all">
+          <ArrowLeft size={13}/> Volver
+        </button>
+        <div className="w-px h-5 bg-white/20"/>
+        <BookOpen size={15} className="text-orange-500"/>
+        <span className="font-black text-white text-[11px] uppercase tracking-widest">Módulo de Impuestos</span>
+        <div className="flex-1"/>
+        <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg px-3 py-1 flex items-center gap-2">
+          <span className="text-[10px] text-orange-400 font-black uppercase">UT:</span>
+          <input type="number" value={valorUT} onChange={e=>setValorUT(e.target.value)}
+            onBlur={e=>guardarUT(e.target.value)}
+            className="w-16 bg-transparent text-orange-300 font-black text-[11px] outline-none text-right"/>
+          <span className="text-[10px] text-orange-400">Bs.</span>
+        </div>
+      </div>
+      {/* Sub-nav */}
+      <div className="flex-shrink-0 print:hidden" style={{background:'#111827',borderBottom:'2px solid #f97316'}}>
+        <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setSec(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${sec===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
+              {t.icon} {t.label}
+              {t.badge>0&&<span className="ml-1 bg-orange-500 text-white text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center">{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto bg-gray-50 p-5">
+
+        {/* TABLA ISLR */}
+        {sec==='tabla'&&(
+          <div>
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4 flex items-center gap-4">
+              <div>
+                <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Decreto 1.808 — Tabla de Retenciones ISLR</p>
+                <p className="text-xs text-orange-700 font-medium mt-0.5">UT actual: <strong>Bs. {valorUT}</strong> · Sustraendo general: <strong>Bs. {sustraendo(valorUT)}</strong> · Factor: 83,3334</p>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr style={{background:'#0f172a'}}>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase tracking-widest">Art. 9</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase tracking-widest">Concepto</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">Cód. PJD</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">Base PJD</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">% PJD</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">Cód. PNR</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">% PNR</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase tracking-widest">Sustraendo Bs.</th>
+                </tr></thead>
+                <tbody>
+                  {ISLR_CONCEPTOS.map((c,i)=>(
+                    <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
+                      <td className="px-3 py-2 text-slate-500 text-[10px]">{c.num}</td>
+                      <td className="px-3 py-2 font-black text-slate-800">{c.concepto}</td>
+                      <td className="px-3 py-2 text-center"><span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{c.codPJD||'—'}</span></td>
+                      <td className="px-3 py-2 text-center text-[10px]">{c.basePJD?c.basePJD+'%':'—'}</td>
+                      <td className="px-3 py-2 text-center"><span className="font-black text-orange-600">{c.pctPJD?c.pctPJD+'%':'—'}</span></td>
+                      <td className="px-3 py-2 text-center"><span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{c.codPNR||'—'}</span></td>
+                      <td className="px-3 py-2 text-center"><span className="font-black text-blue-600">{c.pctPNR?c.pctPNR+'%':'—'}</span></td>
+                      <td className="px-3 py-2 text-right font-mono text-[10px]">{c.sustraendoUT>0?fmtN(c.sustraendoUT*valorUT):'—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 text-[10px] text-slate-400 text-center">PJD = Persona Jurídica Domiciliada · PNR = Persona Natural Residente · El sustraendo se recalcula automáticamente al cambiar el valor de UT</div>
+          </div>
+        )}
+
+        {/* RETENCIONES IVA */}
+        {sec==='ret_iva'&&(
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1 relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o factura..." className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:border-orange-500"/>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr style={{background:'#0f172a'}}>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">N° Comp.</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Proveedor</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Factura</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Fecha</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Período</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">%</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto USD</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto Bs.</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Status</th>
+                  <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
+                </tr></thead>
+                <tbody>
+                  {retFiltIVA.length===0?<tr><td colSpan={10} className="py-10 text-center text-slate-400 text-xs">Sin retenciones IVA registradas</td></tr>:
+                  retFiltIVA.map((r,i)=>(
+                    <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
+                      <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
+                      <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
+                      <td className="px-3 py-2">{r.nroFactura||'—'}</td>
+                      <td className="px-3 py-2">{pD(r.fecha)}</td>
+                      <td className="px-3 py-2">{r.periodo||'—'}</td>
+                      <td className="px-3 py-2 text-center font-black">{r.pctRetencion||75}%</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(r.monto)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{fmtN(r.montoBs)}</td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${r.status==='DECLARADO'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}`}>{r.status||'PENDIENTE'}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600">
+                          <Printer size={10}/> Imprimir
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* RETENCIONES ISLR */}
+        {sec==='ret_islr'&&(
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1 relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o factura..." className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:border-orange-500"/>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr style={{background:'#0f172a'}}>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">N° Comp.</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Proveedor</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Factura</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Concepto SENIAT</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">%</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto USD</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto Bs.</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Status</th>
+                  <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
+                </tr></thead>
+                <tbody>
+                  {retFiltISLR.length===0?<tr><td colSpan={9} className="py-10 text-center text-slate-400 text-xs">Sin retenciones ISLR registradas</td></tr>:
+                  retFiltISLR.map((r,i)=>(
+                    <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
+                      <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
+                      <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
+                      <td className="px-3 py-2">{r.nroFactura||'—'}</td>
+                      <td className="px-3 py-2"><span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-[9px] mr-1">{r.codConcepto}</span>{r.concepto||'—'}</td>
+                      <td className="px-3 py-2 text-center font-black text-purple-600">{r.pct||0}%</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(r.monto)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{fmtN(r.montoBs)}</td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${r.status==='DECLARADO'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}`}>{r.status||'PENDIENTE'}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600">
+                          <Printer size={10}/> Imprimir
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* CONFIG */}
+        {sec==='config'&&(
+          <div className="max-w-lg">
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-4">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Configuración fiscal</h3>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1.5">Valor de la Unidad Tributaria (UT) — Bs.</label>
+                <div className="flex gap-3 items-center">
+                  <input type="number" value={valorUT} onChange={e=>setValorUT(e.target.value)}
+                    className="border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black outline-none focus:border-orange-500 w-40"/>
+                  <button onClick={()=>guardarUT(valorUT)} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1.5">G.O. 43.140 del 02/06/2025 — Factor Dec.1808 Art.9 Par.2°: 83,3334</p>
+                <div className="mt-3 bg-orange-50 border border-orange-100 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-orange-600">Con UT = Bs. {valorUT}:</p>
+                  <p className="text-[11px] text-orange-700 mt-1">Sustraendo servicios/fletes: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
+                  <p className="text-[11px] text-orange-700">Sustraendo honorarios/arrendamiento: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+// ══ FIN MÓDULO IMPUESTOS ══
+
+
 // ══ PROCURA MODULE (incrustado) ══
 // Utilidades Procura (scope de módulo)
 const pFmt=(n)=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0);
@@ -6652,7 +6969,7 @@ function App() {
   // Solo tabs nativos del portal. Las vistas cross-portal viven DENTRO del módulo de Ventas.
   const NAV_PORTAL_TABS = {
     produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
-    administracion:      ['ventas','banco','procura'],
+    administracion:      ['ventas','banco','procura','impuestos'],
     finanzas:            [],
     contabilidad:        [],
     resena_portal:       ['resena'],
@@ -6840,6 +7157,10 @@ function App() {
         stats: ()=>({ s1:'Proveedores, OC, CxP, Estado de Cuenta', s2:'Módulo de Procura'}),
         chart:null
       },
+      (hasPerm('impuestos')||appUser?.role==='Master') && { tab:'impuestos', icon:<BookOpen size={20}/>, title:'Módulo de Impuestos', color:'#8b5cf6',
+        stats: ()=>({ s1:'ISLR, IVA, Retenciones, UT', s2:'Módulo Impuestos'}),
+        chart:null
+      },
     ].filter(Boolean);
 
     // ── FILTRO POR PORTAL ──────────────────────────────────────────────────────
@@ -6848,7 +7169,7 @@ function App() {
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
-      administracion:      ['ventas','banco','procura'],
+      administracion:      ['ventas','banco','procura','impuestos'],
       finanzas:            [],
       contabilidad:        [],
       resena_portal:       ['resena'],
@@ -7078,6 +7399,7 @@ function App() {
       auditoria:    {dark:false, borderColor:'#dc2626', chartType:'configText'},
       banco:        {dark:true,  borderColor:'#7c3aed', chartType:'configText'},
       procura:      {dark:true,  borderColor:'#f97316', chartType:'configText'},
+      impuestos:    {dark:true,  borderColor:'#8b5cf6', chartType:'configText'},
     };
 
     return (
@@ -30400,6 +30722,7 @@ ${resumenHtml}
                     {hasPerm('ventas') && navInPortal('ventas') && <button onClick={() => {clearAllReports(); setActiveTab('ventas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'ventas' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> Ventas</button>}
                     {hasPerm('banco') && navInPortal('banco') && <button onClick={() => {clearAllReports(); setActiveTab('banco');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'banco' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Building2 size={14}/> Bancos</button>}
                     {(hasPerm('procura')||appUser?.role==='Master') && <button onClick={() => {clearAllReports(); setActiveTab('procura');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'procura' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShoppingCart size={14}/> Procura</button>}
+                    {(hasPerm('impuestos')||appUser?.role==='Master') && <button onClick={() => {clearAllReports(); setActiveTab('impuestos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'impuestos' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BookOpen size={14}/> Impuestos</button>}
                     {hasPerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
@@ -32227,6 +32550,9 @@ ${resumenHtml}
 
           {/* ── PROCURA & COMPRAS ── */}
            {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
+
+          {/* ── IMPUESTOS ── */}
+           {activeTab === 'impuestos' && (hasPerm('impuestos')||appUser?.role==='Master') && <ImpuestosApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
              <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
