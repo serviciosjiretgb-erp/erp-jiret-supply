@@ -11,7 +11,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs, query, orderBy, arrayUnion } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs, query, where, orderBy, arrayUnion } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
@@ -2194,10 +2194,21 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       const retISLRLista=calcRetISLRLista(form,tot);
       const neto=calcNeto(tot,retIVA,retISLRLista);
       const asiento=generarAsiento(form,tot,retIVA,retISLRLista,neto);
+      const isEditing=!!form.id;
       const id=form.id||`FC-${pId()}`;
       const tasa=pNum(form.tasa||0);
       const nroBase=String(facturasCompra.length+1).padStart(4,'0');
       const batch=writeBatch(db);
+
+      // En modo edición: eliminar comprobantes anteriores para evitar duplicados
+      if(isEditing){
+        const [prevIVA,prevISLR]=await Promise.all([
+          getDocs(query(getColRef('procura_ret_iva'),where('facturaId','==',id))),
+          getDocs(query(getColRef('procura_ret_islr'),where('facturaId','==',id)))
+        ]);
+        prevIVA.forEach(d=>batch.delete(d.ref));
+        prevISLR.forEach(d=>batch.delete(d.ref));
+      }
 
       // Limpiar undefined recursivamente — Firestore los rechaza
       const clean=(obj)=>{
@@ -2261,7 +2272,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
           facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
           fechaFactura:form.fecha,fecha:getTodayDate(),
-          pctRetencion:form.pctRetIVA,
+          pctRetencion:pNum(form.pctRetIVA||75),
           baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
           monto:retIVA.monto,montoBs:retIVA.montoBs,
           tasa:form.tasa,periodo:getPeriodo(),
