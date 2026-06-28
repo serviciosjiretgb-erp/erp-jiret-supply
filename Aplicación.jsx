@@ -17,35 +17,69 @@ import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDo
 import BancoApp from './BancoApp';
 
 // ══ MÓDULO IMPUESTOS — Tabla ISLR y utilidades ══
+// Tabla ISLR completa — Decreto 1.808 — UT 43 (G.O. 43.140 02/06/2025)
+// Columnas: num=Art9, concepto, PNNR(no residente), PNR(residente), PJND(no domiciliada), PJD(domiciliada)
+// Para Supply G&B el más común es PJD. codPNR = Persona Natural Residente.
 const ISLR_CONCEPTOS = [
-  {num:'9.1.b', concepto:'Honorarios profesionales',           codPJD:'004', basePJD:100, pctPJD:5,  codPNR:'002', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.2.b', concepto:'Comisiones mercantiles y otras',     codPJD:'020', basePJD:100, pctPJD:5,  codPNR:'018', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.3.c', concepto:'Intereses',                          codPJD:'027', basePJD:100, pctPJD:5,  codPNR:'025', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.11',  concepto:'Servicios',                          codPJD:'055', basePJD:100, pctPJD:2,  codPNR:'053', basePNR:100, pctPNR:1, sustraendoUT:83.3334},
-  {num:'9.12',  concepto:'Arrendamiento bienes inmuebles',     codPJD:'059', basePJD:100, pctPJD:5,  codPNR:'057', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.13',  concepto:'Arrendamiento bienes muebles',       codPJD:'063', basePJD:100, pctPJD:5,  codPNR:'061', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.15',  concepto:'Fletes y transporte nacional',       codPJD:'072', basePJD:100, pctPJD:3,  codPNR:'071', basePNR:100, pctPNR:1, sustraendoUT:83.3334},
-  {num:'9.19',  concepto:'Publicidad y propaganda',            codPJD:'084', basePJD:100, pctPJD:5,  codPNR:'083', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.18',  concepto:'Adquisición fondos de comercio',     codPJD:'081', basePJD:100, pctPJD:5,  codPNR:'079', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.2.a', concepto:'Comisiones enajenación inmuebles',   codPJD:'016', basePJD:100, pctPJD:5,  codPNR:'014', basePNR:100, pctPNR:3, sustraendoUT:83.3334},
-  {num:'9.7a',  concepto:'Regalías Art.27 #16',                codPJD:'035', basePJD:90,  pctPJD:34, codPNR:null,  basePNR:null,pctPNR:null,sustraendoUT:0},
-  {num:'9.7b',  concepto:'Asistencia técnica Art.27 #16',      codPJD:'037', basePJD:30,  pctPJD:34, codPNR:null,  basePNR:null,pctPNR:null,sustraendoUT:0},
-  {num:'9.7c',  concepto:'Servicios tecnológicos Art.27 #16',  codPJD:'039', basePJD:50,  pctPJD:34, codPNR:null,  basePNR:null,pctPNR:null,sustraendoUT:0},
+  // num | concepto | codPNNR|basePNNR|pctPNNR | codPNR|basePNR|pctPNR|pagMayorBs|sustraendoBsBase | codPJND|basePJND|pctPJND | codPJD|basePJD|pctPJD
+  {num:'9.1.a', concepto:'Honorarios profesionales (no residente)',   codPNNR:'003',basePNNR:90, pctPNNR:34,  codPNR:null,basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:null,basePJND:null,pctPJND:null, codPJD:'005',basePJD:90, pctPJD:'T2'},
+  {num:'9.1.b', concepto:'Honorarios profesionales',                  codPNNR:null,basePNNR:null,pctPNNR:null,codPNR:'002',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'004',basePJD:100,pctPJD:5},
+  {num:'9.1.c', concepto:'Honorarios prof. en hipódromos',            codPNNR:'011',basePNNR:90, pctPNNR:34,  codPNR:'010',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.1.d', concepto:'Honorarios prof. centros de salud',         codPNNR:'013',basePNNR:90, pctPNNR:34,  codPNR:'012',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.2.a', concepto:'Comisiones enajenación inmuebles',          codPNNR:'015',basePNNR:100,pctPNNR:34,  codPNR:'014',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'017',basePJND:100,pctPJND:5,    codPJD:'016',basePJD:100,pctPJD:5},
+  {num:'9.2.b', concepto:'Comisiones mercantiles y otras',            codPNNR:'019',basePNNR:100,pctPNNR:34,  codPNR:'018',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'021',basePJND:100,pctPJND:5,    codPJD:'020',basePJD:100,pctPJD:5},
+  {num:'9.3.a', concepto:'Intereses Art.27 #2 LISLR',                codPNNR:'022',basePNNR:95, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'023',basePJND:95, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.3.b', concepto:'Intereses Art.52 Par.2° LISLR',            codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'024',basePJND:100,pctPJND:4.95, codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.3.c', concepto:'Intereses',                                 codPNNR:'026',basePNNR:95, pctPNNR:34,  codPNR:'025',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'028',basePJND:95, pctPJND:'T2', codPJD:'027',basePJD:100,pctPJD:5},
+  {num:'9.4',   concepto:'Agencias de noticias internacionales',      codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'029',basePJND:15, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.5',   concepto:'Fletes y gastos transp. internac.',         codPNNR:'030',basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'031',basePJND:5,  pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.6',   concepto:'Exhibición de películas',                   codPNNR:'032',basePNNR:25, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'033',basePJND:25, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.7a',  concepto:'Regalías Art.27 #16',                      codPNNR:'034',basePNNR:90, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'035',basePJND:90, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.7b',  concepto:'Asistencia técnica Art.27 #16',            codPNNR:'036',basePNNR:30, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'037',basePJND:30, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.7c',  concepto:'Servicios tecnológicos Art.27 #16',        codPNNR:'038',basePNNR:50, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'039',basePJND:50, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.8',   concepto:'Primas de seguro y reaseguro',             codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'040',basePJND:30, pctPJND:10,   codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.9a',  concepto:'Ganancias en juegos y apuestas',           codPNNR:'042',basePNNR:100,pctPNNR:34,  codPNR:'041',basePNR:100, pctPNR:34, sustraendoUT:0,       codPJND:'044',basePJND:100,pctPJND:34,   codPJD:'043',basePJD:100,pctPJD:34},
+  {num:'9.9b',  concepto:'Premios lotería e hipódromos Art.62',      codPNNR:'046',basePNNR:100,pctPNNR:16,  codPNR:'045',basePNR:100, pctPNR:16, sustraendoUT:0,       codPJND:'048',basePJND:100,pctPJND:16,   codPJD:'047',basePJD:100,pctPJD:16},
+  {num:'9.10',  concepto:'Propietarios animales de carreras',        codPNNR:'050',basePNNR:100,pctPNNR:34,  codPNR:'049',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'052',basePJND:100,pctPJND:5,    codPJD:'051',basePJD:100,pctPJD:5},
+  {num:'9.11',  concepto:'Servicios',                                codPNNR:'054',basePNNR:100,pctPNNR:34,  codPNR:'053',basePNR:100, pctPNR:1,  sustraendoUT:83.3334, codPJND:'056',basePJND:100,pctPJND:'T2', codPJD:'055',basePJD:100,pctPJD:2},
+  {num:'9.12',  concepto:'Arrendamiento bienes inmuebles',           codPNNR:'058',basePNNR:100,pctPNNR:34,  codPNR:'057',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'060',basePJND:100,pctPJND:'T2', codPJD:'059',basePJD:100,pctPJD:5},
+  {num:'9.13',  concepto:'Arrendamiento bienes muebles',             codPNNR:'062',basePNNR:100,pctPNNR:34,  codPNR:'061',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'064',basePJND:100,pctPJND:5,    codPJD:'063',basePJD:100,pctPJD:5},
+  {num:'9.14',  concepto:'Pagos tarjetas de crédito o consumo',      codPNNR:'066',basePNNR:null,pctPNNR:34,  codPNR:'065',basePNR:null,pctPNR:3,  sustraendoUT:0,       codPJND:'068',basePJND:null,pctPJND:5,    codPJD:'067',basePJD:null,pctPJD:5},
+  {num:'9.14b', concepto:'Pago gasolina con tarjeta',               codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'069',basePNR:null,pctPNR:1,  sustraendoUT:0,       codPJND:null,basePJND:null,pctPJND:null, codPJD:'070',basePJD:null,pctPJD:1},
+  {num:'9.15',  concepto:'Fletes y gastos transporte nacional',      codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'071',basePNR:100, pctPNR:1,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'072',basePJD:100,pctPJD:3},
+  {num:'9.16',  concepto:'Pago emp. seguro a corredores',            codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'073',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'074',basePJD:100,pctPJD:5},
+  {num:'9.17a', concepto:'Emp. seguro por reparación de bienes',     codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'075',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'076',basePJD:100,pctPJD:5},
+  {num:'9.17b', concepto:'Emp. seguro a centros de salud',           codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'077',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'077',basePJD:100,pctPJD:5},
+  {num:'9.18',  concepto:'Adquisición fondos de comercio',           codPNNR:'080',basePNNR:100,pctPNNR:34,  codPNR:'079',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'082',basePJND:100,pctPJND:5,    codPJD:'081',basePJD:100,pctPJD:5},
+  {num:'9.19a', concepto:'Publicidad y propaganda',                  codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'083',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'085',basePJND:100,pctPJND:5,    codPJD:'084',basePJD:100,pctPJD:5},
+  {num:'9.19b', concepto:'Publicidad — emisoras de radio',           codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:null,basePJND:null,pctPJND:null, codPJD:'086',basePJD:100,pctPJD:3},
+  {num:'9.20',  concepto:'Enajenación acciones Bolsa de Valores',   codPNNR:null, basePNNR:100,pctPNNR:1,   codPNR:null, basePNR:100, pctPNR:1,  sustraendoUT:0,       codPJND:null,basePJND:100,pctPJND:1,    codPJD:null, basePJD:100,pctPJD:1},
+  {num:'9.21',  concepto:'Enajenación acciones fuera Bolsa',         codPNNR:null, basePNNR:100,pctPNNR:34,  codPNR:null, basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:100,pctPJND:5,    codPJD:null, basePJD:100,pctPJD:5},
 ];
 const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
-  const c=ISLR_CONCEPTOS.find(x=>x.codPJD===conceptoCod||x.codPNR===conceptoCod);
+  // tipoContrib: 'PJD'=domiciliada(default), 'PNR'=natural residente, 'PJND'=no domiciliada, 'PNNR'=no residente
+  const c=ISLR_CONCEPTOS.find(x=>
+    x.codPJD===conceptoCod||x.codPNR===conceptoCod||
+    x.codPJND===conceptoCod||x.codPNNR===conceptoCod
+  );
   if(!c)return{monto:0,montoBs:0,base:0,pct:0,sustraendo:0,baseImponible:0};
-  const esPJD=tipoContrib!=='PNR';
-  const pct=esPJD?c.pctPJD:c.pctPNR;
-  const base=esPJD?c.basePJD:c.basePNR;
-  if(!pct||!base)return{monto:0,montoBs:0,base:0,pct:0,sustraendo:0,baseImponible:0};
-  const sustraendoBs=c.sustraendoUT*valorUT;
+  let pct,base;
+  if(tipoContrib==='PNR'){pct=c.pctPNR;base=c.basePNR;}
+  else if(tipoContrib==='PJND'){pct=c.pctPJND;base=c.basePJND;}
+  else if(tipoContrib==='PNNR'){pct=c.pctPNNR;base=c.basePNNR;}
+  else{pct=c.pctPJD;base=c.basePJD;} // PJD default
+  if(!pct||pct==='T2'||!base)return{monto:0,montoBs:0,base:base||0,pct:typeof pct==='string'?pct:0,sustraendo:0,baseImponible:0};
+  const sustraendoBs=c.sustraendoUT*(valorUT||43);
   const montoBruto=montoUSD*(tasaBCV||0);
   const baseImponible=montoBruto*(base/100);
   const retencionBs=Math.max(0,baseImponible*(pct/100)-sustraendoBs);
   const retencionUSD=tasaBCV>0?retencionBs/tasaBCV:0;
-  return{monto:parseFloat(retencionUSD.toFixed(2)),montoBs:parseFloat(retencionBs.toFixed(2)),
-    base,pct,sustraendo:sustraendoBs,baseImponible:parseFloat((tasaBCV>0?baseImponible/tasaBCV:0).toFixed(2))};
+  return{
+    monto:parseFloat(retencionUSD.toFixed(2)),
+    montoBs:parseFloat(retencionBs.toFixed(2)),
+    base,pct,sustraendo:sustraendoBs,
+    baseImponible:parseFloat((tasaBCV>0?baseImponible/tasaBCV:0).toFixed(2))
+  };
 };
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
@@ -165,41 +199,63 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
         {/* TABLA ISLR */}
         {sec==='tabla'&&(
           <div>
-            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4 flex items-center gap-4">
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-4 flex items-center justify-between">
               <div>
-                <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Decreto 1.808 — Tabla de Retenciones ISLR</p>
-                <p className="text-xs text-orange-700 font-medium mt-0.5">UT actual: <strong>Bs. {valorUT}</strong> · Sustraendo general: <strong>Bs. {sustraendo(valorUT)}</strong> · Factor: 83,3334</p>
+                <p className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Decreto 1.808 — Tabla de Retenciones ISLR — UT: Bs. {valorUT}</p>
+                <p className="text-xs text-orange-700 mt-0.5">Sustraendo general: <strong>Bs. {(83.3334*(valorUT||43)).toFixed(2)}</strong> · Factor: 83,3334 · G.O. 43.140 del 02/06/2025</p>
+              </div>
+              <div className="flex gap-3 text-[10px]">
+                <span className="px-2 py-1 bg-slate-900 text-white rounded font-black">PJD = Persona Jurídica Domiciliada</span>
+                <span className="px-2 py-1 bg-blue-900 text-white rounded font-black">PNR = Persona Natural Residente</span>
               </div>
             </div>
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-              <table className="w-full text-xs">
-                <thead><tr style={{background:'#0f172a'}}>
-                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase tracking-widest">Art. 9</th>
-                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase tracking-widest">Concepto</th>
-                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">Cód. PJD</th>
-                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">Base PJD</th>
-                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">% PJD</th>
-                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">Cód. PNR</th>
-                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase tracking-widest">% PNR</th>
-                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase tracking-widest">Sustraendo Bs.</th>
-                </tr></thead>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden overflow-x-auto">
+              <table className="w-full text-[10px]" style={{minWidth:'900px'}}>
+                <thead>
+                  <tr style={{background:'#0f172a'}}>
+                    <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase" rowSpan={2}>Art.9</th>
+                    <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase" rowSpan={2}>Concepto del pago</th>
+                    <th className="px-2 py-2 text-center text-[8px] text-slate-400 font-black uppercase border-l border-slate-700" colSpan={3}>PNNR (No residente)</th>
+                    <th className="px-2 py-2 text-center text-[8px] text-blue-300 font-black uppercase border-l border-slate-700" colSpan={3}>PNR (Residente)</th>
+                    <th className="px-2 py-2 text-center text-[8px] text-slate-400 font-black uppercase border-l border-slate-700" colSpan={3}>PJND (No domiciliada)</th>
+                    <th className="px-2 py-2 text-center text-[8px] text-orange-400 font-black uppercase border-l border-slate-700" colSpan={3}>PJD (Domiciliada) ★</th>
+                  </tr>
+                  <tr style={{background:'#1e293b'}}>
+                    {['Cód.','Base','%','Cód.','Base','%','Cód.','Base','%','Cód.','Base','%'].map((h,i)=>(
+                      <th key={i} className={`px-2 py-1.5 text-center text-[7.5px] font-black uppercase ${i===0||i===3?'border-l border-slate-700':''} ${[0,1,2].includes(i)?'text-slate-400':[3,4,5].includes(i)?'text-blue-300':[6,7,8].includes(i)?'text-slate-400':'text-orange-400'}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
                 <tbody>
-                  {ISLR_CONCEPTOS.map((c,i)=>(
-                    <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
-                      <td className="px-3 py-2 text-slate-500 text-[10px]">{c.num}</td>
-                      <td className="px-3 py-2 font-black text-slate-800">{c.concepto}</td>
-                      <td className="px-3 py-2 text-center"><span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{c.codPJD||'—'}</span></td>
-                      <td className="px-3 py-2 text-center text-[10px]">{c.basePJD?c.basePJD+'%':'—'}</td>
-                      <td className="px-3 py-2 text-center"><span className="font-black text-orange-600">{c.pctPJD?c.pctPJD+'%':'—'}</span></td>
-                      <td className="px-3 py-2 text-center"><span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{c.codPNR||'—'}</span></td>
-                      <td className="px-3 py-2 text-center"><span className="font-black text-blue-600">{c.pctPNR?c.pctPNR+'%':'—'}</span></td>
-                      <td className="px-3 py-2 text-right font-mono text-[10px]">{c.sustraendoUT>0?fmtN(c.sustraendoUT*valorUT):'—'}</td>
-                    </tr>
-                  ))}
+                  {ISLR_CONCEPTOS.map((c,i)=>{
+                    const row=(cod,base,pct,cls)=>[
+                      <td key={`c${cls}`} className={`px-2 py-1.5 text-center border-l border-slate-100 ${i%2===0?'bg-white':'bg-slate-50'}`}>
+                        {cod?<span className="font-mono text-[9px] bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{cod}</span>:<span className="text-slate-300">—</span>}
+                      </td>,
+                      <td key={`b${cls}`} className={`px-2 py-1.5 text-center font-mono ${i%2===0?'bg-white':'bg-slate-50'}`}>
+                        {base?base+'%':<span className="text-slate-300">—</span>}
+                      </td>,
+                      <td key={`p${cls}`} className={`px-2 py-1.5 text-center font-black ${i%2===0?'bg-white':'bg-slate-50'} ${cls==='pjd'?'text-orange-600':cls==='pnr'?'text-blue-600':'text-slate-500'}`}>
+                        {pct?<span>{typeof pct==='string'?pct:pct+'%'}</span>:<span className="text-slate-300">—</span>}
+                      </td>
+                    ];
+                    return (
+                      <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
+                        <td className="px-2 py-1.5 text-slate-400 text-[9px] whitespace-nowrap">{c.num}</td>
+                        <td className="px-2 py-1.5 font-black text-slate-800">{c.concepto}
+                          {c.sustraendoUT>0&&<div className="text-[8px] text-slate-400 font-normal">Sustraendo: Bs. {(c.sustraendoUT*(valorUT||43)).toFixed(2)}</div>}
+                        </td>
+                        {row(c.codPNNR,c.basePNNR,c.pctPNNR,'pnnr')}
+                        {row(c.codPNR,c.basePNR,c.pctPNR,'pnr')}
+                        {row(c.codPJND,c.basePJND,c.pctPJND,'pjnd')}
+                        {row(c.codPJD,c.basePJD,c.pctPJD,'pjd')}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            <div className="mt-3 text-[10px] text-slate-400 text-center">PJD = Persona Jurídica Domiciliada · PNR = Persona Natural Residente · El sustraendo se recalcula automáticamente al cambiar el valor de UT</div>
+            <div className="mt-2 text-[9px] text-slate-400 text-center">★ PJD = Persona Jurídica Domiciliada — el tipo más común para Supply G&B · T2 = Tarifa N°2 (escala progresiva)</div>
           </div>
         )}
 
@@ -1079,11 +1135,19 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
 
   const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado','Otros Terminados'];
 
-  const invFiltrado=inventory.filter(i=>{
-    const matchCat=invCat==='TODOS'||(i.subcategory||i.category||'')===invCat;
-    const matchSearch=!search||(i.desc||'').toLowerCase().includes(search.toLowerCase())||(i.id||'').toLowerCase().includes(search.toLowerCase());
-    return i.activo!==false&&matchCat&&matchSearch;
-  });
+  const invFiltrado=useMemo(()=>{
+    const seen=new Set();
+    return inventory.filter(i=>{
+      if(i.activo===false)return false;
+      const rawId=i.id||'';
+      const code=i.displayId||(rawId.includes('___')?rawId.split('___')[0]:rawId);
+      if(seen.has(code)){return false;}
+      seen.add(code);
+      const matchCat=invCat==='TODOS'||(i.subcategory||i.category||'')===invCat;
+      const matchSearch=!search||(i.desc||'').toLowerCase().includes(search.toLowerCase())||code.toLowerCase().includes(search.toLowerCase());
+      return matchCat&&matchSearch;
+    });
+  },[inventory,invCat,search]);
 
   const srvFiltrado=servicios.filter(s=>!search||(s.nombre||'').toLowerCase().includes(search.toLowerCase())||(s.categoria||'').toLowerCase().includes(search.toLowerCase()));
 
@@ -1256,16 +1320,16 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
 
   const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
 
-  // Dedup: solo almacén general (sin sufijo ___), sin semielaborado
+  // Dedup: agrupar por código base (antes de ___), sin semielaborado
   const invDedup=useMemo(()=>{
     const seen=new Set();
     return inventory.filter(i=>{
       const rawId=i.id||'';
-      if(rawId.includes('___'))return false;
       const cat=(i.subcategory||i.category||'').toLowerCase();
       if(cat.includes('semielaborado'))return false;
       if(i.activo===false)return false;
-      const code=i.displayId||rawId;
+      // Código base: displayId o parte antes del ___
+      const code=i.displayId||(rawId.includes('___')?rawId.split('___')[0]:rawId);
       if(seen.has(code))return false;
       seen.add(code);
       return true;
@@ -1912,21 +1976,218 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
 };
 
 
-const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed}) => {
+const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
+  const [tab,setTab]=useState('datos'); // datos | retenciones | asiento
+  const [planDeCuentas,setPlanDeCuentas]=useState([]);
 
-  // Auto-abrir modal si viene preload de una OC
+  useEffect(()=>{
+    const u=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
+    return()=>u();
+  },[]);
+
+  // Auto-abrir modal si viene preload de OC
   useEffect(()=>{
     if(facturaPreload){
       setForm({...facturaPreload});
+      setTab('datos');
       setModal('form');
       onPreloadConsumed&&onPreloadConsumed();
     }
   },[facturaPreload]);
+
+  const valorUT=pNum(settings?.valorUT||43);
+  const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0);
+  const pD=s=>{if(!s)return'—';try{const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}catch{return s;}};
+
+  // Calcular totales multimoneda desde ítems OC
+  const calcTotalesFC=(f)=>{
+    const items=f.itemsOC||[];
+    const tasa=pNum(f.tasa||0);
+    if(items.length>0){
+      const sub=items.reduce((s,i)=>s+pNum(i.total||0),0);
+      const base16=items.filter(i=>i.iva==='GRAVADO').reduce((s,i)=>s+pNum(i.total||0),0);
+      const base8=items.filter(i=>i.iva==='GRAVADO8').reduce((s,i)=>s+pNum(i.total||0),0);
+      const exento=items.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
+      const iva16=parseFloat((base16*0.16).toFixed(2));
+      const iva8=parseFloat((base8*0.08).toFixed(2));
+      const totalUSD=parseFloat((sub+iva16+iva8).toFixed(2));
+      return{sub,base16,base8,exento,iva16,iva8,ivaTotal:iva16+iva8,totalUSD,
+        subBs:tasa?sub*tasa:0,base16Bs:tasa?base16*tasa:0,iva16Bs:tasa?iva16*tasa:0,
+        iva8Bs:tasa?iva8*tasa:0,exentoBs:tasa?exento*tasa:0,totalBs:tasa?totalUSD*tasa:0};
+    }
+    const base=pNum(f.montoBase||0);
+    const iva16=f.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):f.aplicaIva==='8'?0:0;
+    const iva8=f.aplicaIva==='8'?parseFloat((base*0.08).toFixed(2)):0;
+    const totalUSD=parseFloat((base+iva16+iva8).toFixed(2));
+    return{sub:base,base16:f.aplicaIva==='SI'?base:0,base8:f.aplicaIva==='8'?base:0,
+      exento:f.aplicaIva==='NO'?base:0,iva16,iva8,ivaTotal:iva16+iva8,totalUSD,
+      subBs:tasa?base*tasa:0,base16Bs:tasa?(f.aplicaIva==='SI'?base:0)*tasa:0,
+      iva16Bs:tasa?iva16*tasa:0,iva8Bs:tasa?iva8*tasa:0,
+      exentoBs:tasa?(f.aplicaIva==='NO'?base:0)*tasa:0,totalBs:tasa?totalUSD*tasa:0};
+  };
+
+  // Calcular retención IVA
+  const calcRetIVA=(f,tot)=>{
+    if(!f.aplicaRetIVA||f.pctRetIVA===0)return{monto:0,montoBs:0};
+    const pct=pNum(f.pctRetIVA||75)/100;
+    const ivaBase=tot.iva16+tot.iva8;
+    const monto=parseFloat((ivaBase*pct).toFixed(2));
+    const montoBs=pNum(f.tasa||0)?parseFloat((monto*pNum(f.tasa)).toFixed(2)):0;
+    return{monto,montoBs};
+  };
+
+  // Calcular retención ISLR
+  const calcRetISLRForm=(f,tot)=>{
+    if(!f.aplicaRetISLR||!f.islrCodigo)return{monto:0,montoBs:0,pct:0};
+    const tipoContrib=f.islrTipoContrib||'PJD';
+    const res=calcISLR(tot.totalUSD,pNum(f.tasa||0),f.islrCodigo,tipoContrib,valorUT);
+    return res;
+  };
+
+  // Calcular neto a pagar
+  const calcNeto=(tot,retIVA,retISLR)=>{
+    const monto=parseFloat((tot.totalUSD-retIVA.monto-retISLR.monto).toFixed(2));
+    const montoBs=pNum(form.tasa||0)?parseFloat((monto*pNum(form.tasa)).toFixed(2)):0;
+    return{monto,montoBs};
+  };
+
+  // Generar asiento contable
+  const generarAsiento=(f,tot,retIVA,retISLR,neto)=>{
+    const tasa=pNum(f.tasa||0);
+    const lineas=[];
+    // DÉBITOS: ítems
+    const items=f.itemsOC||[];
+    if(items.length>0){
+      items.forEach(it=>{
+        const cta=it.cuentaContableNombre||'Sin cuenta asignada';
+        lineas.push({tipo:'DEBITO',cuenta:cta,concepto:`${it.desc||'—'} (${it.unidad||'Und'} × ${fmtN(it.cantidad)})`,
+          montoUSD:pNum(it.total||0),montoBs:tasa?pNum(it.total||0)*tasa:0});
+      });
+    } else {
+      lineas.push({tipo:'DEBITO',cuenta:'Inventario / Gasto',concepto:'Compra según factura '+f.nroFactura,
+        montoUSD:tot.sub,montoBs:tot.subBs});
+    }
+    // DÉBITO: IVA crédito fiscal
+    if(tot.ivaTotal>0){
+      lineas.push({tipo:'DEBITO',cuenta:'1.1.02.03.001 — IVA Crédito Fiscal',
+        concepto:`IVA${tot.iva16>0?' 16%':''}${tot.iva8>0?' 8%':''} soportado`,
+        montoUSD:tot.ivaTotal,montoBs:tasa?tot.ivaTotal*tasa:0});
+    }
+    // CRÉDITOS: proveedor (neto), ret IVA, ret ISLR
+    const prov=proveedores.find(p=>p.id===f.proveedorId);
+    const ctaProv=prov?.cuentaContableNombre||'2.1.01.01.002 — Cuentas por Pagar Proveedores';
+    lineas.push({tipo:'CREDITO',cuenta:ctaProv,
+      concepto:`${f.proveedor||'—'} · Fact. ${f.nroFactura||'—'}`,
+      montoUSD:neto.monto,montoBs:neto.montoBs});
+    if(retIVA.monto>0){
+      lineas.push({tipo:'CREDITO',cuenta:'2.1.03.01.001 — Retenciones IVA por enterar',
+        concepto:`Ret. IVA ${f.pctRetIVA||75}% · ${f.proveedor||'—'}`,
+        montoUSD:retIVA.monto,montoBs:retIVA.montoBs});
+    }
+    if(retISLR.monto>0){
+      const conc=ISLR_CONCEPTOS.find(c=>c.codPJD===f.islrCodigo||c.codPNR===f.islrCodigo);
+      lineas.push({tipo:'CREDITO',cuenta:'2.1.03.02.001 — Retenciones ISLR por enterar',
+        concepto:`Ret. ISLR ${retISLR.pct}% · ${conc?.concepto||f.islrCodigo} · ${f.proveedor||'—'}`,
+        montoUSD:retISLR.monto,montoBs:retISLR.montoBs});
+    }
+    const totDeb=lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoUSD,0);
+    const totCred=lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoUSD,0);
+    const cuadrado=Math.abs(totDeb-totCred)<0.02;
+    return{lineas,totDeb,totCred,cuadrado};
+  };
+
+  const initForm=()=>({
+    nroFactura:'',nroControl:'',proveedor:'',proveedorId:'',ocId:'',
+    fecha:getTodayDate(),fechaVencimiento:'',
+    moneda:'USD',tasa:'',
+    montoBase:0,aplicaIva:'SI',iva:0,total:0,saldoPendiente:0,
+    afectaLibroCompras:true,
+    aplicaRetIVA:false,pctRetIVA:75,
+    aplicaRetISLR:false,islrCodigo:'',islrTipoContrib:'PJD',
+    status:'PENDIENTE',observaciones:'',itemsOC:[]
+  });
+
+  // Al seleccionar proveedor auto-configurar retenciones
+  const onSelectProveedor=(provId)=>{
+    const p=proveedores.find(x=>x.id===provId);
+    if(!p)return;
+    const esEspecial=p.tipoContribuyente==='ESPECIAL';
+    setForm(f=>({...f,proveedorId:provId,proveedor:p.nombre,
+      aplicaRetIVA:esEspecial,pctRetIVA:pNum(p.pctRetencion||75),
+      aplicaRetISLR:false}));
+  };
+
+  const guardar=async()=>{
+    if(!form.nroFactura){setDialog({title:'Aviso',text:'N° Factura es obligatorio.',type:'alert'});return;}
+    if(!form.proveedor){setDialog({title:'Aviso',text:'Selecciona un proveedor.',type:'alert'});return;}
+    try{
+      const tot=calcTotalesFC(form);
+      const retIVA=calcRetIVA(form,tot);
+      const retISLR=calcRetISLRForm(form,tot);
+      const neto=calcNeto(tot,retIVA,retISLR);
+      const asiento=generarAsiento(form,tot,retIVA,retISLR,neto);
+      const id=form.id||`FC-${pId()}`;
+      const tasa=pNum(form.tasa||0);
+      const nroComp=`${String(facturasCompra.length+1).padStart(4,'0')}`;
+      const batch=writeBatch(db);
+      // Guardar factura
+      batch.set(getDocRef('procura_facturas_compra',id),{
+        ...form,id,
+        montoBase:tot.sub,iva:tot.ivaTotal,total:tot.totalUSD,saldoPendiente:neto.monto,
+        totalBs:tot.totalBs,netoPagar:neto.monto,netoPagarBs:neto.montoBs,
+        totales:tot,asiento:asiento.lineas,
+        updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
+      });
+      // Retención IVA
+      if(form.aplicaRetIVA&&retIVA.monto>0){
+        const retId=`RET-IVA-${pId()}`;
+        const prov=proveedores.find(p=>p.id===form.proveedorId);
+        batch.set(getDocRef('procura_ret_iva',retId),{
+          id:retId,nroComprobante:'RET-IVA-'+nroComp,
+          facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
+          proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
+          fechaFactura:form.fecha,fecha:getTodayDate(),
+          pctRetencion:form.pctRetIVA,baseIVA:tot.ivaTotal,baseIVABs:tasa?tot.ivaTotal*tasa:0,
+          monto:retIVA.monto,montoBs:retIVA.montoBs,
+          tasa:form.tasa,periodo:getPeriodo(),
+          status:'PENDIENTE',timestamp:Date.now()
+        });
+      }
+      // Retención ISLR
+      if(form.aplicaRetISLR&&retISLR.monto>0){
+        const retId=`RET-ISLR-${pId()}`;
+        const prov=proveedores.find(p=>p.id===form.proveedorId);
+        const conc=ISLR_CONCEPTOS.find(c=>c.codPJD===form.islrCodigo||c.codPNR===form.islrCodigo);
+        batch.set(getDocRef('procura_ret_islr',retId),{
+          id:retId,nroComprobante:'RET-ISLR-'+nroComp,
+          facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
+          proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
+          fechaFactura:form.fecha,fecha:getTodayDate(),
+          codConcepto:form.islrCodigo,concepto:conc?.concepto||'',
+          tipoContrib:form.islrTipoContrib,
+          pct:retISLR.pct,baseImponible:retISLR.baseImponible,
+          baseImponibleBs:tasa?retISLR.baseImponible*tasa:0,
+          monto:retISLR.monto,montoBs:retISLR.montoBs,
+          valorUT,tasa:form.tasa,periodo:getPeriodo(),
+          status:'PENDIENTE',timestamp:Date.now()
+        });
+      }
+      await batch.commit();
+      setModal(null);
+      setDialog({title:'✅ Factura registrada',text:`Factura ${form.nroFactura} guardada${form.aplicaRetIVA?' · Ret. IVA generada':''}${form.aplicaRetISLR?' · Ret. ISLR generada':''}.`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const getPeriodo=()=>{
+    const d=new Date();
+    const q=d.getDate()<=15?'1ra Q':'2da Q';
+    return`${q} ${d.toLocaleString('es-VE',{month:'long'})} ${d.getFullYear()}`;
+  };
 
   const filtradas=facturasCompra.filter(f=>{
     const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
@@ -1935,201 +2196,522 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     return ms&&st&&mes;
   });
 
-  const initForm = () => ({
-    nroFactura:'',proveedor:'',proveedorId:'',ocId:'',
-    fecha:getTodayDate(),fechaVencimiento:'',
-    moneda:'USD',tasa:'',
-    montoBase:0,baseIva16:0,baseIva8:0,iva:0,total:0,
-    saldoPendiente:0,aplicaIva:'SI',
-    status:'PENDIENTE',observaciones:''
-  });
-
-  const calcTotales = (f) => {
-    const base=pNum(f.montoBase);
-    const ivaAmt=f.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
-    return {...f,iva:ivaAmt,total:parseFloat((base+ivaAmt).toFixed(2)),saldoPendiente:parseFloat((base+ivaAmt).toFixed(2))};
-  };
-
-  const guardar = async () => {
-    if(!form.nroFactura||!form.proveedor){setDialog({title:'Aviso',text:'N° Factura y proveedor son obligatorios.',type:'alert'});return;}
-    try{
-      const id=form.id||`FC-${pId()}`;
-      const data=calcTotales(form);
-      await setDoc(getDocRef('procura_facturas_compra',id),{...data,id,updatedAt:Date.now()});
-      setModal(null);
-      setDialog({title:'✅ Factura registrada',text:`Factura ${form.nroFactura} registrada.`,type:'alert'});
-    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-  };
-
-  const exportPDF = () => {
-    let html=pdfOpen('REGISTRO DE FACTURAS DE COMPRA',`Período: ${filtMes||'Todos'} · ${filtradas.length} facturas`);
-    html+=`<table><thead><tr><th>N° Factura</th><th>Proveedor</th><th>Fecha</th><th>Vencimiento</th><th>Moneda</th><th>Base</th><th>IVA</th><th>Total</th><th>Saldo</th><th>Status</th></tr></thead><tbody>`;
-    filtradas.forEach(f=>{
-      const badg=f.status==='PAGADA'?'badge-pag':f.status==='PENDIENTE'?'badge-pend':'badge-apr';
-      html+=`<tr><td><strong>${f.nroFactura||'—'}</strong></td><td>${f.proveedor||'—'}</td><td>${pDate(f.fecha)}</td><td>${pDate(f.fechaVencimiento)}</td><td>${f.moneda||'USD'}</td><td>${pFmt(f.montoBase)}</td><td>${pFmt(f.iva)}</td><td>${pFmt(f.total)}</td><td>${pFmt(f.saldoPendiente||0)}</td><td><span class="${badg}">${f.status}</span></td></tr>`;
-    });
-    const totBase=filtradas.reduce((s,f)=>s+pNum(f.montoBase),0);
-    const totIva=filtradas.reduce((s,f)=>s+pNum(f.iva),0);
-    const totTotal=filtradas.reduce((s,f)=>s+pNum(f.total),0);
-    const totSaldo=filtradas.reduce((s,f)=>s+pNum(f.saldoPendiente||0),0);
-    html+=`<tr class="total-row"><td colspan="5">TOTAL</td><td>${pFmt(totBase)}</td><td>${pFmt(totIva)}</td><td>${pFmt(totTotal)}</td><td>${pFmt(totSaldo)}</td><td></td></tr>`;
-    html+=`</tbody></table>`;
-    pdfPrint(html+pdfClose());
-  };
-
-  const exportXLS = () => {
-    const rows=[['N° Factura','Proveedor','Fecha','Vencimiento','OC Vinculada','Moneda','Base','IVA','Total','Saldo','Status'],
-      ...filtradas.map(f=>[f.nroFactura,f.proveedor,f.fecha,f.fechaVencimiento,f.ocId||'—',f.moneda,pFmt(f.montoBase),pFmt(f.iva),pFmt(f.total),pFmt(f.saldoPendiente||0),f.status])];
-    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`facturas_compra_${getTodayDate()}.csv`;a.click();
-  };
-
   const meses=[];
   for(let i=0;i<12;i++){const d=new Date();d.setMonth(d.getMonth()-i);meses.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
 
-  return (
+  // Datos calculados en tiempo real para el modal
+  const fTot=calcTotalesFC(form);
+  const fRetIVA=calcRetIVA(form,fTot);
+  const fRetISLR=calcRetISLRForm(form,fTot);
+  const fNeto=calcNeto(fTot,fRetIVA,fRetISLR);
+  const fAsiento=modal==='form'?generarAsiento(form,fTot,fRetIVA,fRetISLR,fNeto):{lineas:[],totDeb:0,totCred:0,cuadrado:false};
+  const hasTasa=pNum(form.tasa||0)>0;
+
+  return(
     <div>
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="flex-1 relative min-w-48">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar factura o proveedor..." className={`${inp} pl-9`}/>
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar factura o proveedor..." className={`${inp} pl-9 text-xs py-2`}/>
         </div>
-        <select className={`${sel} w-auto`} value={filtMes} onChange={e=>setFiltMes(e.target.value)}>
+        <select className={`${sel} w-auto text-xs py-2`} value={filtMes} onChange={e=>setFiltMes(e.target.value)}>
           <option value="">Todos los meses</option>
           {meses.map(m=><option key={m} value={m}>{m}</option>)}
         </select>
-        <select className={`${sel} w-auto`} value={filtStatus} onChange={e=>setFiltStatus(e.target.value)}>
+        <select className={`${sel} w-auto text-xs py-2`} value={filtStatus} onChange={e=>setFiltStatus(e.target.value)}>
           {['TODOS','PENDIENTE','PARCIAL','PAGADA','ANULADA'].map(s=><option key={s}>{s}</option>)}
         </select>
-        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
-        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
-        <PBg onClick={()=>{setForm(initForm());setModal('form');}}><Plus size={14}/> Registrar factura</PBg>
+        <PBg onClick={()=>{setForm(initForm());setTab('datos');setModal('form');}}><Plus size={13}/> Registrar factura</PBg>
       </div>
 
-      {/* Totales rápidos */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-white rounded-xl p-4 border border-slate-100">
-          <p className="text-[9px] font-black uppercase text-slate-400">Total facturas filtradas</p>
-          <p className="font-black text-xl text-slate-800">${pFmt(filtradas.reduce((s,f)=>s+pNum(f.total),0))}</p>
+          <p className="text-[9px] font-black uppercase text-slate-400">Total facturas</p>
+          <p className="font-black text-xl text-slate-800">${fmtN(filtradas.reduce((s,f)=>s+pNum(f.total),0))}</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-amber-100">
+        <div className="bg-amber-50 rounded-xl p-4 border border-amber-100">
           <p className="text-[9px] font-black uppercase text-amber-600">Saldo pendiente</p>
-          <p className="font-black text-xl text-amber-700">${pFmt(filtradas.filter(f=>f.status!=='PAGADA').reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
+          <p className="font-black text-xl text-amber-700">${fmtN(filtradas.filter(f=>f.status!=='PAGADA').reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-emerald-100">
+        <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
           <p className="text-[9px] font-black uppercase text-emerald-600">IVA crédito fiscal</p>
-          <p className="font-black text-xl text-emerald-700">${pFmt(filtradas.reduce((s,f)=>s+pNum(f.iva),0))}</p>
+          <p className="font-black text-xl text-emerald-700">${fmtN(filtradas.reduce((s,f)=>s+pNum(f.iva),0))}</p>
         </div>
       </div>
 
+      {/* Tabla */}
       <PCard noPad>
-        <table className="w-full">
-          <thead><tr>
-            <PTh>N° Factura</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh>OC</PTh><PTh right>Base</PTh><PTh right>IVA</PTh><PTh right>Total</PTh><PTh right>Saldo</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
-          </tr></thead>
-          <tbody>
-            {filtradas.length===0?<tr><td colSpan={11} className="py-12"><PEmpty icon={FileText} title="Sin facturas" desc="Registra tu primera factura de compra"/></td></tr>:
-            filtradas.map(f=>{
-              const st=statusCxP(f.status);
-              const vencida=f.status==='PENDIENTE'&&f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
-              return (
-                <tr key={f.id} className={`hover:bg-slate-50 ${vencida?'bg-red-50/30':''}`}>
-                  <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
-                  <PTd>{f.proveedor||'—'}</PTd>
-                  <PTd>{pDate(f.fecha)}</PTd>
-                  <PTd><span className={vencida?'text-red-600 font-black':''}>{pDate(f.fechaVencimiento)||'—'}</span></PTd>
-                  <PTd><span className="text-[10px] text-blue-600">{f.ocId||'—'}</span></PTd>
-                  <PTd right mono>{pFmt(f.montoBase)}</PTd>
-                  <PTd right mono>{pFmt(f.iva)}</PTd>
-                  <PTd right mono><span className="font-black">{f.moneda||'USD'} {pFmt(f.total)}</span></PTd>
-                  <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600 font-black'}>{pFmt(f.saldoPendiente||0)}</span></PTd>
-                  <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
-                  <PTd>
-                    <div className="flex gap-1.5">
-                      <PBp sm onClick={()=>{setForm({...f});setModal('form');}}><Edit size={11}/></PBp>
-                    </div>
-                  </PTd>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr>
+              <PTh>N° Factura</PTh><PTh>N° Control</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh>OC</PTh>
+              <PTh>Libro</PTh><PTh right>Total USD</PTh><PTh right>Neto Pagar</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
+            </tr></thead>
+            <tbody>
+              {filtradas.length===0?<tr><td colSpan={11} className="py-10"><PEmpty icon={FileText} title="Sin facturas" desc="Registra tu primera factura de compra"/></td></tr>:
+              filtradas.map(f=>{
+                const st=statusCxP(f.status);
+                const venc=f.status==='PENDIENTE'&&f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
+                return(
+                  <tr key={f.id} className={`hover:bg-slate-50 ${venc?'bg-red-50/30':''}`}>
+                    <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
+                    <PTd><span className="text-[10px] font-mono">{f.nroControl||'—'}</span></PTd>
+                    <PTd>{f.proveedor||'—'}</PTd>
+                    <PTd>{pD(f.fecha)}</PTd>
+                    <PTd><span className={venc?'text-red-600 font-black':''}>{pD(f.fechaVencimiento)||'—'}</span></PTd>
+                    <PTd><span className="text-[10px] text-blue-600">{f.ocId||'—'}</span></PTd>
+                    <PTd>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${f.afectaLibroCompras!==false?'bg-emerald-50 text-emerald-700':'bg-slate-100 text-slate-400'}`}>
+                        {f.afectaLibroCompras!==false?'Sí':'No'}
+                      </span>
+                    </PTd>
+                    <PTd right mono><span className="font-black">{fmtN(f.total)}</span></PTd>
+                    <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600'}>{fmtN(f.netoPagar||f.saldoPendiente||0)}</span></PTd>
+                    <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
+                    <PTd>
+                      <div className="flex gap-1">
+                        <PBp sm onClick={()=>{setForm({...f});setTab('datos');setModal('form');}}><Edit size={11}/></PBp>
+                      </div>
+                    </PTd>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </PCard>
 
-      {/* Modal Factura */}
-      <PModal open={modal==='form'} onClose={()=>setModal(null)}
-        title={form.id?'Editar factura':form.ocId?`Factura desde OC ${form.ocId}`:'Registrar factura de compra'} wide
-        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardar}><Save size={14}/> Guardar</PBg></>}>
+      {/* ═══ MODAL FACTURA COMPLETO ═══ */}
+      {modal==='form'&&(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-2" style={{background:'rgba(15,23,42,.92)'}}>
+          <div className="bg-white w-full rounded-xl shadow-2xl flex flex-col" style={{maxWidth:'1150px',maxHeight:'96vh'}}>
 
-        {/* Banner OC vinculada */}
-        {form.ocId&&!form.id&&(
-          <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3">
-            <FileText size={16} className="text-orange-500 flex-shrink-0"/>
-            <div>
-              <p className="text-[10px] font-black text-orange-700 uppercase">Factura generada desde OC {form.ocId}</p>
-              <p className="text-[10px] text-orange-500">Los montos se calcularon automáticamente. Ingresa el N° de factura del proveedor.</p>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 flex-shrink-0" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)',borderBottom:'2px solid #f97316'}}>
+              <div className="flex items-center gap-3">
+                <span className="font-black text-white uppercase tracking-widest text-xs">
+                  {form.id?'Editar factura':form.ocId?`Factura desde OC ${form.ocId}`:'Registrar factura de compra'}
+                </span>
+                {form.ocId&&<span className="text-[9px] bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded-full font-black uppercase">Pre-cargada desde {form.ocId}</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Toggle libro compras */}
+                <button onClick={()=>setForm(f=>({...f,afectaLibroCompras:!f.afectaLibroCompras}))}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[9px] font-black uppercase transition-all ${form.afectaLibroCompras!==false?'bg-emerald-500/20 border-emerald-500/50 text-emerald-300':'bg-slate-700 border-slate-600 text-slate-400'}`}>
+                  <BookOpen size={12}/>
+                  {form.afectaLibroCompras!==false?'Afecta libro compras':'No afecta libro'}
+                </button>
+                <button onClick={()=>setModal(null)} className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><X size={14} className="text-white"/></button>
+              </div>
+            </div>
+
+            {/* Sub-tabs */}
+            <div className="flex-shrink-0 flex border-b border-slate-200 bg-slate-50">
+              {[['datos','Datos fiscales',FileText],['retenciones','Retenciones',DollarSign],['asiento','Asiento contable',BookOpen]].map(([id,label,Icon])=>(
+                <button key={id} onClick={()=>setTab(id)}
+                  className={`flex items-center gap-2 px-5 py-2.5 text-[10px] font-black uppercase tracking-wide border-b-2 transition-all ${tab===id?'border-orange-500 text-orange-600 bg-white':'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                  <Icon size={12}/> {label}
+                  {id==='asiento'&&fAsiento.cuadrado&&<span className="w-2 h-2 rounded-full bg-emerald-500 ml-1"/>}
+                  {id==='asiento'&&!fAsiento.cuadrado&&fAsiento.lineas.length>0&&<span className="w-2 h-2 rounded-full bg-red-500 ml-1"/>}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+
+              {/* ── TAB DATOS ── */}
+              {tab==='datos'&&(
+                <div>
+                  {/* Banner OC */}
+                  {form.ocId&&!form.id&&(
+                    <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
+                      <FileText size={14} className="text-orange-500 flex-shrink-0"/>
+                      <p className="text-[10px] font-medium text-orange-700">Datos pre-cargados desde <strong>OC {form.ocId}</strong> · Solo ingresa N° Factura Fiscal y N° Control.</p>
+                    </div>
+                  )}
+
+                  {/* FILA 1: IDs fiscales + proveedor + OC + fechas */}
+                  <div className="grid grid-cols-4 gap-3 mb-4">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Factura Fiscal *</label>
+                      <input className={`${inp} text-xs py-1.5 ${!form.nroFactura?'border-orange-400 bg-orange-50':''}`} autoFocus
+                        value={form.nroFactura||''} onChange={e=>setForm(f=>({...f,nroFactura:e.target.value.toUpperCase()}))}
+                        placeholder="00001234"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Control Fiscal *</label>
+                      <input className={`${inp} text-xs py-1.5 ${!form.nroControl?'border-orange-400 bg-orange-50':''}`}
+                        value={form.nroControl||''} onChange={e=>setForm(f=>({...f,nroControl:e.target.value.toUpperCase()}))}
+                        placeholder="00-000456"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Proveedor *</label>
+                      {form.ocId&&form.proveedor?(
+                        <div className="text-xs font-black text-slate-700 bg-slate-100 rounded-xl px-3 py-1.5">{form.proveedor}</div>
+                      ):(
+                        <select className={`${sel} text-xs py-1.5`} value={form.proveedorId||''} onChange={e=>onSelectProveedor(e.target.value)}>
+                          <option value="">— Seleccionar —</option>
+                          {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">OC vinculada</label>
+                      {form.ocId?(
+                        <div className="text-xs font-black text-blue-600 bg-blue-50 rounded-xl px-3 py-1.5">{form.ocId}</div>
+                      ):(
+                        <select className={`${sel} text-xs py-1.5`} value={form.ocId||''} onChange={e=>setForm(f=>({...f,ocId:e.target.value}))}>
+                          <option value="">Sin OC vinculada</option>
+                          {ordenesCompra.map(o=><option key={o.id} value={o.nroOC}>{o.nroOC} — {o.proveedor}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha factura</label>
+                      <input type="date" className={`${inp} text-xs py-1.5`} value={form.fecha||''} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha vencimiento</label>
+                      <input type="date" className={`${inp} text-xs py-1.5`} value={form.fechaVencimiento||''} onChange={e=>setForm(f=>({...f,fechaVencimiento:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Moneda</label>
+                      <select className={`${sel} text-xs py-1.5`} value={form.moneda||'USD'} onChange={e=>setForm(f=>({...f,moneda:e.target.value}))}>
+                        {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Bs./$</label>
+                      <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))} placeholder="0 = solo USD"/>
+                    </div>
+                  </div>
+
+                  {/* ÍTEMS OC o entrada manual */}
+                  {form.itemsOC&&form.itemsOC.length>0?(
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Ítems pre-cargados desde OC</p>
+                        <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-black uppercase flex items-center gap-1"><Lock size={9}/> Solo lectura</span>
+                      </div>
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead><tr style={{background:'#0f172a'}}>
+                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">#</th>
+                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Tipo</th>
+                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Descripción</th>
+                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Cat.</th>
+                            <th className="px-3 py-2 text-center text-[8px] text-orange-400 font-black uppercase">IVA</th>
+                            <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Cant.</th>
+                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Und.</th>
+                            <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">P.Unit</th>
+                            <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total USD</th>
+                            {hasTasa&&<th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total Bs.</th>}
+                          </tr></thead>
+                          <tbody>
+                            {form.itemsOC.map((it,i)=>(
+                              <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
+                                <td className="px-3 py-1.5 text-slate-500">{i+1}</td>
+                                <td className="px-3 py-1.5"><PBadge v={it.tipo==='SERVICIO'?'blue':'green'}>{it.tipo==='SERVICIO'?'SERV.':'PROD.'}</PBadge></td>
+                                <td className="px-3 py-1.5 font-black text-slate-800">{it.desc||'—'}</td>
+                                <td className="px-3 py-1.5 text-[10px] text-slate-500">{it.categoria||'—'}</td>
+                                <td className="px-3 py-1.5 text-center">
+                                  <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${it.iva==='EXENTO'?'bg-amber-50 text-amber-700':it.iva==='GRAVADO8'?'bg-blue-50 text-blue-700':'bg-orange-50 text-orange-700'}`}>
+                                    {it.iva==='EXENTO'?'EXENTO':it.iva==='GRAVADO8'?'8%':'16%'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-1.5 text-right font-mono">{pFmt(it.cantidad)}</td>
+                                <td className="px-3 py-1.5 text-slate-500">{it.unidad||'Und'}</td>
+                                <td className="px-3 py-1.5 text-right font-mono">{pFmt(it.precioUnit)}</td>
+                                <td className="px-3 py-1.5 text-right font-black text-orange-600">{pFmt(it.total||0)}</td>
+                                {hasTasa&&<td className="px-3 py-1.5 text-right font-mono text-slate-400">{pFmt(pNum(it.total||0)*pNum(form.tasa))}</td>}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ):(
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div>
+                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Aplica IVA</label>
+                        <select className={`${sel} text-xs py-1.5`} value={form.aplicaIva||'SI'} onChange={e=>{
+                          const base=pNum(form.montoBase);
+                          const iva=e.target.value==='NO'?0:e.target.value==='8'?parseFloat((base*0.08).toFixed(2)):parseFloat((base*0.16).toFixed(2));
+                          setForm(f=>({...f,aplicaIva:e.target.value,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))}));
+                        }}>
+                          <option value="SI">Sí — 16%</option>
+                          <option value="8">Sí — 8%</option>
+                          <option value="NO">No — Exento</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base imponible</label>
+                        <input type="number" className={`${inp} text-xs py-1.5`} value={form.montoBase||''} onChange={e=>{
+                          const base=pNum(e.target.value);
+                          const pct=form.aplicaIva==='8'?0.08:form.aplicaIva==='NO'?0:0.16;
+                          const iva=parseFloat((base*pct).toFixed(2));
+                          setForm(f=>({...f,montoBase:base,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))}));
+                        }}/>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">IVA calculado</label>
+                        <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={pFmt(form.iva||0)}/>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TOTALES + OBSERVACIONES */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Observaciones</label>
+                      <textarea className={`${inp} resize-none text-xs`} rows={3} value={form.observaciones||''} onChange={e=>setForm(f=>({...f,observaciones:e.target.value}))} placeholder="Condiciones especiales..."/>
+                    </div>
+                    {/* Totales multimoneda */}
+                    <div className="bg-slate-900 rounded-xl p-3">
+                      <div className="grid gap-1.5 text-[10px]" style={{gridTemplateColumns:hasTasa?'auto 1fr 1fr':'auto 1fr'}}>
+                        <span className="text-slate-400 font-black uppercase text-[8px]">Sub-total</span>
+                        {hasTasa&&<span className="text-right text-slate-400 font-mono">Bs. {fmtN(fTot.subBs)}</span>}
+                        <span className="text-right text-slate-200 font-mono">USD {fmtN(fTot.sub)}</span>
+                        {fTot.exento>0&&<><span className="text-slate-400 font-black uppercase text-[8px]">Exento</span>{hasTasa&&<span className="text-right text-slate-400 font-mono">Bs. {fmtN(fTot.exentoBs)}</span>}<span className="text-right text-slate-200 font-mono">USD {fmtN(fTot.exento)}</span></>}
+                        {fTot.iva16>0&&<><span className="text-slate-400 font-black uppercase text-[8px]">IVA 16%</span>{hasTasa&&<span className="text-right text-slate-400 font-mono">Bs. {fmtN(fTot.iva16Bs)}</span>}<span className="text-right text-slate-200 font-mono">USD {fmtN(fTot.iva16)}</span></>}
+                        {fTot.iva8>0&&<><span className="text-slate-400 font-black uppercase text-[8px]">IVA 8%</span>{hasTasa&&<span className="text-right text-slate-400 font-mono">Bs. {fmtN(fTot.iva8Bs)}</span>}<span className="text-right text-slate-200 font-mono">USD {fmtN(fTot.iva8)}</span></>}
+                        <span className="text-orange-400 font-black uppercase text-[8px]">Total factura</span>
+                        {hasTasa&&<span className="text-right text-orange-300 font-black font-mono">Bs. {fmtN(fTot.totalBs)}</span>}
+                        <span className="text-right text-orange-400 font-black font-mono text-sm">USD {fmtN(fTot.totalUSD)}</span>
+                        {(fRetIVA.monto>0||fRetISLR.monto>0)&&<>
+                          <div className="col-span-full h-px bg-slate-700 my-1"/>
+                          {fRetIVA.monto>0&&<><span className="text-red-400 font-black uppercase text-[8px]">− Ret. IVA {form.pctRetIVA||75}%</span>{hasTasa&&<span className="text-right text-red-400 font-mono">Bs. {fmtN(fRetIVA.montoBs)}</span>}<span className="text-right text-red-400 font-mono">USD {fmtN(fRetIVA.monto)}</span></>}
+                          {fRetISLR.monto>0&&<><span className="text-purple-400 font-black uppercase text-[8px]">− Ret. ISLR {fRetISLR.pct}%</span>{hasTasa&&<span className="text-right text-purple-400 font-mono">Bs. {fmtN(fRetISLR.montoBs)}</span>}<span className="text-right text-purple-400 font-mono">USD {fmtN(fRetISLR.monto)}</span></>}
+                          <div className="col-span-full h-px bg-cyan-800 my-1"/>
+                          <span className="text-cyan-300 font-black uppercase text-[8px]">Neto a pagar</span>
+                          {hasTasa&&<span className="text-right text-cyan-300 font-black font-mono">Bs. {fmtN(fNeto.montoBs)}</span>}
+                          <span className="text-right text-cyan-300 font-black font-mono text-sm">USD {fmtN(fNeto.monto)}</span>
+                        </>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── TAB RETENCIONES ── */}
+              {tab==='retenciones'&&(
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Retención IVA */}
+                  <div className="border-2 border-orange-200 rounded-xl overflow-hidden">
+                    <div className="bg-orange-50 px-4 py-3 border-b-2 border-orange-200 flex items-center justify-between">
+                      <h4 className="font-black text-orange-800 text-xs uppercase tracking-wide flex items-center gap-2"><Receipt size={13}/> Retención IVA</h4>
+                      <button onClick={()=>setForm(f=>({...f,aplicaRetIVA:!f.aplicaRetIVA}))}
+                        className={`flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${form.aplicaRetIVA?'bg-orange-500 text-white':'bg-slate-200 text-slate-500'}`}>
+                        {form.aplicaRetIVA?'Activa':'Inactiva'}
+                      </button>
+                    </div>
+                    <div className={`p-4 space-y-3 ${!form.aplicaRetIVA?'opacity-40 pointer-events-none':''}`}>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% Retención</label>
+                          <select className={`${sel} text-xs py-1.5`} value={form.pctRetIVA||75} onChange={e=>setForm(f=>({...f,pctRetIVA:pNum(e.target.value)}))}>
+                            <option value={75}>75% del IVA</option>
+                            <option value={100}>100% del IVA</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base (IVA total)</label>
+                          <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`USD ${fmtN(fTot.ivaTotal)}`}/>
+                        </div>
+                      </div>
+                      <div className="bg-orange-900 rounded-xl p-3 flex justify-between items-center">
+                        <span className="text-[9px] text-orange-300 font-black uppercase">Monto a retener</span>
+                        <div className="text-right">
+                          <div className="font-black text-orange-300 text-lg">USD {fmtN(fRetIVA.monto)}</div>
+                          {hasTasa&&<div className="text-[10px] text-orange-400">Bs. {fmtN(fRetIVA.montoBs)}</div>}
+                        </div>
+                      </div>
+                      <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
+                        <p className="text-[9px] text-emerald-700 font-medium"><Check size={10} className="inline mr-1"/>Al guardar se genera el comprobante de retención IVA automáticamente.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Retención ISLR */}
+                  <div className="border-2 border-purple-200 rounded-xl overflow-hidden">
+                    <div className="bg-purple-50 px-4 py-3 border-b-2 border-purple-200 flex items-center justify-between">
+                      <h4 className="font-black text-purple-800 text-xs uppercase tracking-wide flex items-center gap-2"><DollarSign size={13}/> Retención ISLR</h4>
+                      <button onClick={()=>setForm(f=>({...f,aplicaRetISLR:!f.aplicaRetISLR}))}
+                        className={`flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${form.aplicaRetISLR?'bg-purple-600 text-white':'bg-slate-200 text-slate-500'}`}>
+                        {form.aplicaRetISLR?'Activa':'Inactiva'}
+                      </button>
+                    </div>
+                    <div className={`p-4 space-y-3 ${!form.aplicaRetISLR?'opacity-40 pointer-events-none':''}`}>
+                      <div>
+                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tipo de contribuyente</label>
+                        <select className={`${sel} text-xs py-1.5`} value={form.islrTipoContrib||'PJD'} onChange={e=>setForm(f=>({...f,islrTipoContrib:e.target.value}))}>
+                          <option value="PJD">PJD — Persona Jurídica Domiciliada</option>
+                          <option value="PNR">PNR — Persona Natural Residente</option>
+                          <option value="PJND">PJND — Persona Jurídica No Domiciliada</option>
+                          <option value="PNNR">PNNR — Persona Natural No Residente</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Concepto SENIAT</label>
+                        <select className={`${sel} text-xs py-1.5`} value={form.islrCodigo||''} onChange={e=>setForm(f=>({...f,islrCodigo:e.target.value}))}>
+                          <option value="">— Seleccionar concepto —</option>
+                          {ISLR_CONCEPTOS.filter(c=>{
+                            const tc=form.islrTipoContrib||'PJD';
+                            if(tc==='PJD')return c.codPJD&&typeof c.pctPJD==='number';
+                            if(tc==='PNR')return c.codPNR&&typeof c.pctPNR==='number';
+                            if(tc==='PJND')return c.codPJND&&typeof c.pctPJND==='number';
+                            return c.codPNNR&&typeof c.pctPNNR==='number';
+                          }).map((c,i)=>{
+                            const tc=form.islrTipoContrib||'PJD';
+                            const cod=tc==='PJD'?c.codPJD:tc==='PNR'?c.codPNR:tc==='PJND'?c.codPJND:c.codPNNR;
+                            const pct=tc==='PJD'?c.pctPJD:tc==='PNR'?c.pctPNR:tc==='PJND'?c.pctPJND:c.pctPNNR;
+                            return<option key={i} value={cod}>{cod} — {c.concepto} ({pct}%)</option>;
+                          })}
+                        </select>
+                      </div>
+                      {form.islrCodigo&&(
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">UT actual</label>
+                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`Bs. ${valorUT}`}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Sustraendo</label>
+                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`Bs. ${fmtN(83.3334*valorUT)}`}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base imponible</label>
+                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`USD ${fmtN(fRetISLR.baseImponible)}`}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% aplicado</label>
+                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={fRetISLR.pct?fRetISLR.pct+'%':'—'}/>
+                          </div>
+                        </div>
+                      )}
+                      <div className="bg-purple-900 rounded-xl p-3 flex justify-between items-center">
+                        <span className="text-[9px] text-purple-300 font-black uppercase">Monto a retener</span>
+                        <div className="text-right">
+                          <div className="font-black text-purple-300 text-lg">USD {fmtN(fRetISLR.monto)}</div>
+                          {hasTasa&&<div className="text-[10px] text-purple-400">Bs. {fmtN(fRetISLR.montoBs)}</div>}
+                        </div>
+                      </div>
+                      <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
+                        <p className="text-[9px] text-emerald-700 font-medium"><Check size={10} className="inline mr-1"/>Al guardar se genera el comprobante de retención ISLR automáticamente.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Neto a pagar resumen */}
+                  <div className="col-span-2 bg-slate-900 rounded-xl p-4">
+                    <div className="grid gap-2 text-[11px]" style={{gridTemplateColumns:hasTasa?'auto 1fr 1fr':'auto 1fr'}}>
+                      <span className="text-slate-400 font-black uppercase text-[9px]">Total factura</span>
+                      {hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {fmtN(fTot.totalBs)}</span>}
+                      <span className="text-right text-white font-mono">USD {fmtN(fTot.totalUSD)}</span>
+                      {fRetIVA.monto>0&&<><span className="text-red-400 font-black uppercase text-[9px]">− Ret. IVA</span>{hasTasa&&<span className="text-right text-red-400 font-mono">− Bs. {fmtN(fRetIVA.montoBs)}</span>}<span className="text-right text-red-400 font-mono">− USD {fmtN(fRetIVA.monto)}</span></>}
+                      {fRetISLR.monto>0&&<><span className="text-purple-400 font-black uppercase text-[9px]">− Ret. ISLR</span>{hasTasa&&<span className="text-right text-purple-400 font-mono">− Bs. {fmtN(fRetISLR.montoBs)}</span>}<span className="text-right text-purple-400 font-mono">− USD {fmtN(fRetISLR.monto)}</span></>}
+                      <div className="col-span-full h-px bg-cyan-700 my-1"/>
+                      <span className="text-cyan-300 font-black uppercase text-[9px]">Neto a pagar al proveedor</span>
+                      {hasTasa&&<span className="text-right text-cyan-300 font-black font-mono text-sm">Bs. {fmtN(fNeto.montoBs)}</span>}
+                      <span className="text-right text-cyan-300 font-black font-mono text-lg">USD {fmtN(fNeto.monto)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── TAB ASIENTO CONTABLE ── */}
+              {tab==='asiento'&&(
+                <div>
+                  {/* Check cuadre */}
+                  <div className={`flex items-center justify-between p-3 rounded-xl mb-4 ${fAsiento.cuadrado?'bg-emerald-50 border border-emerald-200':'bg-red-50 border border-red-200'}`}>
+                    <div className="flex items-center gap-2">
+                      {fAsiento.cuadrado
+                        ?<><CheckCircle size={16} className="text-emerald-600"/><span className="font-black text-emerald-700 text-xs uppercase">Asiento cuadrado ✓</span></>
+                        :<><AlertTriangle size={16} className="text-red-600"/><span className="font-black text-red-700 text-xs uppercase">Asiento descuadrado — revisa las cuentas contables</span></>
+                      }
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-500">
+                      Débitos: USD {fmtN(fAsiento.totDeb)} · Créditos: USD {fmtN(fAsiento.totCred)}
+                    </div>
+                  </div>
+
+                  {fAsiento.lineas.length===0?(
+                    <div className="text-center py-8 text-slate-400 text-xs">Completa los datos fiscales y los ítems para ver el asiento</div>
+                  ):(
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead><tr style={{background:'#0f172a'}}>
+                          <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">#</th>
+                          <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Cuenta contable</th>
+                          <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Descripción</th>
+                          <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">Tipo</th>
+                          <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Débito USD</th>
+                          <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Crédito USD</th>
+                          {hasTasa&&<th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Débito Bs.</th>}
+                          {hasTasa&&<th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Crédito Bs.</th>}
+                        </tr></thead>
+                        <tbody>
+                          {fAsiento.lineas.map((l,i)=>(
+                            <tr key={i} className={`${i%2===0?'bg-white':'bg-slate-50'} ${l.tipo==='CREDITO'?'opacity-90':''}`}>
+                              <td className="px-3 py-2 text-slate-400">{i+1}</td>
+                              <td className="px-3 py-2">
+                                <span className="font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 block w-fit mb-0.5">{l.cuenta.split(' — ')[0]}</span>
+                                <span className="text-[10px] text-slate-500">{l.cuenta.split(' — ')[1]||l.cuenta}</span>
+                              </td>
+                              <td className="px-3 py-2 text-[11px]">{l.concepto}</td>
+                              <td className="px-3 py-2 text-center">
+                                <PBadge v={l.tipo==='DEBITO'?'orange':'blue'}>{l.tipo}</PBadge>
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{l.tipo==='DEBITO'?pFmt(l.montoUSD):'—'}</td>
+                              <td className="px-3 py-2 text-right font-mono font-black text-blue-600">{l.tipo==='CREDITO'?pFmt(l.montoUSD):'—'}</td>
+                              {hasTasa&&<td className="px-3 py-2 text-right font-mono text-slate-500">{l.tipo==='DEBITO'?pFmt(l.montoBs):'—'}</td>}
+                              {hasTasa&&<td className="px-3 py-2 text-right font-mono text-slate-500">{l.tipo==='CREDITO'?pFmt(l.montoBs):'—'}</td>}
+                            </tr>
+                          ))}
+                          {/* Totales */}
+                          <tr style={{background:'#0f172a'}}>
+                            <td colSpan={4} className="px-3 py-2.5 text-[9px] font-black text-slate-400 uppercase">Totales</td>
+                            <td className="px-3 py-2.5 text-right font-black text-orange-400 font-mono">{pFmt(fAsiento.totDeb)}</td>
+                            <td className="px-3 py-2.5 text-right font-black text-blue-400 font-mono">{pFmt(fAsiento.totCred)}</td>
+                            {hasTasa&&<td className="px-3 py-2.5 text-right text-slate-400 font-mono">{pFmt(fAsiento.lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoBs,0))}</td>}
+                            {hasTasa&&<td className="px-3 py-2.5 text-right text-slate-400 font-mono">{pFmt(fAsiento.lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoBs,0))}</td>}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {!fAsiento.cuadrado&&fAsiento.lineas.some(l=>l.cuenta.includes('Sin cuenta'))&&(
+                    <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+                      <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5"/>
+                      <p className="text-[10px] text-amber-700">Algunos ítems o el proveedor no tienen cuenta contable asignada. Ve a <strong>Catálogo de Prod/Serv</strong> o <strong>Proveedores</strong> para asignarlas.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 flex-shrink-0">
+              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                {form.aplicaRetIVA&&<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-black">Ret. IVA {form.pctRetIVA||75}%</span>}
+                {form.aplicaRetISLR&&form.islrCodigo&&<span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-black">Ret. ISLR {form.islrCodigo}</span>}
+                {form.afectaLibroCompras!==false&&<span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-black">Libro compras ✓</span>}
+              </div>
+              <div className="flex gap-2">
+                <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
+                <PBg onClick={guardar}><Save size={13}/> {form.id?'Actualizar':'Guardar y generar retenciones'}</PBg>
+              </div>
             </div>
           </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-4">
-          <PFG label="N° Factura proveedor *">
-            <input className={inp} value={form.nroFactura||''} autoFocus onChange={e=>setForm({...form,nroFactura:e.target.value.toUpperCase()})} placeholder="Ej: 00001234"/>
-          </PFG>
-          <PFG label="Proveedor *">
-            <select className={sel} value={form.proveedorId||''} onChange={e=>{const p=proveedores.find(x=>x.id===e.target.value);setForm({...form,proveedorId:e.target.value,proveedor:p?.nombre||''});}}>
-              <option value="">Seleccionar...</option>
-              {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
-          </PFG>
-          <PFG label="Fecha factura"><input type="date" className={inp} value={form.fecha||''} onChange={e=>setForm({...form,fecha:e.target.value})}/></PFG>
-          <PFG label="Fecha vencimiento"><input type="date" className={inp} value={form.fechaVencimiento||''} onChange={e=>setForm({...form,fechaVencimiento:e.target.value})}/></PFG>
-          <PFG label="OC vinculada">
-            <select className={sel} value={form.ocId||''} onChange={e=>setForm({...form,ocId:e.target.value})}>
-              <option value="">Sin OC vinculada</option>
-              {ordenesCompra.map(o=><option key={o.id} value={o.nroOC}>{o.nroOC} — {o.proveedor}</option>)}
-            </select>
-          </PFG>
-          <PFG label="Moneda">
-            <select className={sel} value={form.moneda||'USD'} onChange={e=>setForm({...form,moneda:e.target.value})}>
-              {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
-            </select>
-          </PFG>
-          <PFG label="Tasa Bs/$"><input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="0 = sin tasa"/></PFG>
-          <PFG label="Aplica IVA">
-            <select className={sel} value={form.aplicaIva||'SI'} onChange={e=>{
-              const base=pNum(form.montoBase);
-              const iva=e.target.value==='NO'?0:e.target.value==='8'?parseFloat((base*0.08).toFixed(2)):parseFloat((base*0.16).toFixed(2));
-              setForm({...form,aplicaIva:e.target.value,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))});
-            }}>
-              <option value="SI">Sí — 16%</option>
-              <option value="8">Sí — 8%</option>
-              <option value="NO">No — Exento</option>
-            </select>
-          </PFG>
-          <PFG label="Base imponible (monto neto)">
-            <input type="number" className={inp} value={form.montoBase||''} onChange={e=>{
-              const base=pNum(e.target.value);
-              const pct=form.aplicaIva==='8'?0.08:form.aplicaIva==='NO'?0:0.16;
-              const iva=parseFloat((base*pct).toFixed(2));
-              setForm({...form,montoBase:base,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))});
-            }}/>
-          </PFG>
-          <PFG label={`IVA ${form.aplicaIva==='8'?'8':'16'}%`}><input className={`${inp} bg-slate-50`} readOnly value={pFmt(form.iva||0)}/></PFG>
-          <PFG label="Total factura" full>
-            <div className="bg-slate-900 rounded-xl px-4 py-3 flex justify-between items-center">
-              <span className="text-[10px] font-black text-slate-400 uppercase">Total {form.moneda||'USD'}</span>
-              <span className="font-black text-white text-xl">{pFmt(form.total||0)}</span>
-              {pNum(form.tasa)>0&&<span className="text-[10px] text-slate-400">= Bs. {pFmt(pNum(form.total)*pNum(form.tasa))}</span>}
-            </div>
-          </PFG>
-          <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
         </div>
-      </PModal>
+      )}
     </div>
   );
 };
+
 
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 5: CUENTAS POR PAGAR (CxP)
