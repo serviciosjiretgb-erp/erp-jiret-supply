@@ -17,47 +17,47 @@ import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDo
 import BancoApp from './BancoApp';
 
 // ══ MÓDULO IMPUESTOS — Tabla ISLR y utilidades ══
-// Tabla ISLR completa — Decreto 1.808 — UT 43 (G.O. 43.140 02/06/2025)
-// Columnas: num=Art9, concepto, PNNR(no residente), PNR(residente), PJND(no domiciliada), PJD(domiciliada)
-// Para Supply G&B el más común es PJD. codPNR = Persona Natural Residente.
+// Tabla ISLR — Decreto 1.808 — UT 43 (G.O. 43.140 02/06/2025)
+// sustraendoBs = SUSTRAENDO REAL en Bs. (columna "Sustraendo en Bs." del PDF)
+// umbraBs      = "Pagos mayores a Bs." (umbral mínimo para retener)
+// El sustraendo SOLO aplica a PNR y PNNR (personas naturales), NUNCA a PJD/PJND.
 const ISLR_CONCEPTOS = [
-  // num | concepto | codPNNR|basePNNR|pctPNNR | codPNR|basePNR|pctPNR|pagMayorBs|sustraendoBsBase | codPJND|basePJND|pctPJND | codPJD|basePJD|pctPJD
-  {num:'9.1.a', concepto:'Honorarios profesionales (no residente)',   codPNNR:'003',basePNNR:90, pctPNNR:34,  codPNR:null,basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:null,basePJND:null,pctPJND:null, codPJD:'005',basePJD:90, pctPJD:'T2'},
-  {num:'9.1.b', concepto:'Honorarios profesionales',                  codPNNR:null,basePNNR:null,pctPNNR:null,codPNR:'002',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'004',basePJD:100,pctPJD:5},
-  {num:'9.1.c', concepto:'Honorarios prof. en hipódromos',            codPNNR:'011',basePNNR:90, pctPNNR:34,  codPNR:'010',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.1.d', concepto:'Honorarios prof. centros de salud',         codPNNR:'013',basePNNR:90, pctPNNR:34,  codPNR:'012',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.2.a', concepto:'Comisiones enajenación inmuebles',          codPNNR:'015',basePNNR:100,pctPNNR:34,  codPNR:'014',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'017',basePJND:100,pctPJND:5,    codPJD:'016',basePJD:100,pctPJD:5},
-  {num:'9.2.b', concepto:'Comisiones mercantiles y otras',            codPNNR:'019',basePNNR:100,pctPNNR:34,  codPNR:'018',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'021',basePJND:100,pctPJND:5,    codPJD:'020',basePJD:100,pctPJD:5},
-  {num:'9.3.a', concepto:'Intereses Art.27 #2 LISLR',                codPNNR:'022',basePNNR:95, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'023',basePJND:95, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.3.b', concepto:'Intereses Art.52 Par.2° LISLR',            codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'024',basePJND:100,pctPJND:4.95, codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.3.c', concepto:'Intereses',                                 codPNNR:'026',basePNNR:95, pctPNNR:34,  codPNR:'025',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'028',basePJND:95, pctPJND:'T2', codPJD:'027',basePJD:100,pctPJD:5},
-  {num:'9.4',   concepto:'Agencias de noticias internacionales',      codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'029',basePJND:15, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.5',   concepto:'Fletes y gastos transp. internac.',         codPNNR:'030',basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'031',basePJND:5,  pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.6',   concepto:'Exhibición de películas',                   codPNNR:'032',basePNNR:25, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'033',basePJND:25, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.7a',  concepto:'Regalías Art.27 #16',                      codPNNR:'034',basePNNR:90, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'035',basePJND:90, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.7b',  concepto:'Asistencia técnica Art.27 #16',            codPNNR:'036',basePNNR:30, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'037',basePJND:30, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.7c',  concepto:'Servicios tecnológicos Art.27 #16',        codPNNR:'038',basePNNR:50, pctPNNR:34,  codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'039',basePJND:50, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.8',   concepto:'Primas de seguro y reaseguro',             codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:'040',basePJND:30, pctPJND:10,   codPJD:null, basePJD:null,pctPJD:null},
-  {num:'9.9a',  concepto:'Ganancias en juegos y apuestas',           codPNNR:'042',basePNNR:100,pctPNNR:34,  codPNR:'041',basePNR:100, pctPNR:34, sustraendoUT:0,       codPJND:'044',basePJND:100,pctPJND:34,   codPJD:'043',basePJD:100,pctPJD:34},
-  {num:'9.9b',  concepto:'Premios lotería e hipódromos Art.62',      codPNNR:'046',basePNNR:100,pctPNNR:16,  codPNR:'045',basePNR:100, pctPNR:16, sustraendoUT:0,       codPJND:'048',basePJND:100,pctPJND:16,   codPJD:'047',basePJD:100,pctPJD:16},
-  {num:'9.10',  concepto:'Propietarios animales de carreras',        codPNNR:'050',basePNNR:100,pctPNNR:34,  codPNR:'049',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'052',basePJND:100,pctPJND:5,    codPJD:'051',basePJD:100,pctPJD:5},
-  {num:'9.11',  concepto:'Servicios',                                codPNNR:'054',basePNNR:100,pctPNNR:34,  codPNR:'053',basePNR:100, pctPNR:1,  sustraendoUT:83.3334, codPJND:'056',basePJND:100,pctPJND:'T2', codPJD:'055',basePJD:100,pctPJD:2},
-  {num:'9.12',  concepto:'Arrendamiento bienes inmuebles',           codPNNR:'058',basePNNR:100,pctPNNR:34,  codPNR:'057',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'060',basePJND:100,pctPJND:'T2', codPJD:'059',basePJD:100,pctPJD:5},
-  {num:'9.13',  concepto:'Arrendamiento bienes muebles',             codPNNR:'062',basePNNR:100,pctPNNR:34,  codPNR:'061',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'064',basePJND:100,pctPJND:5,    codPJD:'063',basePJD:100,pctPJD:5},
-  {num:'9.14',  concepto:'Pagos tarjetas de crédito o consumo',      codPNNR:'066',basePNNR:null,pctPNNR:34,  codPNR:'065',basePNR:null,pctPNR:3,  sustraendoUT:0,       codPJND:'068',basePJND:null,pctPJND:5,    codPJD:'067',basePJD:null,pctPJD:5},
-  {num:'9.14b', concepto:'Pago gasolina con tarjeta',               codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'069',basePNR:null,pctPNR:1,  sustraendoUT:0,       codPJND:null,basePJND:null,pctPJND:null, codPJD:'070',basePJD:null,pctPJD:1},
-  {num:'9.15',  concepto:'Fletes y gastos transporte nacional',      codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'071',basePNR:100, pctPNR:1,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'072',basePJD:100,pctPJD:3},
-  {num:'9.16',  concepto:'Pago emp. seguro a corredores',            codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'073',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'074',basePJD:100,pctPJD:5},
-  {num:'9.17a', concepto:'Emp. seguro por reparación de bienes',     codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'075',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'076',basePJD:100,pctPJD:5},
-  {num:'9.17b', concepto:'Emp. seguro a centros de salud',           codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'077',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:null,pctPJND:null, codPJD:'077',basePJD:100,pctPJD:5},
-  {num:'9.18',  concepto:'Adquisición fondos de comercio',           codPNNR:'080',basePNNR:100,pctPNNR:34,  codPNR:'079',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'082',basePJND:100,pctPJND:5,    codPJD:'081',basePJD:100,pctPJD:5},
-  {num:'9.19a', concepto:'Publicidad y propaganda',                  codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:'083',basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:'085',basePJND:100,pctPJND:5,    codPJD:'084',basePJD:100,pctPJD:5},
-  {num:'9.19b', concepto:'Publicidad — emisoras de radio',           codPNNR:null, basePNNR:null,pctPNNR:null,codPNR:null, basePNR:null,pctPNR:null,sustraendoUT:0,       codPJND:null,basePJND:null,pctPJND:null, codPJD:'086',basePJD:100,pctPJD:3},
-  {num:'9.20',  concepto:'Enajenación acciones Bolsa de Valores',   codPNNR:null, basePNNR:100,pctPNNR:1,   codPNR:null, basePNR:100, pctPNR:1,  sustraendoUT:0,       codPJND:null,basePJND:100,pctPJND:1,    codPJD:null, basePJD:100,pctPJD:1},
-  {num:'9.21',  concepto:'Enajenación acciones fuera Bolsa',         codPNNR:null, basePNNR:100,pctPNNR:34,  codPNR:null, basePNR:100, pctPNR:3,  sustraendoUT:83.3334, codPJND:null,basePJND:100,pctPJND:5,    codPJD:null, basePJD:100,pctPJD:5},
+  // sustraendoBs: 107.50 = honorarios/comisiones/arrendamiento | 35.83 = servicios/fletes | 0 = sin sustraendo
+  {num:'9.1.a', concepto:'Honorarios profesionales (no residente)',  codPNNR:'003',basePNNR:90, pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:null,basePJND:null,pctPJND:null, codPJD:'005',basePJD:90, pctPJD:'T2'},
+  {num:'9.1.b', concepto:'Honorarios profesionales',                 codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:3583.34,sustraendoBs:107.50,codPNR:'002',basePNR:100, pctPNR:3,    codPJND:null,basePJND:null,pctPJND:null, codPJD:'004',basePJD:100,pctPJD:5},
+  {num:'9.1.c', concepto:'Honorarios prof. en hipódromos',           codPNNR:'011',basePNNR:90, pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'010',basePNR:100, pctPNR:3,    codPJND:null,basePJND:null,pctPJND:null, codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.1.d', concepto:'Honorarios prof. centros de salud',        codPNNR:'013',basePNNR:90, pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'012',basePNR:100, pctPNR:3,    codPJND:null,basePJND:null,pctPJND:null, codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.2.a', concepto:'Comisiones enajenación inmuebles',         codPNNR:'015',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'014',basePNR:100, pctPNR:3,    codPJND:'017',basePJND:100,pctPJND:5,   codPJD:'016',basePJD:100,pctPJD:5},
+  {num:'9.2.b', concepto:'Comisiones mercantiles y otras',           codPNNR:'019',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'018',basePNR:100, pctPNR:3,    codPJND:'021',basePJND:100,pctPJND:5,   codPJD:'020',basePJD:100,pctPJD:5},
+  {num:'9.3.a', concepto:'Intereses Art.27 #2 LISLR',               codPNNR:'022',basePNNR:95, pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'023',basePJND:95, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.3.b', concepto:'Intereses Art.52 Par.2° LISLR',           codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'024',basePJND:100,pctPJND:4.95, codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.3.c', concepto:'Intereses',                                codPNNR:'026',basePNNR:95, pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'025',basePNR:100, pctPNR:3,    codPJND:'028',basePJND:95, pctPJND:'T2', codPJD:'027',basePJD:100,pctPJD:5},
+  {num:'9.4',   concepto:'Agencias de noticias internacionales',     codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'029',basePJND:15, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.5',   concepto:'Fletes y gastos transp. internac.',        codPNNR:'030',basePNNR:null,pctPNNR:null,umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'031',basePJND:5,  pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.6',   concepto:'Exhibición de películas',                  codPNNR:'032',basePNNR:25, pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'033',basePJND:25, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.7a',  concepto:'Regalías Art.27 #16',                     codPNNR:'034',basePNNR:90, pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'035',basePJND:90, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.7b',  concepto:'Asistencia técnica Art.27 #16',           codPNNR:'036',basePNNR:30, pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'037',basePJND:30, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.7c',  concepto:'Servicios tecnológicos Art.27 #16',       codPNNR:'038',basePNNR:50, pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'039',basePJND:50, pctPJND:'T2', codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.8',   concepto:'Primas de seguro y reaseguro',            codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:'040',basePJND:30, pctPJND:10,   codPJD:null, basePJD:null,pctPJD:null},
+  {num:'9.9a',  concepto:'Ganancias en juegos y apuestas',          codPNNR:'042',basePNNR:100,pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:'041',basePNR:100, pctPNR:34,   codPJND:'044',basePJND:100,pctPJND:34,  codPJD:'043',basePJD:100,pctPJD:34},
+  {num:'9.9b',  concepto:'Premios lotería e hipódromos Art.62',     codPNNR:'046',basePNNR:100,pctPNNR:16,  umbraBs:null,  sustraendoBs:0,    codPNR:'045',basePNR:100, pctPNR:16,   codPJND:'048',basePJND:100,pctPJND:16,  codPJD:'047',basePJD:100,pctPJD:16},
+  {num:'9.10',  concepto:'Propietarios animales de carreras',       codPNNR:'050',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'049',basePNR:100, pctPNR:3,    codPJND:'052',basePJND:100,pctPJND:5,   codPJD:'051',basePJD:100,pctPJD:5},
+  {num:'9.11',  concepto:'Servicios',                               codPNNR:'054',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:35.83, codPNR:'053',basePNR:100, pctPNR:1,    codPJND:'056',basePJND:100,pctPJND:'T2', codPJD:'055',basePJD:100,pctPJD:2},
+  {num:'9.12',  concepto:'Arrendamiento bienes inmuebles',          codPNNR:'058',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'057',basePNR:100, pctPNR:3,    codPJND:'060',basePJND:100,pctPJND:'T2', codPJD:'059',basePJD:100,pctPJD:5},
+  {num:'9.13',  concepto:'Arrendamiento bienes muebles',            codPNNR:'062',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'061',basePNR:100, pctPNR:3,    codPJND:'064',basePJND:100,pctPJND:5,   codPJD:'063',basePJD:100,pctPJD:5},
+  {num:'9.14',  concepto:'Pagos tarjetas de crédito o consumo',     codPNNR:'066',basePNNR:null,pctPNNR:34,  umbraBs:null,  sustraendoBs:0,    codPNR:'065',basePNR:null,pctPNR:3,    codPJND:'068',basePJND:null,pctPJND:5,   codPJD:'067',basePJD:null,pctPJD:5},
+  {num:'9.14b', concepto:'Pago gasolina con tarjeta',              codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:null,  sustraendoBs:0,    codPNR:'069',basePNR:null,pctPNR:1,    codPJND:null, basePJND:null,pctPJND:null, codPJD:'070',basePJD:null,pctPJD:1},
+  {num:'9.15',  concepto:'Fletes y gastos transporte nacional',     codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:3583.34,sustraendoBs:35.83, codPNR:'071',basePNR:100, pctPNR:1,    codPJND:null, basePJND:null,pctPJND:null, codPJD:'072',basePJD:100,pctPJD:3},
+  {num:'9.16',  concepto:'Pago emp. seguro a corredores',           codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:3583.34,sustraendoBs:107.50,codPNR:'073',basePNR:100, pctPNR:3,    codPJND:null, basePJND:null,pctPJND:null, codPJD:'074',basePJD:100,pctPJD:5},
+  {num:'9.17a', concepto:'Emp. seguro por reparación de bienes',    codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:3583.34,sustraendoBs:107.50,codPNR:'075',basePNR:100, pctPNR:3,    codPJND:null, basePJND:null,pctPJND:null, codPJD:'076',basePJD:100,pctPJD:5},
+  {num:'9.17b', concepto:'Emp. seguro a centros de salud',          codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:3583.34,sustraendoBs:107.50,codPNR:'077',basePNR:100, pctPNR:3,    codPJND:null, basePJND:null,pctPJND:null, codPJD:'077',basePJD:100,pctPJD:5},
+  {num:'9.18',  concepto:'Adquisición fondos de comercio',          codPNNR:'080',basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:'079',basePNR:100, pctPNR:3,    codPJND:'082',basePJND:100,pctPJND:5,   codPJD:'081',basePJD:100,pctPJD:5},
+  {num:'9.19a', concepto:'Publicidad y propaganda',                 codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:3583.34,sustraendoBs:107.50,codPNR:'083',basePNR:100, pctPNR:3,    codPJND:'085',basePJND:100,pctPJND:5,   codPJD:'084',basePJD:100,pctPJD:5},
+  {num:'9.19b', concepto:'Publicidad — emisoras de radio',          codPNNR:null, basePNNR:null,pctPNNR:null,umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:null,pctPNR:null, codPJND:null, basePJND:null,pctPJND:null, codPJD:'086',basePJD:100,pctPJD:3},
+  {num:'9.20',  concepto:'Enajenación acciones Bolsa de Valores',  codPNNR:null, basePNNR:100,pctPNNR:1,   umbraBs:null,  sustraendoBs:0,    codPNR:null, basePNR:100, pctPNR:1,    codPJND:null, basePJND:100,pctPJND:1,   codPJD:null, basePJD:100,pctPJD:1},
+  {num:'9.21',  concepto:'Enajenación acciones fuera Bolsa',        codPNNR:null, basePNNR:100,pctPNNR:34,  umbraBs:3583.34,sustraendoBs:107.50,codPNR:null, basePNR:100, pctPNR:3,    codPJND:null, basePJND:100,pctPJND:5,   codPJD:null, basePJD:100,pctPJD:5},
 ];
 const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
-  // tipoContrib: 'PJD'=domiciliada(default), 'PNR'=natural residente, 'PJND'=no domiciliada, 'PNNR'=no residente
   const c=ISLR_CONCEPTOS.find(x=>
     x.codPJD===conceptoCod||x.codPNR===conceptoCod||
     x.codPJND===conceptoCod||x.codPNNR===conceptoCod
@@ -69,7 +69,9 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
   else if(tipoContrib==='PNNR'){pct=c.pctPNNR;base=c.basePNNR;}
   else{pct=c.pctPJD;base=c.basePJD;} // PJD default
   if(!pct||pct==='T2'||!base)return{monto:0,montoBs:0,base:base||0,pct:typeof pct==='string'?pct:0,sustraendo:0,baseImponible:0};
-  const sustraendoBs=c.sustraendoUT*(valorUT||43);
+  // Sustraendo: SOLO personas naturales (PNR/PNNR), valor fijo en Bs. de la tabla
+  const esPNatural=(tipoContrib==='PNR'||tipoContrib==='PNNR');
+  const sustraendoBs=esPNatural?(c.sustraendoBs||0):0;
   const montoBruto=montoUSD*(tasaBCV||0);
   const baseImponible=montoBruto*(base/100);
   const retencionBs=Math.max(0,baseImponible*(pct/100)-sustraendoBs);
@@ -243,7 +245,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
                       <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                         <td className="px-2 py-1.5 text-slate-400 text-[9px] whitespace-nowrap">{c.num}</td>
                         <td className="px-2 py-1.5 font-black text-slate-800">{c.concepto}
-                          {c.sustraendoUT>0&&<div className="text-[8px] text-amber-600 font-normal">PNR Sustraendo: Bs. {(c.sustraendoUT*(valorUT||43)).toFixed(2)}</div>}
+                          {c.sustraendoBs>0&&<div className="text-[8px] text-amber-600 font-normal">PNR Sustraendo real: Bs. {c.sustraendoBs.toFixed(2)} · Umbral: Bs. {(c.umbraBs||0).toFixed(2)}</div>}
                         </td>
                         {row(c.codPNNR,c.basePNNR,c.pctPNNR,'pnnr')}
                         {row(c.codPNR,c.basePNR,c.pctPNR,'pnr')}
@@ -2048,13 +2050,13 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     return{montoBs,monto,ivaBaseBs,ivaBaseUSD,pct:pNum(f.pctRetIVA||75)};
   };
 
-  // ── Retenciones ISLR múltiples: base imponible EDITABLE, en Bs. ───
-  // Sustraendo SOLO para personas naturales (PNR, PNNR). Para PJD y PJND = 0.
+  // ── Retenciones ISLR múltiples: base editable, sustraendo fijo Bs. ──
+  // Sustraendo FIJO en Bs. (del PDF). SOLO para PNR/PNNR. PJD/PJND = sin sustraendo.
   const calcRetISLRLista=(f,tot)=>{
     const lista=f.islrRetenciones||[];
     if(lista.length===0)return[];
     const tasa=pNum(f.tasa||0);
-    const totalBs=tasa>0?tot.totalUSD*tasa:0;
+    const totalBs=tasa>0?parseFloat((tot.totalUSD*tasa).toFixed(2)):0; // ISLR requiere tasa BCV para calcular en Bs.
     return lista.filter(r=>r.activo&&r.codigo).map(r=>{
       const c=ISLR_CONCEPTOS.find(x=>
         x.codPJD===r.codigo||x.codPNR===r.codigo||
@@ -2066,32 +2068,24 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       if(tc==='PNR'){pct=c.pctPNR;basePorc=c.basePNR;}
       else if(tc==='PJND'){pct=c.pctPJND;basePorc=c.basePJND;}
       else if(tc==='PNNR'){pct=c.pctPNNR;basePorc=c.basePNNR;}
-      else{pct=c.pctPJD;basePorc=c.basePJD;} // PJD
+      else{pct=c.pctPJD;basePorc=c.basePJD;}
       if(!pct||pct==='T2'||!basePorc)
-        return{...r,monto:0,montoBs:0,baseImponibleBs:0,pct:pct||'T2',concepto:c.concepto,error:pct==='T2'?'Tarifa N°2 — cálculo manual':'Sin datos'};
-      // Base imponible: si el usuario la editó, usarla; si no, calcularla
-      const baseImponibleBs=r.baseImponibleBsManual!=null
-        ? pNum(r.baseImponibleBsManual)
-        : parseFloat((totalBs*(basePorc/100)).toFixed(2));
-      // Sustraendo: SOLO personas naturales (PNR / PNNR)
+        return{...r,monto:0,montoBs:0,baseImponibleBs:0,pct:pct||'T2',concepto:c.concepto,
+          error:pct==='T2'?'Tarifa N°2 — requiere cálculo manual':'Sin datos para este tipo'};
+      // Base imponible en Bs.: editable o calculada
+      const baseImponibleBs=r.baseImponibleBsManual!=null&&r.baseImponibleBsManual!==''
+        ? parseFloat(r.baseImponibleBsManual)
+        : tasa>0?parseFloat((totalBs*(basePorc/100)).toFixed(2)):0;
+      // Sustraendo FIJO en Bs. (columna "Sustraendo en Bs." del PDF) — SOLO personas naturales
       const esPNatural=(tc==='PNR'||tc==='PNNR');
-      const sustraendoBs=esPNatural?parseFloat(((c.sustraendoUT||0)*valorUT).toFixed(2)):0;
+      const sustraendoBs=esPNatural?(c.sustraendoBs||0):0;
+      const umbraBs=c.umbraBs||0;
       const retencionBs=parseFloat(Math.max(0,baseImponibleBs*(pct/100)-sustraendoBs).toFixed(2));
       const retencionUSD=tasa>0?parseFloat((retencionBs/tasa).toFixed(2)):0;
-      return{...r,
-        pct,basePorc,
-        baseImponibleBs,
-        sustraendoBs,
-        esPNatural,
-        montoBs:retencionBs,
-        monto:retencionUSD,
-        concepto:c.concepto,
-        totalBs,
-      };
+      return{...r,pct,basePorc,baseImponibleBs,sustraendoBs,esPNatural,umbraBs,
+        montoBs:retencionBs,monto:retencionUSD,concepto:c.concepto,totalBs};
     });
   };
-
-  // Calcular neto a pagar
   const calcNeto=(tot,retIVA,retISLRLista)=>{
     const totalRetISLR=retISLRLista.reduce((s,r)=>s+pNum(r.monto),0);
     const monto=parseFloat((tot.totalUSD-retIVA.monto-totalRetISLR).toFixed(2));
@@ -2624,7 +2618,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                   {/* Retención ISLR — múltiples */}
                   <div className="border-2 border-purple-200 rounded-xl overflow-hidden">
                     <div className="bg-purple-50 px-4 py-3 border-b-2 border-purple-200 flex items-center justify-between">
-                      <h4 className="font-black text-purple-800 text-xs uppercase tracking-wide flex items-center gap-2"><DollarSign size={13}/> Retenciones ISLR</h4>
+                      <div>
+                        <h4 className="font-black text-purple-800 text-xs uppercase tracking-wide flex items-center gap-2"><DollarSign size={13}/> Retenciones ISLR</h4>
+                        {!hasTasa&&<p className="text-[9px] text-amber-600 font-black mt-0.5">⚠️ Ingresa la Tasa Bs./$ en "Datos fiscales" para calcular</p>}
+                      </div>
                       <button onClick={()=>setForm(f=>({...f,
                         islrRetenciones:[...(f.islrRetenciones||[]),{id:pId(),codigo:'',tipoContrib:'PJD',activo:true}]
                       }))} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-600 text-white text-[9px] font-black uppercase">
@@ -2687,6 +2684,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                                   return(
                                   <div className="bg-purple-900 rounded-lg p-2.5 mt-2 space-y-2">
                                     {calcd2.error&&<div className="text-amber-300 text-[9px] font-black">⚠️ {calcd2.error}</div>}
+                                    {!pNum(form.tasa)&&r.codigo&&<div className="text-amber-300 text-[9px] font-black">⚠️ Ingresa la Tasa Bs./$ para calcular retención ISLR en Bs.</div>}
                                     <div className="grid grid-cols-2 gap-2">
                                       <div>
                                         <label className="text-[8px] text-purple-300 font-black uppercase block mb-0.5">
@@ -2710,7 +2708,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                                         <span className="text-[8px] text-purple-300 font-black uppercase">Sustraendo (persona natural)</span>
                                         <div className="text-right">
                                           <span className="text-white font-mono text-[10px]">Bs. {fmtN(calcd2.sustraendoBs)}</span>
-                                          <span className="text-purple-400 text-[8px] ml-1">= {valorUT} UT × 83,3334</span>
+                                          <span className="text-purple-400 text-[8px] ml-1">(Decreto 1.808 — valor fijo)</span>
                                         </div>
                                       </div>
                                     )}
