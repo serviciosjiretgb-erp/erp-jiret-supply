@@ -143,7 +143,13 @@ const PEmpty = ({icon:Icon,title,desc}) => (
 
 // ── Status helpers ────────────────────────────────────────────────────
 const statusOC = (s) => {
-  const map={BORRADOR:{label:'Borrador',v:'gray'},APROBADA:{label:'Aprobada',v:'blue'},ENVIADA:{label:'Enviada',v:'purple'},RECIBIDA:{label:'Recibida',v:'green'},CERRADA:{label:'Cerrada',v:'gold'},ANULADA:{label:'Anulada',v:'red'}};
+  const map={
+    BORRADOR:     {label:'Borrador',     v:'gray'},
+    APROBADA:     {label:'Aprobada',     v:'blue'},
+    'EN TRÁNSITO':{label:'En Tránsito',  v:'purple'},
+    PROCESADA:    {label:'Procesada',    v:'green'},
+    ANULADA:      {label:'Anulada',      v:'red'},
+  };
   return map[s]||{label:s,v:'gray'};
 };
 
@@ -911,7 +917,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 3: ÓRDENES DE COMPRA
 // ══════════════════════════════════════════════════════════════════════
-const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}) => {
+const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,navegarAFactura}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [modal,setModal]=useState(null);
@@ -931,14 +937,28 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
     return()=>{u1();u2();};
   },[]);
 
-  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas'];
+  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
 
-  const invFiltrado=inventory.filter(i=>{
+  // Dedup: solo almacén general (sin sufijo ___), sin semielaborado
+  const invDedup=useMemo(()=>{
+    const seen=new Set();
+    return inventory.filter(i=>{
+      const rawId=i.id||'';
+      if(rawId.includes('___'))return false;
+      const cat=(i.subcategory||i.category||'').toLowerCase();
+      if(cat.includes('semielaborado'))return false;
+      if(i.activo===false)return false;
+      const code=i.displayId||rawId;
+      if(seen.has(code))return false;
+      seen.add(code);
+      return true;
+    });
+  },[inventory]);
+
+  const invFiltrado=invDedup.filter(i=>{
     const matchCat=invTab==='TODOS'||(i.subcategory||i.category||'')===invTab;
     const matchSearch=!invSearch||(i.desc||'').toLowerCase().includes(invSearch.toLowerCase())||(i.displayId||i.id||'').toLowerCase().includes(invSearch.toLowerCase());
-    const cat2=(i.subcategory||i.category||'').toLowerCase();
-    const excluir=cat2.includes('semielaborado')||cat2.includes('otros terminados');
-    return i.activo!==false&&matchCat&&matchSearch&&!excluir;
+    return matchCat&&matchSearch;
   });
 
   const srvFiltrado=servicios.filter(s=>!srvSearch||(s.nombre||'').toLowerCase().includes(srvSearch.toLowerCase())||(s.categoria||'').toLowerCase().includes(srvSearch.toLowerCase()));
@@ -974,13 +994,18 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
   const calcTotales=(its,tasa)=>{
     const t=pNum(tasa||0);
     const subtotalUSD=its.reduce((s,i)=>s+pNum(i.total||0),0);
-    const baseIvaUSD=its.filter(i=>i.iva!=='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const base16USD=its.filter(i=>i.iva==='GRAVADO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const base8USD=its.filter(i=>i.iva==='GRAVADO8').reduce((s,i)=>s+pNum(i.total||0),0);
     const exentoUSD=its.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
-    const iva16USD=baseIvaUSD*0.16;
-    const totalUSD=subtotalUSD+iva16USD;
-    return {subtotalUSD,baseIvaUSD,exentoUSD,iva16USD,totalUSD,
+    const iva16USD=parseFloat((base16USD*0.16).toFixed(2));
+    const iva8USD=parseFloat((base8USD*0.08).toFixed(2));
+    const ivaTotal=iva16USD+iva8USD;
+    const baseIvaUSD=base16USD+base8USD;
+    const totalUSD=subtotalUSD+ivaTotal;
+    return {subtotalUSD,baseIvaUSD,base16USD,base8USD,exentoUSD,iva16USD,iva8USD,ivaTotal,totalUSD,
       subtotalBs:t?subtotalUSD*t:0,baseIvaBs:t?baseIvaUSD*t:0,
-      exentoBs:t?exentoUSD*t:0,iva16Bs:t?iva16USD*t:0,totalBs:t?totalUSD*t:0};
+      iva16Bs:t?iva16USD*t:0,iva8Bs:t?iva8USD*t:0,
+      exentoBs:t?exentoUSD*t:0,totalBs:t?totalUSD*t:0};
   };
 
   const tot=calcTotales(items,form.tasa);
@@ -1121,9 +1146,11 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
     <div style="display:flex;justify-content:flex-end;margin-top:4px">
       <table class="tot" style="width:${ta>0?'52%':'30%'}">
         <tr><td class="lbl">Sub-Total</td>${ta>0?`<td class="val">Bs. ${fmtN(t.subtotalBs)}</td>`:''}<td class="val">USD ${fmtN(t.subtotalUSD)}</td></tr>
-        <tr><td class="lbl">Exento</td>${ta>0?`<td class="val">Bs. ${fmtN(t.exentoBs)}</td>`:''}<td class="val">USD ${t.exentoUSD>0?fmtN(t.exentoUSD):'—'}</td></tr>
-        <tr><td class="lbl">Base IVA</td>${ta>0?`<td class="val">Bs. ${fmtN(t.baseIvaBs)}</td>`:''}<td class="val">USD ${fmtN(t.baseIvaUSD)}</td></tr>
-        <tr><td class="lbl">IVA 16%</td>${ta>0?`<td class="val">Bs. ${fmtN(t.iva16Bs)}</td>`:''}<td class="val">USD ${fmtN(t.iva16USD)}</td></tr>
+        ${t.exentoUSD>0?`<tr><td class="lbl">Exento</td>${ta>0?`<td class="val">Bs. ${fmtN(t.exentoBs)}</td>`:''}<td class="val">USD ${fmtN(t.exentoUSD)}</td></tr>`:''}
+        ${t.base16USD>0?`<tr><td class="lbl">Base IVA 16%</td>${ta>0?`<td class="val">Bs. ${fmtN(t.baseIvaBs)}</td>`:''}<td class="val">USD ${fmtN(t.base16USD)}</td></tr>
+        <tr><td class="lbl">IVA 16%</td>${ta>0?`<td class="val">Bs. ${fmtN(t.iva16Bs)}</td>`:''}<td class="val">USD ${fmtN(t.iva16USD)}</td></tr>`:''}
+        ${t.base8USD>0?`<tr><td class="lbl">Base IVA 8%</td>${ta>0?`<td class="val">Bs. ${fmtN(t.iva8Bs/0.08*ta)}</td>`:''}<td class="val">USD ${fmtN(t.base8USD)}</td></tr>
+        <tr><td class="lbl">IVA 8%</td>${ta>0?`<td class="val">Bs. ${fmtN(t.iva8Bs)}</td>`:''}<td class="val">USD ${fmtN(t.iva8USD)}</td></tr>`:''}
         <tr class="tr"><td class="lbl" style="color:#f97316">TOTAL A PAGAR</td>${ta>0?`<td class="val" style="color:#f97316">Bs. ${fmtN(t.totalBs)}</td>`:''}<td class="val" style="color:#f97316">USD ${fmtN(t.totalUSD)}</td></tr>
       </table>
     </div>
@@ -1145,7 +1172,49 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
     const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
   };
 
-  const statusList=['TODOS','BORRADOR','APROBADA','ENVIADA','RECIBIDA','CERRADA','ANULADA'];
+  const convertirAFactura = async (oc) => {
+    setDialog({
+      title:'¿Convertir a Factura?',
+      text:`Se creará una factura de compra pre-llenada con los datos de la ${oc.nroOC} y el status pasará a PROCESADA.`,
+      type:'confirm',
+      onConfirm: async () => {
+        try {
+          // Calcular base imponible desde ítems
+          const t = oc.totales || calcTotales(oc.items||[], oc.tasa);
+          const preload = {
+            nroFactura: '',
+            proveedor: oc.proveedor||'',
+            proveedorId: oc.proveedorId||'',
+            ocId: oc.nroOC,
+            fecha: getTodayDate(),
+            fechaVencimiento: oc.fechaVencimiento||'',
+            moneda: oc.moneda||'USD',
+            tasa: oc.tasa||'',
+            montoBase: t.subtotalUSD,
+            baseIva16: t.base16USD||0,
+            baseIva8: t.base8USD||0,
+            iva: t.ivaTotal||0,
+            total: t.totalUSD,
+            saldoPendiente: t.totalUSD,
+            aplicaIva: t.baseIvaUSD>0?'SI':'NO',
+            status: 'PENDIENTE',
+            observaciones: oc.observaciones||'',
+            itemsOC: oc.items||[],
+          };
+          // Marcar OC como PROCESADA
+          await updateDoc(getDocRef('procura_ordenes_compra', oc.id), {
+            status: 'PROCESADA', updatedAt: Date.now()
+          });
+          // Navegar a facturas con preload
+          navegarAFactura(preload);
+        } catch(e) {
+          setDialog({title:'Error', text:e.message, type:'alert'});
+        }
+      }
+    });
+  };
+
+  const statusList=['TODOS','BORRADOR','APROBADA','EN TRÁNSITO','ANULADA','PROCESADA'];
 
   // Íconos badge
   const ivaColor=v=>v==='EXENTO'?'bg-amber-50 text-amber-700 border border-amber-200':'bg-emerald-50 text-emerald-700 border border-emerald-200';
@@ -1190,10 +1259,16 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
                       <div className="flex gap-1 flex-wrap">
                         <PBp sm onClick={()=>imprimirOC(oc)}><Printer size={11}/></PBp>
                         <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setModal('form');}}><Edit size={11}/></PBp>
-                        {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')}><Check size={11}/></PBg>}
-                        {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'ENVIADA')}><Send size={11}/></PBo>}
-                        {oc.status==='ENVIADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'RECIBIDA')}><Truck size={11}/></PBo>}
-                        {!['CERRADA','ANULADA'].includes(oc.status)&&<PBo sm onClick={()=>cambiarStatus(oc,'ANULADA')}><Ban size={11}/></PBo>}
+                        {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')} title="Aprobar"><Check size={11}/></PBg>}
+                        {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'EN TRÁNSITO')} title="Enviar / En tránsito"><Send size={11}/></PBo>}
+                        {['APROBADA','EN TRÁNSITO'].includes(oc.status)&&(
+                          <button onClick={()=>convertirAFactura(oc)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-black uppercase text-white transition-all hover:opacity-90"
+                            style={{background:'#f97316'}} title="Convertir a Factura de Compra">
+                            <FileText size={11}/> Facturar
+                          </button>
+                        )}
+                        {!['PROCESADA','ANULADA'].includes(oc.status)&&<PBd sm onClick={()=>cambiarStatus(oc,'ANULADA')} title="Anular"><Ban size={11}/></PBd>}
                         <PBd sm onClick={()=>eliminarOC(oc)}><Trash2 size={11}/></PBd>
                       </div>
                     </PTd>
@@ -1329,9 +1404,9 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
                           <span className="text-slate-400 font-black uppercase">Sub-Total</span>
                           {hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.subtotalBs)}</span>}
                           <span className="text-right text-white font-mono">USD {pFmt(tot.subtotalUSD)}</span>
-                          <span className="text-slate-400 font-black uppercase">IVA 16%</span>
-                          {hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.iva16Bs)}</span>}
-                          <span className="text-right text-white font-mono">USD {pFmt(tot.iva16USD)}</span>
+                          {tot.exentoUSD>0&&<><span className="text-slate-400 font-black uppercase">Exento</span>{hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.exentoBs)}</span>}<span className="text-right text-white font-mono">USD {pFmt(tot.exentoUSD)}</span></>}
+                          {tot.iva16USD>0&&<><span className="text-slate-400 font-black uppercase">IVA 16%</span>{hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.iva16Bs)}</span>}<span className="text-right text-white font-mono">USD {pFmt(tot.iva16USD)}</span></>}
+                          {tot.iva8USD>0&&<><span className="text-slate-400 font-black uppercase">IVA 8%</span>{hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {pFmt(tot.iva8Bs)}</span>}<span className="text-right text-white font-mono">USD {pFmt(tot.iva8USD)}</span></>}
                           <span className="text-orange-400 font-black uppercase">TOTAL</span>
                           {hasTasa&&<span className="text-right text-orange-300 font-black font-mono">Bs. {pFmt(tot.totalBs)}</span>}
                           <span className="text-right text-orange-400 font-black text-sm font-mono">USD {pFmt(tot.totalUSD)}</span>
@@ -1478,6 +1553,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">IVA</label>
                     <select className={`${sel} text-xs py-1.5`} value={itemForm.iva||'GRAVADO'} onChange={e=>setItemForm({...itemForm,iva:e.target.value})}>
                       <option value="GRAVADO">Gravado 16%</option>
+                      <option value="GRAVADO8">Gravado 8%</option>
                       <option value="EXENTO">Exento</option>
                     </select>
                   </div>
@@ -1519,12 +1595,21 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings}
 };
 
 
-const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog}) => {
+const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
+
+  // Auto-abrir modal si viene preload de una OC
+  useEffect(()=>{
+    if(facturaPreload){
+      setForm({...facturaPreload});
+      setModal('form');
+      onPreloadConsumed&&onPreloadConsumed();
+    }
+  },[facturaPreload]);
 
   const filtradas=facturasCompra.filter(f=>{
     const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
@@ -1537,7 +1622,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     nroFactura:'',proveedor:'',proveedorId:'',ocId:'',
     fecha:getTodayDate(),fechaVencimiento:'',
     moneda:'USD',tasa:'',
-    montoBase:0,iva:0,total:0,
+    montoBase:0,baseIva16:0,baseIva8:0,iva:0,total:0,
+    saldoPendiente:0,aplicaIva:'SI',
     status:'PENDIENTE',observaciones:''
   });
 
@@ -1655,10 +1741,25 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       </PCard>
 
       {/* Modal Factura */}
-      <PModal open={modal==='form'} onClose={()=>setModal(null)} title={form.id?'Editar factura':'Registrar factura de compra'} wide
+      <PModal open={modal==='form'} onClose={()=>setModal(null)}
+        title={form.id?'Editar factura':form.ocId?`Factura desde OC ${form.ocId}`:'Registrar factura de compra'} wide
         footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardar}><Save size={14}/> Guardar</PBg></>}>
+
+        {/* Banner OC vinculada */}
+        {form.ocId&&!form.id&&(
+          <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3">
+            <FileText size={16} className="text-orange-500 flex-shrink-0"/>
+            <div>
+              <p className="text-[10px] font-black text-orange-700 uppercase">Factura generada desde OC {form.ocId}</p>
+              <p className="text-[10px] text-orange-500">Los montos se calcularon automáticamente. Ingresa el N° de factura del proveedor.</p>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-4">
-          <PFG label="N° Factura proveedor *"><input className={inp} value={form.nroFactura||''} onChange={e=>setForm({...form,nroFactura:e.target.value.toUpperCase()})}/></PFG>
+          <PFG label="N° Factura proveedor *">
+            <input className={inp} value={form.nroFactura||''} autoFocus onChange={e=>setForm({...form,nroFactura:e.target.value.toUpperCase()})} placeholder="Ej: 00001234"/>
+          </PFG>
           <PFG label="Proveedor *">
             <select className={sel} value={form.proveedorId||''} onChange={e=>{const p=proveedores.find(x=>x.id===e.target.value);setForm({...form,proveedorId:e.target.value,proveedor:p?.nombre||''});}}>
               <option value="">Seleccionar...</option>
@@ -1670,7 +1771,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
           <PFG label="OC vinculada">
             <select className={sel} value={form.ocId||''} onChange={e=>setForm({...form,ocId:e.target.value})}>
               <option value="">Sin OC vinculada</option>
-              {ordenesCompra.filter(o=>o.proveedorId===form.proveedorId).map(o=><option key={o.id} value={o.nroOC}>{o.nroOC}</option>)}
+              {ordenesCompra.map(o=><option key={o.id} value={o.nroOC}>{o.nroOC} — {o.proveedor}</option>)}
             </select>
           </PFG>
           <PFG label="Moneda">
@@ -1678,20 +1779,32 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
               {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
             </select>
           </PFG>
-          <PFG label="Tasa Bs/$"><input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="Ej: 62,50"/></PFG>
-          <PFG label="Aplica IVA 16%">
-            <select className={sel} value={form.aplicaIva||'SI'} onChange={e=>setForm({...form,aplicaIva:e.target.value})}>
-              <option value="SI">Sí — 16%</option><option value="NO">No</option>
+          <PFG label="Tasa Bs/$"><input type="number" className={inp} value={form.tasa||''} onChange={e=>setForm({...form,tasa:e.target.value})} placeholder="0 = sin tasa"/></PFG>
+          <PFG label="Aplica IVA">
+            <select className={sel} value={form.aplicaIva||'SI'} onChange={e=>{
+              const base=pNum(form.montoBase);
+              const iva=e.target.value==='NO'?0:e.target.value==='8'?parseFloat((base*0.08).toFixed(2)):parseFloat((base*0.16).toFixed(2));
+              setForm({...form,aplicaIva:e.target.value,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))});
+            }}>
+              <option value="SI">Sí — 16%</option>
+              <option value="8">Sí — 8%</option>
+              <option value="NO">No — Exento</option>
             </select>
           </PFG>
           <PFG label="Base imponible (monto neto)">
-            <input type="number" className={inp} value={form.montoBase||''} onChange={e=>{const base=pNum(e.target.value);const iva=form.aplicaIva==='NO'?0:parseFloat((base*0.16).toFixed(2));setForm({...form,montoBase:base,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))});}}/>
+            <input type="number" className={inp} value={form.montoBase||''} onChange={e=>{
+              const base=pNum(e.target.value);
+              const pct=form.aplicaIva==='8'?0.08:form.aplicaIva==='NO'?0:0.16;
+              const iva=parseFloat((base*pct).toFixed(2));
+              setForm({...form,montoBase:base,iva,total:parseFloat((base+iva).toFixed(2)),saldoPendiente:parseFloat((base+iva).toFixed(2))});
+            }}/>
           </PFG>
-          <PFG label="IVA 16%"><input className={`${inp} bg-slate-50`} readOnly value={pFmt(form.iva||0)}/></PFG>
+          <PFG label={`IVA ${form.aplicaIva==='8'?'8':'16'}%`}><input className={`${inp} bg-slate-50`} readOnly value={pFmt(form.iva||0)}/></PFG>
           <PFG label="Total factura" full>
             <div className="bg-slate-900 rounded-xl px-4 py-3 flex justify-between items-center">
               <span className="text-[10px] font-black text-slate-400 uppercase">Total {form.moneda||'USD'}</span>
               <span className="font-black text-white text-xl">{pFmt(form.total||0)}</span>
+              {pNum(form.tasa)>0&&<span className="text-[10px] text-slate-400">= Bs. {pFmt(pNum(form.total)*pNum(form.tasa))}</span>}
             </div>
           </PFG>
           <PFG label="Observaciones" full><textarea className={`${inp} resize-none`} rows={2} value={form.observaciones||''} onChange={e=>setForm({...form,observaciones:e.target.value})}/></PFG>
@@ -2098,6 +2211,7 @@ const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra
 // ══════════════════════════════════════════════════════════════════════
 function ProcuraApp({fbUser,onBack,settings}) {
   const [sec,setSec]=useState('dashboard');
+  const [facturaPreload,setFacturaPreload]=useState(null);
   const [proveedores,setProveedores]=useState([]);
   const [ordenesCompra,setOrdenesCompra]=useState([]);
   const [facturasCompra,setFacturasCompra]=useState([]);
@@ -2109,7 +2223,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
     if(!fbUser)return;
     const subs=[
       onSnapshot(getColRef('procura_proveedores'),s=>setProveedores(s.docs.map(d=>d.data()))),
-      onSnapshot(query(getColRef('procura_ordenes_compra'),orderBy('fecha','desc')),s=>setOrdenesCompra(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('procura_ordenes_compra'),s=>setOrdenesCompra(s.docs.map(d=>d.data()).sort((a,b)=>(b.creadoEn||0)-(a.creadoEn||0)))),
       onSnapshot(query(getColRef('procura_facturas_compra'),orderBy('fecha','desc')),s=>setFacturasCompra(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_pagos_cxp'),orderBy('fecha','desc')),s=>setPagosCxP(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'),orderBy('fecha','desc')),s=>setTasas(s.docs.map(d=>d.data()))),
@@ -2118,7 +2232,9 @@ function ProcuraApp({fbUser,onBack,settings}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings};
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,
+    navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
+  };
 
   const tabs=[
     {id:'dashboard',   label:'Dashboard',         icon:<LayoutDashboard size={13}/>},
@@ -2137,7 +2253,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'proveedores':return <ProveedoresView {...sharedProps}/>;
       case 'catalogo':return <CatalogoServiciosView {...sharedProps}/>;
       case 'ordenes':return <OrdenesCompraView {...sharedProps}/>;
-      case 'facturas':return <FacturasCompraView {...sharedProps}/>;
+      case 'facturas':return <FacturasCompraView {...sharedProps} facturaPreload={facturaPreload} onPreloadConsumed={()=>setFacturaPreload(null)}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
       case 'historial':return <HistorialPagosView {...sharedProps}/>;
       case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
