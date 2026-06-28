@@ -2198,16 +2198,60 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       const tasa=pNum(form.tasa||0);
       const nroBase=String(facturasCompra.length+1).padStart(4,'0');
       const batch=writeBatch(db);
-      // Guardar factura
-      batch.set(getDocRef('procura_facturas_compra',id),{
-        ...form,id,
-        montoBase:tot.sub,iva:tot.ivaTotal,total:tot.totalUSD,saldoPendiente:neto.monto,
-        totalBs:tot.totalBs,netoPagar:neto.monto,netoPagarBs:neto.montoBs,
-        totales:tot,asiento:asiento.lineas,
-        retIVA:form.aplicaRetIVA?{monto:retIVA.monto,montoBs:retIVA.montoBs,pct:form.pctRetIVA}:null,
-        retISLRLista:retISLRLista.map(r=>({codigo:r.codigo,concepto:r.concepto,pct:r.pct,monto:r.monto,montoBs:r.montoBs})),
+
+      // Limpiar undefined recursivamente — Firestore los rechaza
+      const clean=(obj)=>{
+        if(Array.isArray(obj))return obj.map(clean);
+        if(obj&&typeof obj==='object'){
+          const r={};
+          Object.entries(obj).forEach(([k,v])=>{if(v!==undefined)r[k]=clean(v);});
+          return r;
+        }
+        return obj;
+      };
+
+      // Solo guardar campos seguros del formulario (excluir campos de estado UI)
+      const formData={
+        nroFactura:form.nroFactura||'',
+        nroControl:form.nroControl||'',
+        proveedor:form.proveedor||'',
+        proveedorId:form.proveedorId||'',
+        ocId:form.ocId||'',
+        fecha:form.fecha||'',
+        fechaVencimiento:form.fechaVencimiento||'',
+        moneda:form.moneda||'USD',
+        tasa:form.tasa||'',
+        afectaLibroCompras:form.afectaLibroCompras!==false,
+        aplicaRetIVA:!!form.aplicaRetIVA,
+        pctRetIVA:pNum(form.pctRetIVA||75),
+        islrRetenciones:(form.islrRetenciones||[]).map(r=>({
+          id:r.id||'',codigo:r.codigo||'',tipoContrib:r.tipoContrib||'PJD',activo:!!r.activo,
+          baseImponibleBsManual:r.baseImponibleBsManual!=null?String(r.baseImponibleBsManual):null
+        })),
+        observaciones:form.observaciones||'',
+        status:form.status||'PENDIENTE',
+        itemsOC:(form.itemsOC||[]).map(it=>clean(it)),
+      };
+
+      batch.set(getDocRef('procura_facturas_compra',id),clean({
+        ...formData,id,
+        montoBase:tot.sub||0,iva:tot.ivaTotal||0,total:tot.totalUSD||0,
+        saldoPendiente:neto.monto||0,
+        totalBs:tot.totalBs||0,netoPagar:neto.monto||0,netoPagarBs:neto.montoBs||0,
+        totales:clean(tot),
+        asiento:asiento.lineas.map(l=>clean(l)),
+        retIVA:form.aplicaRetIVA?{
+          monto:retIVA.monto||0,montoBs:retIVA.montoBs||0,
+          pct:pNum(form.pctRetIVA||75),
+          ivaBaseBs:retIVA.ivaBaseBs||0,ivaBaseUSD:retIVA.ivaBaseUSD||0
+        }:null,
+        retISLRLista:retISLRLista.map(r=>({
+          codigo:r.codigo||'',concepto:r.concepto||'',
+          pct:pNum(r.pct||0),monto:r.monto||0,montoBs:r.montoBs||0,
+          baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0
+        })),
         updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
-      });
+      }));
       const prov=proveedores.find(p=>p.id===form.proveedorId);
       // Retención IVA
       if(form.aplicaRetIVA&&retIVA.monto>0){
