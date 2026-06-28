@@ -1982,12 +1982,15 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
   const [filtMes,setFiltMes]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
-  const [tab,setTab]=useState('datos'); // datos | retenciones | asiento
+  const [tab,setTab]=useState('datos');
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
+  const [servicios,setServicios]=useState([]);
 
   useEffect(()=>{
-    const u=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
-    return()=>u();
+    const u1=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
+    const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();};
+
   },[]);
 
   // Auto-abrir modal si viene preload de OC
@@ -2031,54 +2034,110 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       exentoBs:tasa?(f.aplicaIva==='NO'?base:0)*tasa:0,totalBs:tasa?totalUSD*tasa:0};
   };
 
-  // Calcular retención IVA
+  // Calcular retención IVA — BASE EN Bs., equivalente USD
   const calcRetIVA=(f,tot)=>{
     if(!f.aplicaRetIVA||f.pctRetIVA===0)return{monto:0,montoBs:0};
+    const tasa=pNum(f.tasa||0);
     const pct=pNum(f.pctRetIVA||75)/100;
-    const ivaBase=tot.iva16+tot.iva8;
-    const monto=parseFloat((ivaBase*pct).toFixed(2));
-    const montoBs=pNum(f.tasa||0)?parseFloat((monto*pNum(f.tasa)).toFixed(2)):0;
-    return{monto,montoBs};
+    const ivaBaseUSD=tot.iva16+tot.iva8;
+    // Calcular en Bs si hay tasa, sino en USD
+    if(tasa>0){
+      const ivaBaseBs=ivaBaseUSD*tasa;
+      const montoBs=parseFloat((ivaBaseBs*pct).toFixed(2));
+      const monto=parseFloat((montoBs/tasa).toFixed(2));
+      return{monto,montoBs,ivaBaseUSD,ivaBaseBs,pct:pNum(f.pctRetIVA||75)};
+    }
+    const monto=parseFloat((ivaBaseUSD*pct).toFixed(2));
+    return{monto,montoBs:0,ivaBaseUSD,ivaBaseBs:0,pct:pNum(f.pctRetIVA||75)};
   };
 
-  // Calcular retención ISLR
-  const calcRetISLRForm=(f,tot)=>{
-    if(!f.aplicaRetISLR||!f.islrCodigo)return{monto:0,montoBs:0,pct:0};
-    const tipoContrib=f.islrTipoContrib||'PJD';
-    const res=calcISLR(tot.totalUSD,pNum(f.tasa||0),f.islrCodigo,tipoContrib,valorUT);
-    return res;
+  // Calcular lista de retenciones ISLR — múltiples, en Bs.
+  const calcRetISLRLista=(f,tot)=>{
+    const lista=f.islrRetenciones||[];
+    if(lista.length===0)return[];
+    const tasa=pNum(f.tasa||0);
+    return lista.map(r=>{
+      if(!r.codigo||!r.activo)return{...r,monto:0,montoBs:0,baseImponibleBs:0};
+      const c=ISLR_CONCEPTOS.find(x=>x.codPJD===r.codigo||x.codPNR===r.codigo||x.codPJND===r.codigo||x.codPNNR===r.codigo);
+      if(!c)return{...r,monto:0,montoBs:0,baseImponibleBs:0};
+      const tc=r.tipoContrib||'PJD';
+      let pct,base;
+      if(tc==='PNR'){pct=c.pctPNR;base=c.basePNR;}
+      else if(tc==='PJND'){pct=c.pctPJND;base=c.basePJND;}
+      else if(tc==='PNNR'){pct=c.pctPNNR;base=c.basePNNR;}
+      else{pct=c.pctPJD;base=c.basePJD;}
+      if(!pct||pct==='T2'||!base)return{...r,monto:0,montoBs:0,baseImponibleBs:0,pct:pct||'T2',concepto:c.concepto};
+      const sustraendoBs=(c.sustraendoUT||0)*valorUT;
+      // Base: total factura en Bs × % base imponible del concepto
+      const totalBs=tasa>0?tot.totalUSD*tasa:tot.totalUSD;
+      const baseImponibleBs=totalBs*(base/100);
+      const retencionBs=Math.max(0,baseImponibleBs*(pct/100)-sustraendoBs);
+      const retencionUSD=tasa>0?parseFloat((retencionBs/tasa).toFixed(2)):parseFloat(retencionBs.toFixed(2));
+      return{...r,
+        pct,base,sustraendoBs,baseImponibleBs:parseFloat(baseImponibleBs.toFixed(2)),
+        montoBs:parseFloat(retencionBs.toFixed(2)),
+        monto:retencionUSD,
+        concepto:c.concepto
+      };
+    }).filter(r=>r.activo);
   };
 
   // Calcular neto a pagar
-  const calcNeto=(tot,retIVA,retISLR)=>{
-    const monto=parseFloat((tot.totalUSD-retIVA.monto-retISLR.monto).toFixed(2));
-    const montoBs=pNum(form.tasa||0)?parseFloat((monto*pNum(form.tasa)).toFixed(2)):0;
-    return{monto,montoBs};
+  const calcNeto=(tot,retIVA,retISLRLista)=>{
+    const totalRetISLR=retISLRLista.reduce((s,r)=>s+pNum(r.monto),0);
+    const monto=parseFloat((tot.totalUSD-retIVA.monto-totalRetISLR).toFixed(2));
+    const tasa=pNum(form.tasa||0);
+    const montoBs=tasa?parseFloat((monto*tasa).toFixed(2)):0;
+    return{monto,montoBs,totalRetISLR};
   };
 
   // Generar asiento contable
-  const generarAsiento=(f,tot,retIVA,retISLR,neto)=>{
+  const resolverCuenta=(it)=>{
+    // 1. Si el ítem ya tiene cuenta guardada, usarla
+    if(it.cuentaContableNombre&&!it.cuentaContableNombre.includes('Sin cuenta'))
+      return it.cuentaContableNombre;
+    // 2. Para productos: buscar en P_CUENTA_MAP por categoría
+    if(it.tipo==='PRODUCTO'||!it.tipo){
+      const cta=pGetCuenta(it.categoria||'');
+      if(cta.codigo) return`${cta.codigo} — ${cta.nombre}`;
+      // Fallback: buscar categoría sin tilde
+      const catNorm=(it.categoria||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const found=Object.entries(P_CUENTA_MAP).find(([k])=>
+        k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')===catNorm
+      );
+      if(found) return`${found[1].codigo} — ${found[1].nombre}`;
+    }
+    // 3. Para servicios: buscar en catálogo de servicios por nombre
+    if(it.tipo==='SERVICIO'||it.srvId){
+      const srv=servicios.find(s=>s.id===it.srvId||s.nombre===it.desc);
+      if(srv?.cuentaContableNombre) return srv.cuentaContableNombre;
+      if(srv?.cuentaContableId){
+        const cta=planDeCuentas.find(c=>c.id===srv.cuentaContableId);
+        if(cta) return`${cta.codigo} — ${cta.nombre}`;
+      }
+    }
+    return`⚠️ Sin cuenta asignada (${it.categoria||it.tipo||'—'})`;
+  };
+
+  const generarAsiento=(f,tot,retIVA,retISLRLista,neto)=>{
     const tasa=pNum(f.tasa||0);
     const lineas=[];
-    // DÉBITOS: ítems
     const items=f.itemsOC||[];
     if(items.length>0){
       items.forEach(it=>{
-        const cta=it.cuentaContableNombre||'Sin cuenta asignada';
-        lineas.push({tipo:'DEBITO',cuenta:cta,concepto:`${it.desc||'—'} (${it.unidad||'Und'} × ${fmtN(it.cantidad)})`,
+        const cta=resolverCuenta(it);
+        lineas.push({tipo:'DEBITO',cuenta:cta,concepto:`${it.desc||'—'} (${it.unidad||'Und'} × ${pFmt(it.cantidad)})`,
           montoUSD:pNum(it.total||0),montoBs:tasa?pNum(it.total||0)*tasa:0});
       });
     } else {
-      lineas.push({tipo:'DEBITO',cuenta:'Inventario / Gasto',concepto:'Compra según factura '+f.nroFactura,
+      lineas.push({tipo:'DEBITO',cuenta:'Inventario / Gasto',concepto:'Compra según factura '+(f.nroFactura||''),
         montoUSD:tot.sub,montoBs:tot.subBs});
     }
-    // DÉBITO: IVA crédito fiscal
     if(tot.ivaTotal>0){
       lineas.push({tipo:'DEBITO',cuenta:'1.1.02.03.001 — IVA Crédito Fiscal',
         concepto:`IVA${tot.iva16>0?' 16%':''}${tot.iva8>0?' 8%':''} soportado`,
         montoUSD:tot.ivaTotal,montoBs:tasa?tot.ivaTotal*tasa:0});
     }
-    // CRÉDITOS: proveedor (neto), ret IVA, ret ISLR
     const prov=proveedores.find(p=>p.id===f.proveedorId);
     const ctaProv=prov?.cuentaContableNombre||'2.1.01.01.002 — Cuentas por Pagar Proveedores';
     lineas.push({tipo:'CREDITO',cuenta:ctaProv,
@@ -2089,12 +2148,13 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
         concepto:`Ret. IVA ${f.pctRetIVA||75}% · ${f.proveedor||'—'}`,
         montoUSD:retIVA.monto,montoBs:retIVA.montoBs});
     }
-    if(retISLR.monto>0){
-      const conc=ISLR_CONCEPTOS.find(c=>c.codPJD===f.islrCodigo||c.codPNR===f.islrCodigo);
-      lineas.push({tipo:'CREDITO',cuenta:'2.1.03.02.001 — Retenciones ISLR por enterar',
-        concepto:`Ret. ISLR ${retISLR.pct}% · ${conc?.concepto||f.islrCodigo} · ${f.proveedor||'—'}`,
-        montoUSD:retISLR.monto,montoBs:retISLR.montoBs});
-    }
+    retISLRLista.forEach(r=>{
+      if(r.monto>0){
+        lineas.push({tipo:'CREDITO',cuenta:'2.1.03.02.001 — Retenciones ISLR por enterar',
+          concepto:`Ret. ISLR ${r.pct}% · ${r.concepto||r.codigo} · ${f.proveedor||'—'}`,
+          montoUSD:r.monto,montoBs:r.montoBs});
+      }
+    });
     const totDeb=lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoUSD,0);
     const totCred=lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoUSD,0);
     const cuadrado=Math.abs(totDeb-totCred)<0.02;
@@ -2108,7 +2168,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     montoBase:0,aplicaIva:'SI',iva:0,total:0,saldoPendiente:0,
     afectaLibroCompras:true,
     aplicaRetIVA:false,pctRetIVA:75,
-    aplicaRetISLR:false,islrCodigo:'',islrTipoContrib:'PJD',
+    islrRetenciones:[], // lista: [{codigo,tipoContrib,activo}]
     status:'PENDIENTE',observaciones:'',itemsOC:[]
   });
 
@@ -2119,7 +2179,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     const esEspecial=p.tipoContribuyente==='ESPECIAL';
     setForm(f=>({...f,proveedorId:provId,proveedor:p.nombre,
       aplicaRetIVA:esEspecial,pctRetIVA:pNum(p.pctRetencion||75),
-      aplicaRetISLR:false}));
+      islrRetenciones:[]}));
   };
 
   const guardar=async()=>{
@@ -2128,12 +2188,12 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     try{
       const tot=calcTotalesFC(form);
       const retIVA=calcRetIVA(form,tot);
-      const retISLR=calcRetISLRForm(form,tot);
-      const neto=calcNeto(tot,retIVA,retISLR);
-      const asiento=generarAsiento(form,tot,retIVA,retISLR,neto);
+      const retISLRLista=calcRetISLRLista(form,tot);
+      const neto=calcNeto(tot,retIVA,retISLRLista);
+      const asiento=generarAsiento(form,tot,retIVA,retISLRLista,neto);
       const id=form.id||`FC-${pId()}`;
       const tasa=pNum(form.tasa||0);
-      const nroComp=`${String(facturasCompra.length+1).padStart(4,'0')}`;
+      const nroBase=String(facturasCompra.length+1).padStart(4,'0');
       const batch=writeBatch(db);
       // Guardar factura
       batch.set(getDocRef('procura_facturas_compra',id),{
@@ -2141,45 +2201,51 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
         montoBase:tot.sub,iva:tot.ivaTotal,total:tot.totalUSD,saldoPendiente:neto.monto,
         totalBs:tot.totalBs,netoPagar:neto.monto,netoPagarBs:neto.montoBs,
         totales:tot,asiento:asiento.lineas,
+        retIVA:form.aplicaRetIVA?{monto:retIVA.monto,montoBs:retIVA.montoBs,pct:form.pctRetIVA}:null,
+        retISLRLista:retISLRLista.map(r=>({codigo:r.codigo,concepto:r.concepto,pct:r.pct,monto:r.monto,montoBs:r.montoBs})),
         updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
       });
+      const prov=proveedores.find(p=>p.id===form.proveedorId);
       // Retención IVA
       if(form.aplicaRetIVA&&retIVA.monto>0){
         const retId=`RET-IVA-${pId()}`;
-        const prov=proveedores.find(p=>p.id===form.proveedorId);
         batch.set(getDocRef('procura_ret_iva',retId),{
-          id:retId,nroComprobante:'RET-IVA-'+nroComp,
+          id:retId,nroComprobante:'RET-IVA-'+nroBase,
           facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
           fechaFactura:form.fecha,fecha:getTodayDate(),
-          pctRetencion:form.pctRetIVA,baseIVA:tot.ivaTotal,baseIVABs:tasa?tot.ivaTotal*tasa:0,
+          pctRetencion:form.pctRetIVA,
+          baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
           monto:retIVA.monto,montoBs:retIVA.montoBs,
           tasa:form.tasa,periodo:getPeriodo(),
           status:'PENDIENTE',timestamp:Date.now()
         });
       }
-      // Retención ISLR
-      if(form.aplicaRetISLR&&retISLR.monto>0){
+      // Retenciones ISLR — una por concepto
+      retISLRLista.forEach((r,i)=>{
+        if(r.monto<=0)return;
         const retId=`RET-ISLR-${pId()}`;
-        const prov=proveedores.find(p=>p.id===form.proveedorId);
-        const conc=ISLR_CONCEPTOS.find(c=>c.codPJD===form.islrCodigo||c.codPNR===form.islrCodigo);
         batch.set(getDocRef('procura_ret_islr',retId),{
-          id:retId,nroComprobante:'RET-ISLR-'+nroComp,
+          id:retId,nroComprobante:`RET-ISLR-${nroBase}-${i+1}`,
           facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
           fechaFactura:form.fecha,fecha:getTodayDate(),
-          codConcepto:form.islrCodigo,concepto:conc?.concepto||'',
-          tipoContrib:form.islrTipoContrib,
-          pct:retISLR.pct,baseImponible:retISLR.baseImponible,
-          baseImponibleBs:tasa?retISLR.baseImponible*tasa:0,
-          monto:retISLR.monto,montoBs:retISLR.montoBs,
+          codConcepto:r.codigo,concepto:r.concepto||'',
+          tipoContrib:r.tipoContrib||'PJD',
+          pct:r.pct,
+          baseImponibleBs:r.baseImponibleBs,
+          sustraendoBs:r.sustraendoBs,
+          monto:r.monto,montoBs:r.montoBs,
           valorUT,tasa:form.tasa,periodo:getPeriodo(),
           status:'PENDIENTE',timestamp:Date.now()
         });
-      }
+      });
       await batch.commit();
+      const nISLR=retISLRLista.filter(r=>r.monto>0).length;
       setModal(null);
-      setDialog({title:'✅ Factura registrada',text:`Factura ${form.nroFactura} guardada${form.aplicaRetIVA?' · Ret. IVA generada':''}${form.aplicaRetISLR?' · Ret. ISLR generada':''}.`,type:'alert'});
+      setDialog({title:'✅ Factura registrada',
+        text:`Factura ${form.nroFactura} guardada${form.aplicaRetIVA&&retIVA.monto>0?' · Ret. IVA generada':''}${nISLR>0?` · ${nISLR} Ret. ISLR generadas`:''}.`,
+        type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
@@ -2202,9 +2268,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
   // Datos calculados en tiempo real para el modal
   const fTot=calcTotalesFC(form);
   const fRetIVA=calcRetIVA(form,fTot);
-  const fRetISLR=calcRetISLRForm(form,fTot);
-  const fNeto=calcNeto(fTot,fRetIVA,fRetISLR);
-  const fAsiento=modal==='form'?generarAsiento(form,fTot,fRetIVA,fRetISLR,fNeto):{lineas:[],totDeb:0,totCred:0,cuadrado:false};
+  const fRetISLRLista=calcRetISLRLista(form,fTot);
+  const fRetISLRTotal=fRetISLRLista.reduce((s,r)=>s+pNum(r.monto),0);
+  const fRetISLRTotalBs=fRetISLRLista.reduce((s,r)=>s+pNum(r.montoBs),0);
+  const fNeto=calcNeto(fTot,fRetIVA,fRetISLRLista);
+  const fAsiento=modal==='form'?generarAsiento(form,fTot,fRetIVA,fRetISLRLista,fNeto):{lineas:[],totDeb:0,totCred:0,cuadrado:false};
   const hasTasa=pNum(form.tasa||0)>0;
 
   return(
@@ -2480,10 +2548,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                         <span className="text-orange-400 font-black uppercase text-[8px]">Total factura</span>
                         {hasTasa&&<span className="text-right text-orange-300 font-black font-mono">Bs. {fmtN(fTot.totalBs)}</span>}
                         <span className="text-right text-orange-400 font-black font-mono text-sm">USD {fmtN(fTot.totalUSD)}</span>
-                        {(fRetIVA.monto>0||fRetISLR.monto>0)&&<>
+                        {(fRetIVA.monto>0||fRetISLRTotal>0)&&<>
                           <div className="col-span-full h-px bg-slate-700 my-1"/>
-                          {fRetIVA.monto>0&&<><span className="text-red-400 font-black uppercase text-[8px]">− Ret. IVA {form.pctRetIVA||75}%</span>{hasTasa&&<span className="text-right text-red-400 font-mono">Bs. {fmtN(fRetIVA.montoBs)}</span>}<span className="text-right text-red-400 font-mono">USD {fmtN(fRetIVA.monto)}</span></>}
-                          {fRetISLR.monto>0&&<><span className="text-purple-400 font-black uppercase text-[8px]">− Ret. ISLR {fRetISLR.pct}%</span>{hasTasa&&<span className="text-right text-purple-400 font-mono">Bs. {fmtN(fRetISLR.montoBs)}</span>}<span className="text-right text-purple-400 font-mono">USD {fmtN(fRetISLR.monto)}</span></>}
+                          {fRetIVA.monto>0&&<><span className="text-red-400 font-black uppercase text-[8px]">− Ret. IVA {form.pctRetIVA||75}% (Bs.)</span>{hasTasa&&<span className="text-right text-red-400 font-mono">Bs. {fmtN(fRetIVA.montoBs)}</span>}<span className="text-right text-red-400 font-mono">≈ USD {fmtN(fRetIVA.monto)}</span></>}
+                          {fRetISLRLista.map((r,i)=>r.monto>0&&(<React.Fragment key={i}><span className="text-purple-400 font-black uppercase text-[8px]">− ISLR {r.pct}% · {r.codigo} (Bs.)</span>{hasTasa&&<span className="text-right text-purple-400 font-mono">Bs. {fmtN(r.montoBs)}</span>}<span className="text-right text-purple-400 font-mono">≈ USD {fmtN(r.monto)}</span></React.Fragment>))}
                           <div className="col-span-full h-px bg-cyan-800 my-1"/>
                           <span className="text-cyan-300 font-black uppercase text-[8px]">Neto a pagar</span>
                           {hasTasa&&<span className="text-right text-cyan-300 font-black font-mono">Bs. {fmtN(fNeto.montoBs)}</span>}
@@ -2534,72 +2602,98 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                     </div>
                   </div>
 
-                  {/* Retención ISLR */}
+                  {/* Retención ISLR — múltiples */}
                   <div className="border-2 border-purple-200 rounded-xl overflow-hidden">
                     <div className="bg-purple-50 px-4 py-3 border-b-2 border-purple-200 flex items-center justify-between">
-                      <h4 className="font-black text-purple-800 text-xs uppercase tracking-wide flex items-center gap-2"><DollarSign size={13}/> Retención ISLR</h4>
-                      <button onClick={()=>setForm(f=>({...f,aplicaRetISLR:!f.aplicaRetISLR}))}
-                        className={`flex items-center gap-2 px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${form.aplicaRetISLR?'bg-purple-600 text-white':'bg-slate-200 text-slate-500'}`}>
-                        {form.aplicaRetISLR?'Activa':'Inactiva'}
+                      <h4 className="font-black text-purple-800 text-xs uppercase tracking-wide flex items-center gap-2"><DollarSign size={13}/> Retenciones ISLR</h4>
+                      <button onClick={()=>setForm(f=>({...f,
+                        islrRetenciones:[...(f.islrRetenciones||[]),{id:pId(),codigo:'',tipoContrib:'PJD',activo:true}]
+                      }))} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-600 text-white text-[9px] font-black uppercase">
+                        <Plus size={10}/> Agregar retención
                       </button>
                     </div>
-                    <div className={`p-4 space-y-3 ${!form.aplicaRetISLR?'opacity-40 pointer-events-none':''}`}>
-                      <div>
-                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tipo de contribuyente</label>
-                        <select className={`${sel} text-xs py-1.5`} value={form.islrTipoContrib||'PJD'} onChange={e=>setForm(f=>({...f,islrTipoContrib:e.target.value}))}>
-                          <option value="PJD">PJD — Persona Jurídica Domiciliada</option>
-                          <option value="PNR">PNR — Persona Natural Residente</option>
-                          <option value="PJND">PJND — Persona Jurídica No Domiciliada</option>
-                          <option value="PNNR">PNNR — Persona Natural No Residente</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Concepto SENIAT</label>
-                        <select className={`${sel} text-xs py-1.5`} value={form.islrCodigo||''} onChange={e=>setForm(f=>({...f,islrCodigo:e.target.value}))}>
-                          <option value="">— Seleccionar concepto —</option>
-                          {ISLR_CONCEPTOS.filter(c=>{
-                            const tc=form.islrTipoContrib||'PJD';
-                            if(tc==='PJD')return c.codPJD&&typeof c.pctPJD==='number';
-                            if(tc==='PNR')return c.codPNR&&typeof c.pctPNR==='number';
-                            if(tc==='PJND')return c.codPJND&&typeof c.pctPJND==='number';
-                            return c.codPNNR&&typeof c.pctPNNR==='number';
-                          }).map((c,i)=>{
-                            const tc=form.islrTipoContrib||'PJD';
-                            const cod=tc==='PJD'?c.codPJD:tc==='PNR'?c.codPNR:tc==='PJND'?c.codPJND:c.codPNNR;
-                            const pct=tc==='PJD'?c.pctPJD:tc==='PNR'?c.pctPNR:tc==='PJND'?c.pctPJND:c.pctPNNR;
-                            return<option key={i} value={cod}>{cod} — {c.concepto} ({pct}%)</option>;
+                    <div className="p-4">
+                      {(!form.islrRetenciones||form.islrRetenciones.length===0)?(
+                        <div className="text-center py-6 text-slate-400 text-xs">
+                          <p className="font-black">Sin retenciones ISLR</p>
+                          <p className="text-[10px] mt-1">Haz clic en "Agregar retención" para agregar una (puedes agregar varias con diferentes conceptos)</p>
+                        </div>
+                      ):(
+                        <div className="space-y-3">
+                          {(form.islrRetenciones||[]).map((r,idx)=>{
+                            const calcd=fRetISLRLista.find(x=>x.id===r.id)||{monto:0,montoBs:0,pct:0,baseImponibleBs:0,sustraendoBs:0};
+                            return(
+                              <div key={r.id||idx} className="border border-purple-100 rounded-xl p-3 bg-purple-50/30">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[9px] font-black text-purple-600 uppercase">Retención ISLR #{idx+1}</span>
+                                  <button onClick={()=>setForm(f=>({...f,islrRetenciones:f.islrRetenciones.filter((_,i)=>i!==idx)}))}
+                                    className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                  <div>
+                                    <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Tipo contribuyente</label>
+                                    <select className={`${sel} text-xs py-1`}
+                                      value={r.tipoContrib||'PJD'}
+                                      onChange={e=>setForm(f=>({...f,islrRetenciones:f.islrRetenciones.map((x,i)=>i===idx?{...x,tipoContrib:e.target.value,codigo:''}:x)}))}>
+                                      <option value="PJD">PJD — Jurídica domiciliada</option>
+                                      <option value="PNR">PNR — Natural residente</option>
+                                      <option value="PJND">PJND — Jurídica no domiciliada</option>
+                                      <option value="PNNR">PNNR — Natural no residente</option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-[8px] font-black text-slate-400 uppercase block mb-1">Concepto SENIAT</label>
+                                    <select className={`${sel} text-xs py-1`}
+                                      value={r.codigo||''}
+                                      onChange={e=>setForm(f=>({...f,islrRetenciones:f.islrRetenciones.map((x,i)=>i===idx?{...x,codigo:e.target.value}:x)}))}>
+                                      <option value="">— Seleccionar —</option>
+                                      {ISLR_CONCEPTOS.filter(c=>{
+                                        const tc=r.tipoContrib||'PJD';
+                                        if(tc==='PJD')return c.codPJD&&typeof c.pctPJD==='number';
+                                        if(tc==='PNR')return c.codPNR&&typeof c.pctPNR==='number';
+                                        if(tc==='PJND')return c.codPJND&&typeof c.pctPJND==='number';
+                                        return c.codPNNR&&typeof c.pctPNNR==='number';
+                                      }).map((c,ci)=>{
+                                        const tc=r.tipoContrib||'PJD';
+                                        const cod=tc==='PJD'?c.codPJD:tc==='PNR'?c.codPNR:tc==='PJND'?c.codPJND:c.codPNNR;
+                                        const pct=tc==='PJD'?c.pctPJD:tc==='PNR'?c.pctPNR:tc==='PJND'?c.pctPJND:c.pctPNNR;
+                                        return<option key={ci} value={cod}>{cod} — {c.concepto} ({pct}%)</option>;
+                                      })}
+                                    </select>
+                                  </div>
+                                </div>
+                                {r.codigo&&(
+                                  <div className="bg-purple-900 rounded-lg p-2.5 mt-2">
+                                    <div className="grid grid-cols-3 gap-2 text-[9px] mb-1.5">
+                                      <div><span className="text-purple-400 block">Base en Bs.</span><span className="text-white font-mono font-black">Bs. {fmtN(calcd.baseImponibleBs)}</span></div>
+                                      <div><span className="text-purple-400 block">Sustraendo Bs.</span><span className="text-white font-mono">Bs. {fmtN(calcd.sustraendoBs)}</span></div>
+                                      <div><span className="text-purple-400 block">% aplicado</span><span className="text-white font-black">{calcd.pct}%</span></div>
+                                    </div>
+                                    <div className="border-t border-purple-700 pt-2 flex justify-between items-center">
+                                      <span className="text-purple-300 text-[8px] font-black uppercase">Retención calculada en Bs.</span>
+                                      <div className="text-right">
+                                        <div className="text-purple-300 font-black font-mono">Bs. {fmtN(calcd.montoBs)}</div>
+                                        <div className="text-purple-400 text-[9px] font-mono">≈ USD {fmtN(calcd.monto)}</div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
                           })}
-                        </select>
-                      </div>
-                      {form.islrCodigo&&(
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">UT actual</label>
-                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`Bs. ${valorUT}`}/>
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Sustraendo</label>
-                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`Bs. ${fmtN(83.3334*valorUT)}`}/>
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base imponible</label>
-                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={`USD ${fmtN(fRetISLR.baseImponible)}`}/>
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% aplicado</label>
-                            <input className={`${inp} text-xs py-1.5 bg-slate-50`} readOnly value={fRetISLR.pct?fRetISLR.pct+'%':'—'}/>
+                        </div>
+                      )}
+                      {fRetISLRLista.some(r=>r.monto>0)&&(
+                        <div className="mt-3 bg-slate-900 rounded-xl p-3 flex justify-between items-center">
+                          <span className="text-[9px] text-slate-400 font-black uppercase">Total retenciones ISLR</span>
+                          <div className="text-right">
+                            <div className="text-purple-300 font-black font-mono">Bs. {fmtN(fRetISLRTotalBs)}</div>
+                            <div className="text-purple-400 text-[10px] font-mono">≈ USD {fmtN(fRetISLRTotal)}</div>
                           </div>
                         </div>
                       )}
-                      <div className="bg-purple-900 rounded-xl p-3 flex justify-between items-center">
-                        <span className="text-[9px] text-purple-300 font-black uppercase">Monto a retener</span>
-                        <div className="text-right">
-                          <div className="font-black text-purple-300 text-lg">USD {fmtN(fRetISLR.monto)}</div>
-                          {hasTasa&&<div className="text-[10px] text-purple-400">Bs. {fmtN(fRetISLR.montoBs)}</div>}
-                        </div>
-                      </div>
-                      <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
-                        <p className="text-[9px] text-emerald-700 font-medium"><Check size={10} className="inline mr-1"/>Al guardar se genera el comprobante de retención ISLR automáticamente.</p>
+                      <div className="mt-3 bg-amber-50 border border-amber-100 rounded-xl p-2.5">
+                        <p className="text-[9px] text-amber-700 font-medium">⚠️ Las retenciones ISLR se calculan sobre el <strong>total de la factura en Bs.</strong> con el sustraendo según UT (Bs. {valorUT}). Equivalente USD mostrado como referencia.</p>
                       </div>
                     </div>
                   </div>
@@ -2610,8 +2704,14 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                       <span className="text-slate-400 font-black uppercase text-[9px]">Total factura</span>
                       {hasTasa&&<span className="text-right text-slate-300 font-mono">Bs. {fmtN(fTot.totalBs)}</span>}
                       <span className="text-right text-white font-mono">USD {fmtN(fTot.totalUSD)}</span>
-                      {fRetIVA.monto>0&&<><span className="text-red-400 font-black uppercase text-[9px]">− Ret. IVA</span>{hasTasa&&<span className="text-right text-red-400 font-mono">− Bs. {fmtN(fRetIVA.montoBs)}</span>}<span className="text-right text-red-400 font-mono">− USD {fmtN(fRetIVA.monto)}</span></>}
-                      {fRetISLR.monto>0&&<><span className="text-purple-400 font-black uppercase text-[9px]">− Ret. ISLR</span>{hasTasa&&<span className="text-right text-purple-400 font-mono">− Bs. {fmtN(fRetISLR.montoBs)}</span>}<span className="text-right text-purple-400 font-mono">− USD {fmtN(fRetISLR.monto)}</span></>}
+                      {fRetIVA.monto>0&&<><span className="text-red-400 font-black uppercase text-[9px]">− Ret. IVA ({form.pctRetIVA||75}% del IVA en Bs.)</span>{hasTasa&&<span className="text-right text-red-400 font-mono">− Bs. {fmtN(fRetIVA.montoBs)}</span>}<span className="text-right text-red-400 font-mono">≈ − USD {fmtN(fRetIVA.monto)}</span></>}
+                      {fRetISLRLista.map((r,i)=>r.monto>0&&(
+                        <React.Fragment key={i}>
+                          <span className="text-purple-400 font-black uppercase text-[9px]">− Ret. ISLR {r.pct}% · {r.codigo}</span>
+                          {hasTasa&&<span className="text-right text-purple-400 font-mono">− Bs. {fmtN(r.montoBs)}</span>}
+                          <span className="text-right text-purple-400 font-mono">≈ − USD {fmtN(r.monto)}</span>
+                        </React.Fragment>
+                      ))}
                       <div className="col-span-full h-px bg-cyan-700 my-1"/>
                       <span className="text-cyan-300 font-black uppercase text-[9px]">Neto a pagar al proveedor</span>
                       {hasTasa&&<span className="text-right text-cyan-300 font-black font-mono text-sm">Bs. {fmtN(fNeto.montoBs)}</span>}
@@ -2697,7 +2797,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
             <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 flex-shrink-0">
               <div className="flex items-center gap-2 text-[10px] text-slate-400">
                 {form.aplicaRetIVA&&<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-black">Ret. IVA {form.pctRetIVA||75}%</span>}
-                {form.aplicaRetISLR&&form.islrCodigo&&<span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-black">Ret. ISLR {form.islrCodigo}</span>}
+                {fRetISLRLista.filter(r=>r.monto>0).map((r,i)=><span key={i} className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-black">ISLR {r.pct}% ({r.codigo})</span>)}
                 {form.afectaLibroCompras!==false&&<span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-black">Libro compras ✓</span>}
               </div>
               <div className="flex gap-2">
