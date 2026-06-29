@@ -22331,10 +22331,7 @@ ${resumenHtml}
                   // ── MIGRACIÓN COMPLETA: vincula neId + clientRif + tasa en todas las retenciones ──
                   const todasRet=(retenciones||[]).filter(r=>r.facturaId&&!r.facturaId.startsWith('MANUAL-'));
                   if(todasRet.length===0){setDialog({title:'Sin retenciones',text:'No hay retenciones con facturaId para vincular.',type:'alert'});return;}
-                  setDialog({title:'Vincular '+todasRet.length+' retenciones',
-                    text:'Se actualizarán las '+todasRet.length+' retenciones: neId, clientRif y tasa desde el invoice vinculado. Retenciones sin invoice quedan como "Sin NE" pero con clientRif y tasa.
-
-¿Continuar?',
+                  setDialog({title:'Vincular '+todasRet.length+' retenciones',text:'Se actualizarán '+todasRet.length+' retenciones con neId, clientRif y tasa. ¿Continuar?',
                     type:'confirm',onConfirm:async()=>{
                     let ok=0,okSinNe=0,fail=0;
                     const batches=[];let b=writeBatch(db);let count=0;
