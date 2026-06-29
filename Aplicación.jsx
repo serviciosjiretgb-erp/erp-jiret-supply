@@ -21335,7 +21335,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 +'</tr></thead>'
                 +'<tbody>'+neRowsHtml+'</tbody>'
                 +'<tfoot><tr style="background:#1e293b;color:#fff">'
-                +'<td colspan="4" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · '+cl.nes.length+' DOC'+(cl.nes.length>1?'S':'')</td>'
+                +'<td colspan="4" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · '+cl.nes.length+' DOC'+(cl.nes.length>1?'S':'')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px">$'+fmtN(facturadoCl)+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#94a3b8">—</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:#6ee7b7">$'+fmtN(cobradoCl)+'</td>'
@@ -21496,41 +21496,13 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 <td className="py-2 px-3 text-right font-black text-red-600">${formatNum(sNE)}</td>
                                 <td className="py-2 px-3 text-center"><span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${saldado2?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado2?'Saldado':'Pendiente'}</span></td>
                               </tr>
-                              {invV2&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
+                              {invV2&&(invV2.nroFiscal||localNroFiscal[invV2.id])&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
                                 <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">
-                                  {(invV2.nroFiscal||localNroFiscal[invV2.id])
-                                    ? <span>↳ {String(invV2.nroFiscal||localNroFiscal[invV2.id]).padStart(8,'0')}</span>
-                                    : <span className="flex items-center gap-1">
-                                        <span className="text-amber-600">↳ ⚠️ Sin N° Fiscal</span>
-                                        <input
-                                          id={`nf-${invV2.id}`}
-                                          className="border border-amber-300 rounded px-1.5 py-0.5 text-[9px] font-mono outline-none focus:border-orange-500 w-28 bg-white"
-                                          placeholder="ej: 00002991"
-                                          onKeyDown={e=>{if(e.key==='Enter'){
-                                            const v=(e.target.value||'').trim();
-                                            if(!v)return;
-                                            setDoc(getDocRef('invoices',invV2.id),{nroFiscal:v,updatedAt:Date.now()},{merge:true})
-                                              .then(()=>{setLocalNroFiscal(prev=>({...prev,[invV2.id]:v}));e.target.style.borderColor='#16a34a';})
-                                              .catch(ex=>alert('Error: '+ex.message));
-                                          }}}
-                                        />
-                                        <button
-                                          className="px-1.5 py-0.5 bg-amber-500 text-white text-[8px] font-black rounded hover:bg-amber-600"
-                                          onClick={()=>{
-                                            const inp=document.getElementById('nf-'+invV2.id);
-                                            const v=(inp?.value||'').trim();
-                                            if(!v){alert('Ingresa el número fiscal primero.');return;}
-                                            setDoc(getDocRef('invoices',invV2.id),{nroFiscal:v,updatedAt:Date.now()},{merge:true})
-                                              .then(()=>{setLocalNroFiscal(prev=>({...prev,[invV2.id]:v}));alert('✅ N° Fiscal '+v+' guardado. La sub-fila actualizará al cerrar y reabrir el cliente.');})
-                                              .catch(ex=>alert('Error: '+ex.message));
-                                          }}>✓</button>
-                                      </span>
-                                  }
+                                  ↳ {String(invV2.nroFiscal||localNroFiscal[invV2.id]).padStart(8,'0')}
                                 </td>
                                 <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
                                 <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
                                 <td className="py-1.5 px-3 text-[8px] text-gray-500 col-span-2">
-                                  {!(invV2.nroFiscal||localNroFiscal[invV2.id])&&<span className="text-amber-600 font-black mr-2">Ingresa el N° fiscal para vincular retenciones →</span>}
                                   {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
                                   {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
                                   {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
