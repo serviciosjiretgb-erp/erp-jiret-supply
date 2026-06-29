@@ -19310,9 +19310,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             :(cobrosCxc||[]).reduce((s,c)=>s+parseNum(c.monto||0),0);
 
 
-          // ── GUARDAR COBRO            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-          };
-
           // ── GUARDAR COBRO ──────────────────────────────────────────────
           const guardarCobro=async()=>{
             const m=cxcCobroModal;
