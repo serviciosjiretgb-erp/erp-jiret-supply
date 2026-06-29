@@ -91,6 +91,9 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
   const [retIVA,setRetIVA]=useState([]);
   const [retISLR,setRetISLR]=useState([]);
   const [search,setSearch]=useState('');
+  const [editRet,setEditRet]=useState(null);  // {doc, tipo:'IVA'|'ISLR'}
+  const [editRetForm,setEditRetForm]=useState({});
+  const [impDialog,setImpDialog]=useState(null);
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -102,6 +105,29 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
   const guardarUT=async(val)=>{
     setValorUT(val);
     await setDoc(getDocRef('settings','general'),{valorUT:parseFloat(val)},{merge:true});
+  };
+
+  const guardarEditRet=async()=>{
+    if(!editRet) return;
+    try{
+      const col=editRet.tipo==='IVA'?'procura_ret_iva':'procura_ret_islr';
+      await setDoc(getDocRef(col,editRet.doc.id),{...editRetForm,updatedAt:Date.now()},{merge:true});
+      setEditRet(null);
+      setImpDialog({title:'✅ Actualizado',text:'Comprobante actualizado correctamente.',type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const eliminarRet=async(r,tipo)=>{
+    setImpDialog({title:'¿Eliminar comprobante?',
+      text:`Se eliminará el comprobante ${r.nroComprobante||r.id} de ${r.proveedor||'—'}. Esta acción no se puede deshacer. ¿Confirmar?`,
+      type:'confirm',onConfirm:async()=>{
+        try{
+          const col=tipo==='IVA'?'procura_ret_iva':'procura_ret_islr';
+          await deleteDoc(getDocRef(col,r.id));
+          setImpDialog({title:'✅ Eliminado',text:'Comprobante eliminado.',type:'alert'});
+        }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+      }
+    });
   };
 
   const sustraendo=(ut)=>(83.3334*ut).toFixed(2);
@@ -541,9 +567,17 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${r.status==='DECLARADO'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}`}>{r.status||'PENDIENTE'}</span>
                       </td>
                       <td className="px-3 py-2">
-                        <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600">
-                          <Printer size={10}/> Imprimir
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
+                            <Printer size={10}/> PDF
+                          </button>
+                          <button onClick={()=>{setEditRet({doc:r,tipo:'IVA'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                            <Edit size={10}/> Editar
+                          </button>
+                          <button onClick={()=>eliminarRet(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
+                            <Trash2 size={10}/> Eliminar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -590,9 +624,17 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${r.status==='DECLARADO'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}`}>{r.status||'PENDIENTE'}</span>
                       </td>
                       <td className="px-3 py-2">
-                        <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600">
-                          <Printer size={10}/> Imprimir
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
+                            <Printer size={10}/> PDF
+                          </button>
+                          <button onClick={()=>{setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                            <Edit size={10}/> Editar
+                          </button>
+                          <button onClick={()=>eliminarRet(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
+                            <Trash2 size={10}/> Eliminar
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -711,6 +753,100 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
         )}
 
       </div>
+
+      {/* ── Modal Editar Retención ─────────────────────────────────── */}
+      {editRet&&(
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:'3px solid #f97316'}}>
+              <div>
+                <h3 className="font-black text-white text-sm uppercase tracking-wide">Editar Retención {editRet.tipo}</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">{editRet.doc.nroComprobante||'—'} · {editRet.doc.proveedor||'—'}</p>
+              </div>
+              <button onClick={()=>setEditRet(null)} className="text-slate-400 hover:text-white"><X size={16}/></button>
+            </div>
+            <div className="p-5 grid grid-cols-2 gap-3">
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Status</label>
+                <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.status||'PENDIENTE'} onChange={e=>setEditRetForm(f=>({...f,status:e.target.value}))}>
+                  <option value="PENDIENTE">PENDIENTE</option><option value="DECLARADO">DECLARADO</option>
+                </select>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Factura</label>
+                <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.nroFactura||''} onChange={e=>setEditRetForm(f=>({...f,nroFactura:e.target.value}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Control</label>
+                <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.nroControl||''} onChange={e=>setEditRetForm(f=>({...f,nroControl:e.target.value}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha</label>
+                <input type="date" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.fecha||''} onChange={e=>setEditRetForm(f=>({...f,fecha:e.target.value}))}/>
+              </div>
+              {editRet.tipo==='IVA'&&<>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% Retención IVA</label>
+                  <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                    value={editRetForm.pctRetencion||75} onChange={e=>setEditRetForm(f=>({...f,pctRetencion:parseFloat(e.target.value)}))}>
+                    <option value={75}>75%</option><option value={100}>100%</option>
+                  </select>
+                </div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base IVA Bs.</label>
+                  <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                    value={editRetForm.baseIVABs||0} onChange={e=>setEditRetForm(f=>({...f,baseIVABs:parseFloat(e.target.value)||0}))}/>
+                </div>
+              </>}
+              {editRet.tipo==='ISLR'&&<>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base Imponible Bs.</label>
+                  <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                    value={editRetForm.baseImponibleBs||0} onChange={e=>setEditRetForm(f=>({...f,baseImponibleBs:parseFloat(e.target.value)||0}))}/>
+                </div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Sustraendo Bs.</label>
+                  <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                    value={editRetForm.sustraendoBs||0} onChange={e=>setEditRetForm(f=>({...f,sustraendoBs:parseFloat(e.target.value)||0}))}/>
+                </div>
+              </>}
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto USD</label>
+                <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.monto||0} onChange={e=>setEditRetForm(f=>({...f,monto:parseFloat(e.target.value)||0}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Bs.</label>
+                <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.montoBs||0} onChange={e=>setEditRetForm(f=>({...f,montoBs:parseFloat(e.target.value)||0}))}/>
+              </div>
+              <div className="col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Período</label>
+                <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.periodo||''} onChange={e=>setEditRetForm(f=>({...f,periodo:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex justify-end gap-3">
+              <button onClick={()=>setEditRet(null)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+              <button onClick={guardarEditRet} className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600 flex items-center gap-2"><Save size={13}/> Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── impDialog (confirm/alert local de ImpuestosApp) ── */}
+      {impDialog&&(
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 py-4" style={{background:'#0f172a',borderBottom:'3px solid #f97316'}}>
+              <h3 className="font-black text-white text-sm uppercase tracking-widest">{impDialog.title}</h3>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-600 font-medium">{impDialog.text}</p>
+              <div className="flex justify-end gap-3 mt-6">
+                {impDialog.type==='confirm'&&<button onClick={()=>setImpDialog(null)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>}
+                <button onClick={()=>{if(impDialog.onConfirm)impDialog.onConfirm();else setImpDialog(null);setImpDialog(null);}}
+                  className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600">
+                  {impDialog.type==='confirm'?'Confirmar':'Aceptar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1453,6 +1589,8 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   const [invCat,setInvCat]=useState('TODOS');
   const [search,setSearch]=useState('');
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
+  const [invEditItem,setInvEditItem]=useState(null);
+  const [invEditForm,setInvEditForm]=useState({});
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -1461,7 +1599,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     return()=>{u1();u2();u3();};
   },[]);
 
-  const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado','Otros Terminados'];
+  const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
 
   const invFiltrado=useMemo(()=>{
     const seen=new Set();
@@ -1469,6 +1607,8 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
       if(i.activo===false)return false;
       const rawId=i.id||'';
       const code=i.displayId||(rawId.includes('___')?rawId.split('___')[0]:rawId);
+      // Excluir semielaborados
+      if((i.category||'').toLowerCase()==='semielaborado'||(i.subcategory||'').toLowerCase().includes('semielaborado'))return false;
       if(seen.has(code)){return false;}
       seen.add(code);
       const matchCat=invCat==='TODOS'||(i.subcategory||i.category||'')===invCat;
@@ -1480,6 +1620,30 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   const srvFiltrado=servicios.filter(s=>!search||(s.nombre||'').toLowerCase().includes(search.toLowerCase())||(s.categoria||'').toLowerCase().includes(search.toLowerCase()));
 
   const initSrv=()=>({nombre:'',descripcion:'',categoria:'MANTENIMIENTO',unidad:'Serv.',precio:'',cuentaContableId:'',cuentaContableNombre:'',activo:true});
+
+  const guardarInvEdit=async()=>{
+    if(!invEditItem)return;
+    try{
+      const rawId=invEditItem.id||'';
+      const baseId=invEditItem.displayId||(rawId.includes('___')?rawId.split('___')[0]:rawId);
+      const batch=writeBatch(db);
+      // Actualizar todos los documentos del mismo producto (todos los almacenes)
+      inventory.filter(i=>{
+        const iId=i.id||'';
+        const iBase=i.displayId||(iId.includes('___')?iId.split('___')[0]:iId);
+        return iBase===baseId;
+      }).forEach(inv=>batch.update(getDocRef('inventory',inv.id),{
+        cuentaContableId:invEditForm.cuentaContableId||'',
+        cuentaContableNombre:invEditForm.cuentaContableNombre||'',
+        desc:invEditForm.desc||inv.desc,
+        unit:invEditForm.unit||inv.unit,
+        updatedAt:Date.now()
+      }));
+      await batch.commit();
+      setInvEditItem(null);
+      setDialog({title:'✅ Actualizado',text:'Producto actualizado. La cuenta contable ya está asociada.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
 
   const guardarSrv=async()=>{
     if(!form.nombre){setDialog({title:'Aviso',text:'El nombre es obligatorio.',type:'alert'});return;}
@@ -1546,18 +1710,17 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
       {/* INVENTARIO (solo lectura) */}
       {tab==='inventario'&&(
         <div>
-          <div className="flex gap-1 flex-wrap mb-3">
-            {cats.map(c=>(
-              <button key={c} onClick={()=>setInvCat(c)}
-                className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase transition-all ${invCat===c?'bg-orange-500 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-100'}`}>
-                {c}
-              </button>
-            ))}
+          <div className="flex items-center gap-3 mb-3">
+            <select value={invCat} onChange={e=>setInvCat(e.target.value)}
+              className="border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-white">
+              {cats.map(c=><option key={c} value={c}>{c==='TODOS'?'Todas las categorías':c}</option>)}
+            </select>
+            <span className="text-[10px] text-slate-400 font-mono">{invFiltrado.length} productos</span>
           </div>
           <PCard noPad>
             <table className="w-full">
               <thead><tr>
-                <PTh>Código</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh>Cuenta Contable</PTh><PTh>Unidad</PTh>
+                <PTh>Código</PTh><PTh>Descripción</PTh><PTh>Categoría</PTh><PTh>Cuenta Contable</PTh><PTh>Unidad</PTh><PTh>Acciones</PTh>
               </tr></thead>
               <tbody>
                 {invFiltrado.length===0?<tr><td colSpan={5} className="py-12"><PEmpty icon={Package} title="Sin productos" desc="No hay productos en esta categoría"/></td></tr>:
@@ -1569,14 +1732,56 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
                     <PTd mono>{inv.displayId||inv.id}</PTd>
                     <PTd><span className="font-black text-xs">{inv.desc||'—'}</span></PTd>
                     <PTd><PBadge v="gray">{cat||'—'}</PBadge></PTd>
-                    <PTd><span className="text-[10px] text-blue-600">{cta||<span className="text-slate-400">—</span>}</span></PTd>
+                    <PTd><span className="text-[10px] text-blue-600">{inv.cuentaContableNombre||cta||<span className="text-slate-400">Sin cuenta</span>}</span></PTd>
                     <PTd>{inv.unit||'Und'}</PTd>
+                    <PTd>
+                      <PBp sm onClick={()=>{
+                        setInvEditItem(inv);
+                        setInvEditForm({desc:inv.desc||'',unit:inv.unit||'Und',cuentaContableId:inv.cuentaContableId||'',cuentaContableNombre:inv.cuentaContableNombre||cta||''});
+                      }}><Edit size={11}/></PBp>
+                    </PTd>
                   </tr>
                 );})}
               </tbody>
             </table>
           </PCard>
         </div>
+      )}
+
+      {/* Modal Editar Producto de Inventario */}
+      {invEditItem&&(
+        <PModal open={true} onClose={()=>setInvEditItem(null)} title={`Editar producto — ${invEditItem.displayId||invEditItem.id}`}
+          footer={<><PBo onClick={()=>setInvEditItem(null)}>Cancelar</PBo><PBg onClick={guardarInvEdit}><Save size={14}/> Guardar cambios</PBg></>}>
+          <div className="space-y-4">
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+              <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5">Código</p>
+              <p className="font-black text-slate-800 font-mono text-sm">{invEditItem.displayId||invEditItem.id}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <PFG label="Descripción" full>
+                <input className={inp} value={invEditForm.desc||''} onChange={e=>setInvEditForm(f=>({...f,desc:e.target.value.toUpperCase()}))} placeholder="Descripción del producto"/>
+              </PFG>
+              <PFG label="Unidad">
+                <select className={sel} value={invEditForm.unit||'Und'} onChange={e=>setInvEditForm(f=>({...f,unit:e.target.value}))}>
+                  {['Und','KG','M','M²','LT','GL','Caja','Rollo','Bobina','Par','Juego','MT'].map(u=><option key={u}>{u}</option>)}
+                </select>
+              </PFG>
+              <PFG label="Cuenta Contable" full>
+                <select className={sel} value={invEditForm.cuentaContableId||''} onChange={e=>{
+                  const cta=planDeCuentas.find(c=>c.id===e.target.value);
+                  setInvEditForm(f=>({...f,cuentaContableId:e.target.value,cuentaContableNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));
+                }}>
+                  <option value="">— Seleccionar cuenta contable —</option>
+                  {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                </select>
+                {invEditForm.cuentaContableNombre&&<p className="text-[10px] text-blue-600 font-medium mt-1">{invEditForm.cuentaContableNombre}</p>}
+              </PFG>
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+              <p className="text-[10px] text-blue-700"><strong>Nota:</strong> La cuenta contable se actualizará en todos los almacenes donde existe este producto.</p>
+            </div>
+          </div>
+        </PModal>
       )}
 
       {/* Modal Servicio */}
@@ -2304,7 +2509,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
 };
 
 
-const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings}) => {
+const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
@@ -2793,6 +2998,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     }catch(_e){
       if(pwd!==ADMIN_PASSWORD){setDialog({title:'Clave incorrecta',text:'La clave de administrador no es válida.',type:'alert'});return;}
     }
+    // Cerrar modal de clave ANTES de mostrar confirmación (evita superposición de overlays)
+    setPendingDeleteFact(null); setFactDelPwd('');
     const pagosAsociados=(pagosCxP||[]).filter(p=>p.facturaId===f.id);
     const ejecutarDelete=async()=>{
       try{
@@ -2806,15 +3013,13 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
         snapISLR.forEach(d=>batch.delete(d.ref));
         pagosAsociados.forEach(p=>batch.delete(getDocRef('procura_pagos_cxp',p.id)));
         await batch.commit();
-        setPendingDeleteFact(null);setFactDelPwd('');
-        setDialog({title:'✅ Eliminada',text:`Factura ${f.nroFactura} eliminada junto con sus comprobantes y pagos.`,type:'alert'});
+        setDialog({title:'✅ Eliminada',text:`Factura ${f.nroFactura} eliminada junto con sus comprobantes${pagosAsociados.length>0?' y pagos CxP':''}.`,type:'alert'});
       }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
     };
-    if(pagosAsociados.length>0){
-      setDialog({title:'⚠️ Pagos registrados',text:`Esta factura tiene ${pagosAsociados.length} pago(s) registrado(s) por $${pFmt(pagosAsociados.reduce((s,p)=>s+pNum(p.monto),0))}. ¿Eliminar igualmente?`,type:'confirm',onConfirm:ejecutarDelete});
-    } else {
-      setDialog({title:'¿Eliminar factura?',text:`Se eliminará definitivamente la factura ${f.nroFactura} y todos sus comprobantes de retención. ¿Confirmar?`,type:'confirm',onConfirm:ejecutarDelete});
-    }
+    const warnTxt=pagosAsociados.length>0
+      ?`Esta factura tiene ${pagosAsociados.length} pago(s) por $${pFmt(pagosAsociados.reduce((s,p)=>s+pNum(p.monto),0))}. Se eliminará la factura, sus comprobantes de retención IVA/ISLR y todos los pagos. ¿Confirmar?`
+      :`Se eliminará permanentemente la factura ${f.nroFactura}, sus comprobantes de retención y su registro del libro de compras. ¿Confirmar?`;
+    setDialog({title:'¿Eliminar factura?',text:warnTxt,type:'confirm',onConfirm:ejecutarDelete});
   };
 
   const filtradas=facturasCompra.filter(f=>{
