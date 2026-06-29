@@ -159,7 +159,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
       const exento=pNum(ret.exentoBs||0);
 
       html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-@page{size:A4;margin:1.2cm 1.5cm}
+@page{size:A4 landscape;margin:1cm 1.2cm}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:Arial,sans-serif;font-size:8px;color:#000}
 table{border-collapse:collapse;width:100%}
@@ -169,7 +169,7 @@ th,td{border:1px solid #888;padding:3px 5px;vertical-align:top}
 .val{font-size:8.5px;font-weight:bold}
 .num{font-family:monospace;text-align:right}
 .sec-title{background:#d0d0d0;font-size:8px;font-weight:bold;text-align:center;padding:3px}
-@media print{@page{margin:1.2cm 1.5cm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+@media print{@page{size:A4 landscape;margin:1cm 1.2cm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
 </style></head><body>
 <div style="text-align:center;margin-bottom:6px">
   <div style="font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:1px">COMPROBANTE DE RETENCION DEL IMPUESTO AL VALOR AGREGADO I.V.A.</div>
@@ -288,7 +288,7 @@ th,td{border:1px solid #888;padding:3px 5px;vertical-align:top}
       const compNum=String(ret.nroComprobante||'—').padStart(8,'0');
 
       html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-@page{size:A4;margin:1.2cm 1.5cm}
+@page{size:A4 landscape;margin:1cm 1.2cm}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:Arial,sans-serif;font-size:8px;color:#000}
 table{border-collapse:collapse;width:100%}
@@ -297,7 +297,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
 .lbl{font-size:7px;color:#555;display:block}
 .val{font-size:8.5px;font-weight:bold;display:block}
 .num{font-family:monospace;text-align:right}
-@media print{@page{margin:1.2cm 1.5cm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+@media print{@page{size:A4 landscape;margin:1cm 1.2cm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
 </style></head><body>
 
 <table style="margin-bottom:5px;border:none">
@@ -621,6 +621,49 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                   <p className="text-[11px] text-orange-700 mt-1">Sustraendo PNR servicios/fletes (Cod 053,071): <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
                   <p className="text-[11px] text-orange-700">Sustraendo PNR honorarios/comisiones/arrend.: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
                   <p className="text-[11px] text-slate-500 mt-1">PJD (Jurídica domiciliada): <strong>Sin sustraendo</strong></p>
+                </div>
+              </div>
+            </div>
+            {/* ── Correlativos ── */}
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide mb-1">Numeración de Comprobantes</h3>
+              <p className="text-[10px] text-slate-400 mb-4">Configure el siguiente número correlativo para cada tipo de comprobante. A partir del número ingresado, el sistema generará automáticamente la numeración.</p>
+              <div className="grid grid-cols-2 gap-6">
+                {/* Correlativo IVA */}
+                <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
+                  <label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Comprobante Retención IVA</label>
+                  <p className="text-[9px] text-slate-500 mb-3">Formato: <span className="font-mono bg-white px-1 rounded border border-slate-200">{new Date().getFullYear()}{String(new Date().getMonth()+1).padStart(2,'0')}00<span className="text-orange-600">NNNNNN</span></span> — 14 dígitos</p>
+                  <p className="text-[9px] text-slate-400 mb-2">Ejemplo: <span className="font-mono font-bold">{new Date().getFullYear()}{String(new Date().getMonth()+1).padStart(2,'0')}00{String(settings?.correlativoIVA||1).padStart(6,'0')}</span></p>
+                  <label className="text-[9px] font-black text-slate-500 uppercase block mb-1">Próximo N° secuencial:</label>
+                  <div className="flex gap-2 items-center">
+                    <input type="number" min="1"
+                      defaultValue={settings?.correlativoIVA||1}
+                      id="inp-corr-iva"
+                      className="border-2 border-orange-200 rounded-lg px-3 py-2 text-sm font-black outline-none focus:border-orange-500 w-32"/>
+                    <button onClick={async()=>{
+                      const v=parseInt(document.getElementById('inp-corr-iva').value||1,10);
+                      if(v>0){await setDoc(getDocRef('settings','general'),{correlativoIVA:v},{merge:true});
+                      setDialog({title:'✅ Guardado',text:`Correlativo IVA actualizado a ${v}.`,type:'alert'});}
+                    }} className="bg-orange-500 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                  </div>
+                </div>
+                {/* Correlativo ISLR */}
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-4">
+                  <label className="text-[10px] font-black text-purple-700 uppercase block mb-1">Comprobante Retención ISLR</label>
+                  <p className="text-[9px] text-slate-500 mb-3">Formato: <span className="font-mono bg-white px-1 rounded border border-slate-200"><span className="text-purple-600">NNNNNNNN</span></span> — 8 dígitos secuenciales</p>
+                  <p className="text-[9px] text-slate-400 mb-2">Ejemplo: <span className="font-mono font-bold">{String(settings?.correlativoISLR||1).padStart(8,'0')}</span></p>
+                  <label className="text-[9px] font-black text-slate-500 uppercase block mb-1">Próximo N° secuencial:</label>
+                  <div className="flex gap-2 items-center">
+                    <input type="number" min="1"
+                      defaultValue={settings?.correlativoISLR||1}
+                      id="inp-corr-islr"
+                      className="border-2 border-purple-200 rounded-lg px-3 py-2 text-sm font-black outline-none focus:border-purple-500 w-32"/>
+                    <button onClick={async()=>{
+                      const v=parseInt(document.getElementById('inp-corr-islr').value||1,10);
+                      if(v>0){await setDoc(getDocRef('settings','general'),{correlativoISLR:v},{merge:true});
+                      setDialog({title:'✅ Guardado',text:`Correlativo ISLR actualizado a ${v}.`,type:'alert'});}
+                    }} className="bg-purple-600 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-purple-800">Guardar</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2479,6 +2522,16 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       const id=form.id||`FC-${pId()}`;
       const tasa=pNum(form.tasa||0);
       const nroBase=String(facturasCompra.length+1).padStart(4,'0');
+      // ── Numeración correlativa SENIAT ─────────────────────────────
+      const _hoy=new Date();
+      const _yr=_hoy.getFullYear();
+      const _mo=String(_hoy.getMonth()+1).padStart(2,'0');
+      const _seqIVA=Math.max(1,parseInt(settings?.correlativoIVA||1,10));
+      const _seqISLR=Math.max(1,parseInt(settings?.correlativoISLR||1,10));
+      // IVA: YYYYMM00NNNNNN (14 dígitos)
+      const _nroCompIVA=`${_yr}${_mo}00${String(_seqIVA).padStart(6,'0')}`;
+      // ISLR: 00000000 (8 dígitos secuencial)
+      const _genNroISLR=(i)=>String(_seqISLR+i).padStart(8,'0');
       const batch=writeBatch(db);
 
       // Limpiar undefined recursivamente — Firestore los rechaza
@@ -2539,7 +2592,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       if(form.aplicaRetIVA&&retIVA.monto>0){
         const retId=`RET-IVA-${pId()}`;
         batch.set(getDocRef('procura_ret_iva',retId),{
-          id:retId,nroComprobante:'RET-IVA-'+nroBase,
+          id:retId,nroComprobante:_nroCompIVA,
           facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
           fechaFactura:form.fecha,fecha:getTodayDate(),
@@ -2557,7 +2610,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
         if(r.monto<=0)return;
         const retId=`RET-ISLR-${pId()}`;
         batch.set(getDocRef('procura_ret_islr',retId),{
-          id:retId,nroComprobante:`RET-ISLR-${nroBase}-${i+1}`,
+          id:retId,nroComprobante:_genNroISLR(i),
           facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
           fechaFactura:form.fecha,fecha:getTodayDate(),
@@ -2575,6 +2628,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       });
       await batch.commit();
       const nISLR=retISLRLista.filter(r=>r.monto>0).length;
+      // Incrementar correlativos en settings
+      const _incr={};
+      if(form.aplicaRetIVA&&retIVA.monto>0) _incr.correlativoIVA=_seqIVA+1;
+      if(nISLR>0) _incr.correlativoISLR=_seqISLR+nISLR;
+      if(Object.keys(_incr).length>0) await setDoc(getDocRef('settings','general'),_incr,{merge:true});
       setModal(null);
       setDialog({title:'✅ Factura registrada',
         text:`Factura ${form.nroFactura} guardada${form.aplicaRetIVA&&retIVA.monto>0?' · Ret. IVA generada':''}${nISLR>0?` · ${nISLR} Ret. ISLR generadas`:''}.`,
@@ -3607,10 +3665,10 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
 
   const mes2 = String(filtMes).padStart(2,'0');
   const lastDay = new Date(parseInt(filtAnio), parseInt(filtMes), 0).getDate();
-  const desde = filtQ==='1' ? `${filtAnio}-${mes2}-01` : `${filtAnio}-${mes2}-16`;
+  const desde = filtQ==='2' ? `${filtAnio}-${mes2}-16` : `${filtAnio}-${mes2}-01`;
   const hasta = filtQ==='1' ? `${filtAnio}-${mes2}-15` : `${filtAnio}-${mes2}-${String(lastDay).padStart(2,'0')}`;
   const mesLabel = MESES[parseInt(filtMes,10)-1]||'';
-  const periodoLabel = `${filtQ==='1'?'I':'II'} QUINCENA — ${desde} AL ${hasta}`;
+  const periodoLabel = filtQ==='AMBAS' ? `MES COMPLETO — ${mesLabel.toUpperCase()} ${filtAnio}` : `${filtQ==='1'?'I':'II'} QUINCENA — ${desde} AL ${hasta}`;
 
   // Filtrar facturas del período
   const factsPeriodo = (facturasCompra||[]).filter(f => {
@@ -3678,7 +3736,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || 'J-412309374';
     const dir = settings?.empresaDireccion || 'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
-    const Q = filtQ==='1'?'I QUINCENA':'II QUINCENA';
+    const Q = filtQ==='AMBAS'?'MES COMPLETO':filtQ==='1'?'I QUINCENA':'II QUINCENA';
 
     // Construir AOA — 28 columnas
     const aoa = [];
@@ -3689,7 +3747,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     aoa.push(['','','','','','','','','','','','','','','','','','','','','','','','PERÍODO:',Q,'','','']);
     aoa.push(['','','','','','','','','','','','','','','','','','','','','','','','DEL',`${fmtFE(desde)} AL ${fmtFE(hasta)}`,'','','']);
     // Fila 7: sección headers
-    aoa.push(['','','','','','','','','','','','IMPORTACIONES','','','','Compras Internas por Alícuota General','','','','','Compras Nacionales por Alícuota Reducida','','','','IVA RETENIDO','','','']);
+    aoa.push(['','','','','','','','','IMPORTACIONES','','','','','','','Compras Internas por Alícuota General','','','','','Compras Nacionales por Alícuota Reducida','','','','IVA RETENIDO','','','']);
     // Fila 8: col headers
     aoa.push(['N° Opr','Fecha del Documento','Nº R.I.F. o C.I','Nombre y Apellido o Razón Social','Tipo de Documento','N° de Factura','N° de Control de Factura','Nro de Factura Afectada','Fecha Aplic','N° de Planilla C-80/C-81','N° de Expediente','Total Importación','Base Imponible','0.16','IVA','Total Compras Alícuota General','Compras sin derecho a Crédito Fiscal','Base Imponible','% Alícuota','Crédito Fiscal 16%','Total Compras Alícuota Reducida','Base Imponible','%','Crédito Fiscal 8%','% Retenido','Monto Retenido','Factura que Afecta','N° Comprobante']);
     // Filas de datos
@@ -3800,7 +3858,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
     const rifEmp = settings?.empresaRif||'J-412309374';
     const dirEmp = settings?.empresaDireccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
-    const Q = filtQ==='1'?'I QUINCENA':'II QUINCENA';
+    const Q = filtQ==='AMBAS'?'MES COMPLETO':filtQ==='1'?'I QUINCENA':'II QUINCENA';
 
     const rowsHtml = rows.map(r => {
       const isFac = r.tipo === 'FACTURA';
@@ -3841,8 +3899,9 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     }).join('');
 
     const colHeaders = [
-      'N°','Fecha','N° R.I.F.','Nombre / Razón Social','Tipo Doc.','N° Factura','N° Control','Fac. Afectada','Fec. Aplic','Planilla','Expediente',
-      'IMPORT. Total','IMPORT. Base','%','IMPORT. IVA',
+      'N°','Fecha','N° R.I.F.','Nombre / Razón Social','Tipo Doc.','N° Factura','N° Control','Fac. Afectada',
+      'Fec. Aplic','N° Planilla C-80/C-81','N° Expediente',
+      'Total Importación','Base Imponible','16%','IVA',
       'CI Total','CI Sin Derecho','CI Base','% Alíc.','CI Créd.16%',
       'CR Total','CR Base','%','CR Créd.8%',
       '% Ret.','Mto. Ret. Bs.','Fac. Afecta','N° Comprobante'
@@ -3912,14 +3971,14 @@ th,td{border:1px solid #d1d5db;vertical-align:middle}
 <table>
   <thead>
     <tr>
-      <th colspan="11" style="background:#1e293b;color:#fff;padding:3px;font-size:7px">DATOS DEL DOCUMENTO</th>
-      ${secH('IMPORTACIONES',4,'#0f766e')}
+      <th colspan="8" style="background:#1e293b;color:#fff;padding:3px;font-size:7px">DATOS DEL DOCUMENTO</th>
+      ${secH('IMPORTACIONES',7,'#0f766e')}
       ${secH('COMPRAS INTERNAS — ALÍCUOTA GENERAL 16%',5,'#1e40af')}
       ${secH('COMPRAS NACIONALES — ALÍCUOTA REDUCIDA 8%',4,'#ea580c')}
       ${secH('IVA RETENIDO',4,'#6d28d9')}
     </tr>
     <tr>
-      ${colHeaders.map((h,i)=>`<th style="background:${i<11?'#334155':i<15?'#0f766e':i<20?'#1e40af':i<24?'#ea580c':'#6d28d9'};color:#fff;padding:2px 3px;font-size:5.5px;text-align:center;vertical-align:middle;line-height:1.2">${h}</th>`).join('')}
+      ${colHeaders.map((h,i)=>`<th style="background:${i<8?'#334155':i<15?'#0f766e':i<20?'#1e40af':i<24?'#ea580c':'#6d28d9'};color:#fff;padding:2px 3px;font-size:5.5px;text-align:center;vertical-align:middle;line-height:1.2">${h}</th>`).join('')}
     </tr>
   </thead>
   <tbody>
@@ -3971,6 +4030,7 @@ ${resumenHtml}
           <select className={sel} value={filtQ} onChange={e=>setFiltQ(e.target.value)}>
             <option value="1">I Quincena (1-15)</option>
             <option value="2">II Quincena (16-fin)</option>
+            <option value="AMBAS">Mes completo (ambas)</option>
           </select>
           <input className={inp} placeholder="N° Factura / Control..." value={filtFact} onChange={e=>setFiltFact(e.target.value)} style={{width:180}}/>
           <input className={inp} placeholder="Proveedor..." value={filtProv} onChange={e=>setFiltProv(e.target.value)} style={{width:200}}/>
@@ -3985,8 +4045,8 @@ ${resumenHtml}
           <thead style={{position:'sticky',top:0,zIndex:10}}>
             {/* Fila 1: secciones */}
             <tr>
-              <th colSpan={11} style={{background:'#1e293b',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151',whiteSpace:'nowrap'}}>DATOS DEL DOCUMENTO</th>
-              <th colSpan={4} style={{background:'#0f766e',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>IMPORTACIONES</th>
+              <th colSpan={8} style={{background:'#1e293b',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151',whiteSpace:'nowrap'}}>DATOS DEL DOCUMENTO</th>
+              <th colSpan={7} style={{background:'#0f766e',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>IMPORTACIONES</th>
               <th colSpan={5} style={{background:'#1e40af',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>COMPRAS INTERNAS — ALÍCUOTA GENERAL</th>
               <th colSpan={4} style={{background:'#ea580c',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>COMPRAS ALÍCUOTA REDUCIDA</th>
               <th colSpan={4} style={{background:'#6d28d9',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>IVA RETENIDO</th>
@@ -3996,8 +4056,9 @@ ${resumenHtml}
               {[
                 ['N°','#1e293b',28],['Fecha','#1e293b',80],['R.I.F.','#1e293b',90],['Razón Social','#1e293b',200],
                 ['Tipo Doc.','#1e293b',75],['N° Factura','#1e293b',90],['N° Control','#1e293b',90],
-                ['Fac. Afectada','#1e293b',90],['Fec. Aplic','#1e293b',75],['Planilla','#1e293b',80],['Expediente','#1e293b',80],
-                ['Total Imp.','#0f766e',90],['Base','#0f766e',90],['%','#0f766e',40],['IVA','#0f766e',90],
+                ['Fac. Afectada','#1e293b',90],
+                ['Fec. Aplic','#0f766e',72],['N° Planilla C-80/C-81','#0f766e',88],['N° Expediente','#0f766e',80],
+                ['Total Imp.','#0f766e',90],['Base Imp.','#0f766e',90],['16%','#0f766e',38],['IVA','#0f766e',90],
                 ['Total C.I.','#1e40af',100],['Sin Derecho CF','#1e40af',100],['Base 16%','#1e40af',100],['% Alíc.','#1e40af',50],['Créd. 16%','#1e40af',100],
                 ['Total C.R.','#ea580c',90],['Base 8%','#ea580c',90],['%','#ea580c',40],['Créd. 8%','#ea580c',90],
                 ['% Ret.','#6d28d9',55],['Monto Ret. Bs.','#6d28d9',110],['Fac. Afecta','#6d28d9',90],['N° Comprobante','#6d28d9',130],
