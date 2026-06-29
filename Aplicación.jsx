@@ -3435,9 +3435,59 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 6: HISTORIAL DE PAGOS
 // ══════════════════════════════════════════════════════════════════════
-const HistorialPagosView = ({pagosCxP,dialog,setDialog}) => {
+const HistorialPagosView = ({pagosCxP,facturasCompra,dialog,setDialog}) => {
   const [search,setSearch]=useState('');
   const [filtMes,setFiltMes]=useState(getMesActual());
+
+  const [editPago, setEditPago] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const reversarPago = async (pago) => {
+    setDialog({title:'Reversar pago',text:`¿Reversar el pago de $${pFmt(pago.monto)} a ${pago.proveedor}? Se restaurará el saldo de la factura ${pago.nroFactura}.`,type:'confirm',onConfirm:async()=>{
+      try{
+        const batch=writeBatch(db);
+        batch.delete(getDocRef('procura_pagos_cxp',pago.id));
+        const fact=(facturasCompra||[]).find(f=>f.id===pago.facturaId);
+        if(fact){
+          const saldoRestaurado=pNum(fact.saldoPendiente||0)+pNum(pago.monto);
+          const total=pNum(fact.total||0);
+          const nuevoStatus=saldoRestaurado>=total*0.99?'PENDIENTE':saldoRestaurado>0?'PARCIAL':'PAGADA';
+          batch.update(getDocRef('procura_facturas_compra',fact.id),{
+            saldoPendiente:Math.min(saldoRestaurado,total),
+            status:nuevoStatus,
+            montoCobrado:Math.max(0,pNum(fact.montoCobrado||0)-pNum(pago.monto)),
+            updatedAt:Date.now()
+          });
+        }
+        await batch.commit();
+        setDialog({title:'✅ Reversado',text:'Pago reversado y saldo restaurado.',type:'alert'});
+      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+    }});
+  };
+
+  const guardarEdicion = async () => {
+    if(!editPago||!editForm.monto||pNum(editForm.monto)<=0) return;
+    try{
+      const montoAnterior = pNum(editPago.monto);
+      const montoNuevo = pNum(editForm.monto);
+      const batch=writeBatch(db);
+      batch.update(getDocRef('procura_pagos_cxp',editPago.id),{...editForm,monto:montoNuevo,updatedAt:Date.now()});
+      const fact=(facturasCompra||[]).find(f=>f.id===editPago.facturaId);
+      if(fact){
+        const diff=montoNuevo-montoAnterior;
+        const nuevoSaldo=Math.max(0,pNum(fact.saldoPendiente||0)-diff);
+        const total=pNum(fact.total||0);
+        const nuevoStatus=nuevoSaldo<0.01?'PAGADA':nuevoSaldo<total?'PARCIAL':'PENDIENTE';
+        batch.update(getDocRef('procura_facturas_compra',fact.id),{
+          saldoPendiente:nuevoSaldo,status:nuevoStatus,
+          montoCobrado:pNum(fact.montoCobrado||0)+diff,updatedAt:Date.now()
+        });
+      }
+      await batch.commit();
+      setEditPago(null);
+      setDialog({title:'✅ Actualizado',text:'Pago actualizado correctamente.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
 
   const filtrados=pagosCxP.filter(p=>{
     const ms=(p.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(p.proveedor||'').toLowerCase().includes(search.toLowerCase())||(p.referencia||'').toLowerCase().includes(search.toLowerCase());
@@ -3488,10 +3538,10 @@ const HistorialPagosView = ({pagosCxP,dialog,setDialog}) => {
       <PCard noPad>
         <table className="w-full">
           <thead><tr>
-            <PTh>Fecha</PTh><PTh>Proveedor</PTh><PTh>Factura</PTh><PTh>Método</PTh><PTh>Banco / Cuenta</PTh><PTh>Referencia</PTh><PTh right>Monto</PTh>
+            <PTh>Fecha</PTh><PTh>Proveedor</PTh><PTh>Factura</PTh><PTh>Método</PTh><PTh>Banco / Cuenta</PTh><PTh>Referencia</PTh><PTh right>Monto</PTh><PTh>PDF</PTh><PTh>Acciones</PTh>
           </tr></thead>
           <tbody>
-            {filtrados.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={Receipt} title="Sin pagos" desc="No se encontraron pagos con los filtros actuales"/></td></tr>:
+            {filtrados.length===0?<tr><td colSpan={9} className="py-12"><PEmpty icon={Receipt} title="Sin pagos" desc="No se encontraron pagos con los filtros actuales"/></td></tr>:
             filtrados.map(p=>(
               <tr key={p.id} className="hover:bg-slate-50">
                 <PTd>{pDate(p.fecha)}</PTd>
@@ -3501,11 +3551,49 @@ const HistorialPagosView = ({pagosCxP,dialog,setDialog}) => {
                 <PTd>{p.banco||'—'}</PTd>
                 <PTd mono>{p.referencia||'—'}</PTd>
                 <PTd right mono><span className="font-black text-emerald-600">${pFmt(p.monto)}</span></PTd>
+                <PTd>
+                  <PBo sm onClick={()=>{
+                    let h=pdfOpen('COMPROBANTE DE PAGO',`Pago a ${p.proveedor}`);
+                    h+=`<table><tbody>
+                      <tr><td><strong>Proveedor:</strong></td><td>${p.proveedor||'—'}</td></tr>
+                      <tr><td><strong>N° Factura:</strong></td><td>${p.nroFactura||'—'}</td></tr>
+                      <tr><td><strong>Fecha:</strong></td><td>${pDate(p.fecha)}</td></tr>
+                      <tr><td><strong>Método:</strong></td><td>${p.metodo||'—'}</td></tr>
+                      <tr><td><strong>Banco/Cuenta:</strong></td><td>${p.banco||'—'}</td></tr>
+                      <tr><td><strong>N° Referencia:</strong></td><td>${p.referencia||'—'}</td></tr>
+                      <tr><td><strong>Concepto:</strong></td><td>${p.concepto||'—'}</td></tr>
+                      <tr class="total-row"><td><strong>MONTO PAGADO:</strong></td><td><strong>$${pFmt(p.monto)}</strong></td></tr>
+                    </tbody></table>`;
+                    pdfPrint(h+pdfClose());
+                  }}><Printer size={11}/> PDF</PBo>
+                </PTd>
+                <PTd>
+                  <div className="flex gap-1">
+                    <PBp sm onClick={()=>{setEditPago(p);setEditForm({monto:String(p.monto),metodo:p.metodo||'Transferencia',banco:p.banco||'',referencia:p.referencia||'',fecha:p.fecha||'',concepto:p.concepto||''});}}><Edit size={10}/></PBp>
+                    <button onClick={()=>reversarPago(p)} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-600 text-[9px] font-black uppercase hover:bg-red-100 transition-all"><RotateCcw size={10}/> Rev.</button>
+                  </div>
+                </PTd>
               </tr>
             ))}
           </tbody>
         </table>
       </PCard>
+      {/* Modal Editar Pago */}
+      {editPago&&(
+        <PModal open={true} onClose={()=>setEditPago(null)} title={`Editar pago — ${editPago.proveedor}`}
+          footer={<><PBo onClick={()=>setEditPago(null)}>Cancelar</PBo><PBg onClick={guardarEdicion}><Save size={13}/> Guardar</PBg></>}>
+          <div className="space-y-3 grid grid-cols-2 gap-3">
+            <PFG label="Monto *"><input type="number" className={inp} value={editForm.monto||''} onChange={e=>setEditForm({...editForm,monto:e.target.value})}/></PFG>
+            <PFG label="Método"><select className={sel} value={editForm.metodo||'Transferencia'} onChange={e=>setEditForm({...editForm,metodo:e.target.value})}>
+              {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(m=><option key={m}>{m}</option>)}
+            </select></PFG>
+            <PFG label="Banco / Cuenta"><input className={inp} value={editForm.banco||''} onChange={e=>setEditForm({...editForm,banco:e.target.value})}/></PFG>
+            <PFG label="N° Referencia"><input className={inp} value={editForm.referencia||''} onChange={e=>setEditForm({...editForm,referencia:e.target.value.toUpperCase()})}/></PFG>
+            <PFG label="Fecha"><input type="date" className={inp} value={editForm.fecha||''} onChange={e=>setEditForm({...editForm,fecha:e.target.value})}/></PFG>
+            <PFG label="Concepto"><input className={inp} value={editForm.concepto||''} onChange={e=>setEditForm({...editForm,concepto:e.target.value})}/></PFG>
+          </div>
+        </PModal>
+      )}
     </div>
   );
 };
@@ -3754,7 +3842,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     rows.forEach(r => {
       aoa.push([
         r.seq, fmtFE(r.fecha), r.rif, r.nombre, r.tipo,
-        r.nroFactura||'—', r.nroControl||'—', r.retFact||'—', r.tipo==='RETENCIÓN'?fmtFE(r.fecha):'—', '—', '—',
+        r.nroFactura||'—', r.nroControl||'—', r.retFact||'—', '—', '—', '—',
         r.impTotal, r.impBase, r.tipo==='FACTURA'?0.16:null, r.impIVA,
         r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, r.tipo==='FACTURA'?0.16:null, r.ciCred||null,
         r.crTotal||null, r.crBase||null, r.tipo==='FACTURA'?0.08:null, r.crCred||null,
@@ -3875,7 +3963,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
   <td style="padding:1px 3px;font-size:6px;text-align:center;color:#1d4ed8;font-weight:bold">${r.nroFactura||'—'}</td>
   <td style="padding:1px 3px;font-size:6px;text-align:center">${r.nroControl||'—'}</td>
   <td style="padding:1px 3px;font-size:6px;text-align:center">${r.retFact||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.tipo==='RETENCIÓN'?fmtFE(r.fecha):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;color:#9ca3af">—</td>
   <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
   <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
   <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
@@ -4092,7 +4180,7 @@ ${resumenHtml}
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#1d4ed8',fontWeight:700,fontSize:9}}>{r.nroFactura||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{r.nroControl||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac?'—':r.retFact||'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac?'—':fmtFE(r.fecha)}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,color:'#94a3b8'}}>—</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
                   {/* Importaciones */}
@@ -4209,7 +4297,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'facturas':return <FacturasCompraView {...sharedProps} facturaPreload={facturaPreload} onPreloadConsumed={()=>setFacturaPreload(null)}/>;
       case 'libro_compras':return <LibroComprasView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
-      case 'historial':return <HistorialPagosView {...sharedProps}/>;
+      case 'historial':return <HistorialPagosView {...sharedProps} facturasCompra={facturasCompra}/>;
       case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
       default:return null;
     }
@@ -16669,6 +16757,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
             items:[], aplicaIva:'SI', status:'TRANSITO', observaciones:'',
             facturaId:'', opRelacionada:'', ncConsignacion:'', diasCredito:'0',
+            canal:'TRADICIONAL',
             neClientSearch:'', neShowClientDrop:false
           });
           const calcVenc = (fecha, dias) => {
@@ -16865,6 +16954,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <select value={form.opRelacionada||''} onChange={e=>setForm(f=>({...f,opRelacionada:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
                         <option value="">— Sin OP —</option>
                         {(requirements||[]).filter(r=>r.status!=='CANCELADA').map(r=><option key={r.id} value={r.id}>{r.id} — {r.desc||r.categoria||''}</option>)}
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Canal de Lista</label>
+                      <select value={form.canal||'TRADICIONAL'} onChange={e=>setForm(f=>({...f,canal:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="TRADICIONAL">📋 TRADICIONAL</option>
+                        <option value="DIGITAL">💻 DIGITAL</option>
                       </select></div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Aplica IVA</label>
                       <select value={form.aplicaIva||'SI'} onChange={e=>setForm(f=>({...f,aplicaIva:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none"><option value="SI">Sí (16%)</option><option value="NO">No</option></select></div>
@@ -18503,13 +18597,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           });
 
           let totV=0,totM=0,totU=0,kgSF=0,kgPK=0,kgT=0;
-          const byProd={},byProdQ={},byCli={},byCliQ={},byVend={},byVendQ={},byCat={},byCatQ={},byLoc={},byLocQ={};
+          const byProd={},byProdQ={},byCli={},byCliQ={},byVend={},byVendQ={},byCat={},byCatQ={},byLoc={},byLocQ={},byCanal={},byCanalQ={};
           const rows=[];
           nesFilt.forEach(v=>{
             totV+=v.montoBase;
             byCli[v.cliente]=(byCli[v.cliente]||0)+v.montoBase;
             byVend[v.vendedor]=(byVend[v.vendedor]||0)+v.montoBase;
             byLoc[v.localidad]=(byLoc[v.localidad]||0)+v.montoBase;
+            const vCanal=(v.canal||'TRADICIONAL').toUpperCase();
+            byCanal[vCanal]=(byCanal[vCanal]||0)+v.montoBase;
             v.items.forEach(it=>{
               if(fVF.cat&&it.tipo!==fVF.cat)return;
               const pk=it.desc||it.codigo||'?';
@@ -18518,6 +18614,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               byCliQ[v.cliente]=(byCliQ[v.cliente]||0)+it.cant;
               byVendQ[v.vendedor]=(byVendQ[v.vendedor]||0)+it.cant;
               byLocQ[v.localidad]=(byLocQ[v.localidad]||0)+it.cant;
+              byCanalQ[vCanal]=(byCanalQ[vCanal]||0)+it.cant;
               if(it.tipo==='BOLSAS')totM+=it.cant; else totU+=it.cant;
               kgSF+=it.tipo==='STRETCH FILM'?it.kg:0;
               kgPK+=it.tipo==='PAPEL KRAFT'?it.kg:0;
@@ -18547,6 +18644,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const tV=Object.entries(byVend).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
           const tL=Object.entries(byLoc).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
           const tCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
+          const tCanal=[['DIGITAL',byCanal['DIGITAL']||0],['TRADICIONAL',byCanal['TRADICIONAL']||0]].map(([k,v])=>[k,v*ratioNC]).filter(([,v])=>v>0);
+          const totCanal=tCanal.reduce((s,x)=>s+x[1],0)||1;
           const totVend=tV.reduce((s,x)=>s+x[1],0)||1;
           const totLoc=tL.reduce((s,x)=>s+x[1],0)||1;
           const totCat=tCat.reduce((s,x)=>s+x[1],0)||1;
@@ -18655,7 +18754,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               {/* GRÁFICAS TABS */}
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="flex gap-1 p-3 bg-gray-50 border-b border-gray-100 flex-wrap">
-                  {[{k:'productos',l:'📦 Productos'},{k:'clientes',l:'🏢 Clientes'},{k:'vendedores',l:'👤 Vendedores'},{k:'localidad',l:'📍 Localidad'},{k:'categorias',l:'🏷️ Categorías'}].map(tab=>(
+                  {[{k:'productos',l:'📦 Productos'},{k:'clientes',l:'🏢 Clientes'},{k:'vendedores',l:'👤 Vendedores'},{k:'localidad',l:'📍 Localidad'},{k:'categorias',l:'🏷️ Categorías'},{k:'canal',l:'📡 Canal'}].map(tab=>(
                     <button key={tab.k} onClick={()=>setFVF('tabActiva',tab.k)}
                       className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${fVF.tabActiva===tab.k?'bg-blue-600 text-white':'text-gray-500 hover:bg-gray-100'}`}>
                       {tab.l}
@@ -18808,6 +18907,75 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         ))}
                         {!tCat.length&&<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>}
                       </div>
+                    </div>
+                  )}
+
+                  {fVF.tabActiva==='canal'&&(
+                    <div>
+                      <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">CANAL DE VENTA</h3>
+                      {tCanal.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos — registra el canal en las notas de entrega</p>:(
+                        <div className="flex items-center gap-8">
+                          {/* Donut SVG */}
+                          <div style={{position:'relative',width:280,height:280,flexShrink:0}}>
+                            <svg viewBox="0 0 340 340" style={{width:'100%',height:'100%'}}>
+                              {(()=>{
+                                const W=340,CX=170,CY=170,R=145,IR=75;
+                                const CANAL_COLORS={'DIGITAL':'#3b5bfa','TRADICIONAL':'#7c8bf5'};
+                                let ang=-90;
+                                return tCanal.map(([lbl,val],i)=>{
+                                  const pct=val/totCanal;const deg=pct*360;const end=ang+deg;
+                                  const rad=a=>a*Math.PI/180;
+                                  const P=(a,r)=>[CX+r*Math.cos(rad(a)),CY+r*Math.sin(rad(a))];
+                                  const[x1,y1]=P(ang,R),[x2,y2]=P(end,R),[ix1,iy1]=P(ang,IR),[ix2,iy2]=P(end,IR);
+                                  const lg=deg>180?1:0;
+                                  const path=`M${x1},${y1} A${R},${R} 0 ${lg},1 ${x2},${y2} L${ix2},${iy2} A${IR},${IR} 0 ${lg},0 ${ix1},${iy1}Z`;
+                                  const[lx,ly]=P(ang+deg/2,R*0.73);
+                                  const color=CANAL_COLORS[lbl]||CLRS[i%CLRS.length];
+                                  ang=end;
+                                  return (
+                                    <g key={lbl}>
+                                      <path d={path} fill={color} opacity={0.92}/>
+                                      {pct>0.04&&<text x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={11} fontWeight={900}>{(pct*100).toFixed(1)}%</text>}
+                                    </g>
+                                  );
+                                });
+                              })()}
+                            </svg>
+                          </div>
+                          {/* Legend + details */}
+                          <div className="flex-1 space-y-4">
+                            {tCanal.map(([lbl,val],i)=>{
+                              const CANAL_COLORS={'DIGITAL':'#3b5bfa','TRADICIONAL':'#7c8bf5'};
+                              const color=CANAL_COLORS[lbl]||CLRS[i%CLRS.length];
+                              const pct=(val/totCanal*100).toFixed(1);
+                              return (
+                                <div key={lbl} className="flex items-center gap-3">
+                                  <div style={{width:14,height:14,background:color,borderRadius:3,flexShrink:0}}/>
+                                  <div className="flex-1">
+                                    <div className="flex justify-between items-center mb-1">
+                                      <span className="text-xs font-black text-gray-800 uppercase">{lbl}</span>
+                                      <div className="text-right">
+                                        <div className="text-sm font-black text-gray-900">{fU(val)}</div>
+                                        <div className="text-[10px] text-gray-400">Cant: {formatNum(byCanalQ[lbl]||0)} unidades</div>
+                                      </div>
+                                    </div>
+                                    <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+                                      <div className="h-full rounded-full transition-all" style={{width:`${pct}%`,background:color}}/>
+                                    </div>
+                                    <div className="text-[9px] text-gray-400 mt-0.5">{pct}% del total</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            <div className="mt-4 pt-3 border-t border-gray-100">
+                              <div className="flex justify-between text-xs">
+                                <span className="font-black text-gray-500 uppercase">Total ventas</span>
+                                <span className="font-black text-gray-900">{fU(totCanal)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
