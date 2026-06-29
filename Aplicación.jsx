@@ -2590,54 +2590,114 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
         updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
       }));
       const prov=proveedores.find(p=>p.id===form.proveedorId);
-      // Retención IVA
-      if(form.aplicaRetIVA&&retIVA.monto>0){
-        const retId=`RET-IVA-${pId()}`;
-        batch.set(getDocRef('procura_ret_iva',retId),{
-          id:retId,nroComprobante:_nroCompIVA,
-          facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
-          proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
-          fechaFactura:form.fecha,fecha:getTodayDate(),
-          pctRetencion:form.pctRetIVA,
-          baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
-          monto:retIVA.monto,montoBs:retIVA.montoBs,
+      const _isEditMode=!!form.id;
+
+      if(_isEditMode){
+        // ── MODO EDICIÓN: actualizar comprobantes existentes sin cambiar nroComprobante ──
+        const [_eIVA,_eISLR]=await Promise.all([
+          getDocs(query(getColRef('procura_ret_iva'),where('facturaId','==',id))),
+          getDocs(query(getColRef('procura_ret_islr'),where('facturaId','==',id)))
+        ]);
+        const _updRet={nroFactura:form.nroFactura,nroControl:form.nroControl||'',
+          proveedor:form.proveedor,rifProveedor:prov?.rif||'',
+          fechaFactura:form.fecha,tasa:form.tasa,
           totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
-          exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
-          tasa:form.tasa,periodo:getPeriodo(),
-          status:'PENDIENTE',timestamp:Date.now()
+          exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',updatedAt:Date.now()};
+        // Actualizar ret IVA si existe
+        if(form.aplicaRetIVA&&retIVA.monto>0){
+          if(_eIVA.docs.length>0){
+            _eIVA.docs.forEach(d=>batch.update(d.ref,{..._updRet,
+              pctRetencion:pNum(form.pctRetIVA||75),
+              baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
+              monto:retIVA.monto,montoBs:retIVA.montoBs}));
+          } else {
+            // No existía antes, crear uno nuevo
+            const retId=`RET-IVA-${pId()}`;
+            batch.set(getDocRef('procura_ret_iva',retId),{
+              id:retId,nroComprobante:_nroCompIVA,facturaId:id,..._updRet,
+              pctRetencion:pNum(form.pctRetIVA||75),
+              baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
+              monto:retIVA.monto,montoBs:retIVA.montoBs,
+              fecha:getTodayDate(),periodo:getPeriodo(),status:'PENDIENTE',timestamp:Date.now()
+            });
+            await setDoc(getDocRef('settings','general'),{correlativoIVA:_seqIVA+1},{merge:true});
+          }
+        }
+        // Actualizar ret ISLR si existe
+        const _validISLR=retISLRLista.filter(r=>r.monto>0);
+        if(_validISLR.length>0&&_eISLR.docs.length>0){
+          _eISLR.docs.forEach((d,i)=>{
+            const r=_validISLR[i];
+            if(r) batch.update(d.ref,{..._updRet,
+              codConcepto:r.codigo,concepto:r.concepto||'',
+              tipoContrib:r.tipoContrib||'PJD',pct:r.pct,
+              baseImponibleBs:r.baseImponibleBs,sustraendoBs:r.sustraendoBs,
+              monto:r.monto,montoBs:r.montoBs,valorUT,periodo:getPeriodo()});
+          });
+        } else if(_validISLR.length>0&&_eISLR.docs.length===0){
+          // No existían antes, crear nuevos
+          _validISLR.forEach((r,i)=>{
+            const retId=`RET-ISLR-${pId()}`;
+            batch.set(getDocRef('procura_ret_islr',retId),{
+              id:retId,nroComprobante:_genNroISLR(i),facturaId:id,..._updRet,
+              codConcepto:r.codigo,concepto:r.concepto||'',
+              tipoContrib:r.tipoContrib||'PJD',pct:r.pct,
+              baseImponibleBs:r.baseImponibleBs,sustraendoBs:r.sustraendoBs,
+              monto:r.monto,montoBs:r.montoBs,valorUT,
+              fecha:getTodayDate(),periodo:getPeriodo(),status:'PENDIENTE',timestamp:Date.now()
+            });
+          });
+          await setDoc(getDocRef('settings','general'),{correlativoISLR:_seqISLR+_validISLR.length},{merge:true});
+        }
+      } else {
+        // ── MODO CREACIÓN: crear comprobantes nuevos con correlativo ──
+        if(form.aplicaRetIVA&&retIVA.monto>0){
+          const retId=`RET-IVA-${pId()}`;
+          batch.set(getDocRef('procura_ret_iva',retId),{
+            id:retId,nroComprobante:_nroCompIVA,
+            facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
+            proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
+            fechaFactura:form.fecha,fecha:getTodayDate(),
+            pctRetencion:pNum(form.pctRetIVA||75),
+            baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
+            monto:retIVA.monto,montoBs:retIVA.montoBs,
+            totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+            exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
+            tasa:form.tasa,periodo:getPeriodo(),
+            status:'PENDIENTE',timestamp:Date.now()
+          });
+        }
+        retISLRLista.forEach((r,i)=>{
+          if(r.monto<=0)return;
+          const retId=`RET-ISLR-${pId()}`;
+          batch.set(getDocRef('procura_ret_islr',retId),{
+            id:retId,nroComprobante:_genNroISLR(i),
+            facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
+            proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
+            fechaFactura:form.fecha,fecha:getTodayDate(),
+            codConcepto:r.codigo,concepto:r.concepto||'',
+            tipoContrib:r.tipoContrib||'PJD',
+            pct:r.pct,baseImponibleBs:r.baseImponibleBs,sustraendoBs:r.sustraendoBs,
+            monto:r.monto,montoBs:r.montoBs,
+            totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+            exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
+            valorUT,tasa:form.tasa,periodo:getPeriodo(),
+            status:'PENDIENTE',timestamp:Date.now()
+          });
         });
       }
-      // Retenciones ISLR — una por concepto
-      retISLRLista.forEach((r,i)=>{
-        if(r.monto<=0)return;
-        const retId=`RET-ISLR-${pId()}`;
-        batch.set(getDocRef('procura_ret_islr',retId),{
-          id:retId,nroComprobante:_genNroISLR(i),
-          facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
-          proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
-          fechaFactura:form.fecha,fecha:getTodayDate(),
-          codConcepto:r.codigo,concepto:r.concepto||'',
-          tipoContrib:r.tipoContrib||'PJD',
-          pct:r.pct,
-          baseImponibleBs:r.baseImponibleBs,
-          sustraendoBs:r.sustraendoBs,
-          monto:r.monto,montoBs:r.montoBs,
-          totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
-          exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
-          valorUT,tasa:form.tasa,periodo:getPeriodo(),
-          status:'PENDIENTE',timestamp:Date.now()
-        });
-      });
       await batch.commit();
       const nISLR=retISLRLista.filter(r=>r.monto>0).length;
-      // Incrementar correlativos en settings
-      const _incr={};
-      if(form.aplicaRetIVA&&retIVA.monto>0) _incr.correlativoIVA=_seqIVA+1;
-      if(nISLR>0) _incr.correlativoISLR=_seqISLR+nISLR;
-      if(Object.keys(_incr).length>0) await setDoc(getDocRef('settings','general'),_incr,{merge:true});
+      // Incrementar correlativos solo en creación (no en edición)
+      if(!_isEditMode){
+        const _incr={};
+        if(form.aplicaRetIVA&&retIVA.monto>0) _incr.correlativoIVA=_seqIVA+1;
+        if(nISLR>0) _incr.correlativoISLR=_seqISLR+nISLR;
+        if(Object.keys(_incr).length>0) await setDoc(getDocRef('settings','general'),_incr,{merge:true});
+      }
       setModal(null);
-      setDialog({title:'✅ Factura registrada',
-        text:`Factura ${form.nroFactura} guardada${form.aplicaRetIVA&&retIVA.monto>0?' · Ret. IVA generada':''}${nISLR>0?` · ${nISLR} Ret. ISLR generadas`:''}.`,
+      setDialog({title:_isEditMode?'✅ Factura actualizada':'✅ Factura registrada',
+        text:`Factura ${form.nroFactura} ${_isEditMode?'actualizada correctamente.':'guardada'+((form.aplicaRetIVA&&retIVA.monto>0)?' · Ret. IVA '+(_isEditMode?'actualizada':'generada'):'')+((nISLR>0)?` · ${nISLR} Ret. ISLR ${_isEditMode?'actualizadas':'generadas'}`:'')+'.'}`  ,
         type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -2724,8 +2784,15 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
 
   // ── Eliminar factura (con clave admin) ────────────────────────────
   const confirmarEliminarFactura=async(f,pwd)=>{
-    const pwdValida=pwd===ADMIN_PASSWORD;
-    if(!pwdValida){setDialog({title:'Clave incorrecta',text:'La clave de administrador no es válida.',type:'alert'});return;}
+    try{
+      const usersSnap=await getDocs(getColRef('users'));
+      const users=usersSnap.docs.map(d=>d.data());
+      const adminUser=users.find(u=>u.role==='Master'||u.username==='admin');
+      const validPwd=adminUser?.password||ADMIN_PASSWORD;
+      if(pwd!==validPwd){setDialog({title:'Clave incorrecta',text:'La clave de administrador no es válida.',type:'alert'});return;}
+    }catch(_e){
+      if(pwd!==ADMIN_PASSWORD){setDialog({title:'Clave incorrecta',text:'La clave de administrador no es válida.',type:'alert'});return;}
+    }
     const pagosAsociados=(pagosCxP||[]).filter(p=>p.facturaId===f.id);
     const ejecutarDelete=async()=>{
       try{
