@@ -3867,7 +3867,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 5: CUENTAS POR PAGAR (CxP)
 // ══════════════════════════════════════════════════════════════════════
-const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog}) => {
+const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,settings,dialog,setDialog}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [expanded,setExpanded]=useState(new Set());
@@ -4013,7 +4013,11 @@ ${provRows}
   <span style="color:#f97316">$${fmtN(grandTotal)}</span>
 </div>
 <script>window.onload=()=>window.print();<\/script></body></html>`;
-    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+    try{
+      const w=window.open('','_blank');
+      if(w){w.document.write(html);w.document.close();}
+      else alert('Activa las ventanas emergentes para este sitio en el navegador.');
+    }catch(err){alert('Error al generar PDF: '+err.message);}
   };
 
   // ── REGISTRAR PAGO ─────────────────────────────────────────────────
@@ -21195,6 +21199,73 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           const totalFact=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
           const totalSaldo=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+getSaldoNE(ne),0),0);
           const totalCobrado=totalFact-totalSaldo;
+
+          const exportarECPDF=()=>{
+            const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+            const rifEmp=settings?.empresaRif||'J-41230937-4';
+            const fmtN2=n=>formatNum(parseNum(n||0));
+            let bodyHtml='';
+            cliList.forEach(cl=>{
+              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0);
+              const facturadoCl=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
+              const cobradoCl=facturadoCl-saldoCl;
+              let neRowsHtml='';
+              cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
+                const sNE=getSaldoNE(ne);
+                const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                const invV=(invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
+                const fiscalNum=invV?String(invV.nroFiscal||invV.documento||'—').padStart(8,'0'):'—';
+                neRowsHtml+=`<tr style="border-bottom:1px solid #e5e7eb;${sNE<0.01?'background:#f0fdf4':''}">
+                  <td style="padding:3px 6px;color:#f97316;font-weight:700;font-size:9px">${ne.documento||ne.id}</td>
+                  <td style="padding:3px 6px;font-size:9px">${ne.fecha||'—'}</td>
+                  <td style="padding:3px 6px;font-size:9px;color:#2563eb">${fiscalNum}</td>
+                  <td style="padding:3px 6px;font-size:9px;max-width:180px;overflow:hidden">${(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
+                  <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fmtN2(ne.total||ne.montoBase)}</td>
+                  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#16a34a;font-size:9px">$${fmtN2(cobNE)}</td>
+                  <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;color:${sNE<0.01?'#16a34a':'#dc2626'};font-size:9px">$${fmtN2(sNE)}</td>
+                  <td style="padding:3px 6px;font-size:8px;text-align:center;font-weight:900;color:${sNE<0.01?'#16a34a':'#dc2626'}">${sNE<0.01?'Saldado':'Pendiente'}</td>
+                </tr>`;
+              });
+              bodyHtml+=`<div style="margin-bottom:12px;page-break-inside:avoid">
+                <div style="background:#1e293b;color:#fff;padding:6px 12px;display:flex;justify-content:space-between">
+                  <div><strong style="font-size:10px">${cl.clientName}</strong> <span style="color:#94a3b8;font-size:8px">${cl.clientRif||''}</span></div>
+                  <div><span style="font-family:monospace;color:#f97316;font-weight:900">$${fmtN2(saldoCl)}</span></div>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:9px">
+                  <thead><tr style="background:#0f172a">
+                    <th style="padding:3px 6px;text-align:left;font-size:7px;color:#f97316">DOCUMENTO</th>
+                    <th style="padding:3px 6px;font-size:7px;color:#f97316">FECHA</th>
+                    <th style="padding:3px 6px;font-size:7px;color:#f97316">DOC. FISCAL</th>
+                    <th style="padding:3px 6px;font-size:7px;color:#f97316">DETALLE</th>
+                    <th style="padding:3px 6px;text-align:right;font-size:7px;color:#f97316">TOTAL USD</th>
+                    <th style="padding:3px 6px;text-align:right;font-size:7px;color:#f97316">COBRADO</th>
+                    <th style="padding:3px 6px;text-align:right;font-size:7px;color:#f97316">SALDO</th>
+                    <th style="padding:3px 6px;font-size:7px;color:#f97316">ESTADO</th>
+                  </tr></thead>
+                  <tbody>${neRowsHtml}</tbody>
+                  <tfoot><tr style="background:#1e293b;color:#fff">
+                    <td colspan="4" style="padding:3px 8px;font-size:8px;font-weight:900">Subtotal ${cl.nes.length} doc(s)</td>
+                    <td style="padding:3px 8px;text-align:right;font-family:monospace;font-weight:900">$${fmtN2(facturadoCl)}</td>
+                    <td style="padding:3px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fmtN2(cobradoCl)}</td>
+                    <td style="padding:3px 8px;text-align:right;font-family:monospace;color:#f97316;font-weight:900">$${fmtN2(saldoCl)}</td>
+                    <td></td>
+                  </tr></tfoot>
+                </table>
+              </div>`;
+            });
+            const html='<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:A4 landscape;margin:1.2cm}body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>'
+              +'<div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">'
+              +'<div><div style="font-size:14px;font-weight:900">'+emp+'</div><div style="font-size:8px">RIF: '+rifEmp+'</div></div>'
+              +'<div style="text-align:right"><div style="font-size:12px;font-weight:900;color:#f97316">CUENTAS POR COBRAR — ESTADO DE CUENTA</div>'
+              +'<div style="font-size:8px">Corte: '+getTodayDate()+' · '+cliList.length+' clientes · Saldo: $'+fmtN2(totalSaldo)+'</div></div></div>'
+              +bodyHtml
+              +'<script>window.onload=function(){window.print();}<\/script></body></html>';
+            try{
+              const w=window.open('','_blank');
+              if(w){w.document.write(html);w.document.close();}
+              else alert('Activa las ventanas emergentes para este sitio.');
+            }catch(e){alert('Error PDF: '+e.message);}
+          };
           return (
             <div className="p-4 space-y-4">
               <div className="bg-white rounded-2xl border border-gray-100 p-4">
@@ -21230,11 +21301,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-1">
                   ▲ Contraer todo
                 </button>
-                <button onClick={()=>exportarPDF('cxc')} className="flex items-center gap-1.5 px-4 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all">
+                <button onClick={exportarECPDF} className="flex items-center gap-1.5 px-4 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all">
                   <FileText size={11}/> PDF
-                </button>
-                <button onClick={()=>exportarExcel('cxc')} className="flex items-center gap-1.5 px-4 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all">
-                  <Download size={11}/> Excel
                 </button>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
