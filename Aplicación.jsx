@@ -21160,8 +21160,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const _invNEfiscal=(_invNEtasa?.nroFiscal||'').toString().replace(/^0+/,'').trim();
             const _neClientRif=(ne.clientRif||'').trim();
             const ret=(retenciones||[]).filter(r=>{
+              // Regla 1: enlace directo
               if(r.neId===ne.id||r.neOrigen===ne.id) return true;
-              // Via nroFiscal del invoice de la NE + RIF del cliente (ambos obligatorios)
+              // Regla 2: facturaId→invoice→nroFiscal===nroFiscal de esta NE + RIF del cliente
+              if(r.facturaId&&_invNEfiscal&&_neClientRif){
+                const rInvF=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+                if(rInvF){
+                  const rf=(rInvF.nroFiscal||'').toString().replace(/^0+/,'').trim();
+                  const rr=(rInvF.clientRif||r.clientRif||'').trim();
+                  if(rf===_invNEfiscal&&rr===_neClientRif) return true;
+                }
+              }
+              // Regla 3: r.nroFactura directo + RIF (retenciones manuales)
               if(_invNEfiscal&&_neClientRif){
                 const rFact=(r.nroFactura||r._manualNroFiscal||'').toString().replace(/^0+/,'').trim();
                 const rRif=(r._manualRif||r.clientRif||'').trim();
@@ -21366,7 +21376,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const _r2Fiscal=(invV2?.nroFiscal||'').toString().replace(/^0+/,'').trim();
                             const _r2Rif=(ne.clientRif||'').trim();
                             const retsNE2=(retenciones||[]).filter(r=>{
+                              // Regla 1: enlace directo neId
                               if(r.neId===ne.id||r.neOrigen===ne.id) return true;
+                              // Regla 2: facturaId → invoice.nroFiscal === nroFiscal de esta NE + RIF del cliente
+                              if(r.facturaId&&_r2Fiscal&&_r2Rif){
+                                const retInv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+                                if(retInv){
+                                  const rf=(retInv.nroFiscal||'').toString().replace(/^0+/,'').trim();
+                                  const rr=(retInv.clientRif||r.clientRif||'').trim();
+                                  if(rf===_r2Fiscal&&rr===_r2Rif) return true;
+                                }
+                              }
+                              // Regla 3: r.nroFactura directo + RIF (retenciones manuales)
                               if(_r2Fiscal&&_r2Rif){
                                 const rFact=(r.nroFactura||r._manualNroFiscal||'').toString().replace(/^0+/,'').trim();
                                 const rRif=(r._manualRif||r.clientRif||'').trim();
@@ -21396,21 +21417,27 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                     : <span className="flex items-center gap-1">
                                         <span className="text-amber-600">↳ ⚠️ Sin N° Fiscal</span>
                                         <input
-                                          className="border border-amber-300 rounded px-1.5 py-0.5 text-[9px] font-mono outline-none focus:border-orange-500 w-24 bg-white"
+                                          id={`nf-${invV2.id}`}
+                                          className="border border-amber-300 rounded px-1.5 py-0.5 text-[9px] font-mono outline-none focus:border-orange-500 w-28 bg-white"
                                           placeholder="ej: 00002991"
-                                          onBlur={async(e)=>{
+                                          onKeyDown={e=>{if(e.key==='Enter'){
                                             const v=(e.target.value||'').trim();
-                                            if(v&&v.length>0){
-                                              try{
-                                                // setDoc merge: funciona si el documento existe o no
-                                                const _invDoc=getDocRef('invoices',invV2.id);
-                                                await setDoc(_invDoc,{nroFiscal:v,updatedAt:Date.now()},{merge:true});
-                                                e.target.style.borderColor='#16a34a';
-                                              }catch(ex){alert('Error: '+ex.message);}
-                                            }
-                                          }}
-                                          onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                                            if(!v)return;
+                                            setDoc(getDocRef('invoices',invV2.id),{nroFiscal:v,updatedAt:Date.now()},{merge:true})
+                                              .then(()=>{e.target.style.borderColor='#16a34a';alert('✅ N° Fiscal guardado: '+v+'. Si hay retenciones vinculadas aparecerán automáticamente.');})
+                                              .catch(ex=>alert('Error: '+ex.message));
+                                          }}}
                                         />
+                                        <button
+                                          className="px-1.5 py-0.5 bg-amber-500 text-white text-[8px] font-black rounded hover:bg-amber-600"
+                                          onClick={()=>{
+                                            const inp=document.getElementById('nf-'+invV2.id);
+                                            const v=(inp?.value||'').trim();
+                                            if(!v){alert('Ingresa el número fiscal primero.');return;}
+                                            setDoc(getDocRef('invoices',invV2.id),{nroFiscal:v,updatedAt:Date.now()},{merge:true})
+                                              .then(()=>{if(inp)inp.style.borderColor='#16a34a';alert('✅ N° Fiscal guardado: '+v+'. Si hay retenciones vinculadas aparecerán automáticamente.');})
+                                              .catch(ex=>alert('Error: '+ex.message));
+                                          }}>✓</button>
                                       </span>
                                   }
                                 </td>
