@@ -2313,6 +2313,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
   const [tab,setTab]=useState('datos');
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
   const [servicios,setServicios]=useState([]);
+  const [pendingDeleteFact,setPendingDeleteFact]=useState(null);
+  const [factDelPwd,setFactDelPwd]=useState('');
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
@@ -2646,6 +2648,108 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
     return`${q} ${d.toLocaleString('es-VE',{month:'long'})} ${d.getFullYear()}`;
   };
 
+  // ── PDF de factura de compra ──────────────────────────────────────
+  const imprimirFacturaPDF=(f)=>{
+    const fV=n=>{const a=Math.abs(pNum(n)||0);const p=a.toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
+    const fD=d=>{if(!d)return'—';const[y,m,dd]=d.split('-');return`${dd}/${m}/${y}`;};
+    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rif=settings?.empresaRif||'J-41230937-4';
+    const dir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9';
+    const items=(f.itemsOC||[]);
+    const tot=f.totales||{};
+    const retIVAData=f.retIVA||null;
+    const retISLRData=f.retISLRLista||[];
+    const itemRows=items.length>0?items.map(it=>`<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:5px 8px;font-weight:700;color:#f97316">${it.codigo||it.descripcion||'—'}</td>
+      <td style="padding:5px 8px">${it.descripcion||it.nombre||'—'}</td>
+      <td style="padding:5px 8px;text-align:center">${it.cantidad||0}</td>
+      <td style="padding:5px 8px;text-align:center">${it.unidad||'und'}</td>
+      <td style="padding:5px 8px;text-align:right;font-family:monospace">${fV(it.precioUnit||0)}</td>
+      <td style="padding:5px 8px;text-align:right;font-family:monospace;font-weight:700">${fV(it.total||0)}</td>
+      <td style="padding:5px 8px;text-align:center;font-size:9px">${it.iva==='GRAVADO'?'16%':it.iva==='GRAVADO8'?'8%':'Exento'}</td>
+    </tr>`).join(''):`<tr><td colspan="7" style="padding:12px;text-align:center;color:#94a3b8">Sin ítems registrados</td></tr>`;
+
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <style>@page{size:A4;margin:1.5cm}body{font-family:Arial,sans-serif;font-size:9px;color:#111}table{border-collapse:collapse;width:100%}
+    th{background:#0f172a;color:#fff;padding:5px 8px;text-align:left;font-size:8px;text-transform:uppercase}
+    .sec{background:#f8fafc;border-left:3px solid #f97316;padding:4px 8px;font-weight:900;font-size:8px;text-transform:uppercase;margin:10px 0 4px}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.lbl{font-size:7px;color:#64748b;display:block}.val{font-weight:700;font-size:9px}
+    .tot{background:#0f172a;color:#fff;padding:8px 12px;margin-top:8px;border-radius:4px}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
+    <table style="margin-bottom:12px;border:none"><tr>
+      <td style="border:none;width:60%"><div style="font-size:13px;font-weight:900">${emp}</div><div>RIF: ${rif}</div><div style="color:#64748b">${dir}</div></td>
+      <td style="border:none;text-align:right"><div style="font-size:10px;font-weight:900;color:#f97316">FACTURA DE COMPRA</div>
+        <div style="font-size:14px;font-weight:900">${f.nroFactura||'—'}</div>
+        <div>N° Control: ${f.nroControl||'—'}</div>
+        <div>Fecha: ${fD(f.fecha)}</div>
+        <div style="color:${f.afectaLibroCompras!==false?'#16a34a':'#94a3b8'};font-weight:700;font-size:8px">${f.afectaLibroCompras!==false?'✓ Afecta Libro de Compras':'No afecta Libro de Compras'}</div>
+      </td>
+    </tr></table>
+    <div class="sec">Proveedor</div>
+    <div class="row2" style="border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:8px">
+      <div><span class="lbl">Razón Social</span><span class="val">${f.proveedor||'—'}</span></div>
+      <div><span class="lbl">Tasa BCV (Bs/$)</span><span class="val">${fV(f.tasa||0)}</span></div>
+      <div><span class="lbl">Forma de pago</span><span class="val">${f.condPago||f.moneda||'—'}</span></div>
+      <div><span class="lbl">OC Relacionada</span><span class="val">${f.ocId||'—'}</span></div>
+    </div>
+    <div class="sec">Detalle de ítems</div>
+    <table style="margin-bottom:8px"><thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>Unidad</th><th style="text-align:right">P. Unit.</th><th style="text-align:right">Total USD</th><th>IVA</th></tr></thead>
+    <tbody>${itemRows}</tbody></table>
+    <div class="sec">Totales</div>
+    <table style="width:40%;margin-left:auto;border:1px solid #e2e8f0;border-radius:4px">
+      <tr><td style="padding:4px 10px">Subtotal</td><td style="padding:4px 10px;text-align:right;font-family:monospace">$ ${fV(tot.sub||f.montoBase||0)}</td></tr>
+      ${(tot.iva16||0)>0?`<tr><td style="padding:4px 10px">IVA 16%</td><td style="padding:4px 10px;text-align:right;font-family:monospace">$ ${fV(tot.iva16||0)}</td></tr>`:''}
+      ${(tot.iva8||0)>0?`<tr><td style="padding:4px 10px">IVA 8%</td><td style="padding:4px 10px;text-align:right;font-family:monospace">$ ${fV(tot.iva8||0)}</td></tr>`:''}
+      ${(tot.exento||0)>0?`<tr><td style="padding:4px 10px">Exento</td><td style="padding:4px 10px;text-align:right;font-family:monospace">$ ${fV(tot.exento||0)}</td></tr>`:''}
+      <tr style="background:#1e293b;color:#fff"><td style="padding:5px 10px;font-weight:900">TOTAL USD</td><td style="padding:5px 10px;text-align:right;font-family:monospace;font-weight:900">$ ${fV(f.total||tot.totalUSD||0)}</td></tr>
+      ${pNum(f.tasa||0)>0?`<tr style="background:#1e3a5f;color:#93c5fd"><td style="padding:5px 10px;font-weight:900">TOTAL Bs.</td><td style="padding:5px 10px;text-align:right;font-family:monospace;font-weight:900">Bs. ${fV(f.totalBs||0)}</td></tr>`:''}
+    </table>
+    ${retIVAData?`<div class="sec" style="border-color:#dc2626">Retención IVA</div>
+    <table style="width:50%;border:1px solid #fee2e2;border-radius:4px;margin-bottom:8px">
+      <tr><td style="padding:3px 8px">Base IVA (Bs.)</td><td style="padding:3px 8px;text-align:right;font-family:monospace">Bs. ${fV(retIVAData.ivaBaseBs||0)}</td></tr>
+      <tr><td style="padding:3px 8px">% Retención</td><td style="padding:3px 8px;text-align:right;font-weight:700">${pNum(retIVAData.pct||75)}%</td></tr>
+      <tr style="background:#fef2f2"><td style="padding:3px 8px;font-weight:700;color:#dc2626">Ret. IVA Bs.</td><td style="padding:3px 8px;text-align:right;font-family:monospace;font-weight:700;color:#dc2626">Bs. ${fV(retIVAData.montoBs||0)}</td></tr>
+    </table>`:''}
+    ${retISLRData.length>0?`<div class="sec" style="border-color:#7c3aed">Retenciones ISLR</div>
+    <table style="width:70%;border:1px solid #ede9fe;border-radius:4px;margin-bottom:8px">
+      <thead><tr><th style="background:#4c1d95">Concepto</th><th style="background:#4c1d95;text-align:right">Monto Bs.</th></tr></thead>
+      <tbody>${retISLRData.map(r=>`<tr><td style="padding:3px 8px">${r.codigo||''} — ${r.concepto||''}</td><td style="padding:3px 8px;text-align:right;font-family:monospace;font-weight:700;color:#7c3aed">Bs. ${fV(r.montoBs||0)}</td></tr>`).join('')}</tbody>
+    </table>`:''}
+    <div class="tot" style="width:50%;margin-left:auto"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Neto a pagar:</span><span style="font-family:monospace;color:#f97316;font-size:12px;font-weight:900">$ ${fV(f.netoPagar||f.total||0)}</span></div>
+    ${pNum(f.tasa||0)>0?`<div style="display:flex;justify-content:space-between"><span>Neto Bs.:</span><span style="font-family:monospace;color:#93c5fd">Bs. ${fV(f.netoPagarBs||0)}</span></div>`:''}</div>
+    <div style="margin-top:16px;text-align:center;font-size:7px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px">Supply ERP · ${emp} · Generado: ${new Date().toLocaleDateString('es-VE')}</div>
+    <script>window.onload=()=>window.print();<\/script></body></html>`;
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  // ── Eliminar factura (con clave admin) ────────────────────────────
+  const confirmarEliminarFactura=async(f,pwd)=>{
+    const pwdValida=pwd===ADMIN_PASSWORD;
+    if(!pwdValida){setDialog({title:'Clave incorrecta',text:'La clave de administrador no es válida.',type:'alert'});return;}
+    const pagosAsociados=(pagosCxP||[]).filter(p=>p.facturaId===f.id);
+    const ejecutarDelete=async()=>{
+      try{
+        const [snapIVA,snapISLR]=await Promise.all([
+          getDocs(query(getColRef('procura_ret_iva'),where('facturaId','==',f.id))),
+          getDocs(query(getColRef('procura_ret_islr'),where('facturaId','==',f.id)))
+        ]);
+        const batch=writeBatch(db);
+        batch.delete(getDocRef('procura_facturas_compra',f.id));
+        snapIVA.forEach(d=>batch.delete(d.ref));
+        snapISLR.forEach(d=>batch.delete(d.ref));
+        pagosAsociados.forEach(p=>batch.delete(getDocRef('procura_pagos_cxp',p.id)));
+        await batch.commit();
+        setPendingDeleteFact(null);setFactDelPwd('');
+        setDialog({title:'✅ Eliminada',text:`Factura ${f.nroFactura} eliminada junto con sus comprobantes y pagos.`,type:'alert'});
+      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+    };
+    if(pagosAsociados.length>0){
+      setDialog({title:'⚠️ Pagos registrados',text:`Esta factura tiene ${pagosAsociados.length} pago(s) registrado(s) por $${pFmt(pagosAsociados.reduce((s,p)=>s+pNum(p.monto),0))}. ¿Eliminar igualmente?`,type:'confirm',onConfirm:ejecutarDelete});
+    } else {
+      setDialog({title:'¿Eliminar factura?',text:`Se eliminará definitivamente la factura ${f.nroFactura} y todos sus comprobantes de retención. ¿Confirmar?`,type:'confirm',onConfirm:ejecutarDelete});
+    }
+  };
+
   const filtradas=facturasCompra.filter(f=>{
     const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
     const st=filtStatus==='TODOS'||f.status===filtStatus;
@@ -2730,8 +2834,14 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
                     <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600'}>{fmtN(f.netoPagar||f.saldoPendiente||0)}</span></PTd>
                     <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
                     <PTd>
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 flex-wrap">
                         <PBp sm onClick={()=>{setForm({...f});setTab('datos');setModal('form');}}><Edit size={11}/></PBp>
+                        <PBp sm onClick={()=>imprimirFacturaPDF(f)} title="PDF Factura"><Printer size={11}/></PBp>
+                        <button onClick={()=>{setPendingDeleteFact(f);setFactDelPwd('');}}
+                          className="flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all"
+                          title="Eliminar (requiere clave admin)">
+                          <Trash2 size={10}/>
+                        </button>
                       </div>
                     </PTd>
                   </tr>
@@ -2741,6 +2851,47 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
           </table>
         </div>
       </PCard>
+
+      {/* ── Modal Eliminar Factura — requiere clave admin ── */}
+      {pendingDeleteFact&&(
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0"><Trash2 size={18} className="text-red-600"/></div>
+              <div>
+                <h3 className="font-black text-gray-900 text-sm uppercase">Eliminar Factura</h3>
+                <p className="text-[10px] text-gray-500 mt-0.5">{pendingDeleteFact.nroFactura} · {pendingDeleteFact.proveedor}</p>
+              </div>
+            </div>
+            <div className="bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
+              <p className="text-[10px] text-red-700 font-bold">⚠️ Esta acción eliminará permanentemente:</p>
+              <ul className="text-[10px] text-red-600 mt-1 space-y-0.5 list-disc pl-4">
+                <li>La factura de compra</li>
+                <li>Comprobantes de retención IVA e ISLR asociados</li>
+                <li>Pagos CxP asociados (si los hubiere)</li>
+              </ul>
+            </div>
+            <div className="mb-4">
+              <label className="text-[10px] font-black text-gray-500 uppercase block mb-1.5">🔐 Clave de Administrador</label>
+              <input type="password" autoFocus
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold outline-none focus:border-red-400 tracking-widest"
+                placeholder="Ingresa la clave admin"
+                value={factDelPwd}
+                onChange={e=>setFactDelPwd(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter')confirmarEliminarFactura(pendingDeleteFact,factDelPwd);}}
+              />
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={()=>{setPendingDeleteFact(null);setFactDelPwd('');}}
+                className="px-5 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-black uppercase hover:bg-gray-50">Cancelar</button>
+              <button onClick={()=>confirmarEliminarFactura(pendingDeleteFact,factDelPwd)}
+                className="px-5 py-2.5 bg-red-600 text-white rounded-xl text-xs font-black uppercase hover:bg-red-700 flex items-center gap-2">
+                <Trash2 size={13}/> Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ MODAL FACTURA COMPLETO ═══ */}
       {modal==='form'&&(
@@ -4801,6 +4952,8 @@ function App() {
   const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
+  const [cxcEditCobro, setCxcEditCobro] = useState(null); // cobro en edición
+  const [cxcEditForm, setCxcEditForm] = useState({});
   const [showNewCotizPanel, setShowNewCotizPanel] = useState(false);
   const [editingCotizId, setEditingCotizId] = useState(null);
   const initialCotizForm = { fecha: '', clientRif: '', clientName: '', documento: '', descripcion: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', validez: '15', condicionId: '', observaciones: '', condicionPago: 'CONTADO', diasCredito: '', porcentajeAnticipo: '', tiempoEntrega: '', formaPago: 'BS A TASA BCV' };
@@ -19151,6 +19304,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             ?(cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)&&(c.clientName===clienteActivoData.clientName)).reduce((s,c)=>s+parseNum(c.monto||0),0)
             :cobradoMes;
 
+          // Total cobrado histórico (todos los cobros, con filtro de cliente si aplica)
+          const cobradoHistoricoFilt = clienteActivoData
+            ?(cobrosCxc||[]).filter(c=>c.clientName===clienteActivoData.clientName).reduce((s,c)=>s+parseNum(c.monto||0),0)
+            :(cobrosCxc||[]).reduce((s,c)=>s+parseNum(c.monto||0),0);
+
+
+          // ── GUARDAR COBRO            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          };
+
           // ── GUARDAR COBRO ──────────────────────────────────────────────
           const guardarCobro=async()=>{
             const m=cxcCobroModal;
@@ -20022,6 +20184,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 {[
                   {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
                   {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
+                  {l:'Cobrado histórico',v:`$${formatNum(cobradoHistoricoFilt)}`,s:`${(cobrosCxc||[]).length} cobros en total`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
                   {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
                 ].map((m,i)=>(
                   <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
@@ -20455,6 +20618,13 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                   className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                                   🖨 PDF
                                 </button>
+                                <button onClick={()=>{
+                                  setCxcEditCobro(cb);
+                                  setCxcEditForm({fecha:cb.fecha||'',metodo:cb.metodo||'',referencia:cb.referencia||'',cuentaBancoNombre:cb.cuentaBancoNombre||'',monto:String(cb.monto||''),montoBs:String(cb.montoBs||''),moneda:cb.moneda||'USD',tipo:cb.tipo||'Pago'});
+                                }} title="Editar cobro"
+                                  className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
+                                  ✏️ Editar
+                                </button>
                                 <button onClick={()=>reversarCobro(cb)} title="Reversar cobro"
                                   className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                                   ↩ Reversar
@@ -20708,6 +20878,104 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             </div>
           );
         })()}
+        {/* ── Modal Editar Cobro ─────────────────────────────────── */}
+        {cxcEditCobro&&(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.55)'}}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <div>
+                  <h3 className="font-black text-gray-900 uppercase tracking-wide">Editar Cobro</h3>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{cxcEditCobro.neDocumento||cxcEditCobro.neId||'—'} · {cxcEditCobro.clientName||'—'}</p>
+                </div>
+                <button onClick={()=>setCxcEditCobro(null)} className="p-2 hover:bg-gray-100 rounded-xl"><X size={16}/></button>
+              </div>
+              <div className="p-6 grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Fecha</label>
+                  <input type="date" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.fecha||''} onChange={e=>setCxcEditForm(f=>({...f,fecha:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Monto USD *</label>
+                  <input type="number" step="0.01" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.monto||''} onChange={e=>setCxcEditForm(f=>({...f,monto:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Monto Bs.</label>
+                  <input type="number" step="0.01" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.montoBs||''} onChange={e=>setCxcEditForm(f=>({...f,montoBs:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Moneda</label>
+                  <select className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.moneda||'USD'} onChange={e=>setCxcEditForm(f=>({...f,moneda:e.target.value}))}>
+                    <option value="USD">USD</option><option value="Bs">Bs</option><option value="EUR">EUR</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Tipo</label>
+                  <select className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.tipo||'Pago'} onChange={e=>setCxcEditForm(f=>({...f,tipo:e.target.value}))}>
+                    <option value="Pago">Pago completo</option><option value="Abono">Abono parcial</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Método</label>
+                  <select className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.metodo||''} onChange={e=>setCxcEditForm(f=>({...f,metodo:e.target.value}))}>
+                    {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Débito'].map(m=><option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">N° Referencia</label>
+                  <input className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.referencia||''} onChange={e=>setCxcEditForm(f=>({...f,referencia:e.target.value.toUpperCase()}))}/>
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta / Banco</label>
+                  <input className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.cuentaBancoNombre||''} onChange={e=>setCxcEditForm(f=>({...f,cuentaBancoNombre:e.target.value}))}/>
+                </div>
+              </div>
+              <div className="px-6 pb-5 flex justify-end gap-3">
+                <button onClick={()=>setCxcEditCobro(null)} className="px-5 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-black uppercase hover:bg-gray-50">Cancelar</button>
+                <button onClick={async()=>{
+                  if(!cxcEditCobro||parseNum(cxcEditForm.monto||0)<=0)return;
+                  try{
+                    const montoNuevo=parseNum(cxcEditForm.monto||0);
+                    const montoAnterior=parseNum(cxcEditCobro.monto||0);
+                    const batch=writeBatch(db);
+                    batch.update(getDocRef('cobros_cxc',cxcEditCobro.id),{
+                      fecha:cxcEditForm.fecha||cxcEditCobro.fecha,
+                      metodo:cxcEditForm.metodo||cxcEditCobro.metodo,
+                      referencia:(cxcEditForm.referencia||'').toUpperCase(),
+                      cuentaBancoNombre:cxcEditForm.cuentaBancoNombre||'',
+                      monto:montoNuevo,montoBs:parseNum(cxcEditForm.montoBs||0),
+                      moneda:cxcEditForm.moneda||'USD',tipo:cxcEditForm.tipo||'Pago',
+                      updatedAt:Date.now()
+                    });
+                    if(Math.abs(montoNuevo-montoAnterior)>0.001){
+                      const ne=(notasEntrega||[]).find(n=>n.id===cxcEditCobro.neId);
+                      if(ne){
+                        const cobrosRest=(cobrosCxc||[]).filter(c=>c.neId===cxcEditCobro.neId&&c.id!==cxcEditCobro.id);
+                        const totCob=cobrosRest.reduce((s,c)=>s+parseNum(c.monto||0),0)+montoNuevo;
+                        const totNE=parseNum(ne.total||ne.totalUSD||0);
+                        const totNC=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return ni===ne.id||no===ne.id;}).reduce((s,n)=>s+parseNum(n.montoUSD||0),0);
+                        const totRet=(retenciones||[]).filter(r=>r.neId===ne.id||r.facturaId===ne.facturaId).reduce((s,r)=>s+parseNum(r.montoRetenidoUSD||r.montoRetenido||0)/Math.max(parseNum(r.tasa||1),1),0);
+                        const nuevoSaldo=Math.max(0,totNE-totNC-totRet-totCob);
+                        const st=totCob<0.01?'PENDIENTE':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
+                        batch.update(getDocRef('notasEntrega',ne.id),{statusCxC:st,montoCobrado:totCob,saldoPendiente:nuevoSaldo,updatedAt:Date.now()});
+                      }
+                    }
+                    await batch.commit();
+                    setCxcEditCobro(null);
+                    setDialog({title:'✅ Cobro actualizado',text:'Cobro actualizado correctamente.',type:'alert'});
+                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                }} className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600 flex items-center gap-2"><Save size={14}/> Guardar cambios</button>
+              </div>
+            </div>
+          </div>
+        )}
         {ventasView === 'libro_ventas' && (() => {          // ── helpers de formato venezolano ─────────────────────────────────────
           const fmtVen = n => {
             const parts = Math.abs(parseNum(n)||0).toFixed(2).split('.');
