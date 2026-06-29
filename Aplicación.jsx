@@ -3932,14 +3932,18 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
       const factRows=g.facturas.map(f=>{
         const pagos=pagosPorFactura[f.id]||[];
         const totalPag=pagos.reduce((s,p)=>s+pNum(p.monto||0),0);
+        const _tasaF=Math.max(pNum(f.tasa||0)||tasaBCV||1,1);
         const retBs=pNum(f.retIVA?.montoBs||0);
-        const retUSD=retBs>0?retBs/Math.max(pNum(f.tasa||0)||tasaBCV||1,1):0;
+        const retIVApdf=retBs>0?retBs/_tasaF:0;
+        const retISLRpdf=(f.retISLRLista||[]).reduce((s,r)=>s+pNum(r.monto||0),0);
+        const retUSD=retIVApdf+retISLRpdf;
+        const _diasC=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
         const diasV=diasVencidos(f);
         return `<tr style="border-bottom:1px solid #e5e7eb">
   <td style="padding:3px 6px;color:#f97316;font-weight:700;font-size:9px">${f.nroFactura||'—'}</td>
   <td style="padding:3px 6px;font-size:9px">${fD(f.fecha)}</td>
   <td style="padding:3px 6px;font-size:9px;color:${f.fechaVencimiento<hoy?'#dc2626':'#374151'}">${fD(f.fechaVencimiento)}</td>
-  <td style="padding:3px 6px;text-align:center;font-size:9px;color:#6366f1">${f.diasCredito||'—'}</td>
+  <td style="padding:3px 6px;text-align:center;font-size:9px;color:#6366f1">${_diasC?_diasC+'d':'—'}</td>
   <td style="padding:3px 6px;font-size:9px;color:#2563eb">${f.nroControl||'—'}</td>
   <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fmtN(f.total||0)}</td>
   <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#16a34a;font-size:9px">$${fmtN(totalPag)}</td>
@@ -3952,10 +3956,14 @@ ${pagos.length>0?pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px">
   <td colspan="2" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fmtN(pNum(p.monto||0))}</td>
   <td colspan="4" style="padding:2px 6px;color:#16a34a">${p.banco||''}</td>
 </tr>`).join(''):''}
-${retUSD>0?`<tr style="background:#fff1f2;font-size:8px">
-  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#dc2626">↳ Ret. IVA ${pNum(f.retIVA?.pct||75)}% · N° ${f.retIVA?.nroComprobante||'—'} · Base: Bs.${fV(retBs)}</td>
-  <td colspan="6" style="padding:2px 6px;color:#dc2626;text-align:right;font-family:monospace">-$${fmtN(retUSD)}</td>
-</tr>`:''}`;
+${retIVApdf>0?`<tr style="background:#fff1f2;font-size:8px">
+  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#dc2626">↳ Ret. IVA ${pNum(f.retIVA?.pct||75)}% · N° ${f.retIVA?.nroComprobante||'—'} · Bs.${fV(retBs)}</td>
+  <td colspan="6" style="padding:2px 6px;color:#dc2626;text-align:right;font-family:monospace">-$${fmtN(retIVApdf)}</td>
+</tr>`:''}
+${(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px">
+  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fV(pNum(r.montoBs||0))}</td>
+  <td colspan="6" style="padding:2px 6px;color:#7c3aed;text-align:right;font-family:monospace">-$${fmtN(pNum(r.monto||0))}</td>
+</tr>`).join('')}`;
       }).join('');
       return `<div style="margin-bottom:14px;page-break-inside:avoid">
 <div style="background:#1e293b;color:#fff;padding:7px 12px;display:flex;justify-content:space-between;align-items:center">
@@ -4108,7 +4116,9 @@ ${provRows}
                       const totalPag=pagos.reduce((s,p)=>s+pNum(p.monto||0),0);
                       const retBs=pNum(f.retIVA?.montoBs||0);
                       const tasa=pNum(f.tasa||0)||tasaBCV||1;
-                      const retUSD=retBs>0?retBs/tasa:0;
+                      const retIVAusd=retBs>0?retBs/tasa:0;
+                      const retISLRusd=(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).reduce((s,r)=>s+pNum(r.monto||0),0);
+                      const retUSD=retIVAusd+retISLRusd;
                       const saldo=pNum(f.saldoPendiente||f.total||0);
                       const diasV=diasVencidos(f);
                       const esVencida=f.fechaVencimiento&&f.fechaVencimiento<hoy;
@@ -4125,7 +4135,7 @@ ${provRows}
                             {fD(f.fechaVencimiento)}
                             {diasV>0&&<div className="text-[8px] text-red-500 font-mono">{diasV}d vencida</div>}
                           </td>
-                          <td className="px-3 py-2 text-center text-[10px] font-black text-indigo-600">{f.diasCredito?`${f.diasCredito}d`:'—'}</td>
+                          <td className="px-3 py-2 text-center text-[10px] font-black text-indigo-600">{(f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/(864e5)):null))?`${f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/(864e5)):0)}d`:'—'}</td>
                           <td className="px-3 py-2">
                             <div className="text-[10px] text-blue-600 font-mono">{f.nroControl||'—'}</div>
                           </td>
@@ -4179,17 +4189,32 @@ ${provRows}
                         {retBs>0&&(
                           <tr style={{background:'#fff1f2',borderBottom:'1px solid #fee2e2'}}>
                             <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #dc2626'}}>
-                              <span className="text-[8px] text-red-600 font-black">↳ Retención</span>
+                              <span className="text-[8px] text-red-600 font-black">↳ Ret. IVA</span>
                             </td>
                             <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
                             <td colSpan={2}></td>
                             <td className="px-3 py-1 text-[8px] font-mono text-orange-600">{f.retIVA?.nroComprobante||'—'}</td>
                             <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] font-mono text-red-600 text-right font-black">-${fmtN(retUSD)}</td>
+                            <td className="px-3 py-1 text-[8px] font-mono text-red-600 text-right font-black">-${fmtN(retIVAusd)}</td>
                             <td></td>
                             <td className="px-3 py-1 text-[8px] text-slate-500">Ret. IVA {pNum(f.retIVA?.pct||75)}% · Bs.{fV(retBs)} · Fac. {f.nroFactura||'—'}</td>
                           </tr>
                         )}
+                        {/* Sub-filas: Retenciones ISLR */}
+                        {(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).map((r,ri)=>(
+                          <tr key={ri} style={{background:'#f5f3ff',borderBottom:'1px solid #ede9fe'}}>
+                            <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #7c3aed'}}>
+                              <span className="text-[8px] text-purple-700 font-black">↳ Ret. ISLR</span>
+                            </td>
+                            <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
+                            <td colSpan={2}></td>
+                            <td className="px-3 py-1 text-[8px] font-mono text-purple-600">{r.nroComprobante||'—'}</td>
+                            <td colSpan={2}></td>
+                            <td className="px-3 py-1 text-[8px] font-mono text-purple-700 text-right font-black">-${fmtN(pNum(r.monto||0))}</td>
+                            <td></td>
+                            <td className="px-3 py-1 text-[8px] text-slate-500">ISLR {r.pct||0}% · {r.codigo||''} {r.concepto||''} · Bs.{fV(pNum(r.montoBs||0))}</td>
+                          </tr>
+                        ))}
                       </React.Fragment>
                       );
                     })}
@@ -4834,7 +4859,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'libro_compras':return <LibroComprasView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
       case 'historial':return <HistorialPagosView {...sharedProps} facturasCompra={facturasCompra}/>;
-      case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
+      case 'estado':return <CxPView {...sharedProps}/>;
       default:return null;
     }
   };
@@ -5335,6 +5360,9 @@ function App() {
   const [ecHasta, setEcHasta] = useState('');
   const [ecExpanded, setEcExpanded] = useState({});
   const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
+  const [showOtraRetModal, setShowOtraRetModal] = useState(false);
+  const [otraRetForm, setOtraRetForm] = useState({});
+  const [otraRetBusqCli, setOtraRetBusqCli] = useState('');
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
   const [cxcEditCobro, setCxcEditCobro] = useState(null); // cobro en edición
@@ -19689,6 +19717,41 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             ?(cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)&&(c.clientName===clienteActivoData.clientName)).reduce((s,c)=>s+parseNum(c.monto||0),0)
             :cobradoMes;
 
+          // ── Tipos de retención extra (configurable en settings) ───────────
+          const TIPOS_RET_EXTRA = (settings?.tiposRetencionExtra||[]).length>0
+            ? settings.tiposRetencionExtra
+            : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10}];
+
+          // ── Guardar otra retención ─────────────────────────────────────
+          const guardarOtraRet=async()=>{
+            const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
+            if(!facturaId||!nroComprobante||!fechaComprobante||!montoRetenidoBs)
+              return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
+            try{
+              const inv=(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
+              const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
+              const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+              const montoBs=parseNum(montoRetenidoBs||0);
+              const montoUSD=tasa>1?parseFloat((montoBs/tasa).toFixed(4)):0;
+              const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+              await setDoc(getDocRef('retencionesClientes',id),{
+                id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
+                porcentaje:tipo.porcentaje,
+                cuentaContableId:tipo.cuentaContableId||'',cuentaContableNombre:tipo.cuentaContableNombre||'',
+                facturaId,nroFiscal:inv?.nroFiscal||'',
+                neId:inv?.neOrigen||'',neOrigen:inv?.neOrigen||'',
+                clientRif:inv?.clientRif||'',clientName:inv?.clientName||'',
+                nroRetencion:nroComprobante,fechaComprobante,
+                montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
+                baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
+                observaciones:otraRetForm.observaciones||'',
+                timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+              });
+              setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');
+              setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
+            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+          };
+
           // Total cobrado histórico (todos los cobros, con filtro de cliente si aplica)
           const cobradoHistoricoFilt = clienteActivoData
             ?(cobrosCxc||[]).filter(c=>c.clientName===clienteActivoData.clientName).reduce((s,c)=>s+parseNum(c.monto||0),0)
@@ -20543,6 +20606,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
                     <DollarSign size={13}/> 💳 Registrar Cobro
                   </button>
+                  <button onClick={()=>{setOtraRetForm({tipoId:'RESP_SOCIAL',fechaComprobante:getTodayDate()});setOtraRetBusqCli('');setShowOtraRetModal(true);}}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-purple-700 transition-all">
+                    <FileText size={13}/> 📋 Otras Retenciones
+                  </button>
                   <button onClick={()=>setCxcExpandAll(v=>!v)} className="flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">
                     {cxcExpandAll?'▲ Contraer todo':'▼ Expandir todo'}
                   </button>
@@ -21198,6 +21265,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
+                            const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
                             const _r2Fiscal=(invV2?.nroFiscal||'').toString().replace(/^0+/,'').trim();
                             const _r2Rif=(ne.clientRif||'').trim();
                             const retsNE2=(retenciones||[]).filter(r=>{
@@ -21209,7 +21277,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               }
                               return false;
                             });
-                            const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
                             const saldado2=sNE<0.01;
                             const rowBg=ni%2===0?'bg-white':'bg-gray-50';
                             return(
@@ -21333,6 +21400,135 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             </div>
           );
         })()}
+        {/* ── Modal Otras Retenciones ───────────────────────────────────── */}
+        {showOtraRetModal&&(
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden">
+              <div className="px-6 py-4 flex justify-between items-center" style={{background:'#4c1d95',borderBottom:'3px solid #a855f7'}}>
+                <div>
+                  <h3 className="font-black text-white text-sm uppercase tracking-wide">📋 Registrar Otras Retenciones</h3>
+                  <p className="text-[10px] text-purple-200 mt-0.5">Responsabilidad Social · AE · Timbre Fiscal · otras</p>
+                </div>
+                <button onClick={()=>setShowOtraRetModal(false)} className="text-purple-300 hover:text-white"><X size={16}/></button>
+              </div>
+              <div className="p-5 space-y-4">
+                {/* Tipo de retención */}
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tipo de Retención *</label>
+                  <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-purple-500"
+                    value={otraRetForm.tipoId||'RESP_SOCIAL'}
+                    onChange={e=>{
+                      const tipo=TIPOS_RET_EXTRA.find(t=>t.id===e.target.value)||TIPOS_RET_EXTRA[0];
+                      const base=parseNum(otraRetForm.baseImponibleBs||0);
+                      const monto=base>0?parseFloat((base*tipo.porcentaje/100).toFixed(2)):0;
+                      setOtraRetForm(f=>({...f,tipoId:e.target.value,porcentaje:tipo.porcentaje,montoRetenidoBs:monto||f.montoRetenidoBs,cuentaContableNombre:tipo.cuentaContableNombre||''}));
+                    }}>
+                    {TIPOS_RET_EXTRA.map(t=><option key={t.id} value={t.id}>{t.label} ({t.porcentaje}%)</option>)}
+                  </select>
+                </div>
+                {/* Buscar cliente → factura */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Buscar cliente</label>
+                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      placeholder="Nombre o RIF..." value={otraRetBusqCli}
+                      onChange={e=>setOtraRetBusqCli(e.target.value)}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Factura / Invoice *</label>
+                    <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.facturaId||''}
+                      onChange={e=>{
+                        const inv=(invoices||[]).find(i=>i.id===e.target.value);
+                        const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+                        const base=parseNum(inv?.baseImponible||inv?.montoBase||0)||parseNum(inv?.total||0)*(tasa>1?1:1);
+                        const tipo=TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||TIPOS_RET_EXTRA[0];
+                        const monto=base>0?parseFloat((base*tipo.porcentaje/100).toFixed(2)):0;
+                        setOtraRetForm(f=>({...f,facturaId:e.target.value,tasa,baseImponibleBs:base,montoRetenidoBs:monto||f.montoRetenidoBs}));
+                      }}>
+                      <option value="">— Selecciona invoice —</option>
+                      {(invoices||[]).filter(i=>{
+                        if(!otraRetBusqCli) return true;
+                        const b=otraRetBusqCli.toLowerCase();
+                        return (i.clientName||'').toLowerCase().includes(b)||(i.clientRif||'').includes(b)||(i.nroFiscal||'').includes(b);
+                      }).slice(0,80).map(i=>(
+                        <option key={i.id} value={i.id}>{i.nroFiscal?`#${i.nroFiscal} · `:''}{i.clientName||i.clientRif||i.id} {i.fecha?`(${i.fecha})`:''}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base Imponible Bs. *</label>
+                    <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.baseImponibleBs||''}
+                      onChange={e=>{
+                        const base=parseNum(e.target.value||0);
+                        const tipo=TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||TIPOS_RET_EXTRA[0];
+                        setOtraRetForm(f=>({...f,baseImponibleBs:base,montoRetenidoBs:parseFloat((base*tipo.porcentaje/100).toFixed(2))}));
+                      }}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% Retención</label>
+                    <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.porcentaje||(TIPOS_RET_EXTRA.find(t=>t.id===otraRetForm.tipoId)||TIPOS_RET_EXTRA[0]).porcentaje}
+                      onChange={e=>{
+                        const pct=parseNum(e.target.value||0);
+                        const base=parseNum(otraRetForm.baseImponibleBs||0);
+                        setOtraRetForm(f=>({...f,porcentaje:pct,montoRetenidoBs:base>0?parseFloat((base*pct/100).toFixed(2)):f.montoRetenidoBs}));
+                      }}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Retención Bs. *</label>
+                    <input type="number" step="0.01" className="w-full border-2 border-purple-100 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-purple-500 bg-purple-50"
+                      value={otraRetForm.montoRetenidoBs||''}
+                      onChange={e=>setOtraRetForm(f=>({...f,montoRetenidoBs:e.target.value}))}/>
+                  </div>
+                </div>
+                {otraRetForm.facturaId&&otraRetForm.montoRetenidoBs&&(
+                  <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-[10px]">
+                    <span className="text-purple-600 font-bold">Tasa: </span><span className="font-mono">{parseNum(otraRetForm.tasa||0).toFixed(4)} Bs/$</span>
+                    <span className="mx-3 text-purple-400">|</span>
+                    <span className="text-purple-600 font-bold">≈ USD: </span>
+                    <span className="font-mono font-black text-purple-800">${parseNum(otraRetForm.tasa||0)>1?(parseNum(otraRetForm.montoRetenidoBs||0)/parseNum(otraRetForm.tasa)).toFixed(2):'—'}</span>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Comprobante *</label>
+                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.nroComprobante||''}
+                      onChange={e=>setOtraRetForm(f=>({...f,nroComprobante:e.target.value.toUpperCase()}))}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha Comprobante *</label>
+                    <input type="date" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.fechaComprobante||''}
+                      onChange={e=>setOtraRetForm(f=>({...f,fechaComprobante:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Contable</label>
+                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      placeholder="Ej: 2.1.04.01.001 — Ret. Resp. Social"
+                      value={otraRetForm.cuentaContableNombre||''}
+                      onChange={e=>setOtraRetForm(f=>({...f,cuentaContableNombre:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Observaciones</label>
+                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.observaciones||''}
+                      onChange={e=>setOtraRetForm(f=>({...f,observaciones:e.target.value}))}/>
+                  </div>
+                </div>
+              </div>
+              <div className="px-5 pb-5 flex justify-end gap-3">
+                <button onClick={()=>setShowOtraRetModal(false)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+                <button onClick={guardarOtraRet} className="px-5 py-2.5 bg-purple-600 text-white rounded-xl text-xs font-black uppercase hover:bg-purple-700 flex items-center gap-2"><Save size={13}/> Registrar Retención</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Modal Editar Cobro ─────────────────────────────────── */}
         {cxcEditCobro&&(
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.55)'}}>
