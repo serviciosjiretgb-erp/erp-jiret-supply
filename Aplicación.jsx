@@ -2924,15 +2924,20 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     const tot=f.totales||{};
     const retIVAData=f.retIVA||null;
     const retISLRData=f.retISLRLista||[];
-    const itemRows=items.length>0?items.map(it=>`<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:5px 8px;font-weight:700;color:#f97316">${it.codigo||it.descripcion||'—'}</td>
-      <td style="padding:5px 8px">${it.descripcion||it.nombre||'—'}</td>
+    const itemRows=items.length>0?items.map(it=>{
+      const itCodigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
+      const itDesc=it.desc||it.descripcion||it.nombre||'—';
+      const itBs=pNum(f.tasa||0)>0?`<td style="padding:5px 8px;text-align:right;font-family:monospace;color:#1d4ed8">${fV(pNum(it.total||0)*pNum(f.tasa||0))}</td>`:'';
+      return `<tr style="border-bottom:1px solid #f1f5f9">
+      <td style="padding:5px 8px;font-weight:700;color:#f97316;font-family:monospace">${itCodigo}</td>
+      <td style="padding:5px 8px">${itDesc}</td>
       <td style="padding:5px 8px;text-align:center">${it.cantidad||0}</td>
       <td style="padding:5px 8px;text-align:center">${it.unidad||'und'}</td>
       <td style="padding:5px 8px;text-align:right;font-family:monospace">${fV(it.precioUnit||0)}</td>
       <td style="padding:5px 8px;text-align:right;font-family:monospace;font-weight:700">${fV(it.total||0)}</td>
+      ${itBs}
       <td style="padding:5px 8px;text-align:center;font-size:9px">${it.iva==='GRAVADO'?'16%':it.iva==='GRAVADO8'?'8%':'Exento'}</td>
-    </tr>`).join(''):`<tr><td colspan="7" style="padding:12px;text-align:center;color:#94a3b8">Sin ítems registrados</td></tr>`;
+    </tr>`;}).join('')||`<tr><td colspan="8" style="padding:12px;text-align:center;color:#94a3b8">Sin ítems registrados</td></tr>`;
 
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
     <style>@page{size:A4;margin:1.5cm}body{font-family:Arial,sans-serif;font-size:9px;color:#111}table{border-collapse:collapse;width:100%}
@@ -2958,7 +2963,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
       <div><span class="lbl">OC Relacionada</span><span class="val">${f.ocId||'—'}</span></div>
     </div>
     <div class="sec">Detalle de ítems</div>
-    <table style="margin-bottom:8px"><thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>Unidad</th><th style="text-align:right">P. Unit.</th><th style="text-align:right">Total USD</th><th>IVA</th></tr></thead>
+    <table style="margin-bottom:8px"><thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>Unidad</th><th style="text-align:right">P. Unit.</th><th style="text-align:right">Total USD</th>${pNum(f.tasa||0)>0?'<th style="text-align:right">Total Bs.</th>':''}<th>IVA</th></tr></thead>
     <tbody>${itemRows}</tbody></table>
     <div class="sec">Totales</div>
     <table style="width:40%;margin-left:auto;border:1px solid #e2e8f0;border-radius:4px">
@@ -3274,42 +3279,61 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                   {form.itemsOC&&form.itemsOC.length>0?(
                     <div className="mb-4">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Ítems pre-cargados desde OC</p>
-                        <span className="text-[9px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-black uppercase flex items-center gap-1"><Lock size={9}/> Solo lectura</span>
+                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Ítems de la factura — editables si hay diferencias con la OC</p>
+                        <span className="text-[9px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-black uppercase flex items-center gap-1">✏️ Editable</span>
                       </div>
                       <div className="border border-slate-200 rounded-xl overflow-hidden">
                         <table className="w-full text-xs">
                           <thead><tr style={{background:'#0f172a'}}>
-                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">#</th>
-                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Tipo</th>
-                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Descripción</th>
-                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Cat.</th>
-                            <th className="px-3 py-2 text-center text-[8px] text-orange-400 font-black uppercase">IVA</th>
-                            <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Cant.</th>
-                            <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Und.</th>
-                            <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">P.Unit</th>
-                            <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total USD</th>
-                            {hasTasa&&<th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total Bs.</th>}
+                            <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase">#</th>
+                            <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Código</th>
+                            <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Descripción</th>
+                            <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Cat.</th>
+                            <th className="px-2 py-2 text-center text-[8px] text-orange-400 font-black uppercase">IVA</th>
+                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Cant.</th>
+                            <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Und.</th>
+                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">P.Unit</th>
+                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total USD</th>
+                            {hasTasa&&<th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total Bs.</th>}
                           </tr></thead>
                           <tbody>
-                            {form.itemsOC.map((it,i)=>(
+                            {(form.itemsOC||[]).map((it,i)=>{
+                              const updateItem=(patch)=>{
+                                const updated=[...(form.itemsOC||[])];
+                                const newIt={...updated[i],...patch};
+                                newIt.total=parseFloat((pNum(newIt.cantidad)*pNum(newIt.precioUnit)).toFixed(2));
+                                updated[i]=newIt;
+                                setForm(f=>({...f,itemsOC:updated}));
+                              };
+                              const codigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
+                              const totBs=hasTasa?pNum(it.total||0)*pNum(form.tasa||0):0;
+                              return(
                               <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
-                                <td className="px-3 py-1.5 text-slate-500">{i+1}</td>
-                                <td className="px-3 py-1.5"><PBadge v={it.tipo==='SERVICIO'?'blue':'green'}>{it.tipo==='SERVICIO'?'SERV.':'PROD.'}</PBadge></td>
-                                <td className="px-3 py-1.5 font-black text-slate-800">{it.desc||'—'}</td>
-                                <td className="px-3 py-1.5 text-[10px] text-slate-500">{it.categoria||'—'}</td>
-                                <td className="px-3 py-1.5 text-center">
-                                  <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${it.iva==='EXENTO'?'bg-amber-50 text-amber-700':it.iva==='GRAVADO8'?'bg-blue-50 text-blue-700':'bg-orange-50 text-orange-700'}`}>
-                                    {it.iva==='EXENTO'?'EXENTO':it.iva==='GRAVADO8'?'8%':'16%'}
-                                  </span>
+                                <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
+                                <td className="px-2 py-1 font-mono text-[10px] text-orange-600 whitespace-nowrap">{codigo}</td>
+                                <td className="px-2 py-1 font-black text-slate-800 max-w-40"><div className="truncate" title={it.desc||'—'}>{it.desc||'—'}</div></td>
+                                <td className="px-2 py-1 text-[10px] text-slate-500">{it.categoria||'—'}</td>
+                                <td className="px-2 py-1 text-center">
+                                  <select className="text-[9px] font-black px-1 py-0.5 rounded border border-slate-200 outline-none focus:border-orange-400 bg-white"
+                                    value={it.iva||'GRAVADO'} onChange={e=>updateItem({iva:e.target.value})}>
+                                    <option value="GRAVADO">16%</option>
+                                    <option value="GRAVADO8">8%</option>
+                                    <option value="EXENTO">Exento</option>
+                                  </select>
                                 </td>
-                                <td className="px-3 py-1.5 text-right font-mono">{pFmt(it.cantidad)}</td>
-                                <td className="px-3 py-1.5 text-slate-500">{it.unidad||'Und'}</td>
-                                <td className="px-3 py-1.5 text-right font-mono">{pFmt(it.precioUnit)}</td>
-                                <td className="px-3 py-1.5 text-right font-black text-orange-600">{pFmt(it.total||0)}</td>
-                                {hasTasa&&<td className="px-3 py-1.5 text-right font-mono text-slate-400">{pFmt(pNum(it.total||0)*pNum(form.tasa))}</td>}
-                              </tr>
-                            ))}
+                                <td className="px-2 py-1 text-right">
+                                  <input type="number" className="w-16 text-right text-[10px] font-mono border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-orange-400"
+                                    value={it.cantidad||''} onChange={e=>updateItem({cantidad:pNum(e.target.value)})}/>
+                                </td>
+                                <td className="px-2 py-1 text-slate-500 text-[10px]">{it.unidad||'Und'}</td>
+                                <td className="px-2 py-1 text-right">
+                                  <input type="number" className="w-20 text-right text-[10px] font-mono border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-orange-400"
+                                    value={it.precioUnit||''} onChange={e=>updateItem({precioUnit:pNum(e.target.value)})}/>
+                                </td>
+                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(it.total||0)}</td>
+                                {hasTasa&&<td className="px-2 py-1 text-right font-mono text-blue-700 text-[10px]">{pFmt(totBs)}</td>}
+                              </tr>);
+                            })}
                           </tbody>
                         </table>
                       </div>
