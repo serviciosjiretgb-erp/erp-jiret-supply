@@ -571,7 +571,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                           <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{setEditRet({doc:r,tipo:'IVA'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -628,7 +628,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                           <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -814,9 +814,27 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                 <input type="number" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
                   value={editRetForm.montoBs||0} onChange={e=>setEditRetForm(f=>({...f,montoBs:parseFloat(e.target.value)||0}))}/>
               </div>
-              <div className="col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Período</label>
-                <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
-                  value={editRetForm.periodo||''} onChange={e=>setEditRetForm(f=>({...f,periodo:e.target.value}))}/>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes / Año</label>
+                <input type="month" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm._periodoMes||((editRet?.doc?.fecha||'').substring(0,7))||''}
+                  onChange={e=>setEditRetForm(f=>({...f,_periodoMes:e.target.value}))}/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm._periodoQ||'1'}
+                  onChange={e=>{
+                    const q=e.target.value;
+                    const mes=editRetForm._periodoMes||((editRet?.doc?.fecha||'').substring(0,7))||'';
+                    const [yr,mo]=mes.split('-');
+                    const qLabel=q==='1'?'I QUINCENA':'II QUINCENA';
+                    const label=`${qLabel} ${new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleString('es-VE',{month:'long'}).toUpperCase()} ${yr}`;
+                    setEditRetForm(f=>({...f,_periodoQ:q,periodo:label}));
+                  }}>
+                  <option value="1">I Quincena (1-15)</option>
+                  <option value="2">II Quincena (16-fin)</option>
+                </select>
               </div>
             </div>
             <div className="px-5 pb-5 flex justify-end gap-3">
@@ -2940,7 +2958,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
       <td style="padding:5px 8px;text-align:right;font-family:monospace;font-weight:700">${fV(it.total||0)}</td>
       ${itBs}
       <td style="padding:5px 8px;text-align:center;font-size:9px">${it.iva==='GRAVADO'?'16%':it.iva==='GRAVADO8'?'8%':'Exento'}</td>
-    </tr>`;}).join('')||`<tr><td colspan="8" style="padding:12px;text-align:center;color:#94a3b8">Sin ítems registrados</td></tr>`;
+    </tr>`;}).join(''):`<tr><td colspan="8" style="padding:12px;text-align:center;color:#94a3b8">Sin ítems registrados</td></tr>`;
 
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
     <style>@page{size:A4;margin:1.5cm}body{font-family:Arial,sans-serif;font-size:9px;color:#111}table{border-collapse:collapse;width:100%}
@@ -21043,7 +21061,21 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           const getSaldoNE = (ne) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
-            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
+            const ret=(retenciones||[]).filter(r=>{
+              if(r.neId===ne.id||r.neOrigen===ne.id) return true;
+              // También buscar via facturaId → invoice → neId (retenciones del Libro de Ventas)
+              if(r.facturaId){
+                const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+                if(inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||inv.neId===ne.id)) return true;
+              }
+              // Por nroFactura vinculado a facturas que son de esta NE
+              if(r.nroFactura||r._manualNroFiscal){
+                const nroF=r.nroFactura||r._manualNroFiscal||'';
+                const inv=(invoices||[]).find(i=>(i.nroFiscal||'').replace(/^0+/,'')===nroF.replace(/^0+/,'')||(i.nroFiscal||'')===(nroF||''));
+                if(inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)) return true;
+              }
+              return false;
+            }).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
             return Math.max(0,parseNum(ne.total||ne.montoBase||0)-cobrado-nc-ret);
           };
           const allNEs=(notasEntrega||[]).filter(ne=>{
@@ -21147,7 +21179,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                            const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
+                            const retsNE2=(retenciones||[]).filter(r=>{
+                              if(r.neId===ne.id||r.neOrigen===ne.id) return true;
+                              if(r.facturaId){const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);if(inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||inv.neId===ne.id)) return true;}
+                              if(r.nroFactura||r._manualNroFiscal){const nroF=(r.nroFactura||r._manualNroFiscal||'').replace(/^0+/,'');const inv=(invoices||[]).find(i=>(i.nroFiscal||'').replace(/^0+/,'')===nroF);if(inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)) return true;}
+                              return false;
+                            });
                             const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
                             const saldado2=sNE<0.01;
                             const rowBg=ni%2===0?'bg-white':'bg-gray-50';
@@ -21325,7 +21362,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const totCob=cobrosRest.reduce((s,c)=>s+parseNum(c.monto||0),0)+montoNuevo;
                         const totNE=parseNum(ne.total||ne.totalUSD||0);
                         const totNC=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return ni===ne.id||no===ne.id;}).reduce((s,n)=>s+parseNum(n.montoUSD||0),0);
-                        const totRet=(retenciones||[]).filter(r=>r.neId===ne.id||r.facturaId===ne.facturaId).reduce((s,r)=>s+parseNum(r.montoRetenidoUSD||r.montoRetenido||0)/Math.max(parseNum(r.tasa||1),1),0);
+                        const totRet=(retenciones||[]).filter(r=>{
+                          if(r.neId===ne.id||r.neOrigen===ne.id||r.facturaId===ne.facturaId) return true;
+                          if(r.facturaId){const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);if(inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)) return true;}
+                          return false;
+                        }).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.montoRetenidoUSD||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;return s+(rt>1?rb/rt:parseNum(r.montoRetenidoUSD||rb));},0);
                         const nuevoSaldo=Math.max(0,totNE-totNC-totRet-totCob);
                         const st=totCob<0.01?'PENDIENTE':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
                         batch.update(getDocRef('notasEntrega',ne.id),{statusCxC:st,montoCobrado:totCob,saldoPendiente:nuevoSaldo,updatedAt:Date.now()});
