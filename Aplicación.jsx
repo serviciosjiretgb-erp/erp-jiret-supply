@@ -2794,6 +2794,18 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         observaciones:form.observaciones||'',
         status:form.status||'PENDIENTE',
         itemsOC:(form.itemsOC||[]).map(it=>clean(it)),
+        diasCredito:form.diasCredito||'',
+        condPago:form.condPago||'',
+        esImportacion:!!form.esImportacion,
+        importacion:form.esImportacion&&form.importacion?{
+          fechaAplic:form.importacion.fechaAplic||'',
+          nroPlanilla:form.importacion.nroPlanilla||'',
+          nroExpediente:form.importacion.nroExpediente||'',
+          nroEmbarque:form.importacion.nroEmbarque||'',
+          totalImportacion:pNum(form.importacion.totalImportacion||0),
+          baseImponible:pNum(form.importacion.baseImponible||0),
+          iva:pNum(form.importacion.iva||0)
+        }:null,
       };
 
       batch.set(getDocRef('procura_facturas_compra',id),clean({
@@ -4534,13 +4546,13 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
   <td style="padding:1px 3px;font-size:6px;text-align:center;color:#1d4ed8;font-weight:bold">${r.nroFactura||'—'}</td>
   <td style="padding:1px 3px;font-size:6px;text-align:center">${r.nroControl||'—'}</td>
   <td style="padding:1px 3px;font-size:6px;text-align:center">${r.retFact||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;color:#9ca3af">—</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;color:${r.impFechaAplic?'#1d4ed8':'#9ca3af'}">${r.impFechaAplic?fmtFE(r.impFechaAplic):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;color:${r.impPlanilla?'#1d4ed8':'inherit'}">${r.impPlanilla||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;color:${r.impExpediente?'#1d4ed8':'inherit'}">${r.impExpediente||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${r.impTotal>0?fmtV(r.impTotal):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${r.impBase>0?fmtV(r.impBase):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.impBase>0?'0.16':'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${r.impIVA>0?fmtV(r.impIVA):'—'}</td>
   <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciTotal>0?fmtV(r.ciTotal):'—'}</td>
   <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciSinDer>0?fmtV(r.ciSinDer):'—'}</td>
   <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciBase>0?fmtV(r.ciBase):'—'}</td>
@@ -4868,7 +4880,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'facturas':return <FacturasCompraView {...sharedProps} facturaPreload={facturaPreload} onPreloadConsumed={()=>setFacturaPreload(null)}/>;
       case 'libro_compras':return <LibroComprasView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
-      case 'historial':return <HistorialPagosView {...sharedProps} facturasCompra={facturasCompra}/>;
+      case 'historial':return <CxPView {...sharedProps}/>;  // HistorialPagosView → redirigido a CxPView
       case 'estado':return <CxPView {...sharedProps}/>;
       default:return null;
     }
@@ -5378,6 +5390,35 @@ function App() {
     ? settings.tiposRetencionExtra
     : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10}]
   ,[settings]);
+  // guardarOtraRet — scope de componente (modal se renderiza fuera del IIFE CxC)
+  const guardarOtraRet=useCallback(async()=>{
+    const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
+    if(!facturaId||!nroComprobante||!fechaComprobante||!montoRetenidoBs)
+      return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
+    try{
+      const inv=(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
+      const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
+      const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+      const montoBs=parseNum(montoRetenidoBs||0);
+      const montoUSD=tasa>1?parseFloat((montoBs/tasa).toFixed(4)):0;
+      const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+      await setDoc(getDocRef('retencionesClientes',id),{
+        id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
+        porcentaje:tipo.porcentaje,
+        cuentaContableId:tipo.cuentaContableId||'',cuentaContableNombre:tipo.cuentaContableNombre||'',
+        facturaId,nroFiscal:inv?.nroFiscal||'',
+        neId:inv?.neOrigen||'',neOrigen:inv?.neOrigen||'',
+        clientRif:inv?.clientRif||'',clientName:inv?.clientName||'',
+        nroRetencion:nroComprobante,fechaComprobante,
+        montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
+        baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
+        observaciones:otraRetForm.observaciones||'',
+        timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+      });
+      setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');
+      setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  },[otraRetForm,invoices,TIPOS_RET_EXTRA,settings,appUser]);
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
   const [cxcEditCobro, setCxcEditCobro] = useState(null); // cobro en edición
@@ -19733,35 +19774,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             :cobradoMes;
 
           // ── Guardar otra retención ─────────────────────────────────────
-          const guardarOtraRet=async()=>{
-            const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
-            if(!facturaId||!nroComprobante||!fechaComprobante||!montoRetenidoBs)
-              return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
-            try{
-              const inv=(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
-              const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
-              const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
-              const montoBs=parseNum(montoRetenidoBs||0);
-              const montoUSD=tasa>1?parseFloat((montoBs/tasa).toFixed(4)):0;
-              const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
-              await setDoc(getDocRef('retencionesClientes',id),{
-                id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
-                porcentaje:tipo.porcentaje,
-                cuentaContableId:tipo.cuentaContableId||'',cuentaContableNombre:tipo.cuentaContableNombre||'',
-                facturaId,nroFiscal:inv?.nroFiscal||'',
-                neId:inv?.neOrigen||'',neOrigen:inv?.neOrigen||'',
-                clientRif:inv?.clientRif||'',clientName:inv?.clientName||'',
-                nroRetencion:nroComprobante,fechaComprobante,
-                montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
-                baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
-                observaciones:otraRetForm.observaciones||'',
-                timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
-              });
-              setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');
-              setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
-            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-          };
-
           // Total cobrado histórico (todos los cobros, con filtro de cliente si aplica)
           const cobradoHistoricoFilt = clienteActivoData
             ?(cobrosCxc||[]).filter(c=>c.clientName===clienteActivoData.clientName).reduce((s,c)=>s+parseNum(c.monto||0),0)
