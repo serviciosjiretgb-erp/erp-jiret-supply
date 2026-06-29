@@ -11,7 +11,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs, query, where, orderBy, arrayUnion } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs, query, orderBy, arrayUnion } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
@@ -115,50 +115,291 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
     {id:'config',   label:'Configuración',        icon:<Settings size={13}/>},
   ];
 
+  // ── Firma y sello upload ────────────────────────────────────────
+  const uploadFirmaSello = async (file, campo) => {
+    if(!file) return;
+    try {
+      const ext = file.name.split('.').pop() || 'png';
+      const sRef = storageRef(storage, `firmas/${campo}_${Date.now()}.${ext}`);
+      const snap = await uploadBytes(sRef, file, {contentType: file.type || 'image/png'});
+      const url = await getDownloadURL(snap.ref);
+      await setDoc(getDocRef('settings','general'), {[campo]: url}, {merge:true});
+      setDialog({title:'✅ Cargado',text:`${campo==='firmaUrl'?'Firma':'Sello'} actualizado correctamente.`,type:'alert'});
+    } catch(e) { setDialog({title:'Error',text:e.message,type:'alert'}); }
+  };
+
   const imprimirComprobante=(ret,tipo)=>{
-    const css=`@page{size:A4;margin:2cm}body{font-family:Arial,sans-serif;font-size:10px;color:#1e293b}
-    .hdr{background:#000;color:#fff;padding:10px 18px;display:flex;justify-content:space-between;border-bottom:3px solid #f97316}
-    .title{text-align:center;padding:10px;border-bottom:2px solid #f97316}
-    .title h2{font-size:14px;font-weight:900;text-transform:uppercase;letter-spacing:2px}
-    .body{padding:16px 18px}.fg{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;margin-bottom:12px}
-    .f label{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;display:block}
-    .f p{font-size:11px;font-weight:700;border-bottom:1px solid #e2e8f0;padding-bottom:3px;margin:1px 0 0}
-    .tot{background:#0f172a;padding:10px 16px;border-radius:6px;display:flex;justify-content:space-between;margin-top:12px}
-    .tot span{color:#94a3b8;font-size:9px;text-transform:uppercase}.tot strong{color:#f97316;font-size:16px;font-family:monospace}
-    .foot{margin-top:16px;border-top:2px solid #f97316;padding:8px 18px;font-size:8px;color:#94a3b8;display:flex;justify-content:space-between}
-    @media print{@page{margin:2cm}}`;
-    const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>
-    <div class="hdr"><div style="font-size:16px;font-weight:900">Supply G&B</div>
-    <div style="text-align:right;font-size:8px;color:#9ca3af"><strong style="color:#f97316">SERVICIOS JIRET G&B, C.A.</strong><br>RIF: J-412309374</div></div>
-    <div class="title"><h2>Comprobante de Retención ${tipo==='IVA'?'IVA':'ISLR'}</h2>
-    <p style="font-size:9px;color:#64748b">N° ${ret.nroComprobante||'—'} · ${pD(ret.fecha)}</p></div>
-    <div class="body">
-    <div class="fg">
-      <div class="f"><label>Agente de retención</label><p>SERVICIOS JIRET G&B, C.A.</p></div>
-      <div class="f"><label>RIF agente</label><p>J-412309374</p></div>
-      <div class="f"><label>Proveedor retenido</label><p>${ret.proveedor||'—'}</p></div>
-      <div class="f"><label>RIF proveedor</label><p>${ret.rifProveedor||'—'}</p></div>
-      <div class="f"><label>N° Factura</label><p>${ret.nroFactura||'—'}</p></div>
-      <div class="f"><label>Fecha factura</label><p>${pD(ret.fechaFactura)}</p></div>
-      ${tipo==='IVA'?`
-      <div class="f"><label>Base IVA</label><p>USD ${fmtN(ret.baseIVA)} / Bs. ${fmtN(ret.baseIVABs)}</p></div>
-      <div class="f"><label>% Retención IVA</label><p>${ret.pctRetencion||75}%</p></div>
-      `:`
-      <div class="f"><label>Concepto SENIAT</label><p>${ret.codConcepto||'—'} — ${ret.concepto||'—'}</p></div>
-      <div class="f"><label>% Retención ISLR</label><p>${ret.pct||0}%</p></div>
-      <div class="f"><label>Base imponible</label><p>USD ${fmtN(ret.baseImponible)} / Bs. ${fmtN(ret.baseImponibleBs)}</p></div>
-      <div class="f"><label>Valor UT</label><p>Bs. ${ret.valorUT||43}</p></div>
-      `}
-      <div class="f"><label>Tasa BCV</label><p>Bs. ${fmtN(ret.tasa)}</p></div>
-      <div class="f"><label>Período</label><p>${ret.periodo||'—'}</p></div>
-    </div>
-    <div class="tot">
-      <div><span>Monto retenido</span><br><strong>USD ${fmtN(ret.monto)}</strong></div>
-      <div style="text-align:right"><span>Equivalente Bs.</span><br><strong>Bs. ${fmtN(ret.montoBs)}</strong></div>
-    </div>
-    </div>
-    <div class="foot"><span>SERVICIOS JIRET G&B, C.A. · RIF J-412309374</span><span>Supply ERP · Módulo Impuestos</span></div>
-    <script>window.onload=()=>{window.print();}<\/script></body></html>`;
+    const mesesNombre=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const fV=n=>{if(!n&&n!==0)return'0,00';const a=Math.abs(parseFloat(n)||0);const p=a.toFixed(2).split('.');return (n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
+    const fF=d=>{if(!d)return'—';const p=String(d).split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
+    const fechaParts=(ret.fecha||'').split('-');
+    const anioRet=fechaParts[0]||new Date().getFullYear();
+    const mesRetNum=parseInt(fechaParts[1]||1,10);
+    const mesRetNombre=mesesNombre[mesRetNum-1]||'';
+    const firmaImg=settings?.firmaUrl?`<img src="${settings.firmaUrl}" style="max-height:60px;max-width:140px;object-fit:contain" alt="firma"/>`:'<div style="height:60px"></div>';
+    const selloImg=settings?.selloUrl?`<img src="${settings.selloUrl}" style="max-height:80px;max-width:120px;object-fit:contain" alt="sello"/>`:' ';
+    const empNombre=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const empRif=settings?.empresaRif||'J-41230937-4';
+    const empDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
+
+    // ── Tipo de persona humano ───────────────────────────────────
+    const tipoPersonaMap={'PJD':'Persona Jurídica Domiciliada','PNR':'Persona Natural Residente','PJND':'Persona Jurídica No Domiciliada','PNNR':'Persona Natural No Residente'};
+    const tipoPersonaLabel=tipoPersonaMap[ret.tipoContrib||'PJD']||ret.tipoContrib||'—';
+
+    let html='';
+
+    if(tipo==='IVA'){
+      // ── Comprobante IVA — estilo FEINCA ──────────────────────────
+      const baseIVA=pNum(ret.baseIVABs||0);      // = Monto IVA (la cantidad de IVA)
+      const pctRet=pNum(ret.pctRetencion||75);
+      const ivaRetenido=pNum(ret.montoBs||0);
+      // Base imponible de la factura (antes de IVA) — si tenemos base16Bs guardada la usamos, si no aproximamos
+      const base16=pNum(ret.base16Bs||0)||parseFloat((baseIVA/0.16).toFixed(2));
+      const total=pNum(ret.totalFacturaBs||0)||parseFloat((base16+baseIVA).toFixed(2));
+      const exento=pNum(ret.exentoBs||0);
+
+      html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+@page{size:A4;margin:1.2cm 1.5cm}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:8px;color:#000}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #888;padding:3px 5px;vertical-align:top}
+.hdr-band{background:#d0d0d0;font-weight:bold;font-size:7.5px;padding:3px 5px}
+.lbl{font-size:7px;color:#444;display:block;margin-bottom:1px}
+.val{font-size:8.5px;font-weight:bold}
+.num{font-family:monospace;text-align:right}
+.sec-title{background:#d0d0d0;font-size:8px;font-weight:bold;text-align:center;padding:3px}
+@media print{@page{margin:1.2cm 1.5cm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+</style></head><body>
+<div style="text-align:center;margin-bottom:6px">
+  <div style="font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:1px">COMPROBANTE DE RETENCION DEL IMPUESTO AL VALOR AGREGADO I.V.A.</div>
+  <div style="font-size:6.5px;color:#444;margin-top:2px">Decreto Constituyente de Reforma Parcial del Decreto con Rango, Valor y Fuerza de Ley que establece el Impuesto al Valor Agregado Gaceta Oficial N° 6.507 Ext. del 29-01-2020</div>
+  <div style="font-size:6.5px;color:#444;margin-top:1px">Artículo 11: "La Administración Tributaria podrá designar como responsables del pago del impuesto, en calidad de agentes de retención, a quienes por sus funciones públicas o por razón de sus actividades privadas intervengan en operaciones gravadas con el impuesto establecido en esta Ley.(...)"</div>
+</div>
+
+<table style="margin-bottom:3px">
+  <tr>
+    <td style="width:50%"><span class="lbl">Fecha de Emisión</span><span class="val">${fF(ret.fecha)}</span></td>
+    <td style="width:50%"><span class="lbl">No. Comprobante</span><span class="val" style="font-size:11px">${ret.nroComprobante||'—'}</span></td>
+  </tr>
+</table>
+
+<table style="margin-bottom:3px">
+  <tr>
+    <td class="hdr-band" style="width:50%">Nombre y Apellido o Razón Social del Agente de Retención</td>
+    <td class="hdr-band" style="width:25%">RIF Agente de Retención</td>
+    <td class="hdr-band" style="width:25%">Período de Imposición:</td>
+  </tr>
+  <tr>
+    <td><span class="val">${empNombre}</span></td>
+    <td><span class="val">${empRif}</span></td>
+    <td><span class="val">AÑO: ${anioRet} / MES: ${String(mesRetNum).padStart(2,'0')}</span></td>
+  </tr>
+  <tr>
+    <td colspan="3"><span class="lbl">Domicilio Fiscal del Agente de Retención</span>${empDir}</td>
+  </tr>
+</table>
+
+<table style="margin-bottom:3px">
+  <tr>
+    <td class="hdr-band" style="width:70%">Nombre y Apellido o Razón Social del Proveedor</td>
+    <td class="hdr-band" style="width:30%">N° Registro Único de Información Fiscal RIF</td>
+  </tr>
+  <tr>
+    <td><span class="val">${ret.proveedor||'—'}</span></td>
+    <td><span class="val">${ret.rifProveedor||'—'}</span></td>
+  </tr>
+  <tr>
+    <td colspan="2"><span class="lbl">Domicilio Fiscal del Proveedor</span>${ret.domicilioProveedor||'—'}</td>
+  </tr>
+</table>
+
+<table style="margin-bottom:3px;font-size:7.5px">
+  <thead>
+    <tr>
+      <th colspan="14" class="sec-title">Compras Internas o Importaciones</th>
+    </tr>
+    <tr style="background:#e8e8e8;font-size:7px">
+      <th>Fecha del Documento</th>
+      <th>Número de Factura</th>
+      <th>N° Nota de Crédito</th>
+      <th>N° Nota de Débito</th>
+      <th>Número de Control</th>
+      <th>Documento Afectado</th>
+      <th>Tipo Operación</th>
+      <th class="num">Total Compra con I.V.A. Bs.</th>
+      <th class="num">Compras sin derecho a Crédito Fiscal</th>
+      <th class="num">Base Imponible</th>
+      <th>%</th>
+      <th class="num">Monto I.V.A.</th>
+      <th>%</th>
+      <th class="num">I.V.A. Retenido Monto</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>${fF(ret.fechaFactura)}</td>
+      <td style="font-weight:bold">${ret.nroFactura||'—'}</td>
+      <td></td>
+      <td></td>
+      <td>${ret.nroControl||'—'}</td>
+      <td></td>
+      <td style="text-align:center">01-reg</td>
+      <td class="num">${fV(total)}</td>
+      <td class="num">${fV(exento)}</td>
+      <td class="num"><strong>${fV(base16)}</strong></td>
+      <td style="text-align:center">16,00%</td>
+      <td class="num">${fV(baseIVA)}</td>
+      <td style="text-align:center;font-weight:bold">${pctRet},00%</td>
+      <td class="num"><strong style="font-size:10px">${fV(ivaRetenido)}</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<table style="margin-top:20px">
+  <tr>
+    <td style="width:36%;text-align:center;border:none;padding-top:8px">
+      <div style="min-height:65px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:4px">${firmaImg}</div>
+      <div style="border-top:1px solid #000;padding-top:3px;font-size:7.5px">Agente de Retención(Firma) / Fecha de Entrega<br><strong>${fF(ret.fecha)}</strong></div>
+      <div style="margin-top:6px;font-size:7.5px">Sello Agente de Retención<br><div style="min-height:55px;display:flex;align-items:center;justify-content:center">${selloImg}</div></div>
+    </td>
+    <td style="width:28%;border:none"></td>
+    <td style="width:36%;text-align:center;border:none;padding-top:8px">
+      <div style="min-height:65px"></div>
+      <div style="border-top:1px solid #000;padding-top:3px;font-size:7.5px">Por el Proveedor (Firma) / Fecha de Entrega</div>
+    </td>
+  </tr>
+</table>
+<div style="margin-top:10px;font-size:6.5px;color:#444;border-top:1px solid #ccc;padding-top:4px">
+  Este comprobante se emite según lo establecido en el Artículo Nº 16 de la Providencia Administrativa SNAT/2025/0054 de fecha 02/07/2025 Publicada Gaceta Oficial N° 43.171 de fecha 16 Julio de 2025
+</div>
+<script>window.onload=()=>{window.print();}<\/script></body></html>`;
+
+    } else {
+      // ── Constancia ISLR — estilo 1421 ────────────────────────────
+      const baseImponibleBs=pNum(ret.baseImponibleBs||0);
+      const sustraendoBs=pNum(ret.sustraendoBs||0);
+      const montoBs=pNum(ret.montoBs||0);
+      const pct=pNum(ret.pct||0);
+      const base16=pNum(ret.base16Bs||0);
+      const iva16=pNum(ret.iva16Bs||0);
+      const exento=pNum(ret.exentoBs||0);
+      const totalFac=pNum(ret.totalFacturaBs||0)||(base16+iva16+exento);
+      const compNum=String(ret.nroComprobante||'—').padStart(8,'0');
+
+      html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+@page{size:A4;margin:1.2cm 1.5cm}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:8px;color:#000}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
+.sec-hdr{background:#4472C4;color:#fff;font-weight:bold;font-size:8px;text-align:center;padding:4px;border:1px solid #2255b0}
+.lbl{font-size:7px;color:#555;display:block}
+.val{font-size:8.5px;font-weight:bold;display:block}
+.num{font-family:monospace;text-align:right}
+@media print{@page{margin:1.2cm 1.5cm}body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+</style></head><body>
+
+<table style="margin-bottom:5px;border:none">
+  <tr>
+    <td style="border:none;width:55%">
+      <div style="font-size:12px;font-weight:900">${empNombre}</div>
+      <div style="font-size:8px">R.I.F.: ${empRif}</div>
+      <div style="font-size:7.5px">${empDir}</div>
+    </td>
+    <td style="width:45%;border:1px solid #888;padding:0">
+      <table style="border:none">
+        <tr>
+          <td style="border:none;border-bottom:1px solid #888;font-size:7px;padding:2px 6px">Comprobante Nº:</td>
+          <td style="border:none;border-bottom:1px solid #888;font-weight:bold;font-size:12px;padding:2px 6px;text-align:right">${compNum}</td>
+        </tr>
+        <tr>
+          <td colspan="2" style="border:none;background:#4472C4;color:#fff;font-size:7px;font-weight:bold;padding:2px 6px">Período de Retención</td>
+        </tr>
+        <tr>
+          <td style="border:none;font-size:7.5px;padding:2px 6px">Año: <strong>${anioRet}</strong></td>
+          <td style="border:none;font-size:7.5px;padding:2px 6px;text-align:right">Mes: <strong>${String(mesRetNum).padStart(2,'0')}</strong> <strong>${mesRetNombre}</strong></td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<div style="text-align:center;margin-bottom:5px">
+  <div style="font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:0.5px">CONSTANCIA DE RETENCIÓN DEL IMPUESTO SOBRE LA RENTA I.S.L.R.</div>
+  <div style="font-size:6.5px;margin-top:2px">REGLAMENTO PARCIAL DE LA LEY DE IMPUESTO SOBRE LA RENTA EN MATERIA DE RETENCIONES Decreto N° 1.808 23 de abril de 1997</div>
+  <div style="font-size:6.5px;font-style:italic;margin-top:1px">"Artículo 24: Los agentes de retención están obligados a entregar a los contribuyentes, un comprobante por cada retención de impuesto que les practiquen en el cual se indique, entre otra información, el monto de lo pagado o abonado en cuenta y la cantidad retenida. (...)"</div>
+</div>
+
+<table style="margin-bottom:4px">
+  <tr><td colspan="4" class="sec-hdr">Datos del Proveedor</td></tr>
+  <tr>
+    <td style="width:30%;border-bottom:none"><span class="lbl">Nombre y Apellido o Razón Social :</span><span class="val">${ret.proveedor||'—'}</span></td>
+    <td colspan="3" style="border-bottom:none"><span class="lbl">Domicilio Fiscal :</span><span style="font-size:8px">${ret.domicilioProveedor||'—'}</span></td>
+  </tr>
+  <tr>
+    <td><span class="lbl">R.I.F. :</span><span class="val">${ret.rifProveedor||'—'}</span></td>
+    <td colspan="3"></td>
+  </tr>
+</table>
+
+<table style="margin-bottom:4px">
+  <tr><td colspan="4" class="sec-hdr">Datos de la Factura objeto de Retención</td></tr>
+  <tr>
+    <td style="width:25%"><span class="lbl">Fecha de Emisión :</span><span class="val">${fF(ret.fechaFactura)}</span></td>
+    <td style="width:25%"><span class="lbl">Monto Exento o Exonerado:</span><span class="val num">${fV(exento)}</span></td>
+    <td style="width:25%"><span class="lbl">Base Imponible 16,00% :</span><span class="val num">${fV(base16)}</span></td>
+    <td style="width:25%"><span class="lbl">Monto I.V.A. 16,00 % :</span><span class="val num">${fV(iva16)}</span></td>
+  </tr>
+  <tr>
+    <td><span class="lbl">Número de Documento:</span><span class="val">${ret.nroFactura||'—'}</span></td>
+    <td colspan="2"></td>
+    <td><span class="lbl">Monto Total del Documento Bs.:</span><span class="val num" style="font-size:10px">${fV(totalFac||baseImponibleBs)}</span></td>
+  </tr>
+  <tr>
+    <td><span class="lbl">Número de Control :</span><span class="val">${ret.nroControl||'—'}</span></td>
+    <td colspan="3"></td>
+  </tr>
+</table>
+
+<table style="margin-bottom:16px">
+  <tr><td colspan="4" class="sec-hdr">Datos de la Retención del Impuesto Sobre La Renta I.S.L.R.</td></tr>
+  <tr>
+    <td style="width:30%"><span class="lbl">Tipo de Persona :</span></td>
+    <td colspan="3"><span class="val">${tipoPersonaLabel}</span></td>
+  </tr>
+  <tr>
+    <td><span class="lbl">Código del Concepto de Retención SENIAT :</span></td>
+    <td colspan="3"><span class="val">${ret.codConcepto||'—'}${ret.concepto?' — '+ret.concepto:''}<br><span style="font-size:7px;font-weight:normal">Documento No.${ret.nroFactura||'—'}</span></span></td>
+  </tr>
+  <tr>
+    <td><span class="lbl">Base sujeta a Retención :</span></td>
+    <td colspan="3"><span class="val num">${fV(baseImponibleBs)}</span></td>
+  </tr>
+  <tr>
+    <td><span class="lbl">Porcentaje de Retención:</span><span class="val">${String(pct).replace('.',',')}  %</span></td>
+    <td style="text-align:center"><span class="lbl">(-) Sustraendo Bs.</span><span class="val num">${fV(sustraendoBs)}</span></td>
+    <td colspan="2" style="text-align:center"><span class="lbl">Monto Retenido I.S.L.R. Bs.</span><span class="val num" style="font-size:13px">${fV(montoBs)}</span></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td style="width:33%;text-align:center;border:none;padding-top:8px">
+      <div style="min-height:60px;display:flex;align-items:flex-end;justify-content:center;margin-bottom:4px">${firmaImg}</div>
+      <div style="font-size:7.5px;margin-top:4px">Agente de Retención</div>
+      <div style="min-height:55px;display:flex;align-items:center;justify-content:center;margin-top:4px">${selloImg}</div>
+      <div style="font-size:7.5px">Sello Agente de Retención</div>
+    </td>
+    <td style="width:34%;border:none"></td>
+    <td style="width:33%;text-align:center;border:none;padding-top:68px">
+      <div style="border-top:1px solid #000;padding-top:3px;font-size:7.5px">Firma del Proveedor</div>
+    </td>
+  </tr>
+</table>
+<script>window.onload=()=>{window.print();}<\/script></body></html>`;
+    }
+
     const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
   };
 
@@ -363,11 +604,12 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
 
         {/* CONFIG */}
         {sec==='config'&&(
-          <div className="max-w-lg">
+          <div className="max-w-2xl space-y-4">
+            {/* ── UT ── */}
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-4">
-              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Configuración fiscal</h3>
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Unidad Tributaria (UT)</h3>
               <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1.5">Valor de la Unidad Tributaria (UT) — Bs.</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1.5">Valor de la Unidad Tributaria — Bs.</label>
                 <div className="flex gap-3 items-center">
                   <input type="number" value={valorUT} onChange={e=>setValorUT(e.target.value)}
                     className="border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black outline-none focus:border-orange-500 w-40"/>
@@ -380,6 +622,46 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
                   <p className="text-[11px] text-orange-700">Sustraendo PNR honorarios/comisiones/arrend.: <strong>Bs. {fmtN(83.3334*valorUT)}</strong></p>
                   <p className="text-[11px] text-slate-500 mt-1">PJD (Jurídica domiciliada): <strong>Sin sustraendo</strong></p>
                 </div>
+              </div>
+            </div>
+            {/* ── Firma y Sello Digital ── */}
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide mb-1">Firma y Sello Digital</h3>
+              <p className="text-[10px] text-slate-400 mb-4">Las imágenes cargadas aparecerán automáticamente en los comprobantes de retención IVA e ISLR al imprimirlos. Se recomienda fondo transparente (PNG).</p>
+              <div className="grid grid-cols-2 gap-6">
+                {/* Firma */}
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase block mb-2">✍️ Firma Digital del Agente</label>
+                  <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center bg-slate-50 min-h-28 flex flex-col items-center justify-center gap-2">
+                    {settings?.firmaUrl
+                      ? <img src={settings.firmaUrl} alt="firma" className="max-h-20 max-w-full object-contain mb-2"/>
+                      : <div className="text-slate-300 text-xs">Sin firma cargada</div>
+                    }
+                    <label className="cursor-pointer bg-slate-800 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-black transition-all">
+                      {settings?.firmaUrl?'Reemplazar firma':'Cargar firma'}
+                      <input type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)uploadFirmaSello(f,'firmaUrl');e.target.value='';}}/>
+                    </label>
+                    {settings?.firmaUrl&&<button onClick={async()=>{await setDoc(getDocRef('settings','general'),{firmaUrl:''},{merge:true});}} className="text-[9px] text-red-400 hover:underline">✕ Eliminar</button>}
+                  </div>
+                </div>
+                {/* Sello */}
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase block mb-2">🔵 Sello del Agente de Retención</label>
+                  <div className="border-2 border-dashed border-blue-200 rounded-xl p-4 text-center bg-blue-50 min-h-28 flex flex-col items-center justify-center gap-2">
+                    {settings?.selloUrl
+                      ? <img src={settings.selloUrl} alt="sello" className="max-h-20 max-w-full object-contain mb-2"/>
+                      : <div className="text-blue-200 text-xs">Sin sello cargado</div>
+                    }
+                    <label className="cursor-pointer bg-blue-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-900 transition-all">
+                      {settings?.selloUrl?'Reemplazar sello':'Cargar sello'}
+                      <input type="file" accept="image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)uploadFirmaSello(f,'selloUrl');e.target.value='';}}/>
+                    </label>
+                    {settings?.selloUrl&&<button onClick={async()=>{await setDoc(getDocRef('settings','general'),{selloUrl:''},{merge:true});}} className="text-[9px] text-red-400 hover:underline">✕ Eliminar</button>}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl p-3">
+                <p className="text-[10px] text-amber-700"><strong>Tip:</strong> Use imágenes PNG con fondo transparente para mejor resultado. Tamaño recomendado: 300×100 px para firma · 200×200 px para sello circular.</p>
               </div>
             </div>
           </div>
@@ -2194,21 +2476,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
       const retISLRLista=calcRetISLRLista(form,tot);
       const neto=calcNeto(tot,retIVA,retISLRLista);
       const asiento=generarAsiento(form,tot,retIVA,retISLRLista,neto);
-      const isEditing=!!form.id;
       const id=form.id||`FC-${pId()}`;
       const tasa=pNum(form.tasa||0);
       const nroBase=String(facturasCompra.length+1).padStart(4,'0');
       const batch=writeBatch(db);
-
-      // En modo edición: eliminar comprobantes anteriores para evitar duplicados
-      if(isEditing){
-        const [prevIVA,prevISLR]=await Promise.all([
-          getDocs(query(getColRef('procura_ret_iva'),where('facturaId','==',id))),
-          getDocs(query(getColRef('procura_ret_islr'),where('facturaId','==',id)))
-        ]);
-        prevIVA.forEach(d=>batch.delete(d.ref));
-        prevISLR.forEach(d=>batch.delete(d.ref));
-      }
 
       // Limpiar undefined recursivamente — Firestore los rechaza
       const clean=(obj)=>{
@@ -2272,9 +2543,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
           facturaId:id,nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',proveedorId:form.proveedorId,
           fechaFactura:form.fecha,fecha:getTodayDate(),
-          pctRetencion:pNum(form.pctRetIVA||75),
+          pctRetencion:form.pctRetIVA,
           baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
           monto:retIVA.monto,montoBs:retIVA.montoBs,
+          totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+          exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
           tasa:form.tasa,periodo:getPeriodo(),
           status:'PENDIENTE',timestamp:Date.now()
         });
@@ -2294,6 +2567,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,ordenesCompra,dialog,set
           baseImponibleBs:r.baseImponibleBs,
           sustraendoBs:r.sustraendoBs,
           monto:r.monto,montoBs:r.montoBs,
+          totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+          exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
           valorUT,tasa:form.tasa,periodo:getPeriodo(),
           status:'PENDIENTE',timestamp:Date.now()
         });
@@ -3313,6 +3588,516 @@ const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra
 // ══════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// LIBRO DE COMPRAS VIEW — Módulo Procura
+// ══════════════════════════════════════════════════════════════════
+const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, setDialog, settings}) => {
+  const anioAct = new Date().getFullYear();
+  const mesAct = String(new Date().getMonth()+1).padStart(2,'0');
+  const [filtAnio, setFiltAnio] = useState(String(anioAct));
+  const [filtMes, setFiltMes] = useState(mesAct);
+  const [filtQ, setFiltQ] = useState('1');
+  const [filtFact, setFiltFact] = useState('');
+  const [filtProv, setFiltProv] = useState('');
+
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const fmtV = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pNum(n)||0); const p=a.toFixed(2).split('.'); return (pNum(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
+  const fmtF = d => { if(!d)return'—'; const p=String(d).split('-'); return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d; };
+  const fmtFE = d => { if(!d)return''; const p=String(d).split('-'); return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d; };
+
+  const mes2 = String(filtMes).padStart(2,'0');
+  const lastDay = new Date(parseInt(filtAnio), parseInt(filtMes), 0).getDate();
+  const desde = filtQ==='1' ? `${filtAnio}-${mes2}-01` : `${filtAnio}-${mes2}-16`;
+  const hasta = filtQ==='1' ? `${filtAnio}-${mes2}-15` : `${filtAnio}-${mes2}-${String(lastDay).padStart(2,'0')}`;
+  const mesLabel = MESES[parseInt(filtMes,10)-1]||'';
+  const periodoLabel = `${filtQ==='1'?'I':'II'} QUINCENA — ${desde} AL ${hasta}`;
+
+  // Filtrar facturas del período
+  const factsPeriodo = (facturasCompra||[]).filter(f => {
+    if(f.afectaLibroCompras === false) return false;
+    const fecha = f.fecha||'';
+    if(fecha < desde || fecha > hasta) return false;
+    if(filtFact && !(f.nroFactura||'').toLowerCase().includes(filtFact.toLowerCase()) &&
+       !(f.nroControl||'').toLowerCase().includes(filtFact.toLowerCase())) return false;
+    if(filtProv && !(f.proveedor||'').toLowerCase().includes(filtProv.toLowerCase())) return false;
+    return true;
+  }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+  // Construir filas del libro
+  const rows = []; let seq = 1;
+  factsPeriodo.forEach(f => {
+    const prov = (proveedores||[]).find(p => p.id === f.proveedorId);
+    const rif = prov?.rif || '';
+    const tot = f.totales || {};
+    const tasa = pNum(f.tasa||0);
+    const totalBs   = pNum(tot.totalBs) || pNum(f.totalBs) || pNum(f.total||0)*tasa;
+    const base16Bs  = pNum(tot.base16Bs||0);
+    const iva16Bs   = pNum(tot.iva16Bs||0);
+    const base8Bs   = pNum(tot.base8Bs||0);
+    const iva8Bs    = pNum(tot.iva8Bs||0);
+    const exentoBs  = pNum(tot.exentoBs||0);
+    rows.push({
+      seq:seq++, fecha:f.fecha||'', rif, nombre:f.proveedor||'—',
+      tipo:'FACTURA', nroFactura:f.nroFactura||'', nroControl:f.nroControl||'',
+      impTotal:0, impBase:0, impIVA:0,
+      ciTotal:totalBs, ciSinDer:exentoBs, ciBase:base16Bs, ciCred:iva16Bs,
+      crTotal:base8Bs+iva8Bs, crBase:base8Bs, crCred:iva8Bs,
+      retPct:'', retMonto:0, retFact:'', retComp:'', _id:f.id,
+    });
+    const ret = (retIVACompra||[]).find(r => r.facturaId === f.id);
+    if(ret) rows.push({
+      seq:seq++, fecha:ret.fecha||f.fecha||'', rif:ret.rifProveedor||rif, nombre:ret.proveedor||f.proveedor||'—',
+      tipo:'RETENCIÓN', nroFactura:'', nroControl:'',
+      impTotal:0, impBase:0, impIVA:0,
+      ciTotal:0, ciSinDer:0, ciBase:0, ciCred:0,
+      crTotal:0, crBase:0, crCred:0,
+      retPct:`${pNum(ret.pctRetencion||75)}%`, retMonto:pNum(ret.montoBs||0),
+      retFact:ret.nroFactura||'', retComp:ret.nroComprobante||'',
+    });
+  });
+
+  // Totales
+  const fRows = rows.filter(r=>r.tipo==='FACTURA');
+  const rRows = rows.filter(r=>r.tipo==='RETENCIÓN');
+  const totCiTotal  = fRows.reduce((s,r)=>s+r.ciTotal,0);
+  const totSinDer   = fRows.reduce((s,r)=>s+r.ciSinDer,0);
+  const totBase16   = fRows.reduce((s,r)=>s+r.ciBase,0);
+  const totCred16   = fRows.reduce((s,r)=>s+r.ciCred,0);
+  const totCrTotal  = fRows.reduce((s,r)=>s+r.crTotal,0);
+  const totBase8    = fRows.reduce((s,r)=>s+r.crBase,0);
+  const totCred8    = fRows.reduce((s,r)=>s+r.crCred,0);
+  const totRetMonto = rRows.reduce((s,r)=>s+r.retMonto,0);
+  const totCompras  = totBase16 + totBase8;
+  const totCredFisc = totCred16 + totCred8;
+
+  // ── EXCEL EXPORT ──────────────────────────────────────────────────
+  const exportExcel = async () => {
+    if(!window.XLSX){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
+    const XL = window.XLSX;
+    const numFmt = '#,##0.00';
+    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const rif = settings?.empresaRif || 'J-412309374';
+    const dir = settings?.empresaDireccion || 'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
+    const Q = filtQ==='1'?'I QUINCENA':'II QUINCENA';
+
+    // Construir AOA — 28 columnas
+    const aoa = [];
+    aoa.push(['','','','',empresa,'','','','','','','','','','','','','','','','','','','IMPUESTO AL VALOR AGREGADO','','','','']);
+    aoa.push(['','','','','RIF: '+rif,'','','','','','','','','','','','','','','','','','','FORMA 99030','','','','']);
+    aoa.push(['','','','',dir]);
+    aoa.push(['','','','','LIBRO DE COMPRAS','','','','','','','','','','','','','','','','','','','MES',mesLabel.toUpperCase(),'','','']);
+    aoa.push(['','','','','','','','','','','','','','','','','','','','','','','','PERÍODO:',Q,'','','']);
+    aoa.push(['','','','','','','','','','','','','','','','','','','','','','','','DEL',`${fmtFE(desde)} AL ${fmtFE(hasta)}`,'','','']);
+    // Fila 7: sección headers
+    aoa.push(['','','','','','','','','','','','IMPORTACIONES','','','','Compras Internas por Alícuota General','','','','','Compras Nacionales por Alícuota Reducida','','','','IVA RETENIDO','','','']);
+    // Fila 8: col headers
+    aoa.push(['N° Opr','Fecha del Documento','Nº R.I.F. o C.I','Nombre y Apellido o Razón Social','Tipo de Documento','N° de Factura','N° de Control de Factura','Nro de Factura Afectada','Fecha Aplic','N° de Planilla C-80/C-81','N° de Expediente','Total Importación','Base Imponible','0.16','IVA','Total Compras Alícuota General','Compras sin derecho a Crédito Fiscal','Base Imponible','% Alícuota','Crédito Fiscal 16%','Total Compras Alícuota Reducida','Base Imponible','%','Crédito Fiscal 8%','% Retenido','Monto Retenido','Factura que Afecta','N° Comprobante']);
+    // Filas de datos
+    rows.forEach(r => {
+      aoa.push([
+        r.seq, fmtFE(r.fecha), r.rif, r.nombre, r.tipo,
+        r.nroFactura||'—', r.nroControl||'—', r.retFact||'—', r.tipo==='RETENCIÓN'?fmtFE(r.fecha):'—', '—', '—',
+        r.impTotal, r.impBase, r.tipo==='FACTURA'?0.16:null, r.impIVA,
+        r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, r.tipo==='FACTURA'?0.16:null, r.ciCred||null,
+        r.crTotal||null, r.crBase||null, r.tipo==='FACTURA'?0.08:null, r.crCred||null,
+        r.retPct||'—', r.retMonto||null, r.retFact||'—', r.retComp||'—',
+      ]);
+    });
+    // Fila TOTAL
+    aoa.push(['TOTAL','','','','','','','','','','',0,0,'',0, totCiTotal,totSinDer,totBase16,'',totCred16,totCrTotal,totBase8,'',totCred8,'',totRetMonto,'','']);
+    // Resumen
+    aoa.push([]);
+    aoa.push(['','','','','RESUMEN LIBRO DE COMPRAS']);
+    aoa.push(['','','','','CRÉDITOS FISCALES']);
+    aoa.push(['','','','','Compras no gravadas y/o sin derecho a crédito fiscal','',totSinDer]);
+    aoa.push(['','','','','Importaciones gravadas por alícuota general','',0,'',0]);
+    aoa.push(['','','','','Importaciones gravadas por alícuota reducida','',0,'',0]);
+    aoa.push(['','','','','Compras internas gravadas por alícuota general (16%)','',totBase16,'',totCred16]);
+    aoa.push(['','','','','Compras internas gravadas por alícuota reducida (8%)','',totBase8,'',totCred8]);
+    aoa.push(['','','','','Total compras y créditos fiscales del período','',totCompras,'',totCredFisc]);
+    aoa.push(['','','','','IVA Retenido del período','','','',totRetMonto]);
+
+    const ws = XL.utils.aoa_to_sheet(aoa);
+    // Anchos de columna
+    ws['!cols'] = [{wch:6},{wch:11},{wch:15},{wch:36},{wch:12},{wch:13},{wch:14},{wch:13},{wch:11},{wch:14},{wch:14},{wch:16},{wch:14},{wch:6},{wch:14},{wch:14},{wch:14},{wch:14},{wch:7},{wch:14},{wch:14},{wch:14},{wch:6},{wch:14},{wch:9},{wch:14},{wch:14},{wch:18}];
+    // Congelar primeras 4 columnas
+    ws['!freeze'] = {xSplit:4, ySplit:8};
+
+    // ── Estilos ──────────────────────────────────────────────────────
+    const S = {
+      hdr:  { fill:{patternType:'solid',fgColor:{rgb:'FF1F3864'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:9,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
+      hdrO: { fill:{patternType:'solid',fgColor:{rgb:'FFEA580C'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
+      hdrT: { fill:{patternType:'solid',fgColor:{rgb:'FF0F766E'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
+      hdrB: { fill:{patternType:'solid',fgColor:{rgb:'FF1E40AF'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
+      hdrP: { fill:{patternType:'solid',fgColor:{rgb:'FF6D28D9'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
+      memb: { fill:{patternType:'solid',fgColor:{rgb:'FF1E293B'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:10,name:'Arial'} },
+      sub:  { fill:{patternType:'solid',fgColor:{rgb:'FF334155'}}, font:{color:{rgb:'FFCBD5E1'},sz:8,name:'Arial'} },
+      fac:  { fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}}, font:{color:{rgb:'FF111827'},sz:8,name:'Arial'} },
+      facN: { fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}}, font:{color:{rgb:'FF111827'},sz:8,name:'Arial'}, alignment:{horizontal:'right'} },
+      facHL:{ fill:{patternType:'solid',fgColor:{rgb:'FFEFF6FF'}}, font:{color:{rgb:'FF1D4ED8'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center'} },
+      ret:  { fill:{patternType:'solid',fgColor:{rgb:'FFFEFCE8'}}, font:{color:{rgb:'FF78350F'},sz:8,name:'Arial'} },
+      retN: { fill:{patternType:'solid',fgColor:{rgb:'FFFEFCE8'}}, font:{color:{rgb:'FFDC2626'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'right'} },
+      retHL:{ fill:{patternType:'solid',fgColor:{rgb:'FFFEF3C7'}}, font:{color:{rgb:'FFEA580C'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center'} },
+      tot:  { fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:9,name:'Arial'} },
+      totN: { fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}}, font:{color:{rgb:'FFF97316'},bold:true,sz:9,name:'Arial'}, alignment:{horizontal:'right'} },
+      sum:  { fill:{patternType:'solid',fgColor:{rgb:'FFF8FAFC'}}, font:{color:{rgb:'FF374151'},sz:8,name:'Arial'} },
+      sumN: { fill:{patternType:'solid',fgColor:{rgb:'FFF1F5F9'}}, font:{color:{rgb:'FF0F766E'},bold:true,sz:9,name:'Arial'}, alignment:{horizontal:'right'} },
+    };
+    const sc = (r,c,st) => { const addr=XL.utils.encode_cell({r,c}); if(!ws[addr])ws[addr]={v:'',t:'s'}; ws[addr].s=st; };
+    const scN = (r,c,st) => { const addr=XL.utils.encode_cell({r,c}); if(ws[addr])ws[addr].s=st; };
+    // Filas membrete 0-5
+    for(let r=0;r<4;r++) for(let c=0;c<28;c++) sc(r,c,r<2?S.memb:S.sub);
+    // Fila 6: sección headers
+    for(let c=0;c<28;c++) sc(6,c,c>=11&&c<=14?S.hdrT:c>=15&&c<=19?S.hdrB:c>=20&&c<=23?S.hdrO:c>=24?S.hdrP:S.hdr);
+    // Fila 7: col headers
+    for(let c=0;c<28;c++) sc(7,c,c>=11&&c<=14?S.hdrT:c>=15&&c<=19?S.hdrB:c>=20&&c<=23?S.hdrO:c>=24?S.hdrP:S.hdr);
+    // Filas de datos
+    const firstDataRow = 8;
+    const numCols = [11,12,13,14,15,16,17,18,19,20,21,22,23,25];
+    rows.forEach((r,i) => {
+      const ri = firstDataRow+i;
+      const isFac = r.tipo==='FACTURA';
+      for(let c=0;c<28;c++){
+        const isNum = numCols.includes(c);
+        if(isFac){
+          if(c===5||c===6) sc(ri,c,S.facHL); // N° Factura destacado
+          else if(isNum) sc(ri,c,S.facN);
+          else sc(ri,c,S.fac);
+        } else {
+          if(c>=24&&c<=27) sc(ri,c,S.retHL); // ret columns
+          else if(isNum) sc(ri,c,S.retN);
+          else sc(ri,c,S.ret);
+        }
+        // Aplicar formato numérico
+        const addr=XL.utils.encode_cell({r:ri,c});
+        if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
+      }
+    });
+    // Fila TOTAL
+    const totRow = firstDataRow + rows.length;
+    for(let c=0;c<28;c++){
+      const isNum = numCols.includes(c);
+      sc(totRow,c,isNum?S.totN:S.tot);
+      const addr=XL.utils.encode_cell({r:totRow,c});
+      if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
+    }
+    // Resumen
+    const resStart = totRow+2;
+    for(let ri=resStart;ri<resStart+10;ri++){
+      for(let c=0;c<28;c++){
+        const addr=XL.utils.encode_cell({r:ri,c});
+        if(ws[addr]) ws[addr].s=(c===6||c===8)?S.sumN:S.sum;
+      }
+    }
+
+    const wb = XL.utils.book_new();
+    XL.utils.book_append_sheet(wb, ws, 'L COMPRAS');
+    XL.writeFile(wb, `LibroCompras_${filtAnio}_${mes2}_Q${filtQ}.xlsx`, {cellStyles:true});
+  };
+
+  // ── PDF EXPORT ────────────────────────────────────────────────────
+  const exportPDF = () => {
+    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp = settings?.empresaRif||'J-412309374';
+    const dirEmp = settings?.empresaDireccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
+    const Q = filtQ==='1'?'I QUINCENA':'II QUINCENA';
+
+    const rowsHtml = rows.map(r => {
+      const isFac = r.tipo === 'FACTURA';
+      const bg = isFac ? '#fff' : '#fefce8';
+      const textColor = isFac ? '#111' : '#78350f';
+      const numStyle = `text-align:right;font-family:monospace;font-size:6px;color:${isFac?'#1f2937':'#dc2626'};`;
+      const retHighlight = !isFac ? 'background:#fef3c7;color:#ea580c;font-weight:bold;' : '';
+      return `<tr style="background:${bg};color:${textColor};border-bottom:1px solid #e5e7eb">
+  <td style="padding:1px 3px;font-size:6px;text-align:center;width:22px">${r.seq}</td>
+  <td style="padding:1px 3px;font-size:6px;white-space:nowrap;width:52px">${fmtFE(r.fecha)}</td>
+  <td style="padding:1px 3px;font-size:6px;white-space:nowrap;width:75px">${r.rif||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;max-width:120px;word-wrap:break-word">${r.nombre}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;font-weight:bold;background:${isFac?'#f0fdf4':'#fef9c3'};color:${isFac?'#065f46':'#92400e'}">${r.tipo}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;color:#1d4ed8;font-weight:bold">${r.nroFactura||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.nroControl||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.retFact||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.tipo==='RETENCIÓN'?fmtFE(r.fecha):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">—</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">—</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciTotal>0?fmtV(r.ciTotal):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciSinDer>0?fmtV(r.ciSinDer):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciBase>0?fmtV(r.ciBase):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">${isFac?'0.16':'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciCred>0?fmtV(r.ciCred):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.crTotal>0?fmtV(r.crTotal):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.crBase>0?fmtV(r.crBase):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center">${isFac&&r.crBase>0?'0.08':'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.crCred>0?fmtV(r.crCred):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;${retHighlight}">${r.retPct||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;${numStyle}color:#dc2626;font-weight:bold">${r.retMonto>0?fmtV(r.retMonto):'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;text-align:center;color:#ea580c">${r.retFact||'—'}</td>
+  <td style="padding:1px 3px;font-size:6px;font-size:5.5px">${r.retComp||'—'}</td>
+</tr>`;
+    }).join('');
+
+    const colHeaders = [
+      'N°','Fecha','N° R.I.F.','Nombre / Razón Social','Tipo Doc.','N° Factura','N° Control','Fac. Afectada','Fec. Aplic','Planilla','Expediente',
+      'IMPORT. Total','IMPORT. Base','%','IMPORT. IVA',
+      'CI Total','CI Sin Derecho','CI Base','% Alíc.','CI Créd.16%',
+      'CR Total','CR Base','%','CR Créd.8%',
+      '% Ret.','Mto. Ret. Bs.','Fac. Afecta','N° Comprobante'
+    ];
+    const secH = (txt,cols,color) => `<th colspan="${cols}" style="background:${color};color:#fff;padding:3px 4px;font-size:7px;font-weight:900;text-align:center;border:1px solid #374151">${txt}</th>`;
+
+    const totRow = `<tr style="background:#1f2937;color:#fff;font-weight:900">
+  <td colspan="11" style="padding:2px 4px;font-size:7px">TOTALES — ${rows.length} registros (${fRows.length} facturas · ${rRows.length} retenciones)</td>
+  <td colspan="4" style="padding:2px 4px;font-size:6px;text-align:center">—</td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right;color:#f97316">${fmtV(totCiTotal)}</td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totSinDer)}</td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totBase16)}</td>
+  <td></td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totCred16)}</td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totCrTotal)}</td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totBase8)}</td>
+  <td></td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totCred8)}</td>
+  <td></td>
+  <td style="padding:2px 4px;font-size:6px;text-align:right;color:#f97316">${fmtV(totRetMonto)}</td>
+  <td colspan="2"></td>
+</tr>`;
+
+    const resumenHtml = `<div style="margin-top:20px;page-break-inside:avoid">
+  <table style="width:50%;border-collapse:collapse;font-family:Arial;font-size:8px">
+    <tr><td colspan="2" style="background:#1f2937;color:#fff;font-weight:900;padding:6px 10px">RESUMEN LIBRO DE COMPRAS</td></tr>
+    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 10px">CRÉDITOS FISCALES</td></tr>
+    <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:3px 10px">Compras no gravadas y/o sin derecho a crédito fiscal</td><td style="padding:3px 10px;text-align:right">${fmtV(totSinDer)}</td></tr>
+    <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:3px 10px">Importaciones gravadas por alícuota general</td><td style="padding:3px 10px;text-align:right">0,00</td></tr>
+    <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:3px 10px">Importaciones gravadas por alícuota reducida</td><td style="padding:3px 10px;text-align:right">0,00</td></tr>
+    <tr style="border-bottom:1px solid #e5e7eb;background:#eff6ff"><td style="padding:3px 10px;font-weight:bold">Compras internas gravadas por alícuota general (16%)</td><td style="padding:3px 10px;text-align:right;font-weight:bold">${fmtV(totBase16)} / CF: ${fmtV(totCred16)}</td></tr>
+    <tr style="border-bottom:1px solid #e5e7eb;background:#f0fdf4"><td style="padding:3px 10px;font-weight:bold">Compras internas gravadas por alícuota reducida (8%)</td><td style="padding:3px 10px;text-align:right;font-weight:bold">${fmtV(totBase8)} / CF: ${fmtV(totCred8)}</td></tr>
+    <tr style="background:#f8fafc;border-bottom:1px solid #cbd5e1"><td style="padding:4px 10px;font-weight:bold">Total compras gravadas del período</td><td style="padding:4px 10px;text-align:right;font-weight:bold">${fmtV(totCompras)}</td></tr>
+    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 10px;font-weight:900">Total créditos fiscales del período</td><td style="padding:4px 10px;text-align:right;font-weight:900">${fmtV(totCredFisc)}</td></tr>
+    <tr><td colspan="2" style="padding:6px 10px"></td></tr>
+    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 10px">IVA RETENIDO</td></tr>
+    <tr style="border-bottom:1px solid #e5e7eb"><td style="padding:3px 10px">Total IVA Retenido del período (Bs.)</td><td style="padding:3px 10px;text-align:right;font-weight:bold;color:#dc2626">${fmtV(totRetMonto)}</td></tr>
+  </table>
+</div>`;
+
+    const html = `<html><head><meta charset="utf-8"><style>
+@page{size:legal landscape;margin:6mm 5mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:6px;font-family:Arial}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:7px}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #d1d5db;vertical-align:middle}
+@media print{.no-print{display:none}}
+</style></head><body>
+<div style="margin-bottom:8px">
+  <table style="border:none;margin-bottom:4px">
+    <tr>
+      <td style="border:none;font-size:14px;font-weight:900;color:#111;width:60%">${emp}</td>
+      <td style="border:none;text-align:right;font-size:8px;font-weight:bold;color:#555">IMPUESTO AL VALOR AGREGADO</td>
+    </tr>
+    <tr>
+      <td style="border:none;font-size:8px;color:#444">RIF: ${rifEmp}</td>
+      <td style="border:none;text-align:right;font-size:8px;color:#555">FORMA 99030</td>
+    </tr>
+    <tr>
+      <td style="border:none;font-size:7px;color:#666">${dirEmp}</td>
+      <td style="border:none;text-align:right;font-size:9px;font-weight:bold;color:#f97316">MES: ${mesLabel.toUpperCase()}</td>
+    </tr>
+  </table>
+  <div style="font-weight:900;font-size:13px;border-bottom:2px solid #111;padding-bottom:3px;display:inline-block">LIBRO DE COMPRAS</div>
+  <span style="margin-left:12px;font-size:8px;color:#555">PERÍODO: ${Q} — DEL ${fmtFE(desde)} AL ${fmtFE(hasta)} — ${rows.length} registros</span>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th colspan="11" style="background:#1e293b;color:#fff;padding:3px;font-size:7px">DATOS DEL DOCUMENTO</th>
+      ${secH('IMPORTACIONES',4,'#0f766e')}
+      ${secH('COMPRAS INTERNAS — ALÍCUOTA GENERAL 16%',5,'#1e40af')}
+      ${secH('COMPRAS NACIONALES — ALÍCUOTA REDUCIDA 8%',4,'#ea580c')}
+      ${secH('IVA RETENIDO',4,'#6d28d9')}
+    </tr>
+    <tr>
+      ${colHeaders.map((h,i)=>`<th style="background:${i<11?'#334155':i<15?'#0f766e':i<20?'#1e40af':i<24?'#ea580c':'#6d28d9'};color:#fff;padding:2px 3px;font-size:5.5px;text-align:center;vertical-align:middle;line-height:1.2">${h}</th>`).join('')}
+    </tr>
+  </thead>
+  <tbody>
+    ${rowsHtml}
+    ${totRow}
+  </tbody>
+</table>
+${resumenHtml}
+</body></html>`;
+
+    const w = window.open('','_blank');
+    w.document.write(html); w.document.close();
+    setTimeout(()=>w.print(),600);
+  };
+
+  // ── RENDER ────────────────────────────────────────────────────────
+  const sel = 'border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-orange-400';
+  const inp = 'border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-orange-400 placeholder-slate-300';
+  const anios = []; for(let y=2024;y<=anioAct+1;y++) anios.push(String(y));
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden bg-slate-50">
+      {/* Header + filtros */}
+      <div className="flex-shrink-0 px-4 py-3 bg-white border-b border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <BookOpen size={16} className="text-orange-500"/>
+            <h2 className="font-black text-sm uppercase tracking-widest text-slate-800">Libro de Compras</h2>
+            <span className="text-[10px] text-slate-400 font-mono">{periodoLabel}</span>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={exportExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-emerald-700 transition-all shadow">
+              <FileSpreadsheet size={12}/> Excel
+            </button>
+            <button onClick={exportPDF}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700 transition-all shadow">
+              <Printer size={12}/> PDF
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <select className={sel} value={filtAnio} onChange={e=>setFiltAnio(e.target.value)}>
+            {anios.map(a=><option key={a} value={a}>{a}</option>)}
+          </select>
+          <select className={sel} value={filtMes} onChange={e=>setFiltMes(e.target.value)}>
+            {MESES.map((m,i)=><option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+          </select>
+          <select className={sel} value={filtQ} onChange={e=>setFiltQ(e.target.value)}>
+            <option value="1">I Quincena (1-15)</option>
+            <option value="2">II Quincena (16-fin)</option>
+          </select>
+          <input className={inp} placeholder="N° Factura / Control..." value={filtFact} onChange={e=>setFiltFact(e.target.value)} style={{width:180}}/>
+          <input className={inp} placeholder="Proveedor..." value={filtProv} onChange={e=>setFiltProv(e.target.value)} style={{width:200}}/>
+          {(filtFact||filtProv)&&<button onClick={()=>{setFiltFact('');setFiltProv('');}} className="text-[10px] text-red-500 font-bold hover:underline">✕ Limpiar</button>}
+          <span className="ml-auto text-[10px] text-slate-400 font-mono">{fRows.length} facturas · {rRows.length} retenciones</span>
+        </div>
+      </div>
+
+      {/* Tabla — scroll horizontal */}
+      <div className="flex-1 overflow-auto">
+        <table style={{borderCollapse:'collapse',width:'max-content',minWidth:'100%',fontSize:10}}>
+          <thead style={{position:'sticky',top:0,zIndex:10}}>
+            {/* Fila 1: secciones */}
+            <tr>
+              <th colSpan={11} style={{background:'#1e293b',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151',whiteSpace:'nowrap'}}>DATOS DEL DOCUMENTO</th>
+              <th colSpan={4} style={{background:'#0f766e',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>IMPORTACIONES</th>
+              <th colSpan={5} style={{background:'#1e40af',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>COMPRAS INTERNAS — ALÍCUOTA GENERAL</th>
+              <th colSpan={4} style={{background:'#ea580c',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>COMPRAS ALÍCUOTA REDUCIDA</th>
+              <th colSpan={4} style={{background:'#6d28d9',color:'#fff',padding:'4px 6px',fontSize:9,fontWeight:900,textAlign:'center',border:'1px solid #374151'}}>IVA RETENIDO</th>
+            </tr>
+            {/* Fila 2: columnas */}
+            <tr>
+              {[
+                ['N°','#1e293b',28],['Fecha','#1e293b',80],['R.I.F.','#1e293b',90],['Razón Social','#1e293b',200],
+                ['Tipo Doc.','#1e293b',75],['N° Factura','#1e293b',90],['N° Control','#1e293b',90],
+                ['Fac. Afectada','#1e293b',90],['Fec. Aplic','#1e293b',75],['Planilla','#1e293b',80],['Expediente','#1e293b',80],
+                ['Total Imp.','#0f766e',90],['Base','#0f766e',90],['%','#0f766e',40],['IVA','#0f766e',90],
+                ['Total C.I.','#1e40af',100],['Sin Derecho CF','#1e40af',100],['Base 16%','#1e40af',100],['% Alíc.','#1e40af',50],['Créd. 16%','#1e40af',100],
+                ['Total C.R.','#ea580c',90],['Base 8%','#ea580c',90],['%','#ea580c',40],['Créd. 8%','#ea580c',90],
+                ['% Ret.','#6d28d9',55],['Monto Ret. Bs.','#6d28d9',110],['Fac. Afecta','#6d28d9',90],['N° Comprobante','#6d28d9',130],
+              ].map(([lbl,bg,w],i)=>(
+                <th key={i} style={{background:bg,color:'#fff',padding:'3px 4px',fontSize:8,fontWeight:900,textAlign:'center',border:'1px solid rgba(255,255,255,0.2)',whiteSpace:'nowrap',minWidth:w,maxWidth:w+20}}>
+                  {lbl}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr><td colSpan={28} style={{padding:'40px',textAlign:'center',color:'#94a3b8',fontSize:12,fontStyle:'italic'}}>
+                Sin registros para el período seleccionado
+              </td></tr>
+            )}
+            {rows.map((r,i) => {
+              const isFac = r.tipo==='FACTURA';
+              const bg = isFac ? (i%2===0?'#ffffff':'#f8fafc') : '#fefce8';
+              const txt = isFac ? '#111827' : '#78350f';
+              const numC = isFac ? '#1f2937' : '#dc2626';
+              const td = (v,right=false,bold=false,extra='') =>
+                `<td style="padding:2px 4px;border-right:1px solid #e5e7eb;white-space:nowrap;${right?'text-align:right;':''}${bold?'font-weight:bold;':''}${extra}font-family:${right?'monospace':'inherit'}">${v}</td>`;
+              return (
+                <tr key={i} style={{background:bg,color:txt,borderBottom:'1px solid #e5e7eb'}}>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{r.seq}</td>
+                  <td style={{padding:'2px 4px',borderRight:'1px solid #e5e7eb',fontSize:9,whiteSpace:'nowrap'}}>{fmtFE(r.fecha)}</td>
+                  <td style={{padding:'2px 4px',borderRight:'1px solid #e5e7eb',fontSize:9,whiteSpace:'nowrap'}}>{r.rif||'—'}</td>
+                  <td style={{padding:'2px 4px',borderRight:'1px solid #e5e7eb',fontSize:9,maxWidth:200}}><div style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.nombre}>{r.nombre}</div></td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontWeight:900,fontSize:9,background:isFac?'#f0fdf4':'#fef9c3',color:isFac?'#065f46':'#92400e'}}>{r.tipo}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#1d4ed8',fontWeight:700,fontSize:9}}>{r.nroFactura||'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{r.nroControl||'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac?'—':r.retFact||'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac?'—':fmtFE(r.fecha)}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
+                  {/* Importaciones */}
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9,fontFamily:'monospace'}}>—</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9,fontFamily:'monospace'}}>—</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9,fontFamily:'monospace'}}>—</td>
+                  {/* Compras internas */}
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:isFac?700:400}}>{isFac&&r.ciTotal>0?fmtV(r.ciTotal):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.ciSinDer>0?fmtV(r.ciSinDer):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.ciBase>0?fmtV(r.ciBase):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac&&r.ciBase>0?'0.16':'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:700}}>{isFac&&r.ciCred>0?fmtV(r.ciCred):'—'}</td>
+                  {/* Alicuota reducida */}
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.crTotal>0?fmtV(r.crTotal):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.crBase>0?fmtV(r.crBase):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac&&r.crBase>0?'0.08':'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.crCred>0?fmtV(r.crCred):'—'}</td>
+                  {/* IVA Retenido */}
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,background:!isFac?'#fef3c7':'',color:!isFac?'#ea580c':'#94a3b8',fontWeight:!isFac?900:400}}>{r.retPct||'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#dc2626',fontWeight:700,fontSize:9,fontFamily:'monospace'}}>{r.retMonto>0?fmtV(r.retMonto):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#ea580c',fontSize:9}}>{r.retFact||'—'}</td>
+                  <td style={{padding:'2px 4px',fontSize:8,color:'#374151'}}>{r.retComp||'—'}</td>
+                </tr>
+              );
+            })}
+            {/* Fila TOTAL */}
+            {rows.length > 0 && (
+              <tr style={{background:'#1f2937',color:'#fff',fontWeight:900}}>
+                <td colSpan={11} style={{padding:'4px 8px',fontSize:9,borderRight:'1px solid #374151'}}>TOTALES — {rows.length} REG.</td>
+                <td colSpan={4} style={{padding:'4px 8px',textAlign:'center',borderRight:'1px solid #374151',color:'#94a3b8',fontSize:9}}>—</td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',color:'#f97316',fontFamily:'monospace',fontSize:9}}>{fmtV(totCiTotal)}</td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',fontFamily:'monospace',fontSize:9}}>{fmtV(totSinDer)}</td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',fontFamily:'monospace',fontSize:9}}>{fmtV(totBase16)}</td>
+                <td style={{borderRight:'1px solid #374151'}}></td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',color:'#6ee7b7',fontFamily:'monospace',fontSize:9}}>{fmtV(totCred16)}</td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',fontFamily:'monospace',fontSize:9}}>{fmtV(totCrTotal)}</td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',fontFamily:'monospace',fontSize:9}}>{fmtV(totBase8)}</td>
+                <td style={{borderRight:'1px solid #374151'}}></td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',color:'#6ee7b7',fontFamily:'monospace',fontSize:9}}>{fmtV(totCred8)}</td>
+                <td style={{borderRight:'1px solid #374151'}}></td>
+                <td style={{padding:'4px 8px',textAlign:'right',borderRight:'1px solid #374151',color:'#f97316',fontFamily:'monospace',fontSize:9}}>{fmtV(totRetMonto)}</td>
+                <td colSpan={2}></td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Resumen inferior */}
+      {rows.length > 0 && (
+        <div className="flex-shrink-0 px-4 py-3 bg-slate-900 text-white border-t border-slate-700">
+          <div className="grid grid-cols-4 gap-4 text-center">
+            <div><div className="text-[9px] text-slate-400 uppercase font-black">Total Compras (CF 16%)</div><div className="font-black text-xs font-mono text-emerald-400">Bs. {fmtV(totBase16)}</div><div className="text-[9px] text-slate-400">CF: Bs. {fmtV(totCred16)}</div></div>
+            <div><div className="text-[9px] text-slate-400 uppercase font-black">Total Compras (CF 8%)</div><div className="font-black text-xs font-mono text-emerald-300">Bs. {fmtV(totBase8)}</div><div className="text-[9px] text-slate-400">CF: Bs. {fmtV(totCred8)}</div></div>
+            <div><div className="text-[9px] text-slate-400 uppercase font-black">Sin Derecho CF</div><div className="font-black text-xs font-mono text-slate-300">Bs. {fmtV(totSinDer)}</div></div>
+            <div><div className="text-[9px] text-slate-400 uppercase font-black">IVA Retenido</div><div className="font-black text-xs font-mono text-red-400">Bs. {fmtV(totRetMonto)}</div></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+
 function ProcuraApp({fbUser,onBack,settings}) {
   const [sec,setSec]=useState('dashboard');
   const [facturaPreload,setFacturaPreload]=useState(null);
@@ -3322,6 +4107,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
   const [pagosCxP,setPagosCxP]=useState([]);
   const [tasas,setTasas]=useState([]);
   const [dialog,setDialog]=useState(null);
+  const [retIVACompra,setRetIVACompra]=useState([]);
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -3329,6 +4115,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       onSnapshot(getColRef('procura_proveedores'),s=>setProveedores(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('procura_ordenes_compra'),s=>setOrdenesCompra(s.docs.map(d=>d.data()).sort((a,b)=>(b.creadoEn||0)-(a.creadoEn||0)))),
       onSnapshot(query(getColRef('procura_facturas_compra'),orderBy('fecha','desc')),s=>setFacturasCompra(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVACompra(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_pagos_cxp'),orderBy('fecha','desc')),s=>setPagosCxP(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'),orderBy('fecha','desc')),s=>setTasas(s.docs.map(d=>d.data()))),
     ];
@@ -3336,7 +4123,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -3346,6 +4133,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
     {id:'catalogo',    label:'Catálogo Prod/Serv', icon:<Layers size={13}/>},
     {id:'ordenes',     label:'Órdenes de Compra',  icon:<ClipboardList size={13}/>, badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||null},
     {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>},
+    {id:'libro_compras',label:'Libro Compras',   icon:<BookOpen size={13}/>, badge:null},
     {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
     {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>},
     {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>},
@@ -3358,6 +4146,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'catalogo':return <CatalogoServiciosView {...sharedProps}/>;
       case 'ordenes':return <OrdenesCompraView {...sharedProps}/>;
       case 'facturas':return <FacturasCompraView {...sharedProps} facturaPreload={facturaPreload} onPreloadConsumed={()=>setFacturaPreload(null)}/>;
+      case 'libro_compras':return <LibroComprasView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
       case 'historial':return <HistorialPagosView {...sharedProps}/>;
       case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
@@ -19975,10 +20764,54 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
               }
             }
+            // ── Estilos Libro de Ventas ────────────────────────────────────────
+            const LVS = {
+              memb: {fill:{patternType:'solid',fgColor:{rgb:'FF0F172A'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:10,name:'Arial'}},
+              sub:  {fill:{patternType:'solid',fgColor:{rgb:'FF1E293B'}},font:{color:{rgb:'FFE2E8F0'},sz:8,name:'Arial'}},
+              secH: {fill:{patternType:'solid',fgColor:{rgb:'FF1D4ED8'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'},alignment:{horizontal:'center',wrapText:true}},
+              colH: {fill:{patternType:'solid',fgColor:{rgb:'FF3B82F6'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'},alignment:{horizontal:'center',wrapText:true}},
+              fac:  {fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}},font:{color:{rgb:'FF111827'},sz:8,name:'Arial'}},
+              facN: {fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}},font:{color:{rgb:'FF111827'},sz:8,name:'Arial'},alignment:{horizontal:'right'}},
+              ret:  {fill:{patternType:'solid',fgColor:{rgb:'FFFEFCE8'}},font:{color:{rgb:'FF78350F'},sz:8,name:'Arial'}},
+              retN: {fill:{patternType:'solid',fgColor:{rgb:'FFFEF3C7'}},font:{color:{rgb:'FFDC2626'},bold:true,sz:8,name:'Arial'},alignment:{horizontal:'right'}},
+              nc:   {fill:{patternType:'solid',fgColor:{rgb:'FFEFF6FF'}},font:{color:{rgb:'FF1E40AF'},sz:8,name:'Arial'}},
+              tot:  {fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:9,name:'Arial'}},
+              totN: {fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}},font:{color:{rgb:'FFF97316'},bold:true,sz:9,name:'Arial'},alignment:{horizontal:'right'}},
+              sum:  {fill:{patternType:'solid',fgColor:{rgb:'FFF8FAFC'}},font:{color:{rgb:'FF374151'},sz:8,name:'Arial'}},
+              sumN: {fill:{patternType:'solid',fgColor:{rgb:'FFF1F5F9'}},font:{color:{rgb:'FF0F766E'},bold:true,sz:9,name:'Arial'},alignment:{horizontal:'right'}},
+            };
+            const lvSC=(r,c,st)=>{const addr=XL.utils.encode_cell({r,c});if(!ws[addr])ws[addr]={v:'',t:'s'};ws[addr].s=st;};
+            // Membrete filas 0-5 (índices 0-5)
+            for(let r=0;r<6;r++) for(let c=0;c<19;c++) lvSC(r,c,r<2?LVS.memb:LVS.sub);
+            // Sección header fila 6
+            for(let c=0;c<19;c++) lvSC(6,c,LVS.secH);
+            // Col headers fila 7 y 8
+            for(let r=7;r<9;r++) for(let c=0;c<19;c++) lvSC(r,c,LVS.colH);
+            // Data rows
+            const lvFirst=9;
+            rows.forEach((r,i)=>{
+              const ri=lvFirst+i;
+              const isFac=r.tipo==='FACTURA';const isRet=r.tipo==='RETENCION';
+              const st=isFac?LVS.fac:isRet?LVS.ret:LVS.nc;
+              const stN=isFac?LVS.facN:isRet?LVS.retN:LVS.nc;
+              for(let c=0;c<19;c++){
+                const isNum=[10,11,12,13,14,15,16].includes(c);
+                lvSC(ri,c,isNum?stN:st);
+              }
+            });
+            // Total row
+            const lvTotRow=lvFirst+rows.length;
+            for(let c=0;c<19;c++) lvSC(lvTotRow,c,[10,11,12,13,14,15,16].includes(c)?LVS.totN:LVS.tot);
+            // Resumen rows
+            const lvResStart=lvTotRow+2;
+            for(let ri=lvResStart;ri<lvResStart+20;ri++) for(let c=0;c<19;c++){
+              const addr=XL.utils.encode_cell({r:ri,c});
+              if(ws[addr]) ws[addr].s=(c===5)?LVS.sumN:LVS.sum;
+            }
             // Crear libro y exportar
             const wb=XL.utils.book_new();
             XL.utils.book_append_sheet(wb,ws,'LVENTAS');
-            XL.writeFile(wb,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xlsx`);
+            XL.writeFile(wb,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xlsx`,{cellStyles:true});
           };
 
 
