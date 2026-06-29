@@ -2704,7 +2704,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     afectaLibroCompras:true,
     aplicaRetIVA:false,pctRetIVA:75,
     islrRetenciones:[], // lista: [{codigo,tipoContrib,activo}]
-    status:'PENDIENTE',observaciones:'',itemsOC:[]
+    status:'PENDIENTE',observaciones:'',itemsOC:[],
+    esImportacion:false,
+    importacion:{fechaAplic:'',nroPlanilla:'',nroExpediente:'',nroEmbarque:'',
+      totalImportacion:0,baseImponible:0,iva:0}
   });
 
   // Al seleccionar proveedor auto-configurar retenciones
@@ -2987,6 +2990,25 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     </table>`:''}
     <div class="tot" style="width:50%;margin-left:auto"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span>Neto a pagar:</span><span style="font-family:monospace;color:#f97316;font-size:12px;font-weight:900">$ ${fV(f.netoPagar||f.total||0)}</span></div>
     ${pNum(f.tasa||0)>0?`<div style="display:flex;justify-content:space-between"><span>Neto Bs.:</span><span style="font-family:monospace;color:#93c5fd">Bs. ${fV(f.netoPagarBs||0)}</span></div>`:''}</div>
+    ${f.esImportacion&&f.importacion?`
+    <div style="margin-top:12px;border:2px solid #1d4ed8;border-radius:6px;overflow:hidden">
+      <div style="background:#1d4ed8;color:#fff;padding:6px 12px;font-weight:900;font-size:9px;text-transform:uppercase;letter-spacing:1px">📦 Datos de Importación — DUA / SENIAT</div>
+      <div style="padding:10px 12px;background:#eff6ff">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+          <div><span style="font-size:7px;color:#64748b;display:block;text-transform:uppercase;font-weight:700">N° Embarque</span><span style="font-weight:900;font-size:9px">${f.importacion.nroEmbarque||'—'}</span></div>
+          <div><span style="font-size:7px;color:#64748b;display:block;text-transform:uppercase;font-weight:700">N° Planilla C-80/C-81</span><span style="font-weight:900;font-size:9px">${f.importacion.nroPlanilla||'—'}</span></div>
+          <div><span style="font-size:7px;color:#64748b;display:block;text-transform:uppercase;font-weight:700">N° Expediente DUA</span><span style="font-weight:900;font-size:9px">${f.importacion.nroExpediente||'—'}</span></div>
+          <div><span style="font-size:7px;color:#64748b;display:block;text-transform:uppercase;font-weight:700">Fecha de Aplicación</span><span style="font-weight:900;font-size:9px">${fD(f.importacion.fechaAplic||f.fecha)}</span></div>
+        </div>
+        <table style="width:50%;border-collapse:collapse;font-size:9px">
+          <tr style="background:#dbeafe"><td style="padding:4px 10px;font-weight:700">Total Importación Bs.</td><td style="padding:4px 10px;text-align:right;font-family:monospace;font-weight:900;color:#1d4ed8">${fV(f.importacion.totalImportacion||0)}</td></tr>
+          <tr style="background:#eff6ff"><td style="padding:4px 10px;font-weight:700">Base Imponible Bs.</td><td style="padding:4px 10px;text-align:right;font-family:monospace">${fV(f.importacion.baseImponible||0)}</td></tr>
+          <tr style="background:#dbeafe"><td style="padding:4px 10px;font-weight:700">IVA 16% Bs.</td><td style="padding:4px 10px;text-align:right;font-family:monospace;color:#f97316">${fV(f.importacion.iva||0)}</td></tr>
+        </table>
+        <p style="font-size:7px;color:#93c5fd;margin-top:6px">La CxP se rige por la factura del proveedor. Estos datos aplican exclusivamente al Libro de Compras — sección IMPORTACIONES.</p>
+      </div>
+    </div>`:''
+    }
     <div style="margin-top:16px;text-align:center;font-size:7px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:8px">Supply ERP · ${emp} · Generado: ${new Date().toLocaleDateString('es-VE')}</div>
     <script>window.onload=()=>window.print();<\/script></body></html>`;
     const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
@@ -3196,12 +3218,13 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 
             {/* Sub-tabs */}
             <div className="flex-shrink-0 flex border-b border-slate-200 bg-slate-50">
-              {[['datos','Datos fiscales',FileText],['retenciones','Retenciones',DollarSign],['asiento','Asiento contable',BookOpen]].map(([id,label,Icon])=>(
+              {[['datos','Datos fiscales',FileText],['retenciones','Retenciones',DollarSign],['asiento','Asiento contable',BookOpen],['importacion','Importación',Package]].map(([id,label,Icon])=>(
                 <button key={id} onClick={()=>setTab(id)}
                   className={`flex items-center gap-2 px-5 py-2.5 text-[10px] font-black uppercase tracking-wide border-b-2 transition-all ${tab===id?'border-orange-500 text-orange-600 bg-white':'border-transparent text-slate-400 hover:text-slate-600'}`}>
                   <Icon size={12}/> {label}
                   {id==='asiento'&&fAsiento.cuadrado&&<span className="w-2 h-2 rounded-full bg-emerald-500 ml-1"/>}
                   {id==='asiento'&&!fAsiento.cuadrado&&fAsiento.lineas.length>0&&<span className="w-2 h-2 rounded-full bg-red-500 ml-1"/>}
+                  {id==='importacion'&&form.esImportacion&&<span className="w-2 h-2 rounded-full bg-blue-500 ml-1"/>}
                 </button>
               ))}
             </div>
@@ -3678,12 +3701,125 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
               )}
             </div>
 
+
+              {/* ── TAB IMPORTACIÓN ── */}
+              {tab==='importacion'&&(
+                <div className="space-y-4">
+                  {/* Toggle activar importación */}
+                  {!form.esImportacion?(
+                    <div className="flex flex-col items-center justify-center py-10 gap-4">
+                      <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center">
+                        <Package size={28} className="text-blue-600"/>
+                      </div>
+                      <div className="text-center">
+                        <p className="font-black text-slate-800 text-sm uppercase tracking-wide">Datos de Importación (DUA)</p>
+                        <p className="text-[10px] text-slate-400 mt-1">Esta factura corresponde a una importación con trámite DUA/SENIAT</p>
+                      </div>
+                      <button onClick={()=>setForm(f=>({...f,esImportacion:true,
+                        importacion:{fechaAplic:f.fecha||getTodayDate(),nroPlanilla:'',nroExpediente:'',nroEmbarque:'',totalImportacion:0,baseImponible:0,iva:0}}))}
+                        className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-black uppercase hover:bg-blue-700 flex items-center gap-2 transition-all">
+                        <Package size={14}/> Activar datos de importación
+                      </button>
+                      <p className="text-[9px] text-slate-400 text-center max-w-xs">La CxP se calcula exclusivamente sobre la factura del proveedor. Los datos de importación son informativos para el Libro de Compras.</p>
+                    </div>
+                  ):(
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-blue-500"/>
+                          <p className="text-[10px] font-black text-blue-700 uppercase tracking-wide">Datos DUA / SENIAT activos</p>
+                        </div>
+                        <button onClick={()=>setForm(f=>({...f,esImportacion:false,importacion:{fechaAplic:'',nroPlanilla:'',nroExpediente:'',nroEmbarque:'',totalImportacion:0,baseImponible:0,iva:0}}))}
+                          className="text-[9px] text-red-400 hover:text-red-600 font-black uppercase hover:underline transition-all">
+                          ✕ Desactivar importación
+                        </button>
+                      </div>
+
+                      {/* AVISO CxP */}
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                        <p className="text-[10px] text-amber-700 font-bold">⚠️ La Cuenta por Pagar (CxP) se rige exclusivamente por los datos de la factura del proveedor ({form.proveedor||'—'}), no por los montos de importación.</p>
+                      </div>
+
+                      {/* Datos DUA */}
+                      <div className="bg-white border border-slate-200 rounded-xl p-4">
+                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Datos del Trámite Aduanero</h3>
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Embarque</label>
+                            <input className={inp} placeholder="Ej: MSC-2026-001"
+                              value={(form.importacion||{}).nroEmbarque||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),nroEmbarque:e.target.value.toUpperCase()}}))}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Planilla C-80 / C-81</label>
+                            <input className={inp} placeholder="C-80 o C-81"
+                              value={(form.importacion||{}).nroPlanilla||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),nroPlanilla:e.target.value.toUpperCase()}}))}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Expediente DUA</label>
+                            <input className={inp} placeholder="N° Expediente"
+                              value={(form.importacion||{}).nroExpediente||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),nroExpediente:e.target.value.toUpperCase()}}))}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha de Aplicación</label>
+                            <input type="date" className={inp}
+                              value={(form.importacion||{}).fechaAplic||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),fechaAplic:e.target.value}}))}/>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Valores DUA */}
+                      <div className="bg-white border border-slate-200 rounded-xl p-4">
+                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Valores para Libro de Compras (Importación)</h3>
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Total Importación Bs.</label>
+                            <input type="number" className={inp} placeholder="0,00"
+                              value={(form.importacion||{}).totalImportacion||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),totalImportacion:pNum(e.target.value)}}))}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base Imponible Bs.</label>
+                            <input type="number" className={inp} placeholder="0,00"
+                              value={(form.importacion||{}).baseImponible||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),baseImponible:pNum(e.target.value)}}))}/>
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">IVA Bs. (16%)</label>
+                            <input type="number" className={inp} placeholder="0,00"
+                              value={(form.importacion||{}).iva||''}
+                              onChange={e=>setForm(f=>({...f,importacion:{...(f.importacion||{}),iva:pNum(e.target.value)}}))}/>
+                            <button onClick={()=>{const base=pNum((form.importacion||{}).baseImponible||0);setForm(f=>({...f,importacion:{...(f.importacion||{}),iva:parseFloat((base*0.16).toFixed(2))}}));}}
+                              className="text-[9px] text-blue-500 hover:underline mt-1 block">Calcular 16% automático</button>
+                          </div>
+                        </div>
+
+                        {/* Resumen DUA */}
+                        {((form.importacion||{}).totalImportacion>0||(form.importacion||{}).baseImponible>0)&&(
+                          <div className="mt-4 bg-blue-900 rounded-xl p-3">
+                            <div className="grid gap-1.5 text-[10px]" style={{gridTemplateColumns:'1fr 1fr 1fr'}}>
+                              <div><span className="text-blue-300 font-black uppercase text-[8px] block">Total Importación</span><span className="text-white font-black font-mono">Bs. {fmtN((form.importacion||{}).totalImportacion||0)}</span></div>
+                              <div><span className="text-blue-300 font-black uppercase text-[8px] block">Base Imponible</span><span className="text-white font-black font-mono">Bs. {fmtN((form.importacion||{}).baseImponible||0)}</span></div>
+                              <div><span className="text-blue-300 font-black uppercase text-[8px] block">IVA 16%</span><span className="text-orange-300 font-black font-mono">Bs. {fmtN((form.importacion||{}).iva||0)}</span></div>
+                            </div>
+                            <p className="text-[8px] text-blue-400 mt-2">Estos valores aparecerán en la columna IMPORTACIONES del Libro de Compras. La CxP no se ve afectada.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             {/* Footer */}
             <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 flex-shrink-0">
               <div className="flex items-center gap-2 text-[10px] text-slate-400">
                 {form.aplicaRetIVA&&<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-black">Ret. IVA {form.pctRetIVA||75}%</span>}
                 {fRetISLRLista.filter(r=>r.monto>0).map((r,i)=><span key={i} className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-black">ISLR {r.pct}% ({r.codigo})</span>)}
                 {form.afectaLibroCompras!==false&&<span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-black">Libro compras ✓</span>}
+                {form.esImportacion&&<span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-black">📦 Importación DUA</span>}
               </div>
               <div className="flex gap-2">
                 <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
@@ -3703,35 +3839,150 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // ══════════════════════════════════════════════════════════════════════
 const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog}) => {
   const [search,setSearch]=useState('');
-  const [filtProv,setFiltProv]=useState('TODOS');
+  const [filtStatus,setFiltStatus]=useState('TODOS');
+  const [expanded,setExpanded]=useState(new Set());
   const [modal,setModal]=useState(null);
   const [factSel,setFactSel]=useState(null);
   const [formPago,setFormPago]=useState({});
+  const [cuentasBancarias,setCuentasBancarias]=useState([]);
 
-  const pendientes=facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA'&&pNum(f.saldoPendiente||f.total)>0);
-  const filtradas=pendientes.filter(f=>{
-    const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
-    const pv=filtProv==='TODOS'||f.proveedorId===filtProv;
-    return ms&&pv;
-  });
+  useEffect(()=>{
+    const u=onSnapshot(getColRef('cuentasBancarias'),s=>setCuentasBancarias(s.docs.map(d=>d.data())));
+    return u;
+  },[]);
 
-  const totalPendiente=filtradas.reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0);
-  const vencidas=filtradas.filter(f=>f.fechaVencimiento&&f.fechaVencimiento<getTodayDate());
-  const proxVencer=filtradas.filter(f=>f.fechaVencimiento&&f.fechaVencimiento>=getTodayDate()&&f.fechaVencimiento<=new Date(Date.now()+7*864e5).toISOString().slice(0,10));
+  const hoy=getTodayDate();
+  const fV=n=>{const a=Math.abs(pNum(n)||0);const p=a.toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
+  const fmtN=n=>pFmt(n);
+  const fD=d=>{if(!d)return'—';const pts=String(d).split('-');return pts.length===3?`${pts[2]}/${pts[1]}/${pts[0]}`:d;};
 
-  const abrirPago = (fact) => {
-    setFactSel(fact);
-    setFormPago({monto:pFmt(fact.saldoPendiente||fact.total),metodo:'Transferencia',fecha:getTodayDate(),banco:'',referencia:'',moneda:fact.moneda||'USD',tasa:String(tasaBCV||0),concepto:`Pago factura ${fact.nroFactura}`});
-    setModal('pago');
+  // Agrupar facturas por proveedor (solo pendientes/parciales)
+  const factsActivas=(facturasCompra||[]).filter(f=>f.status!=='ANULADA'&&pNum(f.saldoPendiente||f.total||0)>0.01);
+  const pagosPorFactura=useMemo(()=>{
+    const m={};
+    (pagosCxP||[]).forEach(p=>{if(!m[p.facturaId])m[p.facturaId]=[];m[p.facturaId].push(p);});
+    return m;
+  },[pagosCxP]);
+
+  const gruposProv=useMemo(()=>{
+    const grupos={};
+    factsActivas.forEach(f=>{
+      const pid=f.proveedorId||f.proveedor||'SIN_PROV';
+      if(!grupos[pid])grupos[pid]={pid,nombre:f.proveedor||'—',rif:'',facturas:[],totalSaldo:0,totalPagado:0,totalRet:0};
+      const saldo=pNum(f.saldoPendiente||f.total||0);
+      const pagos=(pagosPorFactura[f.id]||[]).reduce((s,p)=>s+pNum(p.monto||0),0);
+      const ret=pNum(f.retIVA?.montoBs||0)/Math.max(pNum(f.tasa||0)||tasaBCV||1,1);
+      grupos[pid].facturas.push(f);
+      grupos[pid].totalSaldo+=saldo;
+      grupos[pid].totalPagado+=pagos;
+      grupos[pid].totalRet+=ret;
+    });
+    // Enriquecer con datos del directorio de proveedores
+    (proveedores||[]).forEach(p=>{if(grupos[p.id]){grupos[p.id].rif=p.rif||'';grupos[p.id].nombre=p.nombre||grupos[p.id].nombre;}});
+    return Object.values(grupos).sort((a,b)=>b.totalSaldo-a.totalSaldo);
+  },[factsActivas,pagosPorFactura,proveedores,tasaBCV]);
+
+  const getStatus=(grupo)=>{
+    const vencida=grupo.facturas.some(f=>f.fechaVencimiento&&f.fechaVencimiento<hoy&&f.status!=='PAGADA');
+    return vencida?'VENCIDO':'POR PAGAR';
   };
 
-  const registrarPago = async () => {
-    if(!formPago.monto||pNum(formPago.monto)<=0){setDialog({title:'Aviso',text:'El monto debe ser mayor a 0.',type:'alert'});return;}
+  const filtrados=gruposProv.filter(g=>{
+    const ms=(g.nombre||'').toLowerCase().includes(search.toLowerCase())||(g.rif||'').includes(search);
+    const st=filtStatus==='TODOS'||getStatus(g)===filtStatus;
+    return ms&&st;
+  });
+
+  const grandTotal=filtrados.reduce((s,g)=>s+g.totalSaldo,0);
+  const grandPagado=filtrados.reduce((s,g)=>s+g.totalPagado,0);
+  const grandRet=filtrados.reduce((s,g)=>s+g.totalRet,0);
+  const toggleExpand=(pid)=>{setExpanded(prev=>{const n=new Set(prev);n.has(pid)?n.delete(pid):n.add(pid);return n;});};
+
+  const diasVencidos=(f)=>{
+    if(!f.fechaVencimiento)return null;
+    const hoyD=new Date();const venD=new Date(f.fechaVencimiento);
+    const diff=Math.floor((hoyD-venD)/(1000*60*60*24));
+    return diff>0?diff:0;
+  };
+
+  // ── PDF REPORTE CxP ────────────────────────────────────────────────
+  const exportarPDF=()=>{
+    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp=settings?.empresaRif||'J-41230937-4';
+    const provRows=filtrados.map(g=>{
+      const status=getStatus(g);
+      const factRows=g.facturas.map(f=>{
+        const pagos=pagosPorFactura[f.id]||[];
+        const totalPag=pagos.reduce((s,p)=>s+pNum(p.monto||0),0);
+        const retBs=pNum(f.retIVA?.montoBs||0);
+        const retUSD=retBs>0?retBs/Math.max(pNum(f.tasa||0)||tasaBCV||1,1):0;
+        const diasV=diasVencidos(f);
+        return `<tr style="border-bottom:1px solid #e5e7eb">
+  <td style="padding:3px 6px;color:#f97316;font-weight:700;font-size:9px">${f.nroFactura||'—'}</td>
+  <td style="padding:3px 6px;font-size:9px">${fD(f.fecha)}</td>
+  <td style="padding:3px 6px;font-size:9px;color:${f.fechaVencimiento<hoy?'#dc2626':'#374151'}">${fD(f.fechaVencimiento)}</td>
+  <td style="padding:3px 6px;text-align:center;font-size:9px;color:#6366f1">${f.diasCredito||'—'}</td>
+  <td style="padding:3px 6px;font-size:9px;color:#2563eb">${f.nroControl||'—'}</td>
+  <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fmtN(f.total||0)}</td>
+  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#16a34a;font-size:9px">$${fmtN(totalPag)}</td>
+  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#dc2626;font-size:9px">${retUSD>0?'$'+fmtN(retUSD):'—'}</td>
+  <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;color:#f97316;font-size:9px">$${fmtN(pNum(f.saldoPendiente||f.total||0))}</td>
+  <td style="padding:3px 6px;font-size:8px;color:#6b7280">${f.observaciones||''}</td>
+</tr>
+${pagos.length>0?pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px">
+  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#16a34a">↳ Pago: ${fD(p.fecha)} — ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td>
+  <td colspan="2" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fmtN(pNum(p.monto||0))}</td>
+  <td colspan="4" style="padding:2px 6px;color:#16a34a">${p.banco||''}</td>
+</tr>`).join(''):''}
+${retUSD>0?`<tr style="background:#fff1f2;font-size:8px">
+  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#dc2626">↳ Ret. IVA ${pNum(f.retIVA?.pct||75)}% · N° ${f.retIVA?.nroComprobante||'—'} · Base: Bs.${fV(retBs)}</td>
+  <td colspan="6" style="padding:2px 6px;color:#dc2626;text-align:right;font-family:monospace">-$${fmtN(retUSD)}</td>
+</tr>`:''}`;
+      }).join('');
+      return `<div style="margin-bottom:14px;page-break-inside:avoid">
+<div style="background:#1e293b;color:#fff;padding:7px 12px;display:flex;justify-content:space-between;align-items:center">
+  <div><strong style="font-size:11px">${g.nombre}</strong> <span style="color:#94a3b8;font-size:9px">${g.rif}</span></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span style="font-family:monospace;font-weight:900;font-size:12px;color:#f97316">$${fmtN(g.totalSaldo)}</span>
+    <span style="background:${status==='VENCIDO'?'#dc2626':'#f59e0b'};color:#fff;padding:2px 8px;border-radius:10px;font-size:8px;font-weight:900">${status}</span>
+  </div>
+</div>
+<table style="width:100%;border-collapse:collapse;font-size:9px">
+  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">EMISIÓN</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">VENCE</th><th style="padding:4px 6px;text-align:center;font-size:7.5px;color:#f97316">DÍAS</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">N° CONTROL</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">TOTAL USD</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">PAGADO</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">RET.IVA</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">SALDO USD</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">OBS.</th></tr></thead>
+  <tbody>${factRows}</tbody>
+  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900;font-size:9px">Subtotal ${g.facturas.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900">$${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fmtN(g.totalPagado)}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#fca5a5">$${fmtN(g.totalRet)}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#f97316;font-weight:900">$${fmtN(g.totalSaldo)}</td><td></td></tr></tfoot>
+</table></div>`;
+    }).join('');
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page{size:legal landscape;margin:1.2cm 1.5cm}
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px;color:#111}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">
+  <div><div style="font-size:16px;font-weight:900">${emp}</div><div style="font-size:8px;color:#666">RIF: ${rifEmp}</div></div>
+  <div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">CUENTAS POR PAGAR DETALLADO</div>
+    <div style="font-size:8px;color:#555">Corte: ${hoy} · ${filtrados.length} proveedores · ${filtrados.reduce((s,g)=>s+g.facturas.length,0)} documentos · Total: $${fmtN(grandTotal)}</div>
+  </div>
+</div>
+${provRows}
+<div style="background:#0f172a;color:#fff;padding:8px 12px;margin-top:16px;display:flex;justify-content:space-between;font-weight:900;font-size:11px">
+  <span>TOTAL GENERAL — ${filtrados.length} proveedores</span>
+  <span style="color:#f97316">$${fmtN(grandTotal)}</span>
+</div>
+<script>window.onload=()=>window.print();<\/script></body></html>`;
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  // ── REGISTRAR PAGO ─────────────────────────────────────────────────
+  const abrirPago=(f)=>{
+    setFactSel(f);
+    setFormPago({fecha:getTodayDate(),metodo:'Transferencia',banco:'',referencia:'',monto:pNum(f.saldoPendiente||f.total||0).toFixed(2),concepto:`Pago factura ${f.nroFactura||'—'}`});
+    setModal('pago');
+  };
+  const guardarPago=async()=>{
+    const monto=pNum(formPago.monto||0);
+    if(monto<=0){setDialog({title:'Aviso',text:'El monto debe ser mayor a 0.',type:'alert'});return;}
     try{
-      const monto=pNum(formPago.monto);
-      const saldoActual=pNum(factSel.saldoPendiente||factSel.total);
-      const nuevoSaldo=Math.max(0,saldoActual-monto);
-      const nuevoStatus=nuevoSaldo<0.01?'PAGADA':'PARCIAL';
       const batch=writeBatch(db);
       const pagoId=`PAGO-${pId()}`;
       batch.set(getDocRef('procura_pagos_cxp',pagoId),{
@@ -3739,440 +3990,247 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
         proveedor:factSel.proveedor,proveedorId:factSel.proveedorId||'',
         ...formPago,monto,timestamp:Date.now()
       });
+      const nuevoSaldo=Math.max(0,pNum(factSel.saldoPendiente||factSel.total||0)-monto);
+      const nuevoStatus=nuevoSaldo<0.01?'PAGADA':nuevoSaldo<pNum(factSel.total||0)?'PARCIAL':'PENDIENTE';
       batch.update(getDocRef('procura_facturas_compra',factSel.id),{
         saldoPendiente:nuevoSaldo,status:nuevoStatus,
-        montoCobrado:(pNum(factSel.montoCobrado)||0)+monto,
-        updatedAt:Date.now()
+        montoCobrado:(pNum(factSel.montoCobrado)||0)+monto,updatedAt:Date.now()
       });
       await batch.commit();
       setModal(null);
-      setDialog({title:'✅ Pago registrado',text:`Pago de $${pFmt(monto)} registrado. Saldo: $${pFmt(nuevoSaldo)}`,type:'alert'});
+      setDialog({title:'✅ Pago registrado',text:`Pago de $${pFmt(monto)} registrado para ${factSel.nroFactura}.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const exportPDF = () => {
-    let html=pdfOpen('REPORTE CUENTAS POR PAGAR',`Pendientes: ${filtradas.length} facturas · Total: $${pFmt(totalPendiente)}`);
-    html+=`<table><thead><tr><th>N° Factura</th><th>Proveedor</th><th>Fecha</th><th>Vencimiento</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Status</th></tr></thead><tbody>`;
-    filtradas.forEach(f=>{
-      const venc=f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
-      html+=`<tr${venc?' style="background:#fef2f2"':''}><td><strong>${f.nroFactura||'—'}</strong></td><td>${f.proveedor||'—'}</td><td>${pDate(f.fecha)}</td><td style="${venc?'color:#dc2626;font-weight:bold':''}">${pDate(f.fechaVencimiento)||'—'}</td><td>$${pFmt(f.total)}</td><td>$${pFmt(f.montoCobrado||0)}</td><td><strong>$${pFmt(f.saldoPendiente||f.total)}</strong></td><td><span class="${f.status==='PARCIAL'?'badge-apr':'badge-pend'}">${f.status}</span></td></tr>`;
-    });
-    html+=`<tr class="total-row"><td colspan="6" style="text-align:right">TOTAL PENDIENTE</td><td>$${pFmt(totalPendiente)}</td><td></td></tr></tbody></table>`;
-    pdfPrint(html+pdfClose());
-  };
-
-  const exportXLS = () => {
-    const rows=[['N° Factura','Proveedor','Fecha','Vencimiento','Total','Pagado','Saldo Pendiente','Status'],
-      ...filtradas.map(f=>[f.nroFactura,f.proveedor,f.fecha,f.fechaVencimiento,pFmt(f.total),pFmt(f.montoCobrado||0),pFmt(f.saldoPendiente||f.total),f.status])];
-    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`cxp_${getTodayDate()}.csv`;a.click();
-  };
-
   return (
-    <div>
-      {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4 mb-5">
-        <div className="rounded-2xl p-5 text-white shadow-xl" style={{background:P_CARD}}>
-          <p className="text-[9px] font-black uppercase text-slate-400">Total por pagar</p>
-          <p className="font-black text-3xl mt-1" style={{color:P_ORANGE}}>${pFmt(totalPendiente)}</p>
-          <p className="text-[10px] text-slate-400 mt-2">{filtradas.length} facturas pendientes</p>
-        </div>
-        <div className="bg-red-50 rounded-2xl p-5 border border-red-100">
-          <p className="text-[9px] font-black uppercase text-red-600">Vencidas</p>
-          <p className="font-black text-3xl mt-1 text-red-600">${pFmt(vencidas.reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
-          <p className="text-[10px] text-red-400 mt-2">{vencidas.length} facturas vencidas</p>
-        </div>
-        <div className="bg-amber-50 rounded-2xl p-5 border border-amber-100">
-          <p className="text-[9px] font-black uppercase text-amber-600">Próximas a vencer (7 días)</p>
-          <p className="font-black text-3xl mt-1 text-amber-600">${pFmt(proxVencer.reduce((s,f)=>s+pNum(f.saldoPendiente||f.total),0))}</p>
-          <p className="text-[10px] text-amber-400 mt-2">{proxVencer.length} facturas</p>
-        </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex-1 relative min-w-48">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar factura o proveedor..." className={`${inp} pl-9`}/>
-        </div>
-        <select className={`${sel} w-auto`} value={filtProv} onChange={e=>setFiltProv(e.target.value)}>
-          <option value="TODOS">Todos los proveedores</option>
-          {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
-        </select>
-        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
-        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
-      </div>
-
-      <PCard noPad>
-        <table className="w-full">
-          <thead><tr>
-            <PTh>N° Factura</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh right>Total</PTh><PTh right>Pagado</PTh><PTh right>Saldo</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
-          </tr></thead>
-          <tbody>
-            {filtradas.length===0?<tr><td colSpan={9} className="py-12"><PEmpty icon={CreditCard} title="Sin pendientes" desc="No hay facturas pendientes de pago"/></td></tr>:
-            filtradas.map(f=>{
-              const venc=f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
-              const st=statusCxP(f.status);
-              return (
-                <tr key={f.id} className={`hover:bg-slate-50 ${venc?'bg-red-50/40':''}`}>
-                  <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
-                  <PTd>{f.proveedor||'—'}</PTd>
-                  <PTd>{pDate(f.fecha)}</PTd>
-                  <PTd><span className={venc?'text-red-600 font-black':''}>{pDate(f.fechaVencimiento)||'—'}{venc&&' ⚠️'}</span></PTd>
-                  <PTd right mono>{pFmt(f.total)}</PTd>
-                  <PTd right mono className="text-emerald-600">{pFmt(f.montoCobrado||0)}</PTd>
-                  <PTd right mono><span className="font-black text-amber-600">{pFmt(f.saldoPendiente||f.total)}</span></PTd>
-                  <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
-                  <PTd>
-                    <PBg sm onClick={()=>abrirPago(f)}><CreditCard size={11}/> Pagar</PBg>
-                  </PTd>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </PCard>
-
-      {/* Modal Pago */}
-      <PModal open={modal==='pago'} onClose={()=>setModal(null)} title="Registrar pago a proveedor"
-        footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={registrarPago}><CreditCard size={14}/> Registrar pago</PBg></>}>
-        {factSel&&(
-          <div className="space-y-4">
-            <div className="bg-slate-50 rounded-xl p-4">
-              <p className="text-[10px] font-black uppercase text-slate-400">Factura</p>
-              <p className="font-black text-slate-800">{factSel.nroFactura} — {factSel.proveedor}</p>
-              <p className="text-xs text-slate-500 mt-1">Saldo pendiente: <span className="font-black text-orange-600">${pFmt(factSel.saldoPendiente||factSel.total)}</span></p>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <PFG label="Monto a pagar *">
-                <input type="number" className={inp} value={formPago.monto||''} onChange={e=>setFormPago({...formPago,monto:e.target.value})}/>
-              </PFG>
-              <PFG label="Moneda">
-                <select className={sel} value={formPago.moneda||'USD'} onChange={e=>setFormPago({...formPago,moneda:e.target.value})}>
-                  {['USD','Bs','EUR'].map(m=><option key={m}>{m}</option>)}
-                </select>
-              </PFG>
-              <PFG label="Tasa Bs/$"><input type="number" className={inp} value={formPago.tasa||''} onChange={e=>setFormPago({...formPago,tasa:e.target.value})} placeholder={String(tasaBCV||0)}/></PFG>
-              <PFG label="Método de pago">
-                <select className={sel} value={formPago.metodo||'Transferencia'} onChange={e=>setFormPago({...formPago,metodo:e.target.value})}>
-                  {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(m=><option key={m}>{m}</option>)}
-                </select>
-              </PFG>
-              <PFG label="Banco / Cuenta"><input className={inp} value={formPago.banco||''} onChange={e=>setFormPago({...formPago,banco:e.target.value})} placeholder="Ej: Banesco 0134"/></PFG>
-              <PFG label="N° Referencia"><input className={inp} value={formPago.referencia||''} onChange={e=>setFormPago({...formPago,referencia:e.target.value.toUpperCase()})}/></PFG>
-              <PFG label="Fecha de pago"><input type="date" className={inp} value={formPago.fecha||''} onChange={e=>setFormPago({...formPago,fecha:e.target.value})}/></PFG>
-              <PFG label="Concepto"><input className={inp} value={formPago.concepto||''} onChange={e=>setFormPago({...formPago,concepto:e.target.value})}/></PFG>
-            </div>
-            {formPago.monto&&(
-              <div className="bg-slate-900 rounded-xl p-3 flex justify-between items-center">
-                <span className="text-[10px] font-black text-slate-400 uppercase">Saldo tras pago</span>
-                <span className={`font-black text-lg ${Math.max(0,pNum(factSel.saldoPendiente||factSel.total)-pNum(formPago.monto))<0.01?'text-emerald-400':'text-orange-400'}`}>
-                  ${pFmt(Math.max(0,pNum(factSel.saldoPendiente||factSel.total)-pNum(formPago.monto)))}
-                </span>
-              </div>
-            )}
+    <div className="flex flex-col h-full overflow-hidden bg-slate-50">
+      {/* Header */}
+      <div className="flex-shrink-0 px-4 py-3 bg-white border-b border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="font-black text-sm uppercase tracking-widest text-slate-800">Cuentas por Pagar</h2>
+            <p className="text-[10px] text-slate-400 mt-0.5">{filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facturas.length,0)} documentos · Saldo total: <strong className="text-orange-600">${fmtN(grandTotal)}</strong></p>
           </div>
+          <div className="flex gap-2">
+            <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-slate-700 transition-all">
+              <Printer size={12}/> PDF Reporte
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="relative flex-1 min-w-48">
+            <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o RIF..." className="w-full border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs outline-none focus:border-orange-400"/>
+          </div>
+          {['TODOS','VENCIDO','POR PAGAR'].map(s=>(
+            <button key={s} onClick={()=>setFiltStatus(s)}
+              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all ${filtStatus===s?s==='VENCIDO'?'bg-red-600 text-white':s==='POR PAGAR'?'bg-amber-500 text-white':'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tabla Análisis por Proveedor */}
+      <div className="flex-1 overflow-auto px-4 py-3 space-y-1">
+        {filtrados.length===0&&(
+          <div className="py-20 text-center text-slate-400 text-xs font-black uppercase">Sin cuentas por pagar pendientes</div>
         )}
-      </PModal>
-    </div>
-  );
-};
-
-// ══════════════════════════════════════════════════════════════════════
-// MÓDULO 6: HISTORIAL DE PAGOS
-// ══════════════════════════════════════════════════════════════════════
-const HistorialPagosView = ({pagosCxP,facturasCompra,dialog,setDialog}) => {
-  const [search,setSearch]=useState('');
-  const [filtMes,setFiltMes]=useState(getMesActual());
-
-  const [editPago, setEditPago] = useState(null);
-  const [editForm, setEditForm] = useState({});
-
-  const reversarPago = async (pago) => {
-    setDialog({title:'Reversar pago',text:`¿Reversar el pago de $${pFmt(pago.monto)} a ${pago.proveedor}? Se restaurará el saldo de la factura ${pago.nroFactura}.`,type:'confirm',onConfirm:async()=>{
-      try{
-        const batch=writeBatch(db);
-        batch.delete(getDocRef('procura_pagos_cxp',pago.id));
-        const fact=(facturasCompra||[]).find(f=>f.id===pago.facturaId);
-        if(fact){
-          const saldoRestaurado=pNum(fact.saldoPendiente||0)+pNum(pago.monto);
-          const total=pNum(fact.total||0);
-          const nuevoStatus=saldoRestaurado>=total*0.99?'PENDIENTE':saldoRestaurado>0?'PARCIAL':'PAGADA';
-          batch.update(getDocRef('procura_facturas_compra',fact.id),{
-            saldoPendiente:Math.min(saldoRestaurado,total),
-            status:nuevoStatus,
-            montoCobrado:Math.max(0,pNum(fact.montoCobrado||0)-pNum(pago.monto)),
-            updatedAt:Date.now()
-          });
-        }
-        await batch.commit();
-        setDialog({title:'✅ Reversado',text:'Pago reversado y saldo restaurado.',type:'alert'});
-      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-    }});
-  };
-
-  const guardarEdicion = async () => {
-    if(!editPago||!editForm.monto||pNum(editForm.monto)<=0) return;
-    try{
-      const montoAnterior = pNum(editPago.monto);
-      const montoNuevo = pNum(editForm.monto);
-      const batch=writeBatch(db);
-      batch.update(getDocRef('procura_pagos_cxp',editPago.id),{...editForm,monto:montoNuevo,updatedAt:Date.now()});
-      const fact=(facturasCompra||[]).find(f=>f.id===editPago.facturaId);
-      if(fact){
-        const diff=montoNuevo-montoAnterior;
-        const nuevoSaldo=Math.max(0,pNum(fact.saldoPendiente||0)-diff);
-        const total=pNum(fact.total||0);
-        const nuevoStatus=nuevoSaldo<0.01?'PAGADA':nuevoSaldo<total?'PARCIAL':'PENDIENTE';
-        batch.update(getDocRef('procura_facturas_compra',fact.id),{
-          saldoPendiente:nuevoSaldo,status:nuevoStatus,
-          montoCobrado:pNum(fact.montoCobrado||0)+diff,updatedAt:Date.now()
-        });
-      }
-      await batch.commit();
-      setEditPago(null);
-      setDialog({title:'✅ Actualizado',text:'Pago actualizado correctamente.',type:'alert'});
-    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-  };
-
-  const filtrados=pagosCxP.filter(p=>{
-    const ms=(p.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(p.proveedor||'').toLowerCase().includes(search.toLowerCase())||(p.referencia||'').toLowerCase().includes(search.toLowerCase());
-    const mes=!filtMes||(p.fecha||'').startsWith(filtMes);
-    return ms&&mes;
-  });
-
-  const totalFiltrado=filtrados.reduce((s,p)=>s+pNum(p.monto),0);
-  const meses=[];
-  for(let i=0;i<12;i++){const d=new Date();d.setMonth(d.getMonth()-i);meses.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
-
-  const exportPDF = () => {
-    let html=pdfOpen('HISTORIAL DE PAGOS A PROVEEDORES',`Período: ${filtMes||'Todos'} · Total: $${pFmt(totalFiltrado)}`);
-    html+=`<table><thead><tr><th>Fecha</th><th>Proveedor</th><th>N° Factura</th><th>Método</th><th>Banco</th><th>Referencia</th><th>Monto</th></tr></thead><tbody>`;
-    filtrados.forEach(p=>{html+=`<tr><td>${pDate(p.fecha)}</td><td>${p.proveedor||'—'}</td><td>${p.nroFactura||'—'}</td><td>${p.metodo||'—'}</td><td>${p.banco||'—'}</td><td>${p.referencia||'—'}</td><td><strong>$${pFmt(p.monto)}</strong></td></tr>`;});
-    html+=`<tr class="total-row"><td colspan="6" style="text-align:right">TOTAL PAGADO</td><td>$${pFmt(totalFiltrado)}</td></tr></tbody></table>`;
-    pdfPrint(html+pdfClose());
-  };
-
-  const exportXLS = () => {
-    const rows=[['Fecha','Proveedor','N° Factura','Método','Banco','Referencia','Moneda','Monto','Tasa'],
-      ...filtrados.map(p=>[p.fecha,p.proveedor,p.nroFactura,p.metodo,p.banco,p.referencia,p.moneda,pFmt(p.monto),p.tasa||''])];
-    const csv=rows.map(r=>r.map(c=>`"${(c||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`pagos_proveedores_${getTodayDate()}.csv`;a.click();
-  };
-
-  return (
-    <div>
-      <div className="flex items-center gap-3 mb-5">
-        <div className="flex-1 relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar pago, proveedor o referencia..." className={`${inp} pl-9`}/>
-        </div>
-        <select className={`${sel} w-auto`} value={filtMes} onChange={e=>setFiltMes(e.target.value)}>
-          <option value="">Todos los meses</option>
-          {meses.map(m=><option key={m} value={m}>{m}</option>)}
-        </select>
-        <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
-        <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
-      </div>
-
-      <div className="bg-slate-900 rounded-xl p-4 mb-5 flex items-center justify-between">
-        <div><p className="text-[9px] font-black uppercase text-slate-400">Total pagado — {filtrados.length} registros</p></div>
-        <p className="font-black text-white text-2xl">${pFmt(totalFiltrado)}</p>
-      </div>
-
-      <PCard noPad>
-        <table className="w-full">
-          <thead><tr>
-            <PTh>Fecha</PTh><PTh>Proveedor</PTh><PTh>Factura</PTh><PTh>Método</PTh><PTh>Banco / Cuenta</PTh><PTh>Referencia</PTh><PTh right>Monto</PTh><PTh>PDF</PTh><PTh>Acciones</PTh>
-          </tr></thead>
-          <tbody>
-            {filtrados.length===0?<tr><td colSpan={9} className="py-12"><PEmpty icon={Receipt} title="Sin pagos" desc="No se encontraron pagos con los filtros actuales"/></td></tr>:
-            filtrados.map(p=>(
-              <tr key={p.id} className="hover:bg-slate-50">
-                <PTd>{pDate(p.fecha)}</PTd>
-                <PTd><span className="font-black text-slate-800">{p.proveedor||'—'}</span></PTd>
-                <PTd><span className="text-orange-600 font-black">{p.nroFactura||'—'}</span></PTd>
-                <PTd><PBadge v="blue">{p.metodo||'—'}</PBadge></PTd>
-                <PTd>{p.banco||'—'}</PTd>
-                <PTd mono>{p.referencia||'—'}</PTd>
-                <PTd right mono><span className="font-black text-emerald-600">${pFmt(p.monto)}</span></PTd>
-                <PTd>
-                  <PBo sm onClick={()=>{
-                    let h=pdfOpen('COMPROBANTE DE PAGO',`Pago a ${p.proveedor}`);
-                    h+=`<table><tbody>
-                      <tr><td><strong>Proveedor:</strong></td><td>${p.proveedor||'—'}</td></tr>
-                      <tr><td><strong>N° Factura:</strong></td><td>${p.nroFactura||'—'}</td></tr>
-                      <tr><td><strong>Fecha:</strong></td><td>${pDate(p.fecha)}</td></tr>
-                      <tr><td><strong>Método:</strong></td><td>${p.metodo||'—'}</td></tr>
-                      <tr><td><strong>Banco/Cuenta:</strong></td><td>${p.banco||'—'}</td></tr>
-                      <tr><td><strong>N° Referencia:</strong></td><td>${p.referencia||'—'}</td></tr>
-                      <tr><td><strong>Concepto:</strong></td><td>${p.concepto||'—'}</td></tr>
-                      <tr class="total-row"><td><strong>MONTO PAGADO:</strong></td><td><strong>$${pFmt(p.monto)}</strong></td></tr>
-                    </tbody></table>`;
-                    pdfPrint(h+pdfClose());
-                  }}><Printer size={11}/> PDF</PBo>
-                </PTd>
-                <PTd>
-                  <div className="flex gap-1">
-                    <PBp sm onClick={()=>{setEditPago(p);setEditForm({monto:String(p.monto),metodo:p.metodo||'Transferencia',banco:p.banco||'',referencia:p.referencia||'',fecha:p.fecha||'',concepto:p.concepto||''});}}><Edit size={10}/></PBp>
-                    <button onClick={()=>reversarPago(p)} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-600 text-[9px] font-black uppercase hover:bg-red-100 transition-all"><RotateCcw size={10}/> Rev.</button>
-                  </div>
-                </PTd>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </PCard>
-      {/* Modal Editar Pago */}
-      {editPago&&(
-        <PModal open={true} onClose={()=>setEditPago(null)} title={`Editar pago — ${editPago.proveedor}`}
-          footer={<><PBo onClick={()=>setEditPago(null)}>Cancelar</PBo><PBg onClick={guardarEdicion}><Save size={13}/> Guardar</PBg></>}>
-          <div className="space-y-3 grid grid-cols-2 gap-3">
-            <PFG label="Monto *"><input type="number" className={inp} value={editForm.monto||''} onChange={e=>setEditForm({...editForm,monto:e.target.value})}/></PFG>
-            <PFG label="Método"><select className={sel} value={editForm.metodo||'Transferencia'} onChange={e=>setEditForm({...editForm,metodo:e.target.value})}>
-              {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(m=><option key={m}>{m}</option>)}
-            </select></PFG>
-            <PFG label="Banco / Cuenta"><input className={inp} value={editForm.banco||''} onChange={e=>setEditForm({...editForm,banco:e.target.value})}/></PFG>
-            <PFG label="N° Referencia"><input className={inp} value={editForm.referencia||''} onChange={e=>setEditForm({...editForm,referencia:e.target.value.toUpperCase()})}/></PFG>
-            <PFG label="Fecha"><input type="date" className={inp} value={editForm.fecha||''} onChange={e=>setEditForm({...editForm,fecha:e.target.value})}/></PFG>
-            <PFG label="Concepto"><input className={inp} value={editForm.concepto||''} onChange={e=>setEditForm({...editForm,concepto:e.target.value})}/></PFG>
-          </div>
-        </PModal>
-      )}
-    </div>
-  );
-};
-
-// ══════════════════════════════════════════════════════════════════════
-// MÓDULO 7: ESTADO DE CUENTA POR PROVEEDOR
-// ══════════════════════════════════════════════════════════════════════
-const EstadoCuentaProvView = ({proveedores,facturasCompra,pagosCxP,ordenesCompra}) => {
-  const [provSel,setProvSel]=useState('');
-  const [corte,setCorte]=useState('');
-  const [expandido,setExpandido]=useState({});
-
-  const provActivos=proveedores.filter(p=>p.activo!==false);
-  const prov=proveedores.find(p=>p.id===provSel);
-
-  const factsProv=facturasCompra.filter(f=>f.proveedorId===provSel&&(!corte||f.fecha<=corte));
-  const pagosProv=pagosCxP.filter(p=>p.proveedorId===provSel&&(!corte||p.fecha<=corte));
-  const ocProv=ordenesCompra.filter(o=>o.proveedorId===provSel);
-
-  const totalFacturado=factsProv.reduce((s,f)=>s+pNum(f.total),0);
-  const totalPagado=pagosProv.reduce((s,p)=>s+pNum(p.monto),0);
-  const saldo=totalFacturado-totalPagado;
-
-  const exportPDF = () => {
-    if(!prov)return;
-    let html=pdfOpen(`ESTADO DE CUENTA — ${prov.nombre}`,`RIF: ${prov.rif||'—'} · Corte: ${corte?pDate(corte):'Actual'}`);
-    html+=`<table style="margin-bottom:16px"><tr><td style="border:none"><strong>Proveedor:</strong> ${prov.nombre}<br>RIF: ${prov.rif||'—'}<br>Contacto: ${prov.contacto||'—'}</td>
-    <td style="border:none;text-align:right"><strong>Total facturado:</strong> $${pFmt(totalFacturado)}<br><strong>Total pagado:</strong> $${pFmt(totalPagado)}<br><strong style="color:${saldo>0?'#dc2626':'#16a34a'}">Saldo: $${pFmt(Math.abs(saldo))} ${saldo>0?'por pagar':'a favor'}</strong></td></tr></table>`;
-    html+=`<h3 style="margin:12px 0 6px;font-size:11px;text-transform:uppercase;color:#000">Facturas</h3>`;
-    html+=`<table><thead><tr><th>N° Factura</th><th>Fecha</th><th>Vencimiento</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Status</th></tr></thead><tbody>`;
-    factsProv.forEach(f=>{html+=`<tr><td>${f.nroFactura||'—'}</td><td>${pDate(f.fecha)}</td><td>${pDate(f.fechaVencimiento)}</td><td>$${pFmt(f.total)}</td><td>$${pFmt(f.montoCobrado||0)}</td><td>$${pFmt(f.saldoPendiente||f.total)}</td><td><span class="${f.status==='PAGADA'?'badge-pag':'badge-pend'}">${f.status}</span></td></tr>`;});
-    html+=`</tbody></table>`;
-    html+=`<h3 style="margin:16px 0 6px;font-size:11px;text-transform:uppercase;color:#000">Pagos realizados</h3>`;
-    html+=`<table><thead><tr><th>Fecha</th><th>Factura</th><th>Método</th><th>Referencia</th><th>Monto</th></tr></thead><tbody>`;
-    pagosProv.forEach(p=>{html+=`<tr><td>${pDate(p.fecha)}</td><td>${p.nroFactura||'—'}</td><td>${p.metodo||'—'}</td><td>${p.referencia||'—'}</td><td>$${pFmt(p.monto)}</td></tr>`;});
-    html+=`<tr class="total-row"><td colspan="4" style="text-align:right">SALDO ACTUAL</td><td style="color:${saldo>0?'#f97316':'#4ade80'}">$${pFmt(Math.abs(saldo))} ${saldo>0?'POR PAGAR':'A FAVOR'}</td></tr></tbody></table>`;
-    pdfPrint(html+pdfClose());
-  };
-
-  return (
-    <div>
-      {/* Selector */}
-      <div className="flex gap-3 mb-5">
-        <select className={`${sel} flex-1`} value={provSel} onChange={e=>setProvSel(e.target.value)}>
-          <option value="">Seleccionar proveedor...</option>
-          {provActivos.map(p=><option key={p.id} value={p.id}>{p.nombre} — {p.rif||'—'}</option>)}
-        </select>
-        <div className="relative">
-          <label className="absolute -top-4 left-0 text-[9px] font-black text-slate-400 uppercase">Corte de fecha</label>
-          <input type="date" className={inp} value={corte} onChange={e=>setCorte(e.target.value)}/>
-        </div>
-        {provSel&&<PBo onClick={exportPDF}><Printer size={13}/> PDF</PBo>}
-        {!provSel&&<div className="px-4 py-2.5 text-xs text-slate-400 font-medium flex items-center">Selecciona un proveedor para ver su estado de cuenta</div>}
-      </div>
-
-      {provSel&&prov&&(
-        <div className="space-y-5">
-          {/* Header proveedor */}
-          <div className="rounded-2xl p-6 text-white shadow-xl" style={{background:P_CARD}}>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-[9px] font-black uppercase text-slate-400 mb-1">Estado de Cuenta</p>
-                <h2 className="font-black text-xl">{prov.nombre}</h2>
-                <p className="text-[11px] text-slate-400 mt-1">RIF: {prov.rif||'—'} · {prov.contacto||''} · {prov.condPago||''}</p>
+        {filtrados.map(g=>{
+          const status=getStatus(g);
+          const isExp=expanded.has(g.pid);
+          const tasaEfectiva=g.facturas[0]?.tasa?pNum(g.facturas[0].tasa):tasaBCV||1;
+          return(
+          <div key={g.pid} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            {/* Fila proveedor */}
+            <div className="flex items-center px-4 py-3 gap-4 cursor-pointer hover:bg-slate-50 transition-all" onClick={()=>toggleExpand(g.pid)}>
+              <div className="flex-1 min-w-0">
+                <div className="font-black text-slate-800 text-xs uppercase truncate">{g.nombre}</div>
+                <div className="text-[10px] text-slate-400 font-mono">{g.rif}</div>
               </div>
               <div className="text-right">
-                <p className="text-[9px] text-slate-400 uppercase">Saldo actual</p>
-                <p className={`font-black text-3xl mt-1 ${saldo>0?'text-orange-400':'text-emerald-400'}`}>${pFmt(Math.abs(saldo))}</p>
-                <p className="text-[10px] text-slate-400 mt-1">{saldo>0?'por pagar':'saldo a favor'}</p>
+                <div className="font-black text-orange-600 text-sm">${fmtN(g.totalSaldo)}</div>
+                <div className="text-[9px] text-slate-400 font-mono">Bs. {fV(g.totalSaldo*tasaEfectiva)}</div>
               </div>
+              <span className={`text-[9px] font-black px-2.5 py-1 rounded-full ${status==='VENCIDO'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>{status}</span>
+              <button className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg border transition-all ${isExp?'bg-slate-900 text-white border-slate-900':'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                {isExp?'▲ Cerrar':'▼ Detalle'}
+              </button>
             </div>
-          </div>
 
-          {/* KPIs */}
-          <div className="grid grid-cols-4 gap-3">
-            <PKPI label="OC emitidas" value={ocProv.length} accent="blue" Icon={ClipboardList}/>
-            <PKPI label="Facturas" value={factsProv.length} accent="gold" Icon={FileText}/>
-            <PKPI label="Total facturado" value={`$${pFmt(totalFacturado)}`} accent="orange" Icon={DollarSign}/>
-            <PKPI label="Total pagado" value={`$${pFmt(totalPagado)}`} accent="green" Icon={CheckCircle}/>
-          </div>
-
-          {/* Facturas */}
-          <PCard title="Facturas" subtitle={`${factsProv.length} facturas en total`}>
-            {factsProv.length===0?<PEmpty icon={FileText} title="Sin facturas" desc="No hay facturas para este proveedor"/>:(
-              <table className="w-full">
-                <thead><tr><PTh>N° Factura</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh right>Total</PTh><PTh right>Pagado</PTh><PTh right>Saldo</PTh><PTh>Status</PTh></tr></thead>
-                <tbody>
-                  {factsProv.map(f=>{
-                    const st=statusCxP(f.status);
-                    const venc=f.fechaVencimiento&&f.fechaVencimiento<getTodayDate()&&f.status!=='PAGADA';
-                    return (
-                      <tr key={f.id} className={`hover:bg-slate-50 ${venc?'bg-red-50/30':''}`}>
-                        <PTd><span className="font-black text-orange-600">{f.nroFactura||'—'}</span></PTd>
-                        <PTd>{pDate(f.fecha)}</PTd>
-                        <PTd><span className={venc?'text-red-600 font-black':''}>{pDate(f.fechaVencimiento)||'—'}</span></PTd>
-                        <PTd right mono>{pFmt(f.total)}</PTd>
-                        <PTd right mono className="text-emerald-600">{pFmt(f.montoCobrado||0)}</PTd>
-                        <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600'}>{pFmt(f.saldoPendiente||0)}</span></PTd>
-                        <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </PCard>
-
-          {/* Pagos */}
-          <PCard title="Pagos realizados" subtitle={`${pagosProv.length} pagos · $${pFmt(totalPagado)} total`}>
-            {pagosProv.length===0?<PEmpty icon={CreditCard} title="Sin pagos" desc="No se han registrado pagos"/>:(
-              <table className="w-full">
-                <thead><tr><PTh>Fecha</PTh><PTh>Factura</PTh><PTh>Método</PTh><PTh>Banco</PTh><PTh>Referencia</PTh><PTh right>Monto</PTh></tr></thead>
-                <tbody>
-                  {pagosProv.map(p=>(
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <PTd>{pDate(p.fecha)}</PTd>
-                      <PTd><span className="text-orange-600 font-black">{p.nroFactura||'—'}</span></PTd>
-                      <PTd><PBadge v="blue">{p.metodo||'—'}</PBadge></PTd>
-                      <PTd>{p.banco||'—'}</PTd>
-                      <PTd mono>{p.referencia||'—'}</PTd>
-                      <PTd right mono><span className="font-black text-emerald-600">${pFmt(p.monto)}</span></PTd>
+            {/* Detalle expandido */}
+            {isExp&&(
+              <div className="border-t border-slate-200">
+                {/* Sub-header oscuro */}
+                <div style={{background:'#1e293b'}} className="px-4 py-2.5 flex items-center justify-between">
+                  <div className="text-white font-black text-xs uppercase">{g.nombre} <span className="text-slate-400 font-mono text-[10px] ml-2">{g.rif}</span></div>
+                  <div className="flex items-center gap-4 text-[10px] text-slate-400">
+                    <span>Total facturado: <strong className="text-white">${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</strong></span>
+                    <span>Pagado: <strong className="text-emerald-400">${fmtN(g.totalPagado)}</strong></span>
+                    <span>Ret.IVA: <strong className="text-red-400">${fmtN(g.totalRet)}</strong></span>
+                    <span>Saldo: <strong className="text-orange-400">${fmtN(g.totalSaldo)}</strong></span>
+                  </div>
+                </div>
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">DOCUMENTO</th>
+                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">EMISIÓN</th>
+                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">VENCE</th>
+                    <th className="px-3 py-2 text-center text-[7.5px] text-orange-400 font-black uppercase">DÍAS CRED.</th>
+                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">DOC. FISCAL</th>
+                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">TOTAL USD</th>
+                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">PAGADO</th>
+                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">RET.IVA</th>
+                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">SALDO USD</th>
+                    <th className="px-3 py-2 text-[7.5px] text-orange-400 font-black uppercase">OBSERVACIÓN</th>
+                  </tr></thead>
+                  <tbody>
+                    {g.facturas.map((f,fi)=>{
+                      const pagos=pagosPorFactura[f.id]||[];
+                      const totalPag=pagos.reduce((s,p)=>s+pNum(p.monto||0),0);
+                      const retBs=pNum(f.retIVA?.montoBs||0);
+                      const tasa=pNum(f.tasa||0)||tasaBCV||1;
+                      const retUSD=retBs>0?retBs/tasa:0;
+                      const saldo=pNum(f.saldoPendiente||f.total||0);
+                      const diasV=diasVencidos(f);
+                      const esVencida=f.fechaVencimiento&&f.fechaVencimiento<hoy;
+                      return(
+                      <React.Fragment key={f.id}>
+                        {/* Fila factura */}
+                        <tr className={fi%2===0?'bg-white':'bg-slate-50'} style={{borderBottom:'1px solid #f1f5f9'}}>
+                          <td className="px-3 py-2">
+                            <div className="font-black text-orange-600 text-xs">{f.nroFactura||'—'}</div>
+                            <div className="text-[8px] text-slate-400 font-mono">{f.status||'—'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-[10px]">{fD(f.fecha)}</td>
+                          <td className={`px-3 py-2 text-[10px] font-black ${esVencida?'text-red-600':'text-slate-600'}`}>
+                            {fD(f.fechaVencimiento)}
+                            {diasV>0&&<div className="text-[8px] text-red-500 font-mono">{diasV}d vencida</div>}
+                          </td>
+                          <td className="px-3 py-2 text-center text-[10px] font-black text-indigo-600">{f.diasCredito?`${f.diasCredito}d`:'—'}</td>
+                          <td className="px-3 py-2">
+                            <div className="text-[10px] text-blue-600 font-mono">{f.nroControl||'—'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-black text-[11px]">${fmtN(f.total||0)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black text-[11px]">{totalPag>0?`$${fmtN(totalPag)}`:<span className="text-slate-300">$0,00</span>}</td>
+                          <td className="px-3 py-2 text-right font-mono text-red-500 text-[10px]">{retUSD>0?`$${fmtN(retUSD)}`:'—'}</td>
+                          <td className="px-3 py-2 text-right font-black text-orange-600 text-[12px] font-mono">${fmtN(saldo)}</td>
+                          <td className="px-3 py-2 text-[9px] text-slate-400">
+                            <div className="flex items-center gap-1">
+                              <input className="text-[9px] border border-transparent hover:border-slate-200 focus:border-orange-400 rounded px-1 py-0.5 outline-none bg-transparent w-32"
+                                placeholder="Agregar observación..." defaultValue={f.observaciones||''}
+                                onBlur={async(e)=>{if(e.target.value!==f.observaciones){try{await updateDoc(getDocRef('procura_facturas_compra',f.id),{observaciones:e.target.value,updatedAt:Date.now()});}catch(ex){}}}}/>
+                              <button onClick={()=>abrirPago(f)}
+                                className="flex items-center gap-1 px-2 py-1 bg-orange-500 text-white rounded-lg text-[8px] font-black uppercase hover:bg-orange-600 whitespace-nowrap transition-all flex-shrink-0">
+                                <DollarSign size={9}/> Pagar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {/* Sub-filas: Fac. Fiscal */}
+                        {(f.nroControl||f.nroFactura)&&(
+                          <tr style={{background:'#f8fafc',borderBottom:'1px solid #f1f5f9'}}>
+                            <td className="px-3 py-1.5 pl-6" style={{borderLeft:'3px solid #3b82f6'}}>
+                              <span className="text-[8px] text-blue-600 font-black">↳ Fac. Fiscal</span>
+                            </td>
+                            <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
+                            <td colSpan={2}></td>
+                            <td className="px-3 py-1 text-[8px] text-blue-600 font-mono">{f.nroControl||'—'}</td>
+                            <td colSpan={2}></td>
+                            <td colSpan={3} className="px-3 py-1 text-[8px] text-slate-500">
+                              {tasa>1?`Base Bs.${fV(pNum(f.totales?.base16Bs||0))} · IVA Bs.${fV(pNum(f.totales?.iva16Bs||0))} · Total: Bs.${fV(pNum(f.totales?.totalBs||0))} · Tasa: ${fV(tasa)} Bs/$`:''}
+                            </td>
+                          </tr>
+                        )}
+                        {/* Sub-filas: pagos */}
+                        {pagos.map((p,pi)=>(
+                          <tr key={p.id} style={{background:'#f0fdf4',borderBottom:'1px solid #dcfce7'}}>
+                            <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #16a34a'}}>
+                              <span className="text-[8px] text-emerald-700 font-black">↳ Pago</span>
+                            </td>
+                            <td className="px-3 py-1 text-[8px] text-slate-500">{fD(p.fecha)}</td>
+                            <td colSpan={2}></td>
+                            <td className="px-3 py-1 text-[8px] font-mono text-blue-600">{p.referencia||'—'}</td>
+                            <td colSpan={2} className="px-3 py-1 text-[8px] text-emerald-700 font-black text-right font-mono">-${fmtN(pNum(p.monto||0))}</td>
+                            <td></td>
+                            <td></td>
+                            <td className="px-3 py-1 text-[8px] text-slate-500">{p.metodo||'—'} · {p.banco||''}</td>
+                          </tr>
+                        ))}
+                        {/* Sub-fila: Retención IVA */}
+                        {retBs>0&&(
+                          <tr style={{background:'#fff1f2',borderBottom:'1px solid #fee2e2'}}>
+                            <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #dc2626'}}>
+                              <span className="text-[8px] text-red-600 font-black">↳ Retención</span>
+                            </td>
+                            <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
+                            <td colSpan={2}></td>
+                            <td className="px-3 py-1 text-[8px] font-mono text-orange-600">{f.retIVA?.nroComprobante||'—'}</td>
+                            <td colSpan={2}></td>
+                            <td className="px-3 py-1 text-[8px] font-mono text-red-600 text-right font-black">-${fmtN(retUSD)}</td>
+                            <td></td>
+                            <td className="px-3 py-1 text-[8px] text-slate-500">Ret. IVA {pNum(f.retIVA?.pct||75)}% · Bs.{fV(retBs)} · Fac. {f.nroFactura||'—'}</td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                      );
+                    })}
+                    {/* Subtotal */}
+                    <tr style={{background:'#1e293b'}}>
+                      <td colSpan={5} className="px-3 py-2 text-white font-black text-[10px] uppercase">SUBTOTAL {g.facturas.length} DOC(S)</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-white text-[11px]">${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-400 text-[11px]">${fmtN(g.totalPagado)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-400 text-[11px]">${fmtN(g.totalRet)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-orange-400 text-[13px]">${fmtN(g.totalSaldo)}</td>
+                      <td></td>
                     </tr>
-                  ))}
-                  <tr style={{background:P_CARD}}>
-                    <td colSpan={5} className="px-4 py-2 text-right text-[10px] font-black text-slate-400 uppercase">Saldo {saldo>0?'por pagar':'a favor'}</td>
-                    <td className={`px-4 py-2 text-right font-black ${saldo>0?'text-orange-400':'text-emerald-400'}`}>${pFmt(Math.abs(saldo))}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
             )}
-          </PCard>
+          </div>
+          );
+        })}
+      </div>
+
+      {/* TOTAL BAR */}
+      {filtrados.length>0&&(
+        <div className="flex-shrink-0 bg-slate-900 text-white px-4 py-3 flex items-center justify-between border-t border-slate-700">
+          <span className="text-[10px] font-black uppercase text-slate-400">Total general — {filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facturas.length,0)} docs</span>
+          <div className="flex gap-6 text-[11px] font-mono font-black">
+            <span className="text-emerald-400">Pagado: ${fmtN(grandPagado)}</span>
+            <span className="text-red-400">Ret.IVA: ${fmtN(grandRet)}</span>
+            <span className="text-orange-400 text-sm">Saldo: ${fmtN(grandTotal)}</span>
+          </div>
         </div>
+      )}
+
+      {/* Modal Pago */}
+      {modal==='pago'&&factSel&&(
+        <PModal open={true} onClose={()=>setModal(null)} title={`Registrar pago — ${factSel.nroFactura||'—'}`}
+          footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardarPago}><DollarSign size={13}/> Confirmar pago</PBg></>}>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 bg-orange-50 border border-orange-100 rounded-xl px-4 py-2.5">
+              <p className="text-[10px] font-black text-orange-700">{factSel.proveedor} — {factSel.nroFactura}</p>
+              <p className="text-[10px] text-orange-600">Saldo pendiente: <strong>${pFmt(factSel.saldoPendiente||factSel.total||0)}</strong></p>
+            </div>
+            <PFG label="Fecha"><input type="date" className={inp} value={formPago.fecha||''} onChange={e=>setFormPago(f=>({...f,fecha:e.target.value}))}/></PFG>
+            <PFG label="Monto a pagar ($) *"><input type="number" className={inp} value={formPago.monto||''} onChange={e=>setFormPago(f=>({...f,monto:e.target.value}))}/></PFG>
+            <PFG label="Método">
+              <select className={sel} value={formPago.metodo||'Transferencia'} onChange={e=>setFormPago(f=>({...f,metodo:e.target.value}))}>
+                {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(m=><option key={m}>{m}</option>)}
+              </select>
+            </PFG>
+            <PFG label="Banco / Cuenta">
+              <select className={sel} value={formPago.banco||''} onChange={e=>setFormPago(f=>({...f,banco:e.target.value}))}>
+                <option value="">— Seleccionar —</option>
+                {cuentasBancarias.map(c=><option key={c.id} value={c.banco||c.nombre}>{c.banco||c.nombre}</option>)}
+              </select>
+            </PFG>
+            <PFG label="N° Referencia"><input className={inp} value={formPago.referencia||''} onChange={e=>setFormPago(f=>({...f,referencia:e.target.value.toUpperCase()}))}/></PFG>
+            <PFG label="Concepto"><input className={inp} value={formPago.concepto||''} onChange={e=>setFormPago(f=>({...f,concepto:e.target.value}))}/></PFG>
+          </div>
+        </PModal>
       )}
     </div>
   );
@@ -4229,12 +4287,25 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     const base8Bs   = pNum(tot.base8Bs||0);
     const iva8Bs    = pNum(tot.iva8Bs||0);
     const exentoBs  = pNum(tot.exentoBs||0);
+    const imp = f.importacion||null;
     rows.push({
       seq:seq++, fecha:f.fecha||'', rif, nombre:f.proveedor||'—',
       tipo:'FACTURA', nroFactura:f.nroFactura||'', nroControl:f.nroControl||'',
-      impTotal:0, impBase:0, impIVA:0,
-      ciTotal:totalBs, ciSinDer:exentoBs, ciBase:base16Bs, ciCred:iva16Bs,
-      crTotal:base8Bs+iva8Bs, crBase:base8Bs, crCred:iva8Bs,
+      // Importaciones — tomar de DUA si esImportacion, si no va todo en Compras Internas
+      impFechaAplic: f.esImportacion&&imp ? (imp.fechaAplic||'') : '',
+      impPlanilla:   f.esImportacion&&imp ? (imp.nroPlanilla||'') : '',
+      impExpediente: f.esImportacion&&imp ? (imp.nroExpediente||'') : '',
+      impTotal:  f.esImportacion&&imp ? pNum(imp.totalImportacion||0) : 0,
+      impBase:   f.esImportacion&&imp ? pNum(imp.baseImponible||0) : 0,
+      impIVA:    f.esImportacion&&imp ? pNum(imp.iva||0) : 0,
+      // Compras internas — vacíos si es importación (ya están en IMPORTACIONES section)
+      ciTotal:   f.esImportacion ? 0 : totalBs,
+      ciSinDer:  f.esImportacion ? 0 : exentoBs,
+      ciBase:    f.esImportacion ? 0 : base16Bs,
+      ciCred:    f.esImportacion ? 0 : iva16Bs,
+      crTotal:   f.esImportacion ? 0 : base8Bs+iva8Bs,
+      crBase:    f.esImportacion ? 0 : base8Bs,
+      crCred:    f.esImportacion ? 0 : iva8Bs,
       retPct:'', retMonto:0, retFact:'', retComp:'', _id:f.id,
     });
     const ret = (retIVACompra||[]).find(r => r.facturaId === f.id);
@@ -4627,14 +4698,14 @@ ${resumenHtml}
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#1d4ed8',fontWeight:700,fontSize:9}}>{r.nroFactura||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{r.nroControl||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac?'—':r.retFact||'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,color:'#94a3b8'}}>—</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,color:r.impFechaAplic?'#1d4ed8':'#94a3b8'}}>{r.impFechaAplic?fmtFE(r.impFechaAplic):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,color:r.impPlanilla?'#1d4ed8':'#94a3b8'}}>{r.impPlanilla||'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,color:r.impExpediente?'#1d4ed8':'#94a3b8'}}>{r.impExpediente||'—'}</td>
                   {/* Importaciones */}
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9,fontFamily:'monospace'}}>—</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9,fontFamily:'monospace'}}>—</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>—</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9,fontFamily:'monospace'}}>—</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:r.impTotal>0?'#1d4ed8':'#94a3b8',fontSize:9,fontFamily:'monospace'}}>{r.impTotal>0?fmtV(r.impTotal):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:r.impBase>0?'#1d4ed8':'#94a3b8',fontSize:9,fontFamily:'monospace'}}>{r.impBase>0?fmtV(r.impBase):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>{r.impIVA>0?'0.16':'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:r.impIVA>0?'#1d4ed8':'#94a3b8',fontSize:9,fontFamily:'monospace'}}>{r.impIVA>0?fmtV(r.impIVA):'—'}</td>
                   {/* Compras internas */}
                   <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:isFac?700:400}}>{isFac&&r.ciTotal>0?fmtV(r.ciTotal):'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.ciSinDer>0?fmtV(r.ciSinDer):'—'}</td>
