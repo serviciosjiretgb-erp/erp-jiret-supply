@@ -21063,7 +21063,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
             const _invNEtasa=(invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
             const _neDefaultTasa=parseNum(_invNEtasa?.tasaFactura||_invNEtasa?.tasa||0)||tasaBCVec;
-            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{
+            const _invNEfiscal=(_invNEtasa?.nroFiscal||'').toString().replace(/^0+/,'').trim();
+            const _neClientRif=(ne.clientRif||'').trim();
+            const ret=(retenciones||[]).filter(r=>{
+              if(r.neId===ne.id||r.neOrigen===ne.id) return true;
+              // Via nroFiscal del invoice de la NE + RIF del cliente (ambos obligatorios)
+              if(_invNEfiscal&&_neClientRif){
+                const rFact=(r.nroFactura||r._manualNroFiscal||'').toString().replace(/^0+/,'').trim();
+                const rRif=(r._manualRif||r.clientRif||'').trim();
+                if(rFact===_invNEfiscal&&rRif===_neClientRif) return true;
+              }
+              return false;
+            }).reduce((s,r)=>{
               const rb=parseNum(r.montoRetenido||r.monto||0);
               let rt=parseNum(r.tasa||r.tasaFactura||0);
               if(rt<=1){
@@ -21175,7 +21186,15 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                            const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
+                            const retsNE2=(retenciones||[]).filter(r=>{
+                              if(r.neId===ne.id||r.neOrigen===ne.id) return true;
+                              if(_invNEfiscal&&_neClientRif){
+                                const rFact=(r.nroFactura||r._manualNroFiscal||'').toString().replace(/^0+/,'').trim();
+                                const rRif=(r._manualRif||r.clientRif||'').trim();
+                                if(rFact===_invNEfiscal&&rRif===_neClientRif) return true;
+                              }
+                              return false;
+                            });
                             const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
                             const saldado2=sNE<0.01;
                             const rowBg=ni%2===0?'bg-white':'bg-gray-50';
@@ -21193,10 +21212,32 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 <td className="py-2 px-3 text-center"><span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${saldado2?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{saldado2?'Saldado':'Pendiente'}</span></td>
                               </tr>
                               {invV2&&<tr className="border-b border-indigo-100" style={{background:'#eef2ff'}}>
-                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ {invV2.nroFiscal||invV2.documento||'—'}</td>
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">
+                                  {invV2.nroFiscal
+                                    ? <span>↳ {String(invV2.nroFiscal).padStart(8,'0')}</span>
+                                    : <span className="flex items-center gap-1">
+                                        <span className="text-amber-600">↳ ⚠️ Sin N° Fiscal</span>
+                                        <input
+                                          className="border border-amber-300 rounded px-1.5 py-0.5 text-[9px] font-mono outline-none focus:border-orange-500 w-24 bg-white"
+                                          placeholder="ej: 00002991"
+                                          onBlur={async(e)=>{
+                                            const v=(e.target.value||'').trim();
+                                            if(v&&v.length>0){
+                                              try{
+                                                await updateDoc(getDocRef('invoices',invV2.id),{nroFiscal:v,updatedAt:Date.now()});
+                                                e.target.style.borderColor='#16a34a';
+                                              }catch(ex){alert('Error: '+ex.message);}
+                                            }
+                                          }}
+                                          onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                                        />
+                                      </span>
+                                  }
+                                </td>
                                 <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
                                 <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
                                 <td className="py-1.5 px-3 text-[8px] text-gray-500 col-span-2">
+                                  {!invV2.nroFiscal&&<span className="text-amber-600 font-black mr-2">Ingresa el N° fiscal para vincular retenciones →</span>}
                                   {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
                                   {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
                                   {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
