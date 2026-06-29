@@ -21130,6 +21130,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
                 </div>
               </div>
+              {/* Expandir / Contraer todo */}
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[9px] text-gray-400 font-black uppercase">{cliList.length} clientes</span>
+                <button onClick={()=>{const all={};cliList.forEach(cl=>{all[cl.clientRif]=true;});setEcExpanded(all);}}
+                  className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-1">
+                  ▼ Expandir todo
+                </button>
+                <button onClick={()=>setEcExpanded({})}
+                  className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-1">
+                  ▲ Contraer todo
+                </button>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[{l:'Clientes',v:cliList.length,c:'text-gray-800'},{l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},{l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},{l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'}].map(k=>(
                   <div key={k.l} className="bg-white rounded-2xl border border-gray-100 p-4">
@@ -21186,12 +21198,14 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
+                            const _r2Fiscal=(invV2?.nroFiscal||'').toString().replace(/^0+/,'').trim();
+                            const _r2Rif=(ne.clientRif||'').trim();
                             const retsNE2=(retenciones||[]).filter(r=>{
                               if(r.neId===ne.id||r.neOrigen===ne.id) return true;
-                              if(_invNEfiscal&&_neClientRif){
+                              if(_r2Fiscal&&_r2Rif){
                                 const rFact=(r.nroFactura||r._manualNroFiscal||'').toString().replace(/^0+/,'').trim();
                                 const rRif=(r._manualRif||r.clientRif||'').trim();
-                                if(rFact===_invNEfiscal&&rRif===_neClientRif) return true;
+                                if(rFact===_r2Fiscal&&rRif===_r2Rif) return true;
                               }
                               return false;
                             });
