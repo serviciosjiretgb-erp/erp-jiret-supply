@@ -3886,14 +3886,17 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
     const grupos={};
     factsActivas.forEach(f=>{
       const pid=f.proveedorId||f.proveedor||'SIN_PROV';
-      if(!grupos[pid])grupos[pid]={pid,nombre:f.proveedor||'—',rif:'',facturas:[],totalSaldo:0,totalPagado:0,totalRet:0};
+      if(!grupos[pid])grupos[pid]={pid,nombre:f.proveedor||'—',rif:'',facturas:[],totalSaldo:0,totalPagado:0,totalRet:0,totalRetISLR:0};
       const saldo=pNum(f.saldoPendiente||f.total||0);
       const pagos=(pagosPorFactura[f.id]||[]).reduce((s,p)=>s+pNum(p.monto||0),0);
-      const ret=pNum(f.retIVA?.montoBs||0)/Math.max(pNum(f.tasa||0)||tasaBCV||1,1);
+      const _tasa=Math.max(pNum(f.tasa||0)||tasaBCV||1,1);
+      const ret=pNum(f.retIVA?.montoBs||0)/_tasa;
+      const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pNum(r.monto||0),0);
       grupos[pid].facturas.push(f);
       grupos[pid].totalSaldo+=saldo;
       grupos[pid].totalPagado+=pagos;
       grupos[pid].totalRet+=ret;
+      grupos[pid].totalRetISLR+=retISLR;
     });
     // Enriquecer con datos del directorio de proveedores
     (proveedores||[]).forEach(p=>{if(grupos[p.id]){grupos[p.id].rif=p.rif||'';grupos[p.id].nombre=p.nombre||grupos[p.id].nombre;}});
@@ -3914,6 +3917,7 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
   const grandTotal=filtrados.reduce((s,g)=>s+g.totalSaldo,0);
   const grandPagado=filtrados.reduce((s,g)=>s+g.totalPagado,0);
   const grandRet=filtrados.reduce((s,g)=>s+g.totalRet,0);
+  const grandRetISLR=filtrados.reduce((s,g)=>s+g.totalRetISLR,0);
   const toggleExpand=(pid)=>{setExpanded(prev=>{const n=new Set(prev);n.has(pid)?n.delete(pid):n.add(pid);return n;});};
 
   const diasVencidos=(f)=>{
@@ -3947,7 +3951,8 @@ const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,dialog,setDialog})
   <td style="padding:3px 6px;font-size:9px;color:#2563eb">${f.nroControl||'—'}</td>
   <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fmtN(f.total||0)}</td>
   <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#16a34a;font-size:9px">$${fmtN(totalPag)}</td>
-  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#dc2626;font-size:9px">${retUSD>0?'$'+fmtN(retUSD):'—'}</td>
+  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#dc2626;font-size:9px">${retIVApdf>0?'-$'+fmtN(retIVApdf):'—'}</td>
+  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#a855f7;font-size:9px">${retISLRpdf>0?'-$'+fmtN(retISLRpdf):'—'}</td>
   <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;color:#f97316;font-size:9px">$${fmtN(pNum(f.saldoPendiente||f.total||0))}</td>
   <td style="padding:3px 6px;font-size:8px;color:#6b7280">${f.observaciones||''}</td>
 </tr>
@@ -3974,9 +3979,9 @@ ${(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).map(r=>`<tr style="backgrou
   </div>
 </div>
 <table style="width:100%;border-collapse:collapse;font-size:9px">
-  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">EMISIÓN</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">VENCE</th><th style="padding:4px 6px;text-align:center;font-size:7.5px;color:#f97316">DÍAS</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">N° CONTROL</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">TOTAL USD</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">PAGADO</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">RET.IVA</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">SALDO USD</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">OBS.</th></tr></thead>
+  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">EMISIÓN</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">VENCE</th><th style="padding:4px 6px;text-align:center;font-size:7.5px;color:#f97316">DÍAS</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">N° CONTROL</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">TOTAL USD</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">PAGADO</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">RET.IVA</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#a855f7">RET.ISLR</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">SALDO USD</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">OBS.</th></tr></thead>
   <tbody>${factRows}</tbody>
-  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900;font-size:9px">Subtotal ${g.facturas.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900">$${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fmtN(g.totalPagado)}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#fca5a5">$${fmtN(g.totalRet)}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#f97316;font-weight:900">$${fmtN(g.totalSaldo)}</td><td></td></tr></tfoot>
+  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900;font-size:9px">Subtotal ${g.facturas.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900">$${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fmtN(g.totalPagado)}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#fca5a5">${g.totalRet>0?'-$'+fmtN(g.totalRet):'—'}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#d8b4fe">${g.totalRetISLR>0?'-$'+fmtN(g.totalRetISLR):'—'}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#f97316;font-weight:900">$${fmtN(g.totalSaldo)}</td><td></td></tr></tfoot>
 </table></div>`;
     }).join('');
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
@@ -4094,6 +4099,7 @@ ${provRows}
                     <span>Total facturado: <strong className="text-white">${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</strong></span>
                     <span>Pagado: <strong className="text-emerald-400">${fmtN(g.totalPagado)}</strong></span>
                     <span>Ret.IVA: <strong className="text-red-400">${fmtN(g.totalRet)}</strong></span>
+                    {g.totalRetISLR>0&&<span>Ret.ISLR: <strong className="text-purple-400">${fmtN(g.totalRetISLR)}</strong></span>}
                     <span>Saldo: <strong className="text-orange-400">${fmtN(g.totalSaldo)}</strong></span>
                   </div>
                 </div>
@@ -4107,6 +4113,7 @@ ${provRows}
                     <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">TOTAL USD</th>
                     <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">PAGADO</th>
                     <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">RET.IVA</th>
+                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">RET.ISLR</th>
                     <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">SALDO USD</th>
                     <th className="px-3 py-2 text-[7.5px] text-orange-400 font-black uppercase">OBSERVACIÓN</th>
                   </tr></thead>
@@ -4141,7 +4148,8 @@ ${provRows}
                           </td>
                           <td className="px-3 py-2 text-right font-mono font-black text-[11px]">${fmtN(f.total||0)}</td>
                           <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black text-[11px]">{totalPag>0?`$${fmtN(totalPag)}`:<span className="text-slate-300">$0,00</span>}</td>
-                          <td className="px-3 py-2 text-right font-mono text-red-500 text-[10px]">{retUSD>0?`$${fmtN(retUSD)}`:'—'}</td>
+                          <td className="px-3 py-2 text-right font-mono text-red-500 text-[10px]">{retIVAusd>0?`-$${fmtN(retIVAusd)}`:'—'}</td>
+                          <td className="px-3 py-2 text-right font-mono text-purple-600 text-[10px]">{retISLRusd>0?`-$${fmtN(retISLRusd)}`:'—'}</td>
                           <td className="px-3 py-2 text-right font-black text-orange-600 text-[12px] font-mono">${fmtN(saldo)}</td>
                           <td className="px-3 py-2 text-[9px] text-slate-400">
                             <div className="flex items-center gap-1">
@@ -4223,7 +4231,8 @@ ${provRows}
                       <td colSpan={5} className="px-3 py-2 text-white font-black text-[10px] uppercase">SUBTOTAL {g.facturas.length} DOC(S)</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-white text-[11px]">${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-400 text-[11px]">${fmtN(g.totalPagado)}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-400 text-[11px]">${fmtN(g.totalRet)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-400 text-[11px]">{g.totalRet>0?`-$${fmtN(g.totalRet)}`:'—'}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-purple-400 text-[11px]">{g.totalRetISLR>0?`-$${fmtN(g.totalRetISLR)}`:'—'}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-orange-400 text-[13px]">${fmtN(g.totalSaldo)}</td>
                       <td></td>
                     </tr>
@@ -4243,6 +4252,7 @@ ${provRows}
           <div className="flex gap-6 text-[11px] font-mono font-black">
             <span className="text-emerald-400">Pagado: ${fmtN(grandPagado)}</span>
             <span className="text-red-400">Ret.IVA: ${fmtN(grandRet)}</span>
+            {grandRetISLR>0&&<span className="text-purple-400">Ret.ISLR: ${fmtN(grandRetISLR)}</span>}
             <span className="text-orange-400 text-sm">Saldo: ${fmtN(grandTotal)}</span>
           </div>
         </div>
@@ -5363,6 +5373,11 @@ function App() {
   const [showOtraRetModal, setShowOtraRetModal] = useState(false);
   const [otraRetForm, setOtraRetForm] = useState({});
   const [otraRetBusqCli, setOtraRetBusqCli] = useState('');
+  // Tipos de retención extra — scope de componente para que el modal pueda accederlos
+  const TIPOS_RET_EXTRA = useMemo(()=>(settings?.tiposRetencionExtra||[]).length>0
+    ? settings.tiposRetencionExtra
+    : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10}]
+  ,[settings]);
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
   const [cxcEditCobro, setCxcEditCobro] = useState(null); // cobro en edición
@@ -19717,11 +19732,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             ?(cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)&&(c.clientName===clienteActivoData.clientName)).reduce((s,c)=>s+parseNum(c.monto||0),0)
             :cobradoMes;
 
-          // ── Tipos de retención extra (configurable en settings) ───────────
-          const TIPOS_RET_EXTRA = (settings?.tiposRetencionExtra||[]).length>0
-            ? settings.tiposRetencionExtra
-            : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10}];
-
           // ── Guardar otra retención ─────────────────────────────────────
           const guardarOtraRet=async()=>{
             const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
@@ -21197,8 +21207,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
                 </div>
               </div>
-              {/* Expandir / Contraer todo */}
-              <div className="flex items-center gap-2 mb-1">
+              {/* Expandir / Contraer todo + PDF + Excel */}
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="text-[9px] text-gray-400 font-black uppercase">{cliList.length} clientes</span>
                 <button onClick={()=>{const all={};cliList.forEach(cl=>{all[cl.clientRif]=true;});setEcExpanded(all);}}
                   className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-1">
@@ -21207,6 +21217,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 <button onClick={()=>setEcExpanded({})}
                   className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-1">
                   ▲ Contraer todo
+                </button>
+                <button onClick={()=>exportarPDF('cxc')} className="flex items-center gap-1.5 px-4 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all">
+                  <FileText size={11}/> PDF
+                </button>
+                <button onClick={()=>exportarExcel('cxc')} className="flex items-center gap-1.5 px-4 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all">
+                  <Download size={11}/> Excel
                 </button>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -21305,7 +21321,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                             const v=(e.target.value||'').trim();
                                             if(v&&v.length>0){
                                               try{
-                                                await updateDoc(getDocRef('invoices',invV2.id),{nroFiscal:v,updatedAt:Date.now()});
+                                                // setDoc merge: funciona si el documento existe o no
+                                                const _invDoc=getDocRef('invoices',invV2.id);
+                                                await setDoc(_invDoc,{nroFiscal:v,updatedAt:Date.now()},{merge:true});
                                                 e.target.style.borderColor='#16a34a';
                                               }catch(ex){alert('Error: '+ex.message);}
                                             }
