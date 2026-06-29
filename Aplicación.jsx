@@ -5395,7 +5395,8 @@ function App() {
     : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10}]
   ,[settings]);
   // guardarOtraRet — scope de componente (modal se renderiza fuera del IIFE CxC)
-  const guardarOtraRet=useCallback(async()=>{
+  // guardarOtraRet: función simple (no useCallback) — evita TDZ con invoices
+  const guardarOtraRet=async()=>{
     const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
     if(!facturaId||!nroComprobante||!fechaComprobante||!montoRetenidoBs)
       return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
@@ -5422,7 +5423,7 @@ function App() {
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');
       setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-  },[otraRetForm,invoices,TIPOS_RET_EXTRA,settings,appUser]);
+  };
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
   const [cxcEditCobro, setCxcEditCobro] = useState(null); // cobro en edición
