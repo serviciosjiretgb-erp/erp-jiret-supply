@@ -21061,30 +21061,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           const getSaldoNE = (ne) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
-            // Construir índices para esta NE: todos sus invoices y sus nroFiscal
-            const _invNE=(invoices||[]).filter(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento||(ne.facturaId&&(i.id===ne.facturaId||i.documento===ne.facturaId)));
-            const _invIds=new Set(_invNE.map(i=>i.id));
-            const _invFiscales=new Set(_invNE.map(i=>(i.nroFiscal||'').replace(/^0+/,'')).filter(Boolean));
-            const _neRif=ne.clientRif||'';
-            const ret=(retenciones||[]).filter(r=>{
-              // 1. Enlace directo a la NE
-              if(r.neId===ne.id||r.neOrigen===ne.id) return true;
-              // 2. Via facturaId que es uno de los invoices de esta NE
-              if(r.facturaId&&(_invIds.has(r.facturaId)||(()=>{const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);return inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento);})() )) return true;
-              // 3. Via número fiscal: si la retención tiene el mismo N° factura que algún invoice de esta NE
-              //    → aplica aunque el facturaId no coincida exactamente (registros manuales o ID diferente)
-              const rNro=(r.nroFactura||r._manualNroFiscal||'').replace(/^0+/,'').trim();
-              if(rNro&&_invFiscales.has(rNro)){
-                const rRif=(r._manualRif||r.clientRif||'').trim();
-                if(!rRif||!_neRif||rRif===_neRif) return true;
-              }
-              // 4. Retención manual: coincide RIF del cliente + número de factura de cualquier invoice de esta NE
-              if(r._manualRif&&_neRif&&r._manualRif===_neRif){
-                const mNro=(r._manualNroFiscal||'').replace(/^0+/,'').trim();
-                if(mNro&&_invFiscales.has(mNro)) return true;
-              }
-              return false;
-            }).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
+            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
             return Math.max(0,parseNum(ne.total||ne.montoBase||0)-cobrado-nc-ret);
           };
           const allNEs=(notasEntrega||[]).filter(ne=>{
@@ -21188,14 +21165,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                            const retsNE2=(retenciones||[]).filter(r=>{
-                              if(r.neId===ne.id||r.neOrigen===ne.id) return true;
-                              if(r.facturaId&&(_invIds.has(r.facturaId)||(()=>{const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);return inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento);})() )) return true;
-                              const rNro=(r.nroFactura||r._manualNroFiscal||'').replace(/^0+/,'').trim();
-                              if(rNro&&_invFiscales.has(rNro)){const rRif=(r._manualRif||r.clientRif||'').trim();if(!rRif||!_neRif||rRif===_neRif) return true;}
-                              if(r._manualRif&&_neRif&&r._manualRif===_neRif){const mNro=(r._manualNroFiscal||'').replace(/^0+/,'').trim();if(mNro&&_invFiscales.has(mNro)) return true;}
-                              return false;
-                            });
+                            const retsNE2=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id);
                             const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
                             const saldado2=sNE<0.01;
                             const rowBg=ni%2===0?'bg-white':'bg-gray-50';
@@ -21373,18 +21343,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const totCob=cobrosRest.reduce((s,c)=>s+parseNum(c.monto||0),0)+montoNuevo;
                         const totNE=parseNum(ne.total||ne.totalUSD||0);
                         const totNC=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return ni===ne.id||no===ne.id;}).reduce((s,n)=>s+parseNum(n.montoUSD||0),0);
-                        const _invNEc=(invoices||[]).filter(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
-                        const _invIdsc=new Set(_invNEc.map(i=>i.id));
-                        const _invFisc=new Set(_invNEc.map(i=>(i.nroFiscal||'').replace(/^0+/,'')).filter(Boolean));
-                        const _neRifc=ne.clientRif||'';
-                        const totRet=(retenciones||[]).filter(r=>{
-                          if(r.neId===ne.id||r.neOrigen===ne.id) return true;
-                          if(r.facturaId&&(_invIdsc.has(r.facturaId)||(()=>{const inv=(invoices||[]).find(i=>i.id===r.facturaId);return inv&&(inv.neOrigen===ne.id||inv.neOrigen===ne.documento);})() )) return true;
-                          const rNro=(r.nroFactura||r._manualNroFiscal||'').replace(/^0+/,'').trim();
-                          if(rNro&&_invFisc.has(rNro)){const rRif=(r._manualRif||r.clientRif||'').trim();if(!rRif||!_neRifc||rRif===_neRifc) return true;}
-                          if(r._manualRif&&_neRifc&&r._manualRif===_neRifc){const mNro=(r._manualNroFiscal||'').replace(/^0+/,'').trim();if(mNro&&_invFisc.has(mNro)) return true;}
-                          return false;
-                        }).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.montoRetenidoUSD||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;return s+(rt>1?rb/rt:parseNum(r.montoRetenidoUSD||rb));},0);
+                        const totRet=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.montoRetenidoUSD||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;return s+(rt>1?rb/rt:parseNum(r.montoRetenidoUSD||rb));},0);
                         const nuevoSaldo=Math.max(0,totNE-totNC-totRet-totCob);
                         const st=totCob<0.01?'PENDIENTE':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
                         batch.update(getDocRef('notasEntrega',ne.id),{statusCxC:st,montoCobrado:totCob,saldoPendiente:nuevoSaldo,updatedAt:Date.now()});
@@ -21560,10 +21519,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             try{
               const isEditing=!!(retForm.id||retForm._fsId);
               const id=isEditing?(retForm.id||retForm._fsId):`RET-${Date.now()}-${Math.random().toString(36).substr(2,8)}`;
+              // Buscar el neId a partir de la factura seleccionada
+              const _selInv=(invoices||[]).find(i=>i.id===retForm.facturaId||i.documento===retForm.facturaId);
+              const _neIdRet=_selInv?.neOrigen||_selInv?.neId||retForm.neId||'';
+              const _clientRifRet=_selInv?.clientRif||retForm._manualRif||retForm.clientRif||'';
               const retDataToSave={...retForm,
                 _manualCliente:retForm._manualCliente||retClientSearch||'',
                 _manualNroFiscal:retForm._manualNroFiscal||'',
-                _manualRif:retForm._manualRif||''
+                _manualRif:retForm._manualRif||'',
+                neId:_neIdRet,
+                neOrigen:_neIdRet,
+                clientRif:_clientRifRet,
               };
               const {id:_oldId,_fsId:_oldFs,...retDataClean}=retDataToSave;
               if(isEditing){
@@ -21906,6 +21872,30 @@ ${resumenHtml}
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
                 <button onClick={()=>{setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
+                <button onClick={async()=>{
+                  // ── MIGRACIÓN: backfill neId en retenciones existentes ────────
+                  const sinNeId=(retenciones||[]).filter(r=>!r.neId&&r.facturaId&&!r.facturaId.startsWith('MANUAL-'));
+                  if(sinNeId.length===0){setDialog({title:'✅ Todo actualizado',text:'Todas las retenciones ya tienen neId vinculado.',type:'alert'});return;}
+                  setDialog({title:`Vincular ${sinNeId.length} retenciones`,text:`Se vincularán ${sinNeId.length} retenciones existentes a sus NEs correspondientes buscando el invoice de cada una. ¿Continuar?`,type:'confirm',onConfirm:async()=>{
+                    let ok=0,fail=0;
+                    const batches=[];let b=writeBatch(db);let count=0;
+                    for(const r of sinNeId){
+                      const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+                      if(inv&&inv.neOrigen){
+                        b.update(getDocRef('retencionesClientes',r.id),{neId:inv.neOrigen,neOrigen:inv.neOrigen,clientRif:inv.clientRif||r._manualRif||'',updatedAt:getTodayDate()});
+                        ok++;count++;
+                        if(count>=400){batches.push(b);b=writeBatch(db);count=0;}
+                      }else fail++;
+                    }
+                    if(count>0)batches.push(b);
+                    try{
+                      for(const bt of batches)await bt.commit();
+                      setDialog({title:'✅ Migración completada',text:`${ok} retenciones vinculadas correctamente.${fail>0?` ${fail} no pudieron vincularse (factura no encontrada).`:''}`,type:'alert'});
+                    }catch(e){setDialog({title:'Error en migración',text:e.message,type:'alert'});}
+                  }});
+                }} className="bg-amber-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-amber-700 flex items-center gap-2" title="Vincular retenciones existentes a sus NEs para que aparezcan en CxC">
+                  <RefreshCw size={14}/> Vincular retenciones a CxC
+                </button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
