@@ -21061,7 +21061,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           const getSaldoNE = (ne) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
-            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;return s+(rt>1?rb/rt:0);},0);
+            const _invNEtasa=(invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
+            const _neDefaultTasa=parseNum(_invNEtasa?.tasaFactura||_invNEtasa?.tasa||0)||tasaBCVec;
+            const ret=(retenciones||[]).filter(r=>r.neId===ne.id||r.neOrigen===ne.id).reduce((s,r)=>{
+              const rb=parseNum(r.montoRetenido||r.monto||0);
+              let rt=parseNum(r.tasa||r.tasaFactura||0);
+              if(rt<=1){
+                const rInv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+                rt=parseNum(rInv?.tasaFactura||rInv?.tasa||0)||_neDefaultTasa;
+              }
+              return s+(rt>1?rb/rt:0);
+            },0);
             return Math.max(0,parseNum(ne.total||ne.montoBase||0)-cobrado-nc-ret);
           };
           const allNEs=(notasEntrega||[]).filter(ne=>{
@@ -21207,7 +21217,15 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                   <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">NC</span></td>
                                 </tr>);
                               })}
-                              {retsNE2.map((r,ri)=>{const rb=parseNum(r.montoRetenido||r.monto||0);const rt=parseNum(r.tasa||r.tasaFactura||0)||tasaBCVec;const ru=rt>1?rb/rt:0;return(
+                              {retsNE2.map((r,ri)=>{
+                                const rb=parseNum(r.montoRetenido||r.monto||0);
+                                let rt=parseNum(r.tasa||r.tasaFactura||0);
+                                if(rt<=1){
+                                  const rInv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+                                  rt=parseNum(rInv?.tasaFactura||rInv?.tasa||0)||parseNum(invV2?.tasaFactura||invV2?.tasa||0)||tasaBCVec;
+                                }
+                                const ru=rt>1?rb/rt:0;
+                                return(
                                 <tr key={r.id||ri} className="border-b border-amber-100" style={{background:'#fffbeb'}}>
                                   <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700">↳ {r.nroRetencion||r.nroComprobante||'—'}</td>
                                   <td className="py-1.5 px-3 text-[8px] text-amber-600">{r.fechaComprobante||r.fecha||'—'}</td>
@@ -21523,6 +21541,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               const _selInv=(invoices||[]).find(i=>i.id===retForm.facturaId||i.documento===retForm.facturaId);
               const _neIdRet=_selInv?.neOrigen||_selInv?.neId||retForm.neId||'';
               const _clientRifRet=_selInv?.clientRif||retForm._manualRif||retForm.clientRif||'';
+              const _tasaRet=parseNum(_selInv?.tasaFactura||_selInv?.tasa||0)||parseNum(tasaBCV||0)||0;
               const retDataToSave={...retForm,
                 _manualCliente:retForm._manualCliente||retClientSearch||'',
                 _manualNroFiscal:retForm._manualNroFiscal||'',
@@ -21530,6 +21549,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 neId:_neIdRet,
                 neOrigen:_neIdRet,
                 clientRif:_clientRifRet,
+                tasa:_tasaRet||retForm.tasa||0,
               };
               const {id:_oldId,_fsId:_oldFs,...retDataClean}=retDataToSave;
               if(isEditing){
@@ -21882,7 +21902,7 @@ ${resumenHtml}
                     for(const r of sinNeId){
                       const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
                       if(inv&&inv.neOrigen){
-                        b.update(getDocRef('retencionesClientes',r.id),{neId:inv.neOrigen,neOrigen:inv.neOrigen,clientRif:inv.clientRif||r._manualRif||'',updatedAt:getTodayDate()});
+                        const _t=parseNum(inv.tasaFactura||inv.tasa||0);b.update(getDocRef('retencionesClientes',r.id),{neId:inv.neOrigen,neOrigen:inv.neOrigen,clientRif:inv.clientRif||r._manualRif||'',tasa:_t||r.tasa||0,updatedAt:getTodayDate()});
                         ok++;count++;
                         if(count>=400){batches.push(b);b=writeBatch(db);count=0;}
                       }else fail++;
