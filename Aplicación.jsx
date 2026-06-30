@@ -5391,6 +5391,7 @@ function App() {
   const [otraRetForm, setOtraRetForm] = useState({});
   const [otraRetBusqCli, setOtraRetBusqCli] = useState('');
   const [otraRetManual, setOtraRetManual] = useState(false);
+  const [otraRetBusqCuenta, setOtraRetBusqCuenta] = useState('');
   // Tipos de retención extra — scope de componente para que el modal pueda accederlos
   const TIPOS_RET_EXTRA = useMemo(()=>(settings?.tiposRetencionExtra||[]).length>0
     ? settings.tiposRetencionExtra
@@ -5441,7 +5442,7 @@ function App() {
         observaciones:otraRetForm.observaciones||'',
         timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
       });
-      setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);
+      setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
       setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -19776,7 +19777,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const nesBase=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
             if(fechaRef&&(ne.fecha||'')>fechaRef) return false;
-            return getSaldoNEAtFecha(ne,fechaRef)>0.01;
+            // Math.abs: incluye tanto saldo pendiente (positivo) como crédito a favor (negativo, por retenciones que superan el cargo).
+            // Solo se excluye saldo exactamente en cero (ya saldado, sin nada pendiente en ninguna dirección).
+            return Math.abs(getSaldoNEAtFecha(ne,fechaRef))>0.01;
           });
           // nesTotal: TODAS las NEs (incluye saldo=0 por NC completa) para que Total coincida con NE view
           const nesTotal=(notasEntrega||[]).filter(ne=>{
@@ -19941,7 +19944,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0,gTotRetIva=0,gTotRetOtras=0;
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
-                const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
+                const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
                 const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr';
                 let clTotal=0;
                 const neRows=cl.nes.map(ne=>{
@@ -19959,7 +19962,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                   const ncsNE=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return(ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
                   const retsNE=[...retDetallePDF.iva,...retDetallePDF.otras];
-                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
+                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   const diasCredPDF=parseNum(ne.diasCredito||0);
                   const retCompPDF=retsNE.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ');
@@ -20062,7 +20065,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const d=getAgingDays(ne,fechaRef);
                   const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-                  const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id);
+                  const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                   const docFisc=invVinc?(invVinc.nroFiscal||invVinc.documento||'—'):'—';
                   const diasCred=parseNum(ne.diasCredito||0);
                   const retDetalleAg=getRetsDetalleNE(ne);
@@ -20097,7 +20100,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);const d=getAgingDays(ne,fechaRef);
                   const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id)||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId):null);
+                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
                   const diasCredXLS=parseNum(ne.diasCredito||0);
                   body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
@@ -20379,7 +20382,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const saldo=getSaldoNEAtFecha(ne,null);
                         const sel=!!pm.nesSelec?.[ne.id];
                         const aplicado=distMap[ne.id]||0;
-                        const invVinc=ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento);
+                        const invVinc=ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                         const nroFiscal=invVinc?.nroFiscal||ne.nroFiscal||null;
                         const tasa=parseNum(invVinc?.tasa||ne.tasa||tasaBCV||1);
                         const baseUSD=parseNum(invVinc?.montoBase||ne.montoBase||ne.total||0);
@@ -20740,7 +20743,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
                     <DollarSign size={13}/> 💳 Registrar Cobro
                   </button>
-                  <button onClick={()=>{setOtraRetForm({tipoId:'RESP_SOCIAL',fechaComprobante:getTodayDate()});setOtraRetBusqCli('');setShowOtraRetModal(true);}}
+                  <button onClick={()=>{
+                    const tipoIni=TIPOS_RET_EXTRA.find(t=>t.id==='RESP_SOCIAL')||TIPOS_RET_EXTRA[0];
+                    setOtraRetForm({tipoId:'RESP_SOCIAL',fechaComprobante:getTodayDate(),porcentaje:tipoIni.porcentaje,cuentaContableId:tipoIni.cuentaContableId||'',cuentaContableNombre:tipoIni.cuentaContableNombre||''});
+                    setOtraRetBusqCli('');setOtraRetBusqCuenta('');setOtraRetManual(false);setShowOtraRetModal(true);
+                  }}
                     className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-purple-700 transition-all">
                     <FileText size={13}/> 📋 Otras Retenciones
                   </button>
@@ -20801,8 +20808,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       <tbody>
                         {clientesList.map((cl)=>{
                           const sel=cxcExpandAll||cxcSelectedClient===cl.clientRif;
-                          const estado=cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
-                          const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700'}[estado];
+                          const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
+                          const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700','A FAVOR':'bg-teal-100 text-teal-700'}[estado];
                           return (
                             <React.Fragment key={cl.clientRif}>
                               <tr className={`border-b-2 border-gray-200 hover:bg-gray-50 cursor-pointer ${sel?'bg-blue-50 border-blue-200':''}`} onClick={()=>setCxcSelectedClient(cxcSelectedClient===cl.clientRif?'':cl.clientRif)}>
@@ -20846,10 +20853,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                           const d=getAgingDays(ne,fechaRef);
                                           const dc=d<=0?'text-green-700':d<=30?'text-amber-700':d<=60?'text-orange-700':'text-red-700 font-black';
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                                          // Factura vinculada (ambas direcciones)
-                                          const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento)||
-                                                         (ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId||inv.documento===ne.facturaId):null)||
-                                                         (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal):null);
+                                          // Factura vinculada (ambas direcciones, con guarda de RIF para evitar facturas de otro cliente)
+                                          const _rifOkInv=inv=>!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
+                                          const invVinc=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&_rifOkInv(inv))||
+                                                         (ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&_rifOkInv(inv)):null)||
+                                                         (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal&&_rifOkInv(inv)):null);
                                           const docFiscal = invVinc
                                             ? (invVinc.nroFiscal || invVinc.nroControl || ne.nroFiscal || '—')
                                             : (ne.nroFiscal || '—');
@@ -21406,7 +21414,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               let neRowsHtml='';
               cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne,ni)=>{
                 const sNE=getSaldoNE(ne);
-                const invV=(invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
+                const invV=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                 const fiscalNum=localNroFiscal[invV?.id||'']||invV?.nroFiscal||'';
                 const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id);
                 const totalCobNE=cobrosNE.reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -21558,7 +21566,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 bodyXls+='<tr style="background:#0f172a;color:#f97316;font-weight:bold;font-size:9pt"><td>Documento</td><td>Fecha</td><td>Tipo</td><td>Detalle</td><td>Cargo USD</td><td>Ret. IVA</td><td>Otra Ret.</td><td>Cobrado</td><td>Saldo</td></tr>';
                 cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
                   const sNEx=getSaldoNE(ne);
-                  const invVx=(invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
+                  const invVx=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                   const fiscalNumX=localNroFiscal[invVx?.id||'']||invVx?.nroFiscal||'';
                   const cobrosNEx=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                   const totalCobNEx=cobrosNEx.reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -21696,7 +21704,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                            const invV2=(invoices||[]).find(inv=>inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)));
+                            const invV2=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)))&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                             const retDetalle2=getRetsDetalleNEec(ne);
                             const retsNE2=[...retDetalle2.iva,...retDetalle2.otras].sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
                             const enCredito2=sNE<-0.01;
@@ -21826,7 +21834,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   <h3 className="font-black text-white text-sm uppercase tracking-wide">📋 Registrar Otras Retenciones</h3>
                   <p className="text-[10px] text-purple-200 mt-0.5">Responsabilidad Social · AE · Timbre Fiscal · otras</p>
                 </div>
-                <button onClick={()=>setShowOtraRetModal(false)} className="text-purple-300 hover:text-white"><X size={16}/></button>
+                <button onClick={()=>{setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');}} className="text-purple-300 hover:text-white"><X size={16}/></button>
               </div>
               <div className="p-5 space-y-4">
                 {/* Tipo de retención */}
@@ -21846,15 +21854,32 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 {/* ⚙️ Configuración — cuenta contable predeterminada, visible desde el inicio */}
                 <div className="bg-purple-50 border-2 border-purple-100 rounded-xl p-3">
                   <label className="text-[9px] font-black text-purple-700 uppercase block mb-1.5 flex items-center gap-1">⚙️ Configuración — Cuenta contable predeterminada</label>
-                  <select className="w-full border-2 border-purple-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 bg-white"
-                    value={otraRetForm.cuentaContableId||''}
-                    onChange={e=>{
-                      const cta=(planDeCuentas||[]).find(c=>c.id===e.target.value);
-                      setOtraRetForm(f=>({...f,cuentaContableId:e.target.value,cuentaContableNombre:cta?(cta.codigo+' — '+cta.nombre):''}));
-                    }}>
-                    <option value="">— Selecciona cuenta —</option>
-                    {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                  </select>
+                  <div className="relative">
+                    <input className="w-full border-2 border-purple-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 bg-white"
+                      placeholder="🔍 Buscar cuenta por código o nombre..."
+                      value={otraRetForm.cuentaContableId?(otraRetForm.cuentaContableNombre||''):otraRetBusqCuenta}
+                      onChange={e=>{setOtraRetBusqCuenta(e.target.value);if(otraRetForm.cuentaContableId)setOtraRetForm(f=>({...f,cuentaContableId:'',cuentaContableNombre:''}));}}/>
+                    {otraRetForm.cuentaContableId&&
+                      <button type="button" onClick={()=>{setOtraRetBusqCuenta('');setOtraRetForm(f=>({...f,cuentaContableId:'',cuentaContableNombre:''}));}}
+                        className="absolute right-2 top-[9px] text-purple-400 hover:text-red-500"><X size={14}/></button>}
+                    {otraRetBusqCuenta&&!otraRetForm.cuentaContableId&&(
+                      <div className="absolute z-20 left-0 right-0 mt-1 bg-white border-2 border-purple-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                        {(planDeCuentas||[]).filter(c=>{
+                          const q=otraRetBusqCuenta.toUpperCase();
+                          return (c.codigo||'').toUpperCase().includes(q)||(c.nombre||'').toUpperCase().includes(q);
+                        }).slice(0,30).map(c=>(
+                          <div key={c.id} onClick={()=>{setOtraRetForm(f=>({...f,cuentaContableId:c.id,cuentaContableNombre:c.codigo+' — '+c.nombre}));setOtraRetBusqCuenta('');}}
+                            className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-0">
+                            <span className="font-black text-purple-700">{c.codigo}</span> <span className="text-gray-600">— {c.nombre}</span>
+                          </div>
+                        ))}
+                        {(planDeCuentas||[]).filter(c=>{
+                          const q=otraRetBusqCuenta.toUpperCase();
+                          return (c.codigo||'').toUpperCase().includes(q)||(c.nombre||'').toUpperCase().includes(q);
+                        }).length===0&&<div className="px-3 py-3 text-[10px] text-gray-400 font-bold text-center">Sin cuentas que coincidan</div>}
+                      </div>
+                    )}
+                  </div>
                   {otraRetForm.cuentaContableId&&
                     <button type="button" onClick={guardarCuentaTipoRet}
                       className="mt-1.5 text-[9px] font-black text-purple-700 hover:text-purple-900 flex items-center gap-1">
@@ -21982,7 +22007,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 </div>
               </div>
               <div className="px-5 pb-5 flex justify-end gap-3">
-                <button onClick={()=>setShowOtraRetModal(false)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+                <button onClick={()=>{setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');}} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
                 <button onClick={guardarOtraRet} className="px-5 py-2.5 bg-purple-600 text-white rounded-xl text-xs font-black uppercase hover:bg-purple-700 flex items-center gap-2"><Save size={13}/> Registrar Retención</button>
               </div>
             </div>
