@@ -5393,8 +5393,21 @@ function App() {
   // Tipos de retención extra — scope de componente para que el modal pueda accederlos
   const TIPOS_RET_EXTRA = useMemo(()=>(settings?.tiposRetencionExtra||[]).length>0
     ? settings.tiposRetencionExtra
-    : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10}]
+    : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2}]
   ,[settings]);
+  // Guarda la Cuenta Contable predeterminada para un tipo de retención extra (persiste en settings/general)
+  const guardarCuentaTipoRet=async()=>{
+    const tipoId=otraRetForm.tipoId||'RESP_SOCIAL';
+    if(!otraRetForm.cuentaContableId){alert('Selecciona primero una Cuenta Contable.');return;}
+    const ctaSel=(planDeCuentas||[]).find(c=>c.id===otraRetForm.cuentaContableId);
+    const nuevaLista=TIPOS_RET_EXTRA.map(t=>t.id===tipoId
+      ?{...t,cuentaContableId:otraRetForm.cuentaContableId,cuentaContableNombre:ctaSel?(ctaSel.codigo+' — '+ctaSel.nombre):(otraRetForm.cuentaContableNombre||'')}
+      :t);
+    try{
+      await setDoc(getDocRef('settings','general'),{tiposRetencionExtra:nuevaLista},{merge:true});
+      alert('✅ Cuenta predeterminada guardada para "'+(TIPOS_RET_EXTRA.find(t=>t.id===tipoId)?.label||tipoId)+'". Se aplicará automáticamente la próxima vez que elijas este tipo.');
+    }catch(ex){alert('Error guardando: '+ex.message);}
+  };
   // guardarOtraRet — scope de componente (modal se renderiza fuera del IIFE CxC)
   // guardarOtraRet: función simple (no useCallback) — evita TDZ con invoices
   const guardarOtraRet=async()=>{
@@ -5410,11 +5423,12 @@ function App() {
       const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
       await setDoc(getDocRef('retencionesClientes',id),{
         id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
-        porcentaje:tipo.porcentaje,
-        cuentaContableId:tipo.cuentaContableId||'',cuentaContableNombre:tipo.cuentaContableNombre||'',
+        porcentaje:parseNum(otraRetForm.porcentaje||tipo.porcentaje||0),
+        cuentaContableId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
+        cuentaContableNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
         facturaId,nroFiscal:inv?.nroFiscal||'',
         neId:inv?.neOrigen||'',neOrigen:inv?.neOrigen||'',
-        clientRif:inv?.clientRif||'',clientName:inv?.clientName||'',
+        clientRif:inv?.clientRif||otraRetForm.clientRif||'',clientName:inv?.clientName||otraRetForm.clientName||'',
         nroRetencion:nroComprobante,fechaComprobante,
         montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
         baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
@@ -21605,22 +21619,44 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       const tipo=TIPOS_RET_EXTRA.find(t=>t.id===e.target.value)||TIPOS_RET_EXTRA[0];
                       const base=parseNum(otraRetForm.baseImponibleBs||0);
                       const monto=base>0?parseFloat((base*tipo.porcentaje/100).toFixed(2)):0;
-                      setOtraRetForm(f=>({...f,tipoId:e.target.value,porcentaje:tipo.porcentaje,montoRetenidoBs:monto||f.montoRetenidoBs,cuentaContableNombre:tipo.cuentaContableNombre||''}));
+                      setOtraRetForm(f=>({...f,tipoId:e.target.value,porcentaje:tipo.porcentaje,montoRetenidoBs:monto||f.montoRetenidoBs,cuentaContableId:tipo.cuentaContableId||'',cuentaContableNombre:tipo.cuentaContableNombre||''}));
                     }}>
                     {TIPOS_RET_EXTRA.map(t=><option key={t.id} value={t.id}>{t.label} ({t.porcentaje}%)</option>)}
                   </select>
                 </div>
-                {/* Buscar cliente → factura */}
+                {/* Buscar cliente (registrado) → factura */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Buscar cliente</label>
+                  <div className="relative">
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Buscar cliente *</label>
                     <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
-                      placeholder="Nombre o RIF..." value={otraRetBusqCli}
-                      onChange={e=>setOtraRetBusqCli(e.target.value)}/>
+                      placeholder="Nombre o RIF del cliente..." value={otraRetBusqCli}
+                      onChange={e=>{setOtraRetBusqCli(e.target.value);if(otraRetForm.clientRif)setOtraRetForm(f=>({...f,clientRif:'',clientName:'',facturaId:''}));}}/>
+                    {otraRetForm.clientRif&&
+                      <button type="button" onClick={()=>{setOtraRetBusqCli('');setOtraRetForm(f=>({...f,clientRif:'',clientName:'',facturaId:''}));}}
+                        className="absolute right-2 top-[27px] text-slate-400 hover:text-red-500"><X size={13}/></button>}
+                    {otraRetBusqCli&&!otraRetForm.clientRif&&(
+                      <div className="absolute z-20 left-0 right-0 mt-1 bg-white border-2 border-purple-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                        {(clients||[]).filter(c=>{
+                          const q=otraRetBusqCli.toUpperCase();
+                          return (c.name||c.nombre||'').toUpperCase().includes(q)||(c.rif||'').toUpperCase().includes(q);
+                        }).slice(0,20).map(c=>(
+                          <div key={c.id||c.rif} onClick={()=>{setOtraRetForm(f=>({...f,clientRif:c.rif,clientName:c.name||c.nombre,facturaId:''}));setOtraRetBusqCli((c.name||c.nombre||'')+' — '+(c.rif||''));}}
+                            className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-0">
+                            <div className="font-bold text-xs">{c.name||c.nombre}</div>
+                            <div className="text-[9px] text-purple-600 font-bold">{c.rif}</div>
+                          </div>
+                        ))}
+                        {(clients||[]).filter(c=>{
+                          const q=otraRetBusqCli.toUpperCase();
+                          return (c.name||c.nombre||'').toUpperCase().includes(q)||(c.rif||'').toUpperCase().includes(q);
+                        }).length===0&&<div className="px-3 py-3 text-[10px] text-gray-400 font-bold text-center">Sin clientes registrados con ese nombre/RIF</div>}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Factura / Invoice *</label>
-                    <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                    <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 disabled:bg-slate-50 disabled:text-slate-400"
+                      disabled={!otraRetForm.clientRif}
                       value={otraRetForm.facturaId||''}
                       onChange={e=>{
                         const inv=(invoices||[]).find(i=>i.id===e.target.value);
@@ -21630,13 +21666,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const monto=base>0?parseFloat((base*tipo.porcentaje/100).toFixed(2)):0;
                         setOtraRetForm(f=>({...f,facturaId:e.target.value,tasa,baseImponibleBs:base,montoRetenidoBs:monto||f.montoRetenidoBs}));
                       }}>
-                      <option value="">— Selecciona invoice —</option>
-                      {(invoices||[]).filter(i=>{
-                        if(!otraRetBusqCli) return true;
-                        const b=otraRetBusqCli.toLowerCase();
-                        return (i.clientName||'').toLowerCase().includes(b)||(i.clientRif||'').includes(b)||(i.nroFiscal||'').includes(b);
-                      }).slice(0,80).map(i=>(
-                        <option key={i.id} value={i.id}>{i.nroFiscal?`#${i.nroFiscal} · `:''}{i.clientName||i.clientRif||i.id} {i.fecha?`(${i.fecha})`:''}</option>
+                      <option value="">{otraRetForm.clientRif?'— Selecciona factura —':'Primero busca un cliente'}</option>
+                      {(invoices||[]).filter(i=>i.clientRif===otraRetForm.clientRif).slice(0,80).map(i=>(
+                        <option key={i.id} value={i.id}>{i.nroFiscal?'#'+i.nroFiscal+' · ':''}{i.fecha?'('+i.fecha+')':''} ${formatNum(parseNum(i.total||0))}</option>
                       ))}
                     </select>
                   </div>
@@ -21690,12 +21722,22 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       value={otraRetForm.fechaComprobante||''}
                       onChange={e=>setOtraRetForm(f=>({...f,fechaComprobante:e.target.value}))}/>
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Contable</label>
-                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
-                      placeholder="Ej: 2.1.04.01.001 — Ret. Resp. Social"
-                      value={otraRetForm.cuentaContableNombre||''}
-                      onChange={e=>setOtraRetForm(f=>({...f,cuentaContableNombre:e.target.value}))}/>
+                    <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                      value={otraRetForm.cuentaContableId||''}
+                      onChange={e=>{
+                        const cta=(planDeCuentas||[]).find(c=>c.id===e.target.value);
+                        setOtraRetForm(f=>({...f,cuentaContableId:e.target.value,cuentaContableNombre:cta?(cta.codigo+' — '+cta.nombre):''}));
+                      }}>
+                      <option value="">— Selecciona cuenta —</option>
+                      {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                    </select>
+                    {otraRetForm.cuentaContableId&&
+                      <button type="button" onClick={guardarCuentaTipoRet}
+                        className="mt-1.5 text-[9px] font-black text-purple-600 hover:text-purple-800 flex items-center gap-1">
+                        📌 Guardar como cuenta predeterminada para "{(TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||{}).label}"
+                      </button>}
                   </div>
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Observaciones</label>
