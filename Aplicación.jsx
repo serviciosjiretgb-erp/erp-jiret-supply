@@ -5390,6 +5390,7 @@ function App() {
   const [showOtraRetModal, setShowOtraRetModal] = useState(false);
   const [otraRetForm, setOtraRetForm] = useState({});
   const [otraRetBusqCli, setOtraRetBusqCli] = useState('');
+  const [otraRetManual, setOtraRetManual] = useState(false);
   // Tipos de retención extra — scope de componente para que el modal pueda accederlos
   const TIPOS_RET_EXTRA = useMemo(()=>(settings?.tiposRetencionExtra||[]).length>0
     ? settings.tiposRetencionExtra
@@ -5412,30 +5413,35 @@ function App() {
   // guardarOtraRet: función simple (no useCallback) — evita TDZ con invoices
   const guardarOtraRet=async()=>{
     const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
-    if(!facturaId||!nroComprobante||!fechaComprobante||!montoRetenidoBs)
+    const esManualOtra=!facturaId; // sin factura seleccionada = modo manual
+    if(esManualOtra&&!otraRetForm.clientRif)
+      return setDialog({title:'Datos incompletos',text:'Busca y selecciona un cliente registrado.',type:'alert'});
+    if(!nroComprobante||!fechaComprobante||!montoRetenidoBs)
       return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
     try{
-      const inv=(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
+      const inv=esManualOtra?null:(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
       const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
-      const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+      const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
       const montoBs=parseNum(montoRetenidoBs||0);
       const montoUSD=tasa>1?parseFloat((montoBs/tasa).toFixed(4)):0;
       const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+      const facturaIdFinal=esManualOtra?('MANUAL-OTRA-'+Date.now()):facturaId;
       await setDoc(getDocRef('retencionesClientes',id),{
         id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
         porcentaje:parseNum(otraRetForm.porcentaje||tipo.porcentaje||0),
         cuentaContableId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
         cuentaContableNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
-        facturaId,nroFiscal:inv?.nroFiscal||'',
+        facturaId:facturaIdFinal,nroFiscal:inv?.nroFiscal||'',
         neId:inv?.neOrigen||'',neOrigen:inv?.neOrigen||'',
         clientRif:inv?.clientRif||otraRetForm.clientRif||'',clientName:inv?.clientName||otraRetForm.clientName||'',
+        _manualRif:esManualOtra?(otraRetForm.clientRif||''):'',_manualCliente:esManualOtra?(otraRetForm.clientName||''):'',
         nroRetencion:nroComprobante,fechaComprobante,
         montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
         baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
         observaciones:otraRetForm.observaciones||'',
         timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
       });
-      setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');
+      setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);
       setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -20995,7 +21001,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                         })}
                                         {(_manualRetsPorCliente.get(cl.clientRif)||[]).map((r,ri)=>(
                                           <tr key={r.id||ri} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
-                                            <td className="py-2 px-2 font-black text-teal-700 text-[9px]">↳ {r.nroRetencion||'RET-MANUAL'}</td>
+                                            <td className="py-2 px-2 font-black text-teal-700 text-[9px]">↳ {r.tipoLabel?r.tipoLabel+' · ':''}{r.nroRetencion||'RET-MANUAL'}</td>
                                             <td className="py-2 px-2 text-center text-teal-600 text-[9px]">{r.fechaComprobante||r.fecha||'—'}</td>
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
@@ -21010,7 +21016,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                               <span className="font-black px-2 py-0.5 rounded-md text-[9px] text-teal-700 bg-teal-50">{r._sinTasa?'—':'-$'+formatNum(r._montoUSD)}</span>
                                             </td>
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
-                                            <td className="py-2 px-2 text-[9px] text-teal-600 italic">Retención manual · factura {r._manualNroFiscal||'—'} no registrada en el sistema</td>
+                                            <td className="py-2 px-2 text-[9px] text-teal-600 italic">{r.tipoLabel||'Retención manual'} · {r._manualNroFiscal&&r._manualNroFiscal!=='—'?'factura '+r._manualNroFiscal+' no registrada en el sistema':'sin factura asociada'}</td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -21782,8 +21788,8 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <tr key={r.id||ri} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
                               <td className="py-2 px-3 font-black text-teal-700">↳ {r.nroRetencion||'RET-MANUAL'}</td>
                               <td className="py-2 px-3 text-teal-600">{r.fechaComprobante||r.fecha||'—'}</td>
-                              <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret. Manual</span></td>
-                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">Factura N° {r._manualNroFiscal||'—'} · no registrada en el sistema</td>
+                              <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">{r.tipoLabel||'Ret. Manual'}</span></td>
+                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{r._manualNroFiscal&&r._manualNroFiscal!=='—'?'Factura N° '+r._manualNroFiscal+' · no registrada en el sistema':'Sin factura asociada'}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
                               <td className="py-2 px-3 text-right">{r._sinTasa?<span className="text-red-500 font-black text-[9px]">⚠ Sin tasa</span>:<span className="font-black text-teal-700">${formatNum(r._montoUSD)}</span>}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
@@ -21837,6 +21843,31 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     {TIPOS_RET_EXTRA.map(t=><option key={t.id} value={t.id}>{t.label} ({t.porcentaje}%)</option>)}
                   </select>
                 </div>
+                {/* ⚙️ Configuración — cuenta contable predeterminada, visible desde el inicio */}
+                <div className="bg-purple-50 border-2 border-purple-100 rounded-xl p-3">
+                  <label className="text-[9px] font-black text-purple-700 uppercase block mb-1.5 flex items-center gap-1">⚙️ Configuración — Cuenta contable predeterminada</label>
+                  <select className="w-full border-2 border-purple-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 bg-white"
+                    value={otraRetForm.cuentaContableId||''}
+                    onChange={e=>{
+                      const cta=(planDeCuentas||[]).find(c=>c.id===e.target.value);
+                      setOtraRetForm(f=>({...f,cuentaContableId:e.target.value,cuentaContableNombre:cta?(cta.codigo+' — '+cta.nombre):''}));
+                    }}>
+                    <option value="">— Selecciona cuenta —</option>
+                    {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select>
+                  {otraRetForm.cuentaContableId&&
+                    <button type="button" onClick={guardarCuentaTipoRet}
+                      className="mt-1.5 text-[9px] font-black text-purple-700 hover:text-purple-900 flex items-center gap-1">
+                      📌 Guardar como predeterminada para "{(TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||{}).label}"
+                    </button>}
+                </div>
+                {/* Modo: con factura del sistema vs. registro directo sin factura */}
+                <div className="flex gap-2">
+                  <button type="button" onClick={()=>{setOtraRetManual(false);setOtraRetForm(f=>({...f,facturaId:''}));}}
+                    className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${!otraRetManual?'bg-purple-600 text-white border-purple-600':'bg-white text-gray-600 border-gray-200'}`}>🔍 Con factura del sistema</button>
+                  <button type="button" onClick={()=>{setOtraRetManual(true);setOtraRetForm(f=>({...f,facturaId:''}));}}
+                    className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${otraRetManual?'bg-purple-600 text-white border-purple-600':'bg-white text-gray-600 border-gray-200'}`}>✏️ Sin factura (registro directo)</button>
+                </div>
                 {/* Buscar cliente (registrado) → factura */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="relative">
@@ -21867,7 +21898,13 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     )}
                   </div>
                   <div>
-                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Factura / Invoice *</label>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">{otraRetManual?'Tasa Bs/$ (de esa fecha) *':'Factura / Invoice *'}</label>
+                    {otraRetManual?(
+                      <input type="number" step="0.0001" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        placeholder={String(parseNum(settings?.tasaBCV||0))}
+                        value={otraRetForm.tasa||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,tasa:e.target.value}))}/>
+                    ):(
                     <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 disabled:bg-slate-50 disabled:text-slate-400"
                       disabled={!otraRetForm.clientRif}
                       value={otraRetForm.facturaId||''}
@@ -21884,6 +21921,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         <option key={i.id} value={i.id}>{i.nroFiscal?'#'+i.nroFiscal+' · ':''}{i.fecha?'('+i.fecha+')':''} ${formatNum(parseNum(i.total||0))}</option>
                       ))}
                     </select>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
@@ -21936,23 +21974,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       onChange={e=>setOtraRetForm(f=>({...f,fechaComprobante:e.target.value}))}/>
                   </div>
                   <div className="col-span-2">
-                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Contable</label>
-                    <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
-                      value={otraRetForm.cuentaContableId||''}
-                      onChange={e=>{
-                        const cta=(planDeCuentas||[]).find(c=>c.id===e.target.value);
-                        setOtraRetForm(f=>({...f,cuentaContableId:e.target.value,cuentaContableNombre:cta?(cta.codigo+' — '+cta.nombre):''}));
-                      }}>
-                      <option value="">— Selecciona cuenta —</option>
-                      {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                    </select>
-                    {otraRetForm.cuentaContableId&&
-                      <button type="button" onClick={guardarCuentaTipoRet}
-                        className="mt-1.5 text-[9px] font-black text-purple-600 hover:text-purple-800 flex items-center gap-1">
-                        📌 Guardar como cuenta predeterminada para "{(TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||{}).label}"
-                      </button>}
-                  </div>
-                  <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Observaciones</label>
                     <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
                       value={otraRetForm.observaciones||''}
