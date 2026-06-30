@@ -3876,6 +3876,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     const tasa   = Number(form.tasa)||tasaActiva;
     const montoBs  = form.moneda==='BS' ? monto : monto*tasa;
     const montoUSD = form.moneda==='BS' ? monto/tasa : monto;
+    // Movimientos de caja manuales + movimientos del banco_movimientos (cobros CxC y pagos CxP del ERP)
+    const movBancoEnCaja = movBanco.filter(m=>m.origen==='CxP'||m.origenIngreso==='Cobro NE'||m.origenIngreso==='CobroCxC').map(m=>({
+      ...m,
+      moneda: m.moneda||( m.montoBs>0&&m.montoUSD>0? (m.montoBs/m.montoUSD>5?'BS':'USD') : 'USD' ),
+      tipo: m.tipo==='EGRESO'?'Egreso': m.tipo==='Ingreso'?'Ingreso': m.tipo||'Ingreso',
+      _fromBanco: true
+    }));
+    const allMovsCaja = [...movCaja, ...movBancoEnCaja].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
     const saldoBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
     const saldoUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
 
@@ -3895,8 +3903,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <BKPI label="Saldo Caja Bs." value={`Bs.${bancoFmt(saldoBs)}`} accent={saldoBs>=0?'green':'red'} Icon={Banknote} sub={`≈ $${bancoFmt(saldoBs/tasaActiva)}`}/>
           <BKPI label="Saldo Caja USD" value={`$${bancoFmt(saldoUSD)}`} accent={saldoUSD>=0?'green':'red'} Icon={DollarSign}/>
-          <BKPI label="Movimientos Hoy" value={movCaja.filter(m=>m.fecha===getTodayDate()).length} accent="blue" Icon={ArrowLeftRight}/>
-          <BKPI label="Total Movimientos" value={movCaja.length} accent="purple" Icon={FileText}/>
+          <BKPI label="Movimientos Hoy" value={allMovsCaja.filter(m=>m.fecha===getTodayDate()).length} accent="blue" Icon={ArrowLeftRight}/>
+          <BKPI label="Total Movimientos" value={allMovsCaja.length} accent="purple" Icon={FileText}/>
         </div>
 
         <BCard title="Movimientos de Caja" subtitle="Efectivo Bs. y Divisas"
@@ -3905,13 +3913,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
             <table className="w-full">
               <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh></tr></thead>
               <tbody>
-                {movCaja.length===0&&<tr><td colSpan={9}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
-                {movCaja.map(m=><tr key={m.id} className="hover:bg-slate-50">
+                {allMovsCaja.length===0&&<tr><td colSpan={9}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
+                {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?'bg-blue-50/30':''}`}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':'red'}>{m.tipo}</BBadge></BTd>
-                  <BTd><BPill usd={m.moneda==='USD'}>{m.moneda}</BPill></BTd>
-                  <BTd className="max-w-[130px] truncate">{m.concepto}</BTd>
-                  <BTd className="text-[10px] max-w-[100px] truncate">{m.terceroNombre||'—'}</BTd>
+                  <BTd><BPill usd={m.moneda==='USD'}>{m.moneda==='BS'?'Bs':'USD'}</BPill></BTd>
+                  <BTd className="max-w-[180px] truncate" title={m.concepto}>{m.concepto}{m._fromBanco&&<span className="ml-1 text-[8px] font-black text-blue-500 bg-blue-100 px-1 rounded">{m.origen==='CxP'?'CxP':'CxC'}</span>}</BTd>
+                  <BTd className="text-[10px] max-w-[100px] truncate">{m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
                   <BTd mono className="text-slate-400 text-[10px]">{m.referencia||'—'}</BTd>
                   <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>Bs.{bancoFmt(m.montoBs)}</BTd>
                   <BTd right mono className={`text-xs ${m.tipo==='Ingreso'?'text-emerald-500':'text-red-400'}`}>{'$'+bancoFmt(m.montoUSD)}</BTd>
@@ -4830,7 +4838,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
         <div className="text-slate-400 text-xs font-bold">SERVICIOS JIRET G&B, C.A.</div>
       </div>
       {/* Content */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-12">
+      <div className="flex-1 flex flex-col items-center justify-start px-6 pt-10">
         <div className="text-center mb-10">
           <h1 className="text-2xl font-black text-slate-900 uppercase tracking-wide mb-2">Seleccione un Módulo</h1>
           <p className="text-slate-400 text-sm">¿Con qué desea trabajar hoy?</p>
