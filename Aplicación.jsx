@@ -3164,7 +3164,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                     <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
                     <PTd>
                       <div className="flex gap-1 flex-wrap">
-                        <PBp sm onClick={()=>{setForm({...f});setTab('datos');setModal('form');}}><Edit size={11}/></PBp>
+                        <PBp sm onClick={()=>{setForm({...f,esImportacion:!!f.esImportacion,importacion:f.importacion||null});setTab('datos');setModal('form');}}><Edit size={11}/></PBp>
                         <PBp sm onClick={()=>imprimirFacturaPDF(f)} title="PDF Factura"><Printer size={11}/></PBp>
                         <button onClick={()=>{setPendingDeleteFact(f);setFactDelPwd('');}}
                           className="flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[9px] font-black uppercase hover:bg-red-500 hover:text-white transition-all"
@@ -3837,6 +3837,38 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                             </div>
                             <p className="text-[8px] text-blue-400 mt-2">Estos valores aparecerán en la columna IMPORTACIONES del Libro de Compras. La CxP no se ve afectada.</p>
                           </div>
+                        )}
+                      </div>
+
+                      {/* Botón guardar DUA inmediato */}
+                      <div className="flex items-center justify-between bg-blue-950 rounded-xl px-4 py-3 mt-2">
+                        <p className="text-[9px] text-blue-300 font-bold">
+                          {form.id
+                            ? '💡 Guarda los datos DUA independientemente del resto de la factura'
+                            : '💡 Los datos DUA se guardarán junto con la factura al hacer clic en "Guardar y generar retenciones"'}
+                        </p>
+                        {form.id&&(
+                          <button onClick={async()=>{
+                            try{
+                              await updateDoc(getDocRef('procura_facturas_compra',form.id),{
+                                esImportacion:true,
+                                importacion:{
+                                  fechaAplic:(form.importacion||{}).fechaAplic||'',
+                                  nroPlanilla:(form.importacion||{}).nroPlanilla||'',
+                                  nroExpediente:(form.importacion||{}).nroExpediente||'',
+                                  nroEmbarque:(form.importacion||{}).nroEmbarque||'',
+                                  totalImportacion:pNum((form.importacion||{}).totalImportacion||0),
+                                  baseImponible:pNum((form.importacion||{}).baseImponible||0),
+                                  iva:pNum((form.importacion||{}).iva||0)
+                                },
+                                updatedAt:Date.now()
+                              });
+                              setDialog({title:'✅ Datos DUA guardados',text:'Los datos de importación quedaron registrados correctamente en el Libro de Compras.',type:'alert'});
+                            }catch(e){setDialog({title:'Error al guardar DUA',text:e.message,type:'alert'});}
+                          }}
+                            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-500 transition-all flex-shrink-0 ml-4">
+                            <Save size={12}/> Guardar datos DUA
+                          </button>
                         )}
                       </div>
                     </div>
