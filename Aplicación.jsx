@@ -5549,6 +5549,7 @@ function App() {
   const [retFiltFact2, setRetFiltFact2] = useState('');
   const [retPage2, setRetPage2] = useState(0);
   const [showDiagNE, setShowDiagNE] = useState(false);
+  const [showDiagRif, setShowDiagRif] = useState(false);
   // ── Ventas: Notas de Crédito / Débito ────────────────────────────────────────
   const [notasVentaCD, setNotasVentaCD] = useState([]);
   const [showVentaNCModal, setShowVentaNCModal] = useState(false);
@@ -19664,17 +19665,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _retsPorNE = new Map();
           const _findNEforInv=(inv)=>{
             if(!inv) return null;
+            const invRif=(inv.clientRif||'').trim().toUpperCase();
+            // GUARDA: si el RIF del cliente de la NE encontrada no coincide con el RIF de la factura,
+            // se descarta — es una NE de OTRO cliente (dato mal cargado), no un vínculo válido.
+            const _rifOk=n=>{
+              const neRif=(n.clientRif||'').trim().toUpperCase();
+              return !invRif||!neRif||neRif===invRif;
+            };
             // 1. Directo: inv.neOrigen === NE.id o NE.documento
-            let nt=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);
+            let nt=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen)&&_rifOk(n));
             if(nt) return nt;
             // 2. Normalizado (sin importar mayúsculas/espacios) por si hay diferencias de formato
             const norm=(inv.neOrigen||'').toString().trim().toUpperCase();
             if(norm){
-              nt=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);
+              nt=(notasEntrega||[]).find(n=>((n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm)&&_rifOk(n));
               if(nt) return nt;
             }
             // 3. Inverso: la NE tiene su propio facturaId apuntando a esta factura
-            nt=(notasEntrega||[]).find(n=>n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento));
+            nt=(notasEntrega||[]).find(n=>n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento)&&_rifOk(n));
             return nt||null;
           };
           for(const r of (retenciones||[])){
@@ -21267,14 +21275,19 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           const _retsPorNEec = new Map();
           const _findNEforInvEc=(inv)=>{
             if(!inv) return null;
-            let nt=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);
+            const invRifEc=(inv.clientRif||'').trim().toUpperCase();
+            const _rifOkEc=n=>{
+              const neRif=(n.clientRif||'').trim().toUpperCase();
+              return !invRifEc||!neRif||neRif===invRifEc;
+            };
+            let nt=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen)&&_rifOkEc(n));
             if(nt) return nt;
             const norm=(inv.neOrigen||'').toString().trim().toUpperCase();
             if(norm){
-              nt=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);
+              nt=(notasEntrega||[]).find(n=>((n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm)&&_rifOkEc(n));
               if(nt) return nt;
             }
-            nt=(notasEntrega||[]).find(n=>n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento));
+            nt=(notasEntrega||[]).find(n=>n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento)&&_rifOkEc(n));
             return nt||null;
           };
           for(const r of (retenciones||[])){
@@ -22745,10 +22758,11 @@ ${resumenHtml}
                       const sinVincularList=(retenciones||[]).filter(r=>!(r.facturaId||'').startsWith('MANUAL-')).map(r=>{
                         const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                         if(!inv) return{r,motivo:'Factura no encontrada (facturaId no coincide con ninguna factura)'};
-                        let _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);
+                        const _rifChk=n=>!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase();
+                        let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&_rifChk(n));
                         if(!_ne&&inv.neOrigen){
                           const norm=inv.neOrigen.toString().trim().toUpperCase();
-                          _ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);
+                          _ne=(notasEntrega||[]).find(n=>((n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm)&&_rifChk(n));
                         }
                         if(_ne) return null;
                         if(!inv.neOrigen) return{r,inv,motivo:'La factura no tiene neOrigen, y ninguna NE tiene facturaId apuntando a esta factura'};
@@ -22785,6 +22799,58 @@ ${resumenHtml}
                         )}
                       </>):null;
                     })()}
+                    {(()=>{
+                      // Diagnóstico: retenciones cuya factura.neOrigen apunta a una NE que existe,
+                      // pero esa NE pertenece a OTRO cliente (RIF distinto). Estas SÍ se muestran
+                      // ahora en CxC/Estado de Cuenta (como registro aparte bajo el cliente correcto),
+                      // pero el dato neOrigen de la factura sigue mal cargado y conviene corregirlo.
+                      const rifMismatchList=(retenciones||[]).filter(r=>!(r.facturaId||'').startsWith('MANUAL-')).map(r=>{
+                        const inv=(invoices||[]).find(i=>i.id===r.facturaId);
+                        if(!inv||!inv.neOrigen) return null;
+                        let _neSinRif=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);
+                        if(!_neSinRif){
+                          const norm=inv.neOrigen.toString().trim().toUpperCase();
+                          _neSinRif=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);
+                        }
+                        if(!_neSinRif) return null;
+                        const neRif=(_neSinRif.clientRif||'').trim().toUpperCase();
+                        const invRif=(inv.clientRif||'').trim().toUpperCase();
+                        if(!neRif||!invRif||neRif===invRif) return null;
+                        return{r,inv,neEncontrada:_neSinRif};
+                      }).filter(Boolean);
+                      return rifMismatchList.length>0?(<>
+                        <button onClick={()=>setShowDiagRif(p=>!p)} className="bg-amber-100 text-amber-700 px-2.5 py-1 rounded-lg text-[10px] font-black hover:bg-amber-200 transition-all"
+                          title="La factura apunta a una NE que existe, pero esa NE es de otro cliente. Se corrigió para mostrar la retención bajo el cliente correcto (como registro aparte), pero el campo neOrigen de la factura sigue con el dato equivocado.">
+                          ⚠️ {rifMismatchList.length} con NE de otro cliente {showDiagRif?'▲':'▼ ver detalle'}
+                        </button>
+                        {showDiagRif&&(
+                          <div className="w-full mt-2 border-2 border-amber-100 rounded-xl overflow-hidden">
+                            <table className="w-full text-[10px]">
+                              <thead><tr className="bg-amber-50 text-amber-700 font-black uppercase">
+                                <th className="py-1.5 px-3 text-left">N° Comp.</th>
+                                <th className="py-1.5 px-3 text-left">N° Factura</th>
+                                <th className="py-1.5 px-3 text-left">Cliente real (de la factura)</th>
+                                <th className="py-1.5 px-3 text-right">Monto Bs.</th>
+                                <th className="py-1.5 px-3 text-left">NE equivocada</th>
+                                <th className="py-1.5 px-3 text-left">Cliente de esa NE</th>
+                              </tr></thead>
+                              <tbody className="divide-y divide-amber-50">
+                                {rifMismatchList.map(({r,inv,neEncontrada})=>(
+                                  <tr key={r.id}>
+                                    <td className="py-1.5 px-3 font-bold text-blue-700">{r.nroRetencion||'—'}</td>
+                                    <td className="py-1.5 px-3 text-orange-600 font-bold">{inv?.nroFiscal||inv?.documento||'—'}</td>
+                                    <td className="py-1.5 px-3 font-bold">{inv?.clientName||'—'}</td>
+                                    <td className="py-1.5 px-3 text-right font-bold">{formatNum(parseNum(r.montoRetenido||0))}</td>
+                                    <td className="py-1.5 px-3 text-amber-700 font-bold">{neEncontrada.documento||neEncontrada.id}</td>
+                                    <td className="py-1.5 px-3 text-amber-600">{neEncontrada.clientName||'—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>):null;
+                    })()}
                     <div className="flex gap-2">
                       <button onClick={()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
@@ -22798,7 +22864,7 @@ ${resumenHtml}
                           return true;
                         });
                         const totRet=retFilt.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
-                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?parseNum(ret.montoRetenido||0)/rt:0;const isM=(ret?.facturaId||'').startsWith('MANUAL-');const neD=isM?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#4338ca;font-weight:700">${neD}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${isM?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#64748b">${rt>1?formatNum(rt):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700;color:#16a34a">${ru>0?'$'+formatNum(ru):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${(ret.quincena||((parseInt((ret.fechaComprobante||'').split('-')[2]||'16')<=15)?'1':'2'))==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
+                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?parseNum(ret.montoRetenido||0)/rt:0;const isM=(ret?.facturaId||'').startsWith('MANUAL-');const neD=isM?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#4338ca;font-weight:700">${neD}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${isM?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#64748b">${rt>1?formatNum(rt):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700;color:#16a34a">${ru>0?'$'+formatNum(ru):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${(ret.quincena||((parseInt((ret.fechaComprobante||'').split('-')[2]||'16')<=15)?'1':'2'))==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
                         const h=`<div style="font-family:Arial;padding:16px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||''}</div><div style="font-weight:900;font-size:11px;margin-top:4px">REPORTE DE RETENCIONES DE IVA</div></div><div style="text-align:right;font-size:9px"><div>Período: ${mesLabel.toUpperCase()} ${libroAnio}</div><div>${retFilt.length} registros · Total: ${fmtVen(totRet)} Bs.</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:5px;font-size:8px">Fecha</th><th style="padding:5px;font-size:8px">N° Comp.</th><th style="padding:5px;font-size:8px">NE</th><th style="padding:5px;font-size:8px">N° Factura</th><th style="padding:5px;font-size:8px">Cliente</th><th style="padding:5px;font-size:8px">RIF</th><th style="padding:5px;font-size:8px;text-align:right">Monto Ret. Bs.</th><th style="padding:5px;font-size:8px;text-align:right">Tasa Bs/$</th><th style="padding:5px;font-size:8px;text-align:right">Equiv. USD</th><th style="padding:5px;font-size:8px">Quincena</th></tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="6" style="padding:4px 5px;font-size:8px">TOTAL</td><td style="padding:4px 5px;font-size:8px;text-align:right">${fmtVen(totRet)}</td><td></td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#6ee7b7">$${formatNum(retFilt.reduce((s,r)=>{const i=(invoices||[]).find(j=>j.id===r.facturaId);const t=parseNum(r.tasa||r.tasaFactura||i?.tasa||i?.tasaFactura||0);return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0))}</td><td></td></tr></tfoot></table></div>`;
                         handlePDFFromHTML(h,`Retenciones_${libroAnio}_${mes2}`,false);
                       }} className="bg-gray-800 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-black"><Printer size={12}/>PDF</button>
@@ -22814,7 +22880,7 @@ ${resumenHtml}
                           return true;
                         });
                         const ths=['Fecha','N° Comp.','NE','N° Factura','Cliente','RIF','Monto Ret. Bs.','Tasa Bs/$','Equiv. USD','Quincena'];
-                        const rH=retFilt.map(ret=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?(parseNum(ret.montoRetenido||0)/rt).toFixed(2):'';const isM2=(ret?.facturaId||'').startsWith('MANUAL-');const neD2=isM2?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return '<tr>'+[ret.fechaComprobante||'—',ret.nroRetencion||'—',neD2,isM2?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—'),isM2?(ret._manualCliente||'—'):(inv?.clientName||'—'),isM2?(ret._manualRif||'—'):(inv?.clientRif||'—'),fmtVen(ret.montoRetenido||0),rt>1?formatNum(rt):'',ru?'$'+formatNum(ru):'',ret.quincena==='1'?'I Quincena':'II Quincena'].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';}).join('');
+                        const rH=retFilt.map(ret=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?(parseNum(ret.montoRetenido||0)/rt).toFixed(2):'';const isM2=(ret?.facturaId||'').startsWith('MANUAL-');const neD2=isM2?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return '<tr>'+[ret.fechaComprobante||'—',ret.nroRetencion||'—',neD2,isM2?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—'),isM2?(ret._manualCliente||'—'):(inv?.clientName||'—'),isM2?(ret._manualRif||'—'):(inv?.clientRif||'—'),fmtVen(ret.montoRetenido||0),rt>1?formatNum(rt):'',ru?'$'+formatNum(ru):'',ret.quincena==='1'?'I Quincena':'II Quincena'].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';}).join('');
                         const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${settings?.empresaRazonSocial||''} — RETENCIONES DE IVA</h2><table style="border-collapse:collapse;font-family:Arial"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody></table></body></html>`;
                         Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel'})),download:`Retenciones_${libroAnio}_${mes2}.xls`}).click();
                       }} className="bg-green-600 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-green-700"><Download size={12}/>Excel</button>
@@ -22871,7 +22937,7 @@ ${resumenHtml}
                           // NE Origen — mismo lookup robusto que CxC/Estado de Cuenta (directo + normalizado + inverso por facturaId)
                           const retNeDoc=isManual?'—':(()=>{
                             if(!inv)return'—';
-                            let _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);
+                            let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));
                             if(!_ne&&inv.neOrigen){
                               const norm=inv.neOrigen.toString().trim().toUpperCase();
                               _ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);
