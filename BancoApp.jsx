@@ -286,7 +286,7 @@ function LoginScreen({ onLogin, settings, systemUsers }) {
       const user = loginData.username.toLowerCase().trim();
       const pass = loginData.password.trim();
       const found = (systemUsers || []).find(u => u.username === user && u.password === pass);
-      if (found || (user === 'admin' && pass === '1234')) {
+      if (found) {
         onLogin(found || { name: 'Administrador Maestro', role: 'Master' }); setLoginError('');
       } else { setLoginError('Credenciales incorrectas. Verifique e intente nuevamente.'); }
       setLoading(false);
@@ -1795,10 +1795,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const [provs,      setProvs]    = useState([]);
   const [contCuentas,setContC]    = useState([]);
   const [asientosBanco, setAsientosBanco] = useState([]);
+  const [systemUsers, setSystemUsers] = useState([]);
 
   useEffect(() => {
     if (!fbUser) return;
     const subs = [
+      onSnapshot(getColRef('users'), s => setSystemUsers(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),,
       onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>d.data()))),
@@ -1817,6 +1819,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
 
   const tasaActiva = tasas.find(t=>t.modulo==='Banco'||t.modulo==='Todos')?.tasaRef || tasas[0]?.tasaRef || 39.50;
   const cuentasContables = contCuentas; // alias para compatibilidad con MovimientosView
+
+  // Validar clave de admin contra usuarios con rol Master/Admin en Firestore
+  const validarClaveAdmin = (pwd) => {
+    if(!pwd) return false;
+    // Buscar en la lista de usuarios del ERP (colección 'users')
+    const adminUsers = (systemUsers||[]).filter(u=>u.role==='Master'||u.role==='Admin'||u.username==='admin');
+    return adminUsers.some(u=>u.password===pwd||u.pin===pwd||u.clave===pwd);
+  };
 
   // ══════════════════════════════════════════════════════════════════════
   // 1. DASHBOARD
@@ -2717,7 +2727,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     };
 
     const confirmarEliminar = async() => {
-      if(adminPwd !== '1234' && adminPwd.toLowerCase() !== 'admin') {
+      if(!validarClaveAdmin(adminPwd)) {
         setPwdError(true); setTimeout(()=>setPwdError(false),1500); return;
       }
       setBusy(true);
@@ -3094,7 +3104,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
               </div>
               <BFG label="Contraseña de Administrador">
                 <div className="relative"><Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14}/>
-                  <input type="password" className={`${inp} pl-11 ${pwdError?'border-red-500 bg-red-50':''}`} value={adminPwd} onChange={e=>setAdminPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&confirmarEliminar()} placeholder="Clave maestra" autoFocus/>
+                  <input type="password" className={`${inp} pl-11 ${pwdError?'border-red-500 bg-red-50':''}`} value={adminPwd} onChange={e=>setAdminPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&confirmarEliminar()} placeholder="Su contraseña de usuario" autoFocus/>
                 </div>
                 {pwdError && <p className="text-[10px] text-red-500 font-black mt-1 uppercase">Clave incorrecta</p>}
               </BFG>
@@ -3945,7 +3955,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     };
 
     const confirmarElimCaja = async() => {
-      if(cajaPwd!=='1234'&&cajaPwd.toLowerCase()!=='admin'){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
+      if(!validarClaveAdmin(cajaPwd)){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
       if(!cajaPwdModal) return;
       setBusy(true);
       try {
@@ -4045,7 +4055,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
                 <p className="text-sm text-red-600 font-bold mt-1">Monto: Bs.{bancoFmt(cajaPwdModal.montoBs)} · ${bancoFmt(cajaPwdModal.montoUSD)}</p>
               </div>
               <BFG label="Clave de administrador">
-                <input type="password" className={`${inp} ${cajaPwdErr?'border-red-500 bg-red-50':''}`} value={cajaPwd} onChange={e=>setCajaPwd(e.target.value)} placeholder="Ingrese clave admin" onKeyDown={e=>e.key==='Enter'&&confirmarElimCaja()}/>
+                <input type="password" className={`${inp} ${cajaPwdErr?'border-red-500 bg-red-50':''}`} value={cajaPwd} onChange={e=>setCajaPwd(e.target.value)} placeholder="Su contraseña de usuario" onKeyDown={e=>e.key==='Enter'&&confirmarElimCaja()}/>
                 {cajaPwdErr&&<p className="text-red-500 text-[10px] font-black mt-1">Clave incorrecta</p>}
               </BFG>
             </div>
