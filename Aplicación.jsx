@@ -6,7 +6,7 @@ import {
   PlusCircle, Calculator, Plus, Users, UserPlus, LogOut, Lock, 
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
-  Activity, Timer, Award, PackageCheck, Calendar, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera,
+  Activity, Timer, Award, PackageCheck, Calendar, CalendarDays, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera,
   ArrowLeft, Ban, Check, ChevronRight, CreditCard, FileSpreadsheet, Send, Truck, Layers} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
@@ -5562,6 +5562,7 @@ function App() {
   const [showVentaNCModal, setShowVentaNCModal] = useState(false);
   const [ventaNCForm, setVentaNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
   const [ventaNCBusq, setVentaNCBusq] = useState('');
+  const [ventaNCBusqCli, setVentaNCBusqCli] = useState('');
   const [retForm, setRetForm] = useState({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:'1'});
   const [reqFiltAnio, setReqFiltAnio] = useState(''); // 'YYYY' o '' para todos
   const [neInvSearch, setNeInvSearch] = useState('');
@@ -18650,32 +18651,42 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               return setDialog({title:'Datos incompletos',text:'Completa N° documento y fecha.',type:'alert'});
             if(ventaNCForm.naturaleza==='FISCAL'&&!ventaNCForm.facturaId)
               return setDialog({title:'Falta factura',text:'Selecciona la factura a la que aplica.',type:'alert'});
-            if(ventaNCForm.naturaleza==='NO_FISCAL'&&!ventaNCForm.neId)
+            const esClienteDirecto=ventaNCForm.naturaleza==='NO_FISCAL'&&ventaNCForm._clienteDirecto;
+            if(ventaNCForm.naturaleza==='NO_FISCAL'&&!esClienteDirecto&&!ventaNCForm.neId)
               return setDialog({title:'Falta NE',text:'Selecciona la Nota de Entrega.',type:'alert'});
+            if(esClienteDirecto&&!ventaNCForm.clientRif)
+              return setDialog({title:'Falta cliente',text:'Busca y selecciona un cliente registrado.',type:'alert'});
+            if(esClienteDirecto&&!parseNum(ventaNCForm.montoUSD||0))
+              return setDialog({title:'Falta monto',text:'Ingresa el monto en USD.',type:'alert'});
             try {
               const id=`VNC-${Date.now()}`;
               const facAfect=(invoices||[]).find(i=>i.id===ventaNCForm.facturaId);
               const neAfect=(notasEntrega||[]).find(e=>e.id===ventaNCForm.neId);
-              const tasaAfect=parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+              const tasaAfect=esClienteDirecto
+                ?(parseNum(ventaNCForm.tasaDirecta||0)||parseNum(settings?.tasaBCV||0)||1)
+                :(parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
               const docSel=facAfect||neAfect;
               const esND = ventaNCForm.tipo==='ND';
               const modoOp = esND ? 'ajuste' : (ventaNCForm.modoOp||'devolucion');
               const modoAnulacion=ventaNCForm.modoAnulacion||'total';
               const itemsNCForm=ventaNCForm.itemsNC||(docSel?.itemsFacturados||[]).map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)}));
-              const itemsARevertir=modoOp==='devolucion'
+              const itemsARevertir=(modoOp==='devolucion'&&!esClienteDirecto)
                 ?(modoAnulacion==='total'?itemsNCForm:itemsNCForm.filter(it=>it.seleccionado&&parseNum(it.cantNC||0)>0))
                 :[];
               const baseUSDCalc=itemsARevertir.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantNC||it.cantidad||0),0);
-              const montoFinal=ventaNCForm.monto?parseNum(ventaNCForm.monto):parseFloat((baseUSDCalc*tasaAfect).toFixed(2));
+              const montoFinal=esClienteDirecto
+                ?parseFloat((parseNum(ventaNCForm.montoUSD||0)*tasaAfect).toFixed(2))
+                :(ventaNCForm.monto?parseNum(ventaNCForm.monto):parseFloat((baseUSDCalc*tasaAfect).toFixed(2)));
               const batch=writeBatch(db);
               // 1. Guardar NC
               batch.set(getDocRef('notasVentaCreditoDebito',id),{
                 id,...ventaNCForm,monto:montoFinal,tasaFactura:tasaAfect,modoAnulacion,
+                tieneIva:esClienteDirecto?false:true,
                 itemsRevertidos:itemsARevertir.map(it=>({fgId:it.fgId||'',invCode:it.invCode||'',desc:it.desc||'',cantidad:parseNum(it.cantNC||it.cantidad||0),costoUnit:parseNum(it.costoUnit||0)})),
                 timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
               });
-              // 2. Reversar inventario (solo NC)
-              if(ventaNCForm.tipo==='NC'){
+              // 2. Reversar inventario (solo NC, nunca en cliente directo)
+              if(ventaNCForm.tipo==='NC'&&!esClienteDirecto){
                 for(const it of itemsARevertir){
                   const cantRev=parseNum(it.cantNC||it.cantidad||0);
                   if(cantRev<=0) continue;
@@ -18695,8 +18706,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 }
               }
               await batch.commit();
-              setShowVentaNCModal(false); setVentaNCBusq('');
-              setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',itemsNC:undefined,modoAnulacion:'total',_prevDocId:''});
+              setShowVentaNCModal(false); setVentaNCBusq(''); setVentaNCBusqCli('');
+              setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',itemsNC:undefined,modoAnulacion:'total',_prevDocId:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});
               setDialog({title:'✅ Guardada',text:`${ventaNCForm.tipo} ${ventaNCForm.nroDocumento} registrada.${ventaNCForm.tipo==='NC'&&itemsARevertir.length>0?' '+itemsARevertir.length+' producto(s) reversados al inventario.':''}`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
@@ -18731,7 +18742,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="flex gap-2 flex-wrap">
                   <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder="Buscar..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-40"/>
                   <button onClick={exportNCExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-green-700"><Download size={13}/>Excel</button>
-                  <button onClick={()=>{setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:''});setVentaNCBusq('');setShowVentaNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
+                  <button onClick={()=>{setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});setVentaNCBusq('');setVentaNCBusqCli('');setShowVentaNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
                 </div>
               </div>
 
@@ -18963,7 +18974,25 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               </div>
                             </div>
 
+                            {/* Modo de vínculo (solo NO FISCAL): a una NE existente, o cliente directo sin NE */}
+                            {!esFiscal&&(
+                              <div>
+                                <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Vínculo</label>
+                                <div className="flex gap-2">
+                                  <button onClick={()=>setVentaNCForm(f=>({...f,_clienteDirecto:false,clientRif:'',clientName:''}))}
+                                    className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${!ventaNCForm._clienteDirecto?'bg-orange-500 text-white shadow-md':'bg-white text-gray-600 border-2 border-gray-200 hover:border-gray-300'}`}>
+                                    🔗 Asociar a NE
+                                  </button>
+                                  <button onClick={()=>setVentaNCForm(f=>({...f,_clienteDirecto:true,neId:'',itemsNC:undefined,_prevDocId:''}))}
+                                    className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${ventaNCForm._clienteDirecto?'bg-purple-600 text-white shadow-md':'bg-white text-gray-600 border-2 border-gray-200 hover:border-gray-300'}`}>
+                                    👤 Cliente directo
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Buscador */}
+                            {!(!esFiscal&&ventaNCForm._clienteDirecto)&&(
                             <div>
                               <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">{esFiscal?'Seleccionar Factura':'Seleccionar NE'}</label>
                               <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder={esFiscal?'N° fiscal, cliente...':'N° NE, cliente...'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 mb-2 bg-white"/>
@@ -18978,6 +19007,34 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   </select>
                               }
                             </div>
+                            )}
+
+                            {/* Cliente directo — sin NE */}
+                            {!esFiscal&&ventaNCForm._clienteDirecto&&(
+                              <div className="relative">
+                                <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Cliente *</label>
+                                <input value={ventaNCBusqCli||ventaNCForm.clientName||''} onChange={e=>{setVentaNCBusqCli(e.target.value);if(ventaNCForm.clientRif)setVentaNCForm(f=>({...f,clientRif:'',clientName:''}));}}
+                                  placeholder="Nombre o RIF del cliente..." className="w-full border-2 border-purple-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-purple-500 bg-white"/>
+                                {ventaNCForm.clientRif&&
+                                  <button type="button" onClick={()=>{setVentaNCBusqCli('');setVentaNCForm(f=>({...f,clientRif:'',clientName:''}));}}
+                                    className="absolute right-2 top-[27px] text-purple-400 hover:text-red-500"><X size={13}/></button>}
+                                {ventaNCBusqCli&&!ventaNCForm.clientRif&&(
+                                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white border-2 border-purple-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                                    {(clients||[]).filter(c=>{
+                                      const q=ventaNCBusqCli.toUpperCase();
+                                      return (c.name||c.nombre||'').toUpperCase().includes(q)||(c.rif||'').toUpperCase().includes(q);
+                                    }).slice(0,20).map(c=>(
+                                      <div key={c.id||c.rif} onClick={()=>{setVentaNCForm(f=>({...f,clientRif:c.rif,clientName:c.name||c.nombre}));setVentaNCBusqCli('');}}
+                                        className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-0">
+                                        <div className="font-bold text-xs">{c.name||c.nombre}</div>
+                                        <div className="text-[9px] text-purple-600 font-bold">{c.rif}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {ventaNCForm.clientRif&&<div className="text-[9px] font-black text-green-700 mt-1">✓ {ventaNCForm.clientName} — {ventaNCForm.clientRif}</div>}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -19068,7 +19125,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <div style={{flex:1, display:'flex', flexDirection:'column', overflowY:'auto', padding:'16px', gap:'12px'}}>
 
                           {/* Info referencial (para modo ajuste/ND) */}
-                          {(modoOp==='ajuste'||esND)&&docSel&&(
+                          {(modoOp==='ajuste'||esND)&&!esFiscal&&ventaNCForm._clienteDirecto&&ventaNCForm.clientRif&&(
+                            <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-4">
+                              <p className="text-[8px] font-black text-purple-600 uppercase tracking-widest mb-2">👤 Cliente directo · sin NE</p>
+                              <p className="font-black text-sm text-gray-800">{ventaNCForm.clientName}</p>
+                              <p className="text-[9px] text-gray-500 mt-1">{ventaNCForm.clientRif}</p>
+                              <div className="col-span-2 mt-2 text-[8px] text-purple-600 font-bold">ℹ No asociada a ninguna NE — se registra como ajuste directo al saldo del cliente en CxC/Estado de Cuenta, en dólares, sin IVA.</div>
+                            </div>
+                          )}
+                          {(modoOp==='ajuste'||esND)&&!(!esFiscal&&ventaNCForm._clienteDirecto)&&docSel&&(
                             <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
                               <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">📋 Documento de referencia</p>
                               <p className="font-black text-sm text-gray-800">{docSel.clientName}</p>
@@ -19083,13 +19148,40 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               </div>
                             </div>
                           )}
-                          {(modoOp==='ajuste'||esND)&&!docSel&&(
+                          {(modoOp==='ajuste'||esND)&&!(!esFiscal&&ventaNCForm._clienteDirecto)&&!docSel&&(
                             <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-5 text-center text-gray-400 text-xs font-bold">
                               ← Seleccione {esFiscal?'una factura':'una NE'} de referencia
                             </div>
                           )}
+                          {(modoOp==='ajuste'||esND)&&!esFiscal&&ventaNCForm._clienteDirecto&&!ventaNCForm.clientRif&&(
+                            <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-5 text-center text-gray-400 text-xs font-bold">
+                              ← Seleccione un cliente
+                            </div>
+                          )}
 
                           {/* Montos */}
+                          {!esFiscal&&ventaNCForm._clienteDirecto?(
+                            <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-4 space-y-3">
+                              <p className="text-[9px] font-black text-purple-600 uppercase tracking-widest">💰 Monto de la {ventaNCForm.tipo} (USD · sin IVA)</p>
+                              <div>
+                                <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto (USD) — ingreso manual</label>
+                                <input type="number" step="0.01" value={ventaNCForm.montoUSD||''} onChange={e=>setVentaNCForm(f=>({...f,montoUSD:e.target.value}))}
+                                  placeholder="0,00" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$ (referencial, para el registro contable)</label>
+                                <input type="number" step="0.0001" value={ventaNCForm.tasaDirecta||''} onChange={e=>setVentaNCForm(f=>({...f,tasaDirecta:e.target.value}))}
+                                  placeholder={String(parseNum(settings?.tasaBCV||0))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-400"/>
+                              </div>
+                              {parseNum(ventaNCForm.montoUSD||0)>0&&(
+                                <div className="bg-white border border-purple-200 rounded-xl p-3 text-[9px]">
+                                  <p className="text-gray-400 uppercase font-bold text-[8px]">Equivalente en Bs. (referencial)</p>
+                                  <p className="font-black text-purple-700 text-base">Bs. {formatNum(parseNum(ventaNCForm.montoUSD||0)*(parseNum(ventaNCForm.tasaDirecta||0)||parseNum(settings?.tasaBCV||0)||1))}</p>
+                                </div>
+                              )}
+                              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste directo al cliente · sin IVA · sin movimiento de inventario · no asociado a NE</div>
+                            </div>
+                          ):(
                           <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 space-y-3">
                             <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest">💰 Montos de la {ventaNCForm.tipo}</p>
                             <div>
@@ -19126,6 +19218,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Solo ajuste financiero · sin movimiento de inventario</div>
                             )}
                           </div>
+                          )}
 
                           {/* Datos del documento */}
                           <div className="grid grid-cols-2 gap-3">
@@ -19801,8 +19894,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Métricas
           const _totalManualRetUSD=(retenciones||[]).filter(r=>(r.facturaId||'').startsWith('MANUAL-')&&(r._manualRif||r.clientRif||'').trim()).reduce((s,r)=>{const t=parseNum(r.tasa||0)||parseNum(tasaBCV||0)||0;return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0);
-          const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD;
-          const corriente=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD;
+          const _totalManualNCUSD=(notasVentaCD||[]).filter(n=>n._clienteDirecto&&(n.clientRif||'').trim()).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||0;const u=t>1?parseNum(n.monto||0)/t:0;return s+(n.tipo==='NC'?-u:u);},0);
+          const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD;
+          const corriente=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD;
           const v1_30=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>0&&d<=30;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
           const v31_60=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>30&&d<=60;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
           const vMas60=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>60).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
@@ -19842,6 +19936,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             _manualRetsPorCliente.get(rifHist).push({...r,_montoUSD:montoUSDHist,_sinTasa:sinTasaHist,_tasa:tasaHist,_manualCliente:invHist.clientName,_manualNroFiscal:invHist.nroFiscal||invHist.documento});
           }
 
+          // ── NC/ND de Cliente Directo (sin NE) — mismo patrón que retenciones manuales ──
+          const _manualNCPorCliente = new Map();
+          for(const n of (notasVentaCD||[])){
+            if(!n._clienteDirecto) continue;
+            const rif=(n.clientRif||'').trim();
+            if(!rif) continue;
+            const tasa=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||0;
+            const montoBs=parseNum(n.monto||0);
+            const sinTasa=!(tasa>1);
+            const montoUSD=sinTasa?0:montoBs/tasa;
+            const signedUSD=n.tipo==='NC'?-montoUSD:montoUSD;
+            if(!_manualNCPorCliente.has(rif)) _manualNCPorCliente.set(rif,[]);
+            _manualNCPorCliente.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_sinTasa:sinTasa});
+          }
+
           // Por cliente
           const porCliente={};
           nesAbiertas.forEach(ne=>{
@@ -19860,6 +19969,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
             porCliente[rif].total-=totalManualUSD;
             porCliente[rif].corriente-=totalManualUSD;
+          }
+          // Inyectar/ajustar clientes con NC/ND de cliente directo (mismo principio, signo ya incorporado)
+          for(const [rif,ncs] of _manualNCPorCliente){
+            const totalSignedUSD=ncs.reduce((s,x)=>s+x._signedUSD,0);
+            if(!porCliente[rif]){
+              porCliente[rif]={clientName:ncs[0]?.clientName||rif,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+            }
+            porCliente[rif].total+=totalSignedUSD;
+            porCliente[rif].corriente+=totalSignedUSD;
           }
           const clientesList=Object.values(porCliente).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
 
@@ -19941,7 +20059,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <tfoot><tr><td colspan="2">TOTALES</td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table>`;
             } else {
               // Detallado por cliente
-              let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0,gTotRetIva=0,gTotRetOtras=0;
+              let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0,gTotRetIva=0,gTotRetOtras=0,gTotNCDirecta=0;
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
@@ -19989,8 +20107,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 }).join('');
                 const manualRetsCl2=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclPDF=manualRetsCl2.reduce((s,r)=>s+r._montoUSD,0);
-                clTotal-=manualRetUSDclPDF; gTotUSD-=manualRetUSDclPDF; gTotRetOtras+=manualRetUSDclPDF;
+                const manualNCCl2=(_manualNCPorCliente.get(cl.clientRif)||[]);
+                const manualNCSignedUSDPDF=manualNCCl2.reduce((s,n)=>s+n._signedUSD,0);
+                clTotal-=manualRetUSDclPDF; clTotal+=manualNCSignedUSDPDF; gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotRetOtras+=manualRetUSDclPDF; gTotNCDirecta+=manualNCSignedUSDPDF;
                 const manualRowsPDF=manualRetsCl2.map(r=>`<div style="display:grid;${cols9};background:#f0fdfa;border-left:3px solid #0d9488;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#0f766e;font-weight:bold;font-size:9px">↳ Ret. Manual · ${r.nroRetencion||'—'}</span><span style="font-size:9px;color:#0d9488">${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">Factura N° ${r._manualNroFiscal||'—'} · no registrada en el sistema</span><span></span><span style="text-align:right;color:#dc2626;font-weight:bold">${r._sinTasa?'⚠ Sin tasa':'-$'+formatNum(r._montoUSD)}</span></div>`).join('');
+                const manualNCRowsPDF=manualNCCl2.map(n=>`<div style="display:grid;${cols9};background:#faf5ff;border-left:3px solid #9333ea;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#7c3aed;font-weight:bold;font-size:9px">↳ ${n.tipo||'NC'} · ${n.nroDocumento||'—'} · sin NE</span><span style="font-size:9px;color:#7c3aed">${n.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">${n.descripcion||'Cliente directo'}</span><span></span><span style="text-align:right;color:#7c3aed;font-weight:bold">${n._sinTasa?'⚠ Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD))}</span></div>`).join('');
                 return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
                     <span>${cl.clientName}</span>
@@ -20007,12 +20128,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;border-right:1px solid #cbd5e1;padding-right:8px">Saldo USD</span>
                     <span style="padding-left:8px">Observación</span>
                   </div>
-                  ${neRows}${manualRowsPDF}
+                  ${neRows}${manualRowsPDF}${manualNCRowsPDF}
                   <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr">
-                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}${manualRetsCl2.length>0?' + '+manualRetsCl2.length+' ret. manual':''}</span><span></span><span></span><span></span><span></span>
+                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}${manualRetsCl2.length>0?' + '+manualRetsCl2.length+' ret. manual':''}${manualNCCl2.length>0?' + '+manualNCCl2.length+' NC/ND directa':''}</span><span></span><span></span><span></span><span></span>
                     <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
-                    <span style="text-align:right;color:#3b82f6">$${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0))}</span>
+                    <span style="text-align:right;color:#3b82f6">${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)+manualNCSignedUSDPDF)}</span>
                     <span style="text-align:right;color:#b45309;line-height:1.3">$${formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0))}<br><span style="color:#0f766e;font-size:8px">Otra $${formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+manualRetUSDclPDF)}</span></span>
                     <span style="text-align:right;font-weight:bold;color:${clTotal<-0.01?'#0f766e':'#dc2626'}">${clTotal<-0.01?'-$'+formatNum(Math.abs(clTotal)):'$'+formatNum(clTotal)}</span>
                     <span></span>
@@ -20023,7 +20144,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <span style="grid-column:span 5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</span>
                 <span style="text-align:right">$${formatNum(gTotTotal)}</span>
                 <span style="text-align:right;color:#16a34a">$${formatNum(gTotCob)}</span>
-                <span style="text-align:right;color:#3b82f6">-$${formatNum(gTotNC)}</span>
+                <span style="text-align:right;color:#3b82f6;line-height:1.3">-$${formatNum(gTotNC)}${gTotNCDirecta!==0?'<br><span style="color:#7c3aed;font-size:8px">Directa '+(gTotNCDirecta<0?'-$'+formatNum(Math.abs(gTotNCDirecta)):'+$'+formatNum(gTotNCDirecta))+'</span>':''}</span>
                 <span style="text-align:right;color:#b45309;line-height:1.3">$${formatNum(gTotRetIva)}<br><span style="color:#0f766e;font-size:8px">Otra $${formatNum(gTotRetOtras)}</span></span>
                 <span style="text-align:right;font-weight:bold;color:#f97316">$${formatNum(gTotUSD)}</span>
                 <span></span>
@@ -20081,7 +20202,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualRetsClAg=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclAg=manualRetsClAg.reduce((s,r)=>s+r._montoUSD,0);
                 manualRetsClAg.forEach(r=>{const valXm2=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 Ret. Manual · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||'—'}</td><td class="left">Fac. N° ${r._manualNroFiscal||'—'}</td><td colspan="6"></td><td class="a">${valXm2}</td><td></td></tr>`;});
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg;
+                const manualNCClAg=(_manualNCPorCliente.get(cl.clientRif)||[]);
+                const manualNCSignedUSDAg=manualNCClAg.reduce((s,n)=>s+n._signedUSD,0);
+                manualNCClAg.forEach(n=>{const valNm2=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD));detRows+=`<tr class="nc"><td class="left" style="padding-left:16px">${n.tipo||'NC'} · sin NE · ${n.fecha||'—'}</td><td class="left">${n.nroDocumento||'—'}</td><td class="left">${n.descripcion||'Cliente directo'}</td><td colspan="6"></td><td class="b">${valNm2}</td><td></td></tr>`;});
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg;
                 detRows+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
               });
               const html=XH+EMPRESA
@@ -20117,13 +20241,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualRetsClXls=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclXls=manualRetsClXls.reduce((s,r)=>s+r._montoUSD,0);
                 manualRetsClXls.forEach(r=>{const valXm=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);body+=`<tr class="ret"><td class="left" style="padding-left:20px;color:#0f766e;font-weight:bold">🧾 Ret. Manual</td><td class="left">${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||'—'}</td><td></td><td class="left">Factura N° ${r._manualNroFiscal||'—'} · no registrada</td><td colspan="3"></td><td class="a">${valXm}</td><td colspan="3"></td></tr>`;});
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclXls;
+                const manualNCClXls=(_manualNCPorCliente.get(cl.clientRif)||[]);
+                const manualNCSignedUSDXls=manualNCClXls.reduce((s,n)=>s+n._signedUSD,0);
+                manualNCClXls.forEach(n=>{const valNm=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD));body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${n.tipo||'NC'} · sin NE</td><td class="left">${n.fecha||'—'}</td><td class="left">${n.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed">${n.descripcion||'Cliente directo'}</td><td colspan="3"></td><td class="b" style="color:#7c3aed">${valNm}</td><td colspan="3"></td></tr>`;});
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclXls+manualNCSignedUSDXls;
                 const clTotUSD=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
                 const clTotCob=cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0);
                 const clTotNC=cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0);
                 const clTotRetIva=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0);
                 const clTotRetOtras=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+manualRetUSDclXls;
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="5">SUBTOTAL ${cl.clientName}</td><td>$${formatNum(clTotUSD)}</td><td class="g">$${formatNum(clTotCob)}</td><td class="b">${clTotNC>0?'-$'+formatNum(clTotNC):'—'}</td><td class="a">$${formatNum(clTotRetIva)}${clTotRetOtras>0?' / Otra $'+formatNum(clTotRetOtras):''}</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="5">SUBTOTAL ${cl.clientName}</td><td>$${formatNum(clTotUSD)}</td><td class="g">$${formatNum(clTotCob)}</td><td class="b">${clTotNC>0?'-$'+formatNum(clTotNC):'—'}${manualNCSignedUSDXls!==0?' / Directa '+(manualNCSignedUSDXls<0?'-$'+formatNum(Math.abs(manualNCSignedUSDXls)):'+$'+formatNum(manualNCSignedUSDXls)):''}</td><td class="a">$${formatNum(clTotRetIva)}${clTotRetOtras>0?' / Otra $'+formatNum(clTotRetOtras):''}</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
               });
               const gTotXLS=clientesList.reduce((s,cl)=>({
   total:s.total+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.totalUSD||0),0),
@@ -20131,8 +20258,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
   nc:s.nc+cl.nes.reduce((ss,ne)=>ss+getNCNEAtFecha(ne,fechaRef),0),
   retIva:s.retIva+cl.nes.reduce((ss,ne)=>ss+getRetsDetalleNE(ne).ivaUSD,0),
   retOtras:s.retOtras+cl.nes.reduce((ss,ne)=>ss+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((ss,r)=>ss+r._montoUSD,0),
-}),{total:0,cob:0,nc:0,retIva:0,retOtras:0});
-body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</td><td>$${formatNum(gTotXLS.total)}</td><td class="g">$${formatNum(gTotXLS.cob)}</td><td class="b">${gTotXLS.nc>0?'-$'+formatNum(gTotXLS.nc):'—'}</td><td class="a">$${formatNum(gTotXLS.retIva)}${gTotXLS.retOtras>0?' / Otra $'+formatNum(gTotXLS.retOtras):''}</td><td style="color:#f97316;font-weight:bold">$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
+  ncDirecta:s.ncDirecta+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((ss,n)=>ss+n._signedUSD,0),
+}),{total:0,cob:0,nc:0,retIva:0,retOtras:0,ncDirecta:0});
+body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</td><td>$${formatNum(gTotXLS.total)}</td><td class="g">$${formatNum(gTotXLS.cob)}</td><td class="b">${gTotXLS.nc>0?'-$'+formatNum(gTotXLS.nc):'—'}${gTotXLS.ncDirecta!==0?' / Directa '+(gTotXLS.ncDirecta<0?'-$'+formatNum(Math.abs(gTotXLS.ncDirecta)):'+$'+formatNum(gTotXLS.ncDirecta)):''}</td><td class="a">$${formatNum(gTotXLS.retIva)}${gTotXLS.retOtras>0?' / Otra $'+formatNum(gTotXLS.retOtras):''}</td><td style="color:#f97316;font-weight:bold">$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
@@ -21027,16 +21155,36 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                             <td className="py-2 px-2 text-[9px] text-teal-600 italic">{r.tipoLabel||'Retención manual'} · {r._manualNroFiscal&&r._manualNroFiscal!=='—'?'factura '+r._manualNroFiscal+' no registrada en el sistema':'sin factura asociada'}</td>
                                           </tr>
                                         ))}
+                                        {(_manualNCPorCliente.get(cl.clientRif)||[]).map((n,ni)=>(
+                                          <tr key={n.id||ni} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                                            <td className="py-2 px-2 font-black text-purple-700 text-[9px]">↳ {n.tipo||'NC'} · {n.nroDocumento||'—'}</td>
+                                            <td className="py-2 px-2 text-center text-purple-600 text-[9px]">{n.fecha||'—'}</td>
+                                            <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-center"><span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md text-[8px]">Sin NE</span></td>
+                                            <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-right">
+                                              {n._sinTasa?<span className="text-red-500 font-black text-[8px]">⚠ Sin tasa</span>:<span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md text-[9px]">{n.tipo==='NC'?'-':'+'}${formatNum(n._montoUSD)}</span>}
+                                            </td>
+                                            <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-right">
+                                              <span className="font-black px-2 py-0.5 rounded-md text-[9px] text-purple-700 bg-purple-50">{n._sinTasa?'—':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD))}</span>
+                                            </td>
+                                            <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-[9px] text-purple-600 italic">{n.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} directa · cliente sin NE asociada · {n.descripcion||'sin descripción'}</td>
+                                          </tr>
+                                        ))}
                                       </tbody>
                                       <tfoot>
                                         <tr style={{background:'#0f172a'}} className="text-[9px]">
-                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}{(_manualRetsPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualRetsPorCliente.get(cl.clientRif)||[]).length+' ret. manual':''}</td>
+                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}{(_manualRetsPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualRetsPorCliente.get(cl.clientRif)||[]).length+' ret. manual':''}{(_manualNCPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualNCPorCliente.get(cl.clientRif)||[]).length+' NC/ND directa':''}</td>
                                           <td className="py-2 px-2 text-right text-gray-300 font-bold">${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td>
                                           <td className="py-2 px-2 text-right text-green-400 font-black">{cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-teal-400 font-black">{(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0))>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)):'—'}</td>
-                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
+                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
                                           <td colSpan={2}></td>
                                         </tr>
                                       </tfoot>
@@ -21369,6 +21517,20 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(!_manualRetsPorClienteEc.has(rifHistEc)) _manualRetsPorClienteEc.set(rifHistEc,[]);
             _manualRetsPorClienteEc.get(rifHistEc).push({...r,_montoUSD:montoUSDHistEc,_sinTasa:sinTasaHistEc,_tasa:tasaHistEc,_manualCliente:invHistEc.clientName,_manualNroFiscal:invHistEc.nroFiscal||invHistEc.documento});
           }
+          // ── NC/ND de Cliente Directo (sin NE) — mismo patrón que retenciones manuales ──
+          const _manualNCPorClienteEc = new Map();
+          for(const n of (notasVentaCD||[])){
+            if(!n._clienteDirecto) continue;
+            const rif=(n.clientRif||'').trim();
+            if(!rif) continue;
+            const tasa=parseNum(n.tasaFactura||0)||tasaBCVec;
+            const montoBs=parseNum(n.monto||0);
+            const sinTasa=!(tasa>1);
+            const montoUSD=sinTasa?0:montoBs/tasa;
+            const signedUSD=n.tipo==='NC'?-montoUSD:montoUSD;
+            if(!_manualNCPorClienteEc.has(rif)) _manualNCPorClienteEc.set(rif,[]);
+            _manualNCPorClienteEc.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_sinTasa:sinTasa});
+          }
           const porCli={};
           allNEs.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
@@ -21379,10 +21541,14 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           for(const [rif,rets] of _manualRetsPorClienteEc){
             if(!porCli[rif]) porCli[rif]={clientName:rets[0]?._manualCliente||rif,clientRif:rif,vendedor:'—',nes:[]};
           }
+          // Inyectar clientes que solo tienen NC/ND de cliente directo (sin NEs)
+          for(const [rif,ncs] of _manualNCPorClienteEc){
+            if(!porCli[rif]) porCli[rif]={clientName:ncs[0]?.clientName||rif,clientRif:rif,vendedor:'—',nes:[]};
+          }
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
           if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
-          const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0);
+          const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0);
           if(ecEstado==='SALDADO') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)<0.01);
           if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)>=0.01);
           const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
@@ -21404,7 +21570,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             cliList.forEach(cl=>{
               const manualRetsCl=_manualRetsPorClienteEc.get(cl.clientRif)||[];
               const manualRetUSDcl=manualRetsCl.reduce((s,r)=>s+r._montoUSD,0);
-              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl;
+              const manualNCCl=_manualNCPorClienteEc.get(cl.clientRif)||[];
+              const manualNCSignedUSDcl=manualNCCl.reduce((s,n)=>s+n._signedUSD,0);
+              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl+manualNCSignedUSDcl;
               const facturadoCl=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
               const cobradoCl=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
               const isEnCredito=saldoCl<-0.01;
@@ -21498,6 +21666,20 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   +'<td style="padding:3px 6px;text-align:center">'+badge('Manual','#f0fdfa','#0f766e')+'</td>'
                   +'</tr>';
               });
+              manualNCCl.forEach(n=>{
+                const valTxtN=n._sinTasa?'⚠ Sin tasa':(n._signedUSD<0?'-$':'+$')+fmtN(Math.abs(n._signedUSD));
+                neRowsHtml+='<tr style="background:#faf5ff;border-bottom:1px solid #d8b4fe">'
+                  +'<td style="padding:3px 6px;color:#7c3aed;font-weight:900;font-size:9px">↳ '+(n.tipo||'NC')+' · '+(n.nroDocumento||'—')+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:#7c3aed">'+fD(n.fecha)+'</td>'
+                  +'<td style="padding:3px 6px">'+badge(n.tipo==='NC'?'Nota Crédito':'Nota Débito','#faf5ff','#7c3aed')+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:#7c3aed">'+(n.descripcion||'Cliente directo · sin NE asociada')+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:8px;color:#7c3aed">'+valTxtN+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                  +'<td style="padding:3px 6px;text-align:center">'+badge('Sin NE','#faf5ff','#7c3aed')+'</td>'
+                  +'</tr>';
+              });
               // Client section
               bodyHtml+='<div style="margin-bottom:16px;page-break-inside:avoid;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">'
                 +'<div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">'
@@ -21526,9 +21708,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 +'</tr></thead>'
                 +'<tbody>'+neRowsHtml+'</tbody>'
                 +'<tfoot><tr style="background:#1e293b;color:#fff">'
-                +'<td colspan="4" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · '+cl.nes.length+' DOC'+(cl.nes.length>1?'S':'')+'</td>'
+                +'<td colspan="4" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · '+cl.nes.length+' DOC'+(cl.nes.length>1?'S':'')+(manualNCCl.length>0?' + '+manualNCCl.length+' NC/ND DIRECTA':'')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px">$'+fmtN(facturadoCl)+'</td>'
-                +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#5eead4">'+((retIvaCl+retOtrasCl)>0?'$'+fmtN(retIvaCl)+(retOtrasCl>0?' / O $'+fmtN(retOtrasCl):''):'—')+'</td>'
+                +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#5eead4">'+((retIvaCl+retOtrasCl+Math.abs(manualNCSignedUSDcl))>0?'$'+fmtN(retIvaCl)+(retOtrasCl>0?' / O $'+fmtN(retOtrasCl):'')+(manualNCSignedUSDcl!==0?' / NC-ND '+(manualNCSignedUSDcl<0?'-$'+fmtN(Math.abs(manualNCSignedUSDcl)):'+$'+fmtN(manualNCSignedUSDcl)):''):'—')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:#6ee7b7">$'+fmtN(cobradoCl)+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:10px;color:'+(isEnCredito?'#5eead4':isSaldado?'#6ee7b7':'#f97316')+'">'+(isEnCredito?'-$'+fmtN(Math.abs(saldoCl)):'$'+fmtN(saldoCl))+'</td>'
                 +'<td></td>'
@@ -21557,7 +21739,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               cliList.forEach(cl=>{
                 const manualRetsClX=_manualRetsPorClienteEc.get(cl.clientRif)||[];
                 const manualRetUSDclX=manualRetsClX.reduce((s,r)=>s+r._montoUSD,0);
-                const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX;
+                const manualNCClX=_manualNCPorClienteEc.get(cl.clientRif)||[];
+                const manualNCSignedUSDclX=manualNCClX.reduce((s,n)=>s+n._signedUSD,0);
+                const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX+manualNCSignedUSDclX;
                 const facturadoClX=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoClX=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaClX=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
@@ -21589,7 +21773,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   const valTxtMx=r._sinTasa?'Sin tasa':'$'+fmtN2(r._montoUSD);
                   bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\u21b3 '+(r.nroRetencion||'RET-MANUAL')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>Ret. Manual</td><td>Factura N\u00b0 '+(r._manualNroFiscal||'')+' \u00b7 no registrada en el sistema</td><td></td><td></td><td>'+valTxtMx+'</td><td></td><td>'+(r._sinTasa?'—':'-$'+fmtN2(r._montoUSD))+'</td></tr>';
                 });
-                bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)</td><td>$'+fmtN2(facturadoClX)+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
+                manualNCClX.forEach(n=>{
+                  const valTxtNx=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+fmtN2(Math.abs(n._signedUSD));
+                  bodyXls+='<tr><td style="padding-left:16px;color:#7c3aed;font-weight:bold">\u21b3 '+(n.tipo||'NC')+' \u00b7 '+(n.nroDocumento||'')+'</td><td>'+(n.fecha||'')+'</td><td>'+(n.tipo==='NC'?'Nota Cr\u00e9dito':'Nota D\u00e9bito')+' (sin NE)</td><td>'+(n.descripcion||'Cliente directo')+'</td><td>'+valTxtNx+'</td><td colspan="3"></td><td>'+(n._sinTasa?'—':valTxtNx)+'</td></tr>';
+                });
+                bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(manualNCSignedUSDclX!==0?' / NC-ND '+(manualNCSignedUSDclX<0?'-$'+fmtN2(Math.abs(manualNCSignedUSDclX)):'+$'+fmtN2(manualNCSignedUSDclX)):'')+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
                 bodyXls+='<tr><td colspan="9"></td></tr>';
               });
               const htmlXls='<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:12pt">'+emp+' \u2014 ESTADO DE CUENTA</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1">'+bodyXls+'</table></body></html>';
@@ -21654,7 +21842,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               {cliList.map(cl=>{
                 const manualRetsCli=_manualRetsPorClienteEc.get(cl.clientRif)||[];
                 const manualRetUSDcli=manualRetsCli.reduce((s,r)=>s+r._montoUSD,0);
-                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli;
+                const manualNCCli=_manualNCPorClienteEc.get(cl.clientRif)||[];
+                const manualNCSignedUSDcli=manualNCCli.reduce((s,n)=>s+n._signedUSD,0);
+                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli+manualNCSignedUSDcli;
                 const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoCli=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaCli=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
@@ -21805,12 +21995,25 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               <td className="py-2 px-3 text-center"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Manual</span></td>
                             </tr>
                           ))}
+                          {manualNCCli.map((n,ni)=>(
+                            <tr key={n.id||ni} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                              <td className="py-2 px-3 font-black text-purple-700">↳ {n.tipo||'NC'} · {n.nroDocumento||'—'}</td>
+                              <td className="py-2 px-3 text-purple-600">{n.fecha||'—'}</td>
+                              <td className="py-2 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{n.tipo==='NC'?'Nota Crédito':'Nota Débito'}</span></td>
+                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{n.descripcion||'Cliente directo · sin NE asociada'}</td>
+                              <td className="py-2 px-3 text-right text-gray-300">—</td>
+                              <td className="py-2 px-3 text-right">{n._sinTasa?<span className="text-red-500 font-black text-[9px]">⚠ Sin tasa</span>:<span className="font-black text-purple-700">{n.tipo==='NC'?'-':'+'}${formatNum(n._montoUSD)}</span>}</td>
+                              <td className="py-2 px-3 text-right text-gray-300">—</td>
+                              <td className="py-2 px-3 text-right font-black text-purple-700">{n._sinTasa?'—':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD))}</td>
+                              <td className="py-2 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Sin NE</span></td>
+                            </tr>
+                          ))}
                         </tbody>
                         <tfoot>
                           <tr style={{background:'#0f172a'}} className="text-[9px]">
-                            <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}</td>
+                            <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}</td>
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
-                            <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli)>0?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):''):'—'}</td>
+                            <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(manualNCSignedUSDcli))>0?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(manualNCSignedUSDcli!==0?' / NC-ND $'+formatNum(manualNCSignedUSDcli):''):'—'}</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
                             <td className="py-2 px-3 text-right text-orange-400 font-black">{saldoCli<-0.01?'-$'+formatNum(Math.abs(saldoCli)):'$'+formatNum(saldoCli)}</td>
                             <td></td>
