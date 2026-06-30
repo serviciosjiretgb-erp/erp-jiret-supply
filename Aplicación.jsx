@@ -3899,443 +3899,575 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 5: CUENTAS POR PAGAR (CxP)
 // ══════════════════════════════════════════════════════════════════════
-const CxPView = ({facturasCompra,pagosCxP,proveedores,tasaBCV,settings,dialog,setDialog}) => {
-  const [search,setSearch]=useState('');
-  const [filtStatus,setFiltStatus]=useState('TODOS');
-  const [expanded,setExpanded]=useState(new Set());
-  const [modal,setModal]=useState(null);
-  const [factSel,setFactSel]=useState(null);
-  const [formPago,setFormPago]=useState({});
-  const [cuentasBancarias,setCuentasBancarias]=useState([]);
+
+// ══════════════════════════════════════════════════════════════════════════
+// CUENTAS POR PAGAR — DETALLADO (espejo de CxC Ventas)
+// ══════════════════════════════════════════════════════════════════════════
+const CxPView = ({
+  facturasCompra, pagosCxP, proveedores, retIVACompra, notasCompraCD,
+  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal
+}) => {
+  const [cxpSearch, setCxpSearch] = useState('');
+  const [cxpFechaRef, setCxpFechaRef] = useState('');
+  const [cxpExpandAll, setCxpExpandAll] = useState(false);
+  const [cxpExpanded, setCxpExpanded] = useState({});
+  const [cuentasBancarias, setCuentasBancarias] = useState([]);
 
   useEffect(()=>{
-    const u=onSnapshot(getColRef('cuentasBancarias'),s=>setCuentasBancarias(s.docs.map(d=>d.data())));
+    const u = onSnapshot(getColRef('cuentasBancarias'), s=>setCuentasBancarias(s.docs.map(d=>d.data())));
     return u;
-  },[]);
+  }, []);
 
-  const hoy=getTodayDate();
-  const fV=n=>{const a=Math.abs(pNum(n)||0);const p=a.toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
-  const fmtN=n=>pFmt(n);
-  const fD=d=>{if(!d)return'—';const pts=String(d).split('-');return pts.length===3?`${pts[2]}/${pts[1]}/${pts[0]}`:d;};
+  const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
+  const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pN(n)); const p=a.toFixed(2).split('.'); return(pN(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
+  const fD = d => { if(!d)return'—'; const pts=String(d).split('-'); return pts.length===3?`${pts[2]}/${pts[1]}/${pts[0]}`:d; };
+  const hoy = getTodayDate();
+  const fechaRef = cxpFechaRef || hoy;
 
-  // Agrupar facturas por proveedor (solo pendientes/parciales)
-  const factsActivas=(facturasCompra||[]).filter(f=>f.status!=='ANULADA'&&pNum(f.saldoPendiente||f.total||0)>0.01);
-  const pagosPorFactura=useMemo(()=>{
-    const m={};
-    (pagosCxP||[]).forEach(p=>{if(!m[p.facturaId])m[p.facturaId]=[];m[p.facturaId].push(p);});
+  // ── Maps pre-computados ────────────────────────────────────────────
+  const _pagosPorFact = useMemo(()=>{
+    const m = new Map();
+    for(const p of (pagosCxP||[])){
+      if(!m.has(p.facturaId)) m.set(p.facturaId,[]);
+      m.get(p.facturaId).push(p);
+    }
     return m;
   },[pagosCxP]);
 
-  const gruposProv=useMemo(()=>{
-    const grupos={};
-    factsActivas.forEach(f=>{
-      const pid=f.proveedorId||f.proveedor||'SIN_PROV';
-      if(!grupos[pid])grupos[pid]={pid,nombre:f.proveedor||'—',rif:'',facturas:[],totalSaldo:0,totalPagado:0,totalRet:0,totalRetISLR:0};
-      const saldo=pNum(f.saldoPendiente||f.total||0);
-      const pagos=(pagosPorFactura[f.id]||[]).reduce((s,p)=>s+pNum(p.monto||0),0);
-      const _tasa=Math.max(pNum(f.tasa||0)||tasaBCV||1,1);
-      const ret=pNum(f.retIVA?.montoBs||0)/_tasa;
-      const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pNum(r.monto||0),0);
-      grupos[pid].facturas.push(f);
-      grupos[pid].totalSaldo+=saldo;
-      grupos[pid].totalPagado+=pagos;
-      grupos[pid].totalRet+=ret;
-      grupos[pid].totalRetISLR+=retISLR;
+  const _retIVAPorFact = useMemo(()=>{
+    const m = new Map();
+    for(const r of (retIVACompra||[])){
+      if(!m.has(r.facturaId)) m.set(r.facturaId,[]);
+      m.get(r.facturaId).push(r);
+    }
+    return m;
+  },[retIVACompra]);
+
+  const _ncPorProv = useMemo(()=>{
+    const m = new Map();
+    for(const n of (notasCompraCD||[])){
+      const rif = (n.provRif||'').trim();
+      if(!rif) continue;
+      if(!m.has(rif)) m.set(rif,[]);
+      m.get(rif).push(n);
+    }
+    return m;
+  },[notasCompraCD]);
+
+  // Saldo real de una factura al fechaRef
+  const getSaldoFact = (f) => {
+    const total = pN(f.total||f.totalUSD||0);
+    const pagos = (_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef)).reduce((s,p)=>s+pN(p.monto||0),0);
+    const tasa = Math.max(pN(f.tasa||0)||tasaBCV||1,1);
+    const retIVA = (_retIVAPorFact.get(f.id)||[]).reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasa,0);
+    const retISLR = (f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
+    return Math.max(0, total - pagos - retIVA - retISLR);
+  };
+
+  // Aging
+  const getAgingDias = (f) => {
+    if(!f.fechaVencimiento) return 0;
+    const venc = new Date(f.fechaVencimiento);
+    const ref = cxpFechaRef ? new Date(cxpFechaRef) : new Date();
+    return Math.floor((ref - venc)/(1000*60*60*24));
+  };
+
+  // Por proveedor
+  const _factsActivas = useMemo(()=>(facturasCompra||[]).filter(f=>{
+    if(f.status==='ANULADA') return false;
+    if(cxpFechaRef && (f.fecha||'') > fechaRef) return false;
+    return getSaldoFact(f) > 0.01;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }),[facturasCompra,pagosCxP,retIVACompra,cxpFechaRef]);
+
+  const porProveedor = useMemo(()=>{
+    const m = {};
+    _factsActivas.forEach(f=>{
+      const k = f.proveedorId||f.proveedor||'SIN_PROV';
+      if(!m[k]) m[k]={provId:k,nombre:f.proveedor||'—',rif:'',facts:[],total:0,vMas60:0,v31_60:0,v1_30:0,corriente:0};
+      const s=getSaldoFact(f); const d=getAgingDias(f);
+      if(d>60) m[k].vMas60+=s; else if(d>30) m[k].v31_60+=s; else if(d>0) m[k].v1_30+=s; else m[k].corriente+=s;
+      m[k].total+=s; m[k].facts.push(f);
     });
-    // Enriquecer con datos del directorio de proveedores
-    (proveedores||[]).forEach(p=>{if(grupos[p.id]){grupos[p.id].rif=p.rif||'';grupos[p.id].nombre=p.nombre||grupos[p.id].nombre;}});
-    return Object.values(grupos).sort((a,b)=>b.totalSaldo-a.totalSaldo);
-  },[factsActivas,pagosPorFactura,proveedores,tasaBCV]);
+    (proveedores||[]).forEach(p=>{if(m[p.id]){m[p.id].rif=p.rif||'';m[p.id].nombre=p.nombre||m[p.id].nombre;}});
+    // Include providers with NC/ND directo only
+    _ncPorProv.forEach((ncs,rif)=>{
+      const netNC = ncs.reduce((s,n)=>{
+        const t=pN(n.tasaFactura||0)||tasaBCV||1;
+        const u=t>1?pN(n.monto||0)/t:0;
+        return s+(n.tipo==='ND'?u:-u);
+      },0);
+      if(!m[rif] && netNC !== 0){
+        const prov = (proveedores||[]).find(p=>p.rif===rif);
+        m[rif]={provId:rif,nombre:prov?.nombre||rif,rif,facts:[],total:0,vMas60:0,v31_60:0,v1_30:0,corriente:0};
+      }
+      if(m[rif]) m[rif].total += netNC;
+    });
+    return Object.values(m).filter(g=>Math.abs(g.total)>0.01).sort((a,b)=>b.vMas60-a.vMas60||b.total-a.total);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[_factsActivas, proveedores, notasCompraCD]);
 
-  const getStatus=(grupo)=>{
-    const vencida=grupo.facturas.some(f=>f.fechaVencimiento&&f.fechaVencimiento<hoy&&f.status!=='PAGADA');
-    return vencida?'VENCIDO':'POR PAGAR';
+  const filtrados = cxpSearch
+    ? porProveedor.filter(g=>(g.nombre||'').toLowerCase().includes(cxpSearch.toLowerCase())||(g.rif||'').includes(cxpSearch))
+    : porProveedor;
+
+  const getEstado = g => {
+    if(g.vMas60>0.01) return 'CRÍTICO';
+    if(g.v31_60>0.01) return 'VENCIDO';
+    if(g.v1_30>0.01) return 'POR PAGAR';
+    return 'AL DÍA';
   };
+  const estadoColor = {CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR PAGAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700'};
 
-  const filtrados=gruposProv.filter(g=>{
-    const ms=(g.nombre||'').toLowerCase().includes(search.toLowerCase())||(g.rif||'').includes(search);
-    const st=filtStatus==='TODOS'||getStatus(g)===filtStatus;
-    return ms&&st;
-  });
+  const totalCartera = filtrados.reduce((s,g)=>s+g.total,0);
+  const totalFact = filtrados.reduce((s,g)=>s+g.facts.reduce((ss,f)=>ss+pN(f.total||0),0),0);
 
-  const grandTotal=filtrados.reduce((s,g)=>s+g.totalSaldo,0);
-  const grandPagado=filtrados.reduce((s,g)=>s+g.totalPagado,0);
-  const grandRet=filtrados.reduce((s,g)=>s+g.totalRet,0);
-  const grandRetISLR=filtrados.reduce((s,g)=>s+g.totalRetISLR,0);
-  const toggleExpand=(pid)=>{setExpanded(prev=>{const n=new Set(prev);n.has(pid)?n.delete(pid):n.add(pid);return n;});};
-
-  const diasVencidos=(f)=>{
-    if(!f.fechaVencimiento)return null;
-    const hoyD=new Date();const venD=new Date(f.fechaVencimiento);
-    const diff=Math.floor((hoyD-venD)/(1000*60*60*24));
-    return diff>0?diff:0;
-  };
-
-  // ── PDF REPORTE CxP ────────────────────────────────────────────────
-  const exportarPDF=()=>{
-    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const rifEmp=settings?.empresaRif||'J-41230937-4';
-    const provRows=filtrados.map(g=>{
-      const status=getStatus(g);
-      const factRows=g.facturas.map(f=>{
-        const pagos=pagosPorFactura[f.id]||[];
-        const totalPag=pagos.reduce((s,p)=>s+pNum(p.monto||0),0);
-        const _tasaF=Math.max(pNum(f.tasa||0)||tasaBCV||1,1);
-        const retBs=pNum(f.retIVA?.montoBs||0);
-        const retIVApdf=retBs>0?retBs/_tasaF:0;
-        const retISLRpdf=(f.retISLRLista||[]).reduce((s,r)=>s+pNum(r.monto||0),0);
-        const retUSD=retIVApdf+retISLRpdf;
-        const _diasC=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
-        const diasV=diasVencidos(f);
-        return `<tr style="border-bottom:1px solid #e5e7eb">
-  <td style="padding:3px 6px;color:#f97316;font-weight:700;font-size:9px">${f.nroFactura||'—'}</td>
-  <td style="padding:3px 6px;font-size:9px">${fD(f.fecha)}</td>
-  <td style="padding:3px 6px;font-size:9px;color:${f.fechaVencimiento<hoy?'#dc2626':'#374151'}">${fD(f.fechaVencimiento)}</td>
-  <td style="padding:3px 6px;text-align:center;font-size:9px;color:#6366f1">${_diasC?_diasC+'d':'—'}</td>
-  <td style="padding:3px 6px;font-size:9px;color:#2563eb">${f.nroControl||'—'}</td>
-  <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fmtN(f.total||0)}</td>
-  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#16a34a;font-size:9px">$${fmtN(totalPag)}</td>
-  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#dc2626;font-size:9px">${retIVApdf>0?'-$'+fmtN(retIVApdf):'—'}</td>
-  <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#a855f7;font-size:9px">${retISLRpdf>0?'-$'+fmtN(retISLRpdf):'—'}</td>
-  <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;color:#f97316;font-size:9px">$${fmtN(pNum(f.saldoPendiente||f.total||0))}</td>
-  <td style="padding:3px 6px;font-size:8px;color:#6b7280">${f.observaciones||''}</td>
-</tr>
-${pagos.length>0?pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px">
-  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#16a34a">↳ Pago: ${fD(p.fecha)} — ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td>
-  <td colspan="2" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fmtN(pNum(p.monto||0))}</td>
-  <td colspan="4" style="padding:2px 6px;color:#16a34a">${p.banco||''}</td>
-</tr>`).join(''):''}
-${retIVApdf>0?`<tr style="background:#fff1f2;font-size:8px">
-  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#dc2626">↳ Ret. IVA ${pNum(f.retIVA?.pct||75)}% · N° ${f.retIVA?.nroComprobante||'—'} · Bs.${fV(retBs)}</td>
-  <td colspan="6" style="padding:2px 6px;color:#dc2626;text-align:right;font-family:monospace">-$${fmtN(retIVApdf)}</td>
-</tr>`:''}
-${(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px">
-  <td colspan="4" style="padding:2px 6px;padding-left:20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fV(pNum(r.montoBs||0))}</td>
-  <td colspan="6" style="padding:2px 6px;color:#7c3aed;text-align:right;font-family:monospace">-$${fmtN(pNum(r.monto||0))}</td>
-</tr>`).join('')}`;
-      }).join('');
-      return `<div style="margin-bottom:14px;page-break-inside:avoid">
-<div style="background:#1e293b;color:#fff;padding:7px 12px;display:flex;justify-content:space-between;align-items:center">
-  <div><strong style="font-size:11px">${g.nombre}</strong> <span style="color:#94a3b8;font-size:9px">${g.rif}</span></div>
-  <div style="display:flex;align-items:center;gap:10px">
-    <span style="font-family:monospace;font-weight:900;font-size:12px;color:#f97316">$${fmtN(g.totalSaldo)}</span>
-    <span style="background:${status==='VENCIDO'?'#dc2626':'#f59e0b'};color:#fff;padding:2px 8px;border-radius:10px;font-size:8px;font-weight:900">${status}</span>
-  </div>
-</div>
-<table style="width:100%;border-collapse:collapse;font-size:9px">
-  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">EMISIÓN</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">VENCE</th><th style="padding:4px 6px;text-align:center;font-size:7.5px;color:#f97316">DÍAS</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">N° CONTROL</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">TOTAL USD</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">PAGADO</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">RET.IVA</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#a855f7">RET.ISLR</th><th style="padding:4px 6px;text-align:right;font-size:7.5px;color:#f97316">SALDO USD</th><th style="padding:4px 6px;font-size:7.5px;color:#f97316">OBS.</th></tr></thead>
-  <tbody>${factRows}</tbody>
-  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900;font-size:9px">Subtotal ${g.facturas.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900">$${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fmtN(g.totalPagado)}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#fca5a5">${g.totalRet>0?'-$'+fmtN(g.totalRet):'—'}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#d8b4fe">${g.totalRetISLR>0?'-$'+fmtN(g.totalRetISLR):'—'}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#f97316;font-weight:900">$${fmtN(g.totalSaldo)}</td><td></td></tr></tfoot>
-</table></div>`;
-    }).join('');
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-@page{size:legal landscape;margin:1.2cm 1.5cm}
-*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px;color:#111}
-@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-</style></head><body>
-<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">
-  <div><div style="font-size:16px;font-weight:900">${emp}</div><div style="font-size:8px;color:#666">RIF: ${rifEmp}</div></div>
-  <div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">CUENTAS POR PAGAR DETALLADO</div>
-    <div style="font-size:8px;color:#555">Corte: ${hoy} · ${filtrados.length} proveedores · ${filtrados.reduce((s,g)=>s+g.facturas.length,0)} documentos · Total: $${fmtN(grandTotal)}</div>
-  </div>
-</div>
-${provRows}
-<div style="background:#0f172a;color:#fff;padding:8px 12px;margin-top:16px;display:flex;justify-content:space-between;font-weight:900;font-size:11px">
-  <span>TOTAL GENERAL — ${filtrados.length} proveedores</span>
-  <span style="color:#f97316">$${fmtN(grandTotal)}</span>
-</div>
-<script>window.onload=()=>window.print();<\/script></body></html>`;
+  // ── Guardar Pago ───────────────────────────────────────────────────
+  const guardarPago = async () => {
+    const pm = cxpPagoModal;
+    if(!pm) return;
+    const factsSelec = pm.facts.filter(f=>pm.selec[f.id] && pN(pm.montos[f.id]||0)>0);
+    if(factsSelec.length===0) return setDialog({title:'Sin facturas',text:'Selecciona al menos una factura y asigna un monto.',type:'alert'});
+    if(!pm.lp?.metodo) return setDialog({title:'Método requerido',text:'Selecciona el método de pago.',type:'alert'});
+    const totalPago = factsSelec.reduce((s,f)=>s+pN(pm.montos[f.id]||0),0);
+    if(totalPago<=0) return setDialog({title:'Monto inválido',text:'El monto total debe ser mayor a 0.',type:'alert'});
     try{
-      const w=window.open('','_blank');
-      if(w){w.document.write(html);w.document.close();}
-      else alert('Activa las ventanas emergentes para este sitio en el navegador.');
-    }catch(err){alert('Error al generar PDF: '+err.message);}
-  };
-
-  // ── REGISTRAR PAGO ─────────────────────────────────────────────────
-  const abrirPago=(f)=>{
-    setFactSel(f);
-    setFormPago({fecha:getTodayDate(),metodo:'Transferencia',banco:'',referencia:'',monto:pNum(f.saldoPendiente||f.total||0).toFixed(2),concepto:`Pago factura ${f.nroFactura||'—'}`});
-    setModal('pago');
-  };
-  const guardarPago=async()=>{
-    const monto=pNum(formPago.monto||0);
-    if(monto<=0){setDialog({title:'Aviso',text:'El monto debe ser mayor a 0.',type:'alert'});return;}
-    try{
-      const batch=writeBatch(db);
-      const pagoId=`PAGO-${pId()}`;
-      batch.set(getDocRef('procura_pagos_cxp',pagoId),{
-        id:pagoId,facturaId:factSel.id,nroFactura:factSel.nroFactura,
-        proveedor:factSel.proveedor,proveedorId:factSel.proveedorId||'',
-        ...formPago,monto,timestamp:Date.now()
-      });
-      const nuevoSaldo=Math.max(0,pNum(factSel.saldoPendiente||factSel.total||0)-monto);
-      const nuevoStatus=nuevoSaldo<0.01?'PAGADA':nuevoSaldo<pNum(factSel.total||0)?'PARCIAL':'PENDIENTE';
-      batch.update(getDocRef('procura_facturas_compra',factSel.id),{
-        saldoPendiente:nuevoSaldo,status:nuevoStatus,
-        montoCobrado:(pNum(factSel.montoCobrado)||0)+monto,updatedAt:Date.now()
+      const batch = writeBatch(db);
+      const refNum = pm.lp?.referencia||`PAG-${Date.now()}`;
+      factsSelec.forEach(f=>{
+        const monto = pN(pm.montos[f.id]||0);
+        const pagoId = `PAGCXP-${Date.now()}-${f.id.slice(-4)}`;
+        batch.set(getDocRef('procura_pagos_cxp',pagoId),{
+          id:pagoId, facturaId:f.id, proveedorId:f.proveedorId||'', proveedor:f.proveedor||'',
+          monto, fecha:pm.lp.fecha||hoy, metodo:pm.lp.metodo||'Transferencia',
+          banco:pm.lp.banco||'', referencia:refNum, concepto:pm.lp.concepto||'Pago CxP',
+          cuentaId:pm.lp.cuentaId||'', moneda:pm.lp.moneda||'USD', tasa:pm.lp.tasa||tasaBCV||1,
+          timestamp:Date.now(), user:appUser?.name||'Sistema'
+        });
+        // Actualizar saldo en la factura
+        const nuevoSaldo = Math.max(0, pN(f.saldoPendiente||f.total||0) - monto);
+        batch.update(getDocRef('procura_facturas_compra',f.id),{
+          saldoPendiente:nuevoSaldo, status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE', updatedAt:Date.now()
+        });
+        // Movimiento bancario (EGRESO)
+        if(pm.lp.cuentaId){
+          const movId = `MOV-PAGCXP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,5)}`;
+          const montoBs = pN(pm.lp.moneda==='USD'?monto*(pN(pm.lp.tasa||tasaBCV||1)):monto);
+          batch.set(getDocRef('banco_movimientos',movId),{
+            id:movId, cuentaId:pm.lp.cuentaId, tipo:'EGRESO', monto:montoBs,
+            montoUSD:pm.lp.moneda==='USD'?monto:monto/(pN(pm.lp.tasa||tasaBCV||1)),
+            tasa:pN(pm.lp.tasa||tasaBCV||1), fecha:pm.lp.fecha||hoy,
+            concepto:pm.lp.concepto||`Pago ${f.proveedor} Fact. ${f.nroFactura||'—'}`,
+            referencia:refNum, metodo:pm.lp.metodo||'Transferencia',
+            proveedor:f.proveedor||'', facturaId:f.id,
+            timestamp:Date.now(), user:appUser?.name||'Sistema', origen:'CxP'
+          });
+        }
       });
       await batch.commit();
-      setModal(null);
-      setDialog({title:'✅ Pago registrado',text:`Pago de $${pFmt(monto)} registrado para ${factSel.nroFactura}.`,type:'alert'});
+      setCxpPagoModal(null);
+      setDialog({title:'✅ Pago registrado',text:`Pago de $${fN(totalPago)} registrado a ${pm.nombre}. ${pm.lp.cuentaId?'Banco actualizado.':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  return (
-    <div className="flex flex-col h-full overflow-hidden bg-slate-50">
-      {/* Header */}
-      <div className="flex-shrink-0 px-4 py-3 bg-white border-b border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="font-black text-sm uppercase tracking-widest text-slate-800">Cuentas por Pagar</h2>
-            <p className="text-[10px] text-slate-400 mt-0.5">{filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facturas.length,0)} documentos · Saldo total: <strong className="text-orange-600">${fmtN(grandTotal)}</strong></p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase hover:bg-slate-700 transition-all">
-              <Printer size={12}/> PDF Reporte
-            </button>
-          </div>
+  // ── PDF ────────────────────────────────────────────────────────────
+  const exportarPDFCxP = () => {
+    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp = settings?.empresaRif||'J-41230937-4';
+    const body = filtrados.map(g=>{
+      const est = getEstado(g);
+      const tasa = tasaBCV||1;
+      const ncNDs = _ncPorProv.get(g.rif)||[];
+      const factRows = g.facts.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
+        const pagos=(_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef));
+        const totalPag=pagos.reduce((s,p)=>s+pN(p.monto||0),0);
+        const tasaF=Math.max(pN(f.tasa||0)||tasa,1);
+        const rets=_retIVAPorFact.get(f.id)||[];
+        const retIVAusd=rets.reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasaF,0);
+        const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
+        const saldo=getSaldoFact(f); const d=getAgingDias(f);
+        const dc=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
+        return `<tr style="border-bottom:1px solid #e5e7eb">
+<td style="padding:3px 6px;color:#f97316;font-weight:700;font-size:9px">${f.nroFactura||'—'}</td>
+<td style="padding:3px 6px;font-size:9px">${fD(f.fecha)}</td>
+<td style="padding:3px 6px;font-size:9px;color:${(f.fechaVencimiento||'')>fechaRef?'#374151':'#dc2626'}">${fD(f.fechaVencimiento)}</td>
+<td style="padding:3px 6px;text-align:center;font-size:9px">${dc?dc+'d':'—'}</td>
+<td style="padding:3px 6px;font-size:9px;color:#2563eb">${f.nroControl||'—'}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fN(f.total||0)}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;color:#16a34a;font-size:9px">$${fN(totalPag)}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;color:#dc2626;font-size:9px">${retIVAusd>0.001?'-$'+fN(retIVAusd):'—'}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;color:#7c3aed;font-size:9px">${retISLR>0.001?'-$'+fN(retISLR):'—'}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;color:#f97316;font-size:9px">$${fN(saldo)}</td>
+</tr>
+${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#16a34a">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''} · ${p.banco||''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fN(pN(p.monto||0))}</td><td></td></tr>`).join('')}
+${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#dc2626">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td><td></td></tr>`).join('')}
+${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td></tr>`).join('')}`;
+      }).join('');
+      const ncRows = ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasa;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Proveedor directo'}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(u)}</td><td></td></tr>`;}).join('');
+      return `<div style="margin-bottom:14px;page-break-inside:avoid">
+<div style="background:#1e293b;color:#fff;padding:7px 12px;display:flex;justify-content:space-between;align-items:center">
+  <div><strong style="font-size:11px">${g.nombre}</strong> <span style="font-size:9px;color:#94a3b8">${g.rif}</span></div>
+  <div><span style="font-family:monospace;font-weight:900;font-size:12px;color:#f97316">$${fN(g.total)}</span>&nbsp;<span style="background:${est==='CRÍTICO'?'#dc2626':est==='VENCIDO'?'#ea580c':est==='POR PAGAR'?'#d97706':'#16a34a'};color:#fff;padding:2px 8px;border-radius:10px;font-size:8px;font-weight:900">${est}</span></div>
+</div>
+<table style="width:100%;border-collapse:collapse;font-size:9px">
+  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">VENCE</th><th style="color:#f97316;padding:4px 6px;text-align:center">DÍAS</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#dc2626;padding:4px 6px;text-align:right">RET.IVA</th><th style="color:#7c3aed;padding:4px 6px;text-align:right">RET.ISLR</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th></tr></thead>
+  <tbody>${factRows}${ncRows}</tbody>
+  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900">Subtotal ${g.facts.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td><td colspan="3"></td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(g.total)}</td></tr></tfoot>
+</table></div>`;
+    }).join('');
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:legal landscape;margin:1.2cm 1.5cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">
+  <div><div style="font-size:16px;font-weight:900">${emp}</div><div style="font-size:8px;color:#666">RIF: ${rifEmp}</div></div>
+  <div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">CUENTAS POR PAGAR DETALLADO</div>
+    <div style="font-size:8px;color:#555">Corte: ${fechaRef} · ${filtrados.length} proveedores · Total: $${fN(totalCartera)}</div></div>
+</div>
+${body}
+<div style="background:#0f172a;color:#fff;padding:8px 12px;margin-top:16px;display:flex;justify-content:space-between;font-weight:900;font-size:11px">
+  <span>TOTAL CARTERA</span><span style="color:#f97316">$${fN(totalCartera)}</span>
+</div>
+<script>window.onload=()=>window.print();<\/script></body></html>`;
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  // ── Excel ──────────────────────────────────────────────────────────
+  const exportarExcelCxP = () => {
+    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const ths=['Proveedor','RIF','N° Factura','N° Control','Fecha Emis.','Fecha Vence','Días','Total USD','Pagado','Ret. IVA','Ret. ISLR','NC/ND','Saldo USD','Estado'];
+    const rows=[];
+    filtrados.forEach(g=>{
+      const est=getEstado(g);
+      g.facts.forEach(f=>{
+        const tasaF=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
+        const pagosF=(_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef)).reduce((s,p)=>s+pN(p.monto||0),0);
+        const retIVA=(_retIVAPorFact.get(f.id)||[]).reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasaF,0);
+        const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
+        const saldo=getSaldoFact(f);
+        const dias=getAgingDias(f);
+        rows.push([g.nombre,g.rif,f.nroFactura||'—',f.nroControl||'—',f.fecha||'',f.fechaVencimiento||'',dias>0?dias:0,pN(f.total||0),pagosF,retIVA,retISLR,0,saldo,est]);
+      });
+    });
+    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — CUENTAS POR PAGAR · Corte: ${fechaRef}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="12" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalCartera)}</td><td></td></tr></tfoot></table></body></html>`;
+    Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'CxP_Detallado.xls'}).click();
+  };
+
+  return(
+    <div className="p-4 space-y-4">
+      {/* HEADER */}
+      <div className="bg-white rounded-2xl border p-4 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-black text-xl uppercase flex items-center gap-2"><CreditCard size={20} className="text-orange-500"/>Cuentas por Pagar</h2>
+          <p className="text-xs text-gray-500 mt-1">Saldo = Total − Pagos − Ret.IVA − Ret.ISLR ± NC/ND</p>
         </div>
-        <div className="flex gap-2 items-center flex-wrap">
-          <div className="relative flex-1 min-w-48">
-            <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o RIF..." className="w-full border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs outline-none focus:border-orange-400"/>
-          </div>
-          {['TODOS','VENCIDO','POR PAGAR'].map(s=>(
-            <button key={s} onClick={()=>setFiltStatus(s)}
-              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all ${filtStatus===s?s==='VENCIDO'?'bg-red-600 text-white':s==='POR PAGAR'?'bg-amber-500 text-white':'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-              {s}
-            </button>
-          ))}
+        <div className="flex gap-2 flex-wrap items-center">
+          <input value={cxpSearch} onChange={e=>setCxpSearch(e.target.value)} placeholder="Buscar proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-48"/>
+          <input type="date" value={cxpFechaRef} onChange={e=>setCxpFechaRef(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" title="Corte"/>
+          {cxpFechaRef&&<button onClick={()=>setCxpFechaRef('')} className="text-xs text-red-500 font-bold hover:underline">✕ Hoy</button>}
+          <button onClick={()=>setCxpExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{cxpExpandAll?'▲ Contraer':'▼ Expandir'} todo</button>
+          <button onClick={()=>setCxpPagoModal({provSearch:'',provRif:'',nombre:'',facts:[],selec:{},montos:{},lp:{metodo:'Transferencia',fecha:hoy,moneda:'USD',tasa:String(tasaBCV||1),banco:'',referencia:'',concepto:'',cuentaId:''}})}
+            className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:shadow-xl transition-all" style={{background:'linear-gradient(135deg,#ea580c,#c2410c)'}}>
+            <DollarSign size={13}/> 💸 Registrar Pago
+          </button>
+          <button onClick={exportarPDFCxP} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
+          <button onClick={exportarExcelCxP} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel</button>
         </div>
       </div>
 
-      {/* Tabla Análisis por Proveedor */}
-      <div className="flex-1 overflow-auto px-4 py-3 space-y-1">
-        {filtrados.length===0&&(
-          <div className="py-20 text-center text-slate-400 text-xs font-black uppercase">Sin cuentas por pagar pendientes</div>
-        )}
-        {filtrados.map(g=>{
-          const status=getStatus(g);
-          const isExp=expanded.has(g.pid);
-          const tasaEfectiva=g.facturas[0]?.tasa?pNum(g.facturas[0].tasa):tasaBCV||1;
-          return(
-          <div key={g.pid} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            {/* Fila proveedor */}
-            <div className="flex items-center px-4 py-3 gap-4 cursor-pointer hover:bg-slate-50 transition-all" onClick={()=>toggleExpand(g.pid)}>
-              <div className="flex-1 min-w-0">
-                <div className="font-black text-slate-800 text-xs uppercase truncate">{g.nombre}</div>
-                <div className="text-[10px] text-slate-400 font-mono">{g.rif}</div>
-              </div>
-              <div className="text-right">
-                <div className="font-black text-orange-600 text-sm">${fmtN(g.totalSaldo)}</div>
-                <div className="text-[9px] text-slate-400 font-mono">Bs. {fV(g.totalSaldo*tasaEfectiva)}</div>
-              </div>
-              <span className={`text-[9px] font-black px-2.5 py-1 rounded-full ${status==='VENCIDO'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>{status}</span>
-              <button className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg border transition-all ${isExp?'bg-slate-900 text-white border-slate-900':'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                {isExp?'▲ Cerrar':'▼ Detalle'}
-              </button>
-            </div>
+      {/* MÉTRICAS */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          {l:'Total por pagar',v:`$${fN(totalCartera)}`,s:`${filtrados.length} proveedores`,c:'text-orange-700',bg:'bg-orange-50',br:'border-orange-200'},
+          {l:'Crítico (+60d)',v:`$${fN(filtrados.reduce((s,g)=>s+g.vMas60,0))}`,s:`${filtrados.filter(g=>g.vMas60>0.01).length} proveedores`,c:'text-red-700',bg:'bg-red-50',br:'border-red-200'},
+          {l:'Vencido 31–60d',v:`$${fN(filtrados.reduce((s,g)=>s+g.v31_60,0))}`,s:`${filtrados.filter(g=>g.v31_60>0.01).length} proveedores`,c:'text-orange-600',bg:'bg-amber-50',br:'border-amber-200'},
+          {l:'Corriente / Al día',v:`$${fN(filtrados.reduce((s,g)=>s+g.corriente+g.v1_30,0))}`,s:`${filtrados.filter(g=>g.v1_30>0.01||g.corriente>0.01).length} proveedores`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
+        ].map((m,i)=>(
+          <div key={i} className={`rounded-2xl px-4 py-3 border-2 ${m.bg} ${m.br}`}>
+            <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{m.l}</p>
+            <p className={`text-xl font-black ${m.c}`}>{m.v}</p>
+            <p className="text-[8px] text-gray-400">{m.s}</p>
+          </div>
+        ))}
+      </div>
 
-            {/* Detalle expandido */}
-            {isExp&&(
-              <div className="border-t border-slate-200">
-                {/* Sub-header oscuro */}
-                <div style={{background:'#1e293b'}} className="px-4 py-2.5 flex items-center justify-between">
-                  <div className="text-white font-black text-xs uppercase">{g.nombre} <span className="text-slate-400 font-mono text-[10px] ml-2">{g.rif}</span></div>
-                  <div className="flex items-center gap-4 text-[10px] text-slate-400">
-                    <span>Total facturado: <strong className="text-white">${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</strong></span>
-                    <span>Pagado: <strong className="text-emerald-400">${fmtN(g.totalPagado)}</strong></span>
-                    <span>Ret.IVA: <strong className="text-red-400">${fmtN(g.totalRet)}</strong></span>
-                    {g.totalRetISLR>0&&<span>Ret.ISLR: <strong className="text-purple-400">${fmtN(g.totalRetISLR)}</strong></span>}
-                    <span>Saldo: <strong className="text-orange-400">${fmtN(g.totalSaldo)}</strong></span>
+      {/* TABLA PROVEEDORES */}
+      <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b-2 border-gray-100">
+          <h3 className="font-black text-sm uppercase text-gray-800">Análisis por Proveedor</h3>
+          <span className="text-[10px] text-gray-400 font-bold">{filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facts.length,0)} docs</span>
+        </div>
+        {filtrados.length===0?(
+          <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin cartera pendiente</div>
+        ):(
+          <div className="overflow-x-auto">
+            <table className="w-full text-[10px]">
+              <thead className="bg-gray-50 border-b-2 border-gray-100">
+                <tr className="font-black text-gray-400 uppercase">
+                  <th className="py-3 px-4 text-left">Proveedor</th>
+                  <th className="py-3 px-3 text-right">Saldo USD</th>
+                  <th className="py-3 px-3 text-right text-red-400">+60d</th>
+                  <th className="py-3 px-3 text-right text-orange-400">31-60d</th>
+                  <th className="py-3 px-3 text-right text-amber-500">1-30d</th>
+                  <th className="py-3 px-3 text-right text-green-600">Corriente</th>
+                  <th className="py-3 px-4 text-center">Estado</th>
+                  <th className="py-3 px-4 text-center"><button onClick={()=>setCxpExpandAll(v=>!v)} className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-[8px] font-black uppercase">{cxpExpandAll?'▲':'▼'}</button></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtrados.map(g=>{
+                  const est=getEstado(g);
+                  const isExp = cxpExpandAll || !!cxpExpanded[g.provId];
+                  const ncNDs = _ncPorProv.get(g.rif)||[];
+                  return(
+                  <React.Fragment key={g.provId}>
+                    <tr className="border-b border-gray-100 hover:bg-slate-50 cursor-pointer" onClick={()=>setCxpExpanded(p=>({...p,[g.provId]:!p[g.provId]}))}>
+                      <td className="py-3 px-4 font-black">
+                        {g.nombre}
+                        {g.rif&&<span className="ml-2 text-gray-400 font-normal text-[9px]">{g.rif}</span>}
+                      </td>
+                      <td className="py-3 px-3 text-right font-black text-orange-700">${fN(g.total)}</td>
+                      <td className="py-3 px-3 text-right font-black text-red-600">{g.vMas60>0.01?`$${fN(g.vMas60)}`:'—'}</td>
+                      <td className="py-3 px-3 text-right font-black text-orange-500">{g.v31_60>0.01?`$${fN(g.v31_60)}`:'—'}</td>
+                      <td className="py-3 px-3 text-right text-amber-600">{g.v1_30>0.01?`$${fN(g.v1_30)}`:'—'}</td>
+                      <td className="py-3 px-3 text-right text-green-600">{g.corriente>0.01?`$${fN(g.corriente)}`:'—'}</td>
+                      <td className="py-3 px-4 text-center"><span className={`px-2 py-1 rounded-full text-[8px] font-black ${estadoColor[est]||'bg-gray-100 text-gray-600'}`}>{est}</span></td>
+                      <td className="py-3 px-4 text-center text-gray-400">{isExp?'▲':'▼'}</td>
+                    </tr>
+                    {isExp&&(
+                      <tr><td colSpan={8} className="p-0 bg-gray-50">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-[9px]">
+                            <thead>
+                              <tr className="bg-slate-800 text-white">
+                                {['DOCUMENTO','EMISIÓN','VENCE','DÍAS CR.','N° CONTROL','TOTAL USD','PAGADO','RET.IVA','RET.ISLR','SALDO USD'].map(h=>(
+                                  <th key={h} className="py-2 px-3 font-black text-[8px] text-left">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {g.facts.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
+                                const tasaF=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
+                                const pagosF=(_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef));
+                                const totalPag=pagosF.reduce((s,p)=>s+pN(p.monto||0),0);
+                                const rets=_retIVAPorFact.get(f.id)||[];
+                                const retIVA=rets.reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasaF,0);
+                                const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
+                                const saldo=getSaldoFact(f);
+                                const dc=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
+                                const dias=getAgingDias(f);
+                                const dcCol=dias>60?'text-red-700 font-black':dias>30?'text-orange-600 font-black':dias>0?'text-amber-600':'text-green-600';
+                                return(
+                                  <React.Fragment key={f.id}>
+                                    <tr className="border-b border-gray-200 hover:bg-white">
+                                      <td className="py-2 px-3 font-black text-orange-600">{f.nroFactura||'—'}</td>
+                                      <td className="py-2 px-3">{fD(f.fecha)}</td>
+                                      <td className={`py-2 px-3 ${(f.fechaVencimiento||'')>fechaRef?'':'text-red-600 font-bold'}`}>{fD(f.fechaVencimiento)}</td>
+                                      <td className={`py-2 px-3 text-center ${dcCol}`}>{dc?dc+'d':'—'}{dias>0&&<span className="ml-1 text-[8px]">({dias}d venc.)</span>}</td>
+                                      <td className="py-2 px-3 text-blue-600">{f.nroControl||'—'}</td>
+                                      <td className="py-2 px-3 text-right font-mono font-black">${fN(f.total||0)}</td>
+                                      <td className="py-2 px-3 text-right font-mono text-green-700">{totalPag>0.001?'$'+fN(totalPag):'—'}</td>
+                                      <td className="py-2 px-3 text-right font-mono text-red-600">{retIVA>0.001?'-$'+fN(retIVA):'—'}</td>
+                                      <td className="py-2 px-3 text-right font-mono text-purple-600">{retISLR>0.001?'-$'+fN(retISLR):'—'}</td>
+                                      <td className="py-2 px-3 text-right font-mono font-black text-orange-600">${fN(saldo)}</td>
+                                    </tr>
+                                    {pagosF.map((p,pi)=>(
+                                      <tr key={pi} className="bg-green-50 border-b border-green-100">
+                                        <td colSpan={4} className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago · {fD(p.fecha)} · {p.metodo||'—'} {p.referencia?'· #'+p.referencia:''}</td>
+                                        <td className="py-1.5 px-3 text-[8px] text-green-600">{p.banco||''}</td>
+                                        <td colSpan={4}></td>
+                                        <td className="py-1.5 px-3 text-right font-mono font-black text-green-700 text-[8px]">-${fN(pN(p.monto||0))}</td>
+                                      </tr>
+                                    ))}
+                                    {rets.map((r,ri)=>(
+                                      <tr key={ri} className="bg-red-50 border-b border-red-100">
+                                        <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-red-700">↳ Ret. IVA {r.pctRetencion||75}% · Comp. {r.nroComprobante||'—'} · Bs.{fN(pN(r.montoBs||0))}</td>
+                                        <td colSpan={4}></td>
+                                        <td className="py-1.5 px-3 text-right font-mono font-black text-red-700 text-[8px]">-${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td>
+                                      </tr>
+                                    ))}
+                                    {(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map((r,ri)=>(
+                                      <tr key={ri} className="bg-purple-50 border-b border-purple-100">
+                                        <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ Ret. ISLR {r.pct||0}% · {r.codigo||''} {r.concepto||''}</td>
+                                        <td colSpan={4}></td>
+                                        <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">-${fN(pN(r.monto||0))}</td>
+                                      </tr>
+                                    ))}
+                                  </React.Fragment>
+                                );
+                              })}
+                              {ncNDs.map((n,ni)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return(
+                                <tr key={ni} className="bg-purple-50 border-b border-purple-100">
+                                  <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {n.tipo==='NC'?'NC':'ND'} · {n.nroDocumento||'—'} · {n.descripcion||'Ajuste directo al proveedor'}</td>
+                                  <td colSpan={4}></td>
+                                  <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{n.tipo==='NC'?'-$':'$'}{fN(u)}</td>
+                                </tr>
+                              );})}
+                            </tbody>
+                            <tfoot>
+                              <tr className="bg-slate-900 text-white font-black">
+                                <td colSpan={5} className="py-2 px-3 text-[9px]">Subtotal {g.facts.length} doc(s)</td>
+                                <td className="py-2 px-3 text-right font-mono">${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td>
+                                <td className="py-2 px-3 text-right font-mono text-green-400">${fN((_pagosPorFact.get?g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0):0))}</td>
+                                <td className="py-2 px-3 text-right font-mono text-red-300">${fN(g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retIVAPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0))}</td>
+                                <td className="py-2 px-3 text-right font-mono text-purple-300">${fN(g.facts.reduce((s,f)=>s+(f.retISLRLista||[]).reduce((ss,r)=>ss+pN(r.monto||0),0),0))}</td>
+                                <td className="py-2 px-3 text-right font-mono text-orange-400">${fN(g.total)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="bg-slate-900 text-white font-black text-[10px]">
+                  <td colSpan={6} className="py-3 px-4">TOTAL CARTERA · {filtrados.reduce((s,g)=>s+g.facts.length,0)} docs</td>
+                  <td></td><td></td><td></td>
+                  <td className="py-3 px-4 text-right text-orange-400 text-sm font-mono">${fN(totalCartera)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── MODAL REGISTRAR PAGO ── */}
+      {cxpPagoModal&&(()=>{
+        const pm=cxpPagoModal;
+        const setPM=u=>setCxpPagoModal(prev=>({...prev,...(typeof u==='function'?u(prev):u)}));
+        // Proveedor seleccionado
+        const provFacts=pm.provRif?(facturasCompra||[]).filter(f=>(f.proveedorId===pm.provRif||f.proveedor===pm.nombre)&&f.status!=='ANULADA'&&getSaldoFact(f)>0.01):[];
+        const totalSelec=provFacts.filter(f=>pm.selec[f.id]).reduce((s,f)=>s+pN(pm.montos[f.id]||0),0);
+        const provsFilt=(proveedores||[]).filter(p=>(p.nombre||'').toLowerCase().includes((pm.provSearch||'').toLowerCase())||(p.rif||'').includes(pm.provSearch||''));
+        return(
+          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget)setCxpPagoModal(null);}}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{maxWidth:'72rem',maxHeight:'92vh',display:'flex',flexDirection:'column'}}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#ea580c,#7c2d12)'}}>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center"><DollarSign size={20} className="text-white"/></div>
+                  <div>
+                    <div className="font-black text-white text-base">Registrar Pago</div>
+                    <div className="text-orange-200 text-[10px]">Cuentas por Pagar — {settings?.empresaRazonSocial||'SERVICIOS JIRET G&B'}</div>
                   </div>
                 </div>
-                <table className="w-full text-xs">
-                  <thead><tr style={{background:'#0f172a'}}>
-                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">DOCUMENTO</th>
-                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">EMISIÓN</th>
-                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">VENCE</th>
-                    <th className="px-3 py-2 text-center text-[7.5px] text-orange-400 font-black uppercase">DÍAS CRED.</th>
-                    <th className="px-3 py-2 text-left text-[7.5px] text-orange-400 font-black uppercase">DOC. FISCAL</th>
-                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">TOTAL USD</th>
-                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">PAGADO</th>
-                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">RET.IVA</th>
-                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">RET.ISLR</th>
-                    <th className="px-3 py-2 text-right text-[7.5px] text-orange-400 font-black uppercase">SALDO USD</th>
-                    <th className="px-3 py-2 text-[7.5px] text-orange-400 font-black uppercase">OBSERVACIÓN</th>
-                  </tr></thead>
-                  <tbody>
-                    {g.facturas.map((f,fi)=>{
-                      const pagos=pagosPorFactura[f.id]||[];
-                      const totalPag=pagos.reduce((s,p)=>s+pNum(p.monto||0),0);
-                      const retBs=pNum(f.retIVA?.montoBs||0);
-                      const tasa=pNum(f.tasa||0)||tasaBCV||1;
-                      const retIVAusd=retBs>0?retBs/tasa:0;
-                      const retISLRusd=(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).reduce((s,r)=>s+pNum(r.monto||0),0);
-                      const retUSD=retIVAusd+retISLRusd;
-                      const saldo=pNum(f.saldoPendiente||f.total||0);
-                      const diasV=diasVencidos(f);
-                      const esVencida=f.fechaVencimiento&&f.fechaVencimiento<hoy;
-                      return(
-                      <React.Fragment key={f.id}>
-                        {/* Fila factura */}
-                        <tr className={fi%2===0?'bg-white':'bg-slate-50'} style={{borderBottom:'1px solid #f1f5f9'}}>
-                          <td className="px-3 py-2">
-                            <div className="font-black text-orange-600 text-xs">{f.nroFactura||'—'}</div>
-                            <div className="text-[8px] text-slate-400 font-mono">{f.status||'—'}</div>
-                          </td>
-                          <td className="px-3 py-2 text-[10px]">{fD(f.fecha)}</td>
-                          <td className={`px-3 py-2 text-[10px] font-black ${esVencida?'text-red-600':'text-slate-600'}`}>
-                            {fD(f.fechaVencimiento)}
-                            {diasV>0&&<div className="text-[8px] text-red-500 font-mono">{diasV}d vencida</div>}
-                          </td>
-                          <td className="px-3 py-2 text-center text-[10px] font-black text-indigo-600">{(f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/(864e5)):null))?`${f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/(864e5)):0)}d`:'—'}</td>
-                          <td className="px-3 py-2">
-                            <div className="text-[10px] text-blue-600 font-mono">{f.nroControl||'—'}</div>
-                          </td>
-                          <td className="px-3 py-2 text-right font-mono font-black text-[11px]">${fmtN(f.total||0)}</td>
-                          <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black text-[11px]">{totalPag>0?`$${fmtN(totalPag)}`:<span className="text-slate-300">$0,00</span>}</td>
-                          <td className="px-3 py-2 text-right font-mono text-red-500 text-[10px]">{retIVAusd>0?`-$${fmtN(retIVAusd)}`:'—'}</td>
-                          <td className="px-3 py-2 text-right font-mono text-purple-600 text-[10px]">{retISLRusd>0?`-$${fmtN(retISLRusd)}`:'—'}</td>
-                          <td className="px-3 py-2 text-right font-black text-orange-600 text-[12px] font-mono">${fmtN(saldo)}</td>
-                          <td className="px-3 py-2 text-[9px] text-slate-400">
-                            <div className="flex items-center gap-1">
-                              <input className="text-[9px] border border-transparent hover:border-slate-200 focus:border-orange-400 rounded px-1 py-0.5 outline-none bg-transparent w-32"
-                                placeholder="Agregar observación..." defaultValue={f.observaciones||''}
-                                onBlur={async(e)=>{if(e.target.value!==f.observaciones){try{await updateDoc(getDocRef('procura_facturas_compra',f.id),{observaciones:e.target.value,updatedAt:Date.now()});}catch(ex){}}}}/>
-                              <button onClick={()=>abrirPago(f)}
-                                className="flex items-center gap-1 px-2 py-1 bg-orange-500 text-white rounded-lg text-[8px] font-black uppercase hover:bg-orange-600 whitespace-nowrap transition-all flex-shrink-0">
-                                <DollarSign size={9}/> Pagar
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        {/* Sub-filas: Fac. Fiscal */}
-                        {(f.nroControl||f.nroFactura)&&(
-                          <tr style={{background:'#f8fafc',borderBottom:'1px solid #f1f5f9'}}>
-                            <td className="px-3 py-1.5 pl-6" style={{borderLeft:'3px solid #3b82f6'}}>
-                              <span className="text-[8px] text-blue-600 font-black">↳ Fac. Fiscal</span>
-                            </td>
-                            <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
-                            <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] text-blue-600 font-mono">{f.nroControl||'—'}</td>
-                            <td colSpan={2}></td>
-                            <td colSpan={3} className="px-3 py-1 text-[8px] text-slate-500">
-                              {tasa>1?`Base Bs.${fV(pNum(f.totales?.base16Bs||0))} · IVA Bs.${fV(pNum(f.totales?.iva16Bs||0))} · Total: Bs.${fV(pNum(f.totales?.totalBs||0))} · Tasa: ${fV(tasa)} Bs/$`:''}
-                            </td>
-                          </tr>
-                        )}
-                        {/* Sub-filas: pagos */}
-                        {pagos.map((p,pi)=>(
-                          <tr key={p.id} style={{background:'#f0fdf4',borderBottom:'1px solid #dcfce7'}}>
-                            <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #16a34a'}}>
-                              <span className="text-[8px] text-emerald-700 font-black">↳ Pago</span>
-                            </td>
-                            <td className="px-3 py-1 text-[8px] text-slate-500">{fD(p.fecha)}</td>
-                            <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] font-mono text-blue-600">{p.referencia||'—'}</td>
-                            <td colSpan={2} className="px-3 py-1 text-[8px] text-emerald-700 font-black text-right font-mono">-${fmtN(pNum(p.monto||0))}</td>
-                            <td></td>
-                            <td></td>
-                            <td className="px-3 py-1 text-[8px] text-slate-500">{p.metodo||'—'} · {p.banco||''}</td>
-                          </tr>
-                        ))}
-                        {/* Sub-fila: Retención IVA */}
-                        {retBs>0&&(
-                          <tr style={{background:'#fff1f2',borderBottom:'1px solid #fee2e2'}}>
-                            <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #dc2626'}}>
-                              <span className="text-[8px] text-red-600 font-black">↳ Ret. IVA</span>
-                            </td>
-                            <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
-                            <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] font-mono text-orange-600">{f.retIVA?.nroComprobante||'—'}</td>
-                            <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] font-mono text-red-600 text-right font-black">-${fmtN(retIVAusd)}</td>
-                            <td></td>
-                            <td className="px-3 py-1 text-[8px] text-slate-500">Ret. IVA {pNum(f.retIVA?.pct||75)}% · Bs.{fV(retBs)} · Fac. {f.nroFactura||'—'}</td>
-                          </tr>
-                        )}
-                        {/* Sub-filas: Retenciones ISLR */}
-                        {(f.retISLRLista||[]).filter(r=>pNum(r.monto||0)>0).map((r,ri)=>(
-                          <tr key={ri} style={{background:'#f5f3ff',borderBottom:'1px solid #ede9fe'}}>
-                            <td className="px-3 py-1 pl-6" style={{borderLeft:'3px solid #7c3aed'}}>
-                              <span className="text-[8px] text-purple-700 font-black">↳ Ret. ISLR</span>
-                            </td>
-                            <td className="px-3 py-1 text-[8px] text-slate-400">{fD(f.fecha)}</td>
-                            <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] font-mono text-purple-600">{r.nroComprobante||'—'}</td>
-                            <td colSpan={2}></td>
-                            <td className="px-3 py-1 text-[8px] font-mono text-purple-700 text-right font-black">-${fmtN(pNum(r.monto||0))}</td>
-                            <td></td>
-                            <td className="px-3 py-1 text-[8px] text-slate-500">ISLR {r.pct||0}% · {r.codigo||''} {r.concepto||''} · Bs.{fV(pNum(r.montoBs||0))}</td>
-                          </tr>
-                        ))}
-                      </React.Fragment>
-                      );
-                    })}
-                    {/* Subtotal */}
-                    <tr style={{background:'#1e293b'}}>
-                      <td colSpan={5} className="px-3 py-2 text-white font-black text-[10px] uppercase">SUBTOTAL {g.facturas.length} DOC(S)</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-white text-[11px]">${fmtN(g.facturas.reduce((s,f)=>s+pNum(f.total||0),0))}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-400 text-[11px]">${fmtN(g.totalPagado)}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-400 text-[11px]">{g.totalRet>0?`-$${fmtN(g.totalRet)}`:'—'}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-purple-400 text-[11px]">{g.totalRetISLR>0?`-$${fmtN(g.totalRetISLR)}`:'—'}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-orange-400 text-[13px]">${fmtN(g.totalSaldo)}</td>
-                      <td></td>
-                    </tr>
-                  </tbody>
-                </table>
+                <button onClick={()=>setCxpPagoModal(null)} className="w-8 h-8 rounded-lg bg-white/15 text-white hover:bg-white/30 flex items-center justify-center text-lg font-black">×</button>
               </div>
-            )}
-          </div>
-          );
-        })}
-      </div>
-
-      {/* TOTAL BAR */}
-      {filtrados.length>0&&(
-        <div className="flex-shrink-0 bg-slate-900 text-white px-4 py-3 flex items-center justify-between border-t border-slate-700">
-          <span className="text-[10px] font-black uppercase text-slate-400">Total general — {filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facturas.length,0)} docs</span>
-          <div className="flex gap-6 text-[11px] font-mono font-black">
-            <span className="text-emerald-400">Pagado: ${fmtN(grandPagado)}</span>
-            <span className="text-red-400">Ret.IVA: ${fmtN(grandRet)}</span>
-            {grandRetISLR>0&&<span className="text-purple-400">Ret.ISLR: ${fmtN(grandRetISLR)}</span>}
-            <span className="text-orange-400 text-sm">Saldo: ${fmtN(grandTotal)}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Pago */}
-      {modal==='pago'&&factSel&&(
-        <PModal open={true} onClose={()=>setModal(null)} title={`Registrar pago — ${factSel.nroFactura||'—'}`}
-          footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardarPago}><DollarSign size={13}/> Confirmar pago</PBg></>}>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2 bg-orange-50 border border-orange-100 rounded-xl px-4 py-2.5">
-              <p className="text-[10px] font-black text-orange-700">{factSel.proveedor} — {factSel.nroFactura}</p>
-              <p className="text-[10px] text-orange-600">Saldo pendiente: <strong>${pFmt(factSel.saldoPendiente||factSel.total||0)}</strong></p>
+              <div className="flex flex-1 overflow-hidden">
+                {/* COL 1 — Proveedor + Facturas */}
+                <div className="w-80 flex-shrink-0 border-r border-gray-200 overflow-y-auto bg-gray-50">
+                  <div className="p-4 space-y-3">
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar Proveedor</label>
+                      <input value={pm.provSearch||''} onChange={e=>setPM({provSearch:e.target.value,provRif:'',nombre:'',facts:[],selec:{},montos:{}})} placeholder="Nombre o RIF..." className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                      {(pm.provSearch&&!pm.provRif)&&(
+                        <div className="mt-1 bg-white border-2 border-orange-200 rounded-xl shadow-lg max-h-40 overflow-y-auto">
+                          {provsFilt.slice(0,20).map(p=>(
+                            <button key={p.id||p.rif} onClick={()=>setPM({provSearch:p.nombre||p.name,provRif:p.rif,nombre:p.nombre||p.name,selec:{},montos:{}})} className="w-full text-left px-3 py-2 hover:bg-orange-50 border-b border-gray-100 last:border-0">
+                              <div className="font-bold text-xs">{p.nombre||p.name}</div>
+                              <div className="text-[9px] text-orange-600">{p.rif}</div>
+                            </button>
+                          ))}
+                          {provsFilt.length===0&&<div className="px-3 py-3 text-[10px] text-gray-400 text-center">Sin resultados</div>}
+                        </div>
+                      )}
+                      {pm.provRif&&<div className="mt-1 text-[9px] font-black text-green-700">✓ {pm.nombre} — {pm.provRif}</div>}
+                    </div>
+                    {pm.provRif&&(
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-[9px] font-black text-gray-500 uppercase">Facturas pendientes</label>
+                          <button onClick={()=>{const all={};const mon={};provFacts.forEach(f=>{all[f.id]=true;mon[f.id]=String(getSaldoFact(f));});setPM({selec:all,montos:mon});}} className="text-[9px] text-orange-600 font-black hover:underline">✓ Todas</button>
+                        </div>
+                        <div className="space-y-2">
+                          {provFacts.length===0&&<div className="text-[10px] text-gray-400 text-center py-4">Sin facturas pendientes</div>}
+                          {provFacts.map(f=>{
+                            const saldo=getSaldoFact(f);
+                            return(
+                              <div key={f.id} onClick={()=>setPM(prev=>{const s={...prev.selec,[f.id]:!prev.selec[f.id]};const m={...prev.montos};if(s[f.id]&&!m[f.id])m[f.id]=String(saldo);return{selec:s,montos:m};})}
+                                className={`p-2.5 rounded-xl border-2 cursor-pointer transition-all ${pm.selec[f.id]?'border-orange-400 bg-orange-50':'border-gray-200 bg-white hover:border-orange-200'}`}>
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <span className="font-black text-orange-600 text-[10px]">{f.nroFactura||f.id}</span>
+                                    <span className="ml-2 text-gray-400 text-[9px]">{fD(f.fecha)}</span>
+                                  </div>
+                                  <span className="font-mono font-black text-[10px] text-orange-700">${fN(saldo)}</span>
+                                </div>
+                                {pm.selec[f.id]&&(
+                                  <div className="mt-1.5" onClick={e=>e.stopPropagation()}>
+                                    <input type="number" step="0.01" value={pm.montos[f.id]||''} onChange={e=>setPM(prev=>({montos:{...prev.montos,[f.id]:e.target.value}}))}
+                                      placeholder={saldo.toFixed(2)} className="w-full border-2 border-orange-300 rounded-lg px-2 py-1 text-xs font-black outline-none focus:border-orange-500" onClick={e=>e.stopPropagation()}/>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* COL 2 — Datos del Pago */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+                    <div className="text-[9px] font-black text-orange-600 uppercase mb-2">💸 Resumen del Pago</div>
+                    <div className="font-black text-2xl text-orange-700">${fN(totalSelec)}</div>
+                    <div className="text-[9px] text-gray-500 mt-1">{provFacts.filter(f=>pm.selec[f.id]).length} factura(s) seleccionada(s)</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método de pago *</label>
+                      <select value={pm.lp?.metodo||'Transferencia'} onChange={e=>setPM(prev=>({lp:{...prev.lp,metodo:e.target.value}}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                        {['Transferencia','Zelle','Efectivo USD','Efectivo Bs.','Cheque','Débito Bancario'].map(m=><option key={m}>{m}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha *</label>
+                      <input type="date" value={pm.lp?.fecha||hoy} onChange={e=>setPM(prev=>({lp:{...prev.lp,fecha:e.target.value}}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Moneda</label>
+                      <select value={pm.lp?.moneda||'USD'} onChange={e=>setPM(prev=>({lp:{...prev.lp,moneda:e.target.value}}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                        <option value="USD">USD</option><option value="BS">Bs.</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                      <input type="number" step="0.0001" value={pm.lp?.tasa||''} onChange={e=>setPM(prev=>({lp:{...prev.lp,tasa:e.target.value}}))} placeholder={String(tasaBCV||1)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia</label>
+                      <input value={pm.lp?.referencia||''} onChange={e=>setPM(prev=>({lp:{...prev.lp,referencia:e.target.value}}))} placeholder="N° de transferencia" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Bancaria</label>
+                      <select value={pm.lp?.cuentaId||''} onChange={e=>{const c=cuentasBancarias.find(b=>b.id===e.target.value);setPM(prev=>({lp:{...prev.lp,cuentaId:e.target.value,banco:c?c.banco+' '+c.numero:''}}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                        <option value="">— Sin afectar banco —</option>
+                        {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco} {c.numero} ({c.moneda||'Bs.'})</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto / Observación</label>
+                    <input value={pm.lp?.concepto||''} onChange={e=>setPM(prev=>({lp:{...prev.lp,concepto:e.target.value}}))} placeholder="Pago factura de compra..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button onClick={()=>setCxpPagoModal(null)} className="flex-1 py-3 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
+                    <button onClick={guardarPago} className="flex-1 py-3 text-white rounded-xl font-black text-xs transition-all" style={{background:'linear-gradient(135deg,#ea580c,#c2410c)'}}>
+                      💸 Registrar Pago {totalSelec>0&&`— $${fN(totalSelec)}`}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
-            <PFG label="Fecha"><input type="date" className={inp} value={formPago.fecha||''} onChange={e=>setFormPago(f=>({...f,fecha:e.target.value}))}/></PFG>
-            <PFG label="Monto a pagar ($) *"><input type="number" className={inp} value={formPago.monto||''} onChange={e=>setFormPago(f=>({...f,monto:e.target.value}))}/></PFG>
-            <PFG label="Método">
-              <select className={sel} value={formPago.metodo||'Transferencia'} onChange={e=>setFormPago(f=>({...f,metodo:e.target.value}))}>
-                {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(m=><option key={m}>{m}</option>)}
-              </select>
-            </PFG>
-            <PFG label="Banco / Cuenta">
-              <select className={sel} value={formPago.banco||''} onChange={e=>setFormPago(f=>({...f,banco:e.target.value}))}>
-                <option value="">— Seleccionar —</option>
-                {cuentasBancarias.map(c=><option key={c.id} value={c.banco||c.nombre}>{c.banco||c.nombre}</option>)}
-              </select>
-            </PFG>
-            <PFG label="N° Referencia"><input className={inp} value={formPago.referencia||''} onChange={e=>setFormPago(f=>({...f,referencia:e.target.value.toUpperCase()}))}/></PFG>
-            <PFG label="Concepto"><input className={inp} value={formPago.concepto||''} onChange={e=>setFormPago(f=>({...f,concepto:e.target.value}))}/></PFG>
           </div>
-        </PModal>
-      )}
+        );
+      })()}
     </div>
   );
 };
+
+
 
 // ══════════════════════════════════════════════════════════════════════
 // COMPONENTE PRINCIPAL
@@ -4344,6 +4476,317 @@ ${provRows}
 // LIBRO DE COMPRAS VIEW — Módulo Procura
 // ══════════════════════════════════════════════════════════════════
 
+
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ESTADO DE CUENTA — PROVEEDOR (espejo de EC Ventas)
+// ══════════════════════════════════════════════════════════════════════════
+const EstadoCuentaProvView = ({
+  facturasCompra, pagosCxP, proveedores, retIVACompra, notasCompraCD,
+  tasaBCV, settings, dialog, setDialog
+}) => {
+  const [ecSearch, setEcSearch] = useState('');
+  const [ecDesde, setEcDesde] = useState('');
+  const [ecHasta, setEcHasta] = useState('');
+  const [ecExpanded, setEcExpanded] = useState({});
+  const [ecExpandAll, setEcExpandAll] = useState(false);
+
+  const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
+  const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pN(n)); const p=a.toFixed(2).split('.'); return(pN(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
+  const fD = d => { if(!d)return'—'; const pts=String(d).split('-'); return pts.length===3?`${pts[2]}/${pts[1]}/${pts[0]}`:d; };
+  const hoy = getTodayDate();
+
+  // Maps
+  const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP]);
+  const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra]);
+  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
+
+  const getSaldoFact = (f) => {
+    const total = pN(f.total||0);
+    const pagos = (_pagosPorFact.get(f.id)||[]).filter(p=>(!ecHasta||(p.fecha||'')<=ecHasta)).reduce((s,p)=>s+pN(p.monto||0),0);
+    const tasa = Math.max(pN(f.tasa||0)||tasaBCV||1,1);
+    const retIVA = (_retsPorFact.get(f.id)||[]).reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasa,0);
+    const retISLR = (f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
+    return total - pagos - retIVA - retISLR;
+  };
+
+  // Agrupar por proveedor
+  const allFacts = useMemo(()=>(facturasCompra||[]).filter(f=>{
+    if(f.status==='ANULADA') return false;
+    if(ecDesde && (f.fecha||'')< ecDesde) return false;
+    if(ecHasta && (f.fecha||'')> ecHasta) return false;
+    return true;
+  }),[facturasCompra,ecDesde,ecHasta]);
+
+  const porProveedor = useMemo(()=>{
+    const m = {};
+    allFacts.forEach(f=>{
+      const k=f.proveedorId||f.proveedor||'SIN_PROV';
+      if(!m[k]) m[k]={provId:k,nombre:f.proveedor||'—',rif:'',facts:[]};
+      m[k].facts.push(f);
+    });
+    (proveedores||[]).forEach(p=>{if(m[p.id]){m[p.id].rif=p.rif||'';m[p.id].nombre=p.nombre||m[p.id].nombre;}});
+    _ncPorProv.forEach((ncs,rif)=>{
+      const prov=(proveedores||[]).find(p=>p.rif===rif);
+      if(!m[rif]) m[rif]={provId:rif,nombre:prov?.nombre||rif,rif,facts:[]};
+    });
+    return Object.values(m).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
+  },[allFacts,proveedores,_ncPorProv]);
+
+  const filtrados = ecSearch ? porProveedor.filter(g=>(g.nombre||'').toLowerCase().includes(ecSearch.toLowerCase())||(g.rif||'').includes(ecSearch)) : porProveedor;
+
+  const getSaldoProv = (g) => {
+    const s = g.facts.reduce((acc,f)=>acc+getSaldoFact(f),0);
+    const ncNet = (_ncPorProv.get(g.rif)||[]).reduce((acc,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return acc+(n.tipo==='ND'?u:-u);},0);
+    return s + ncNet;
+  };
+
+  const totalSaldo = filtrados.reduce((s,g)=>s+getSaldoProv(g),0);
+
+  // ── PDF ────────────────────────────────────────────────────────────
+  const exportarPDF = () => {
+    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp=settings?.empresaRif||'J-41230937-4';
+    const body=filtrados.map(g=>{
+      const saldoG=getSaldoProv(g);
+      const factsProv=g.facts;
+      const ncNDs=_ncPorProv.get(g.rif)||[];
+      const factRows=factsProv.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
+        const tasa=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
+        const pagos=(_pagosPorFact.get(f.id)||[]).filter(p=>(!ecHasta||(p.fecha||'')<=ecHasta));
+        const rets=_retsPorFact.get(f.id)||[];
+        const saldo=getSaldoFact(f);
+        const saldoLabel=Math.abs(saldo)<0.01?'Saldado':saldo<-0.01?'A favor':'Pendiente';
+        return `<tr style="border-bottom:1px solid #e5e7eb">
+<td style="padding:3px 6px;font-weight:700;color:#f97316;font-size:9px">${f.nroFactura||'—'}</td>
+<td style="padding:3px 6px;font-size:9px">${fD(f.fecha)}</td>
+<td style="padding:3px 6px;font-size:9px">${f.condPago||f.diasCredito?f.diasCredito+'d':'—'}</td>
+<td style="padding:3px 6px;font-size:9px;color:#2563eb">${f.nroControl||'—'}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$${fN(f.total||0)}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:9px;color:#16a34a">$${fN(pagos.reduce((s,p)=>s+pN(p.monto||0),0))}</td>
+<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:9px;color:#f97316">$${fN(saldo)}</td>
+<td style="padding:3px 6px;font-size:8px;color:#6b7280">${saldoLabel}</td>
+</tr>
+${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#16a34a" colspan="3">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td><td style="color:#16a34a">${p.banco||''}</td><td colspan="3" style="text-align:right;color:#16a34a;font-family:monospace">-$${fN(pN(p.monto||0))}</td><td></td></tr>`).join('')}
+${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#dc2626" colspan="3">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'}</td><td></td><td colspan="3" style="text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasa)}</td><td></td></tr>`).join('')}
+${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td></tr>`).join('')}`;
+      }).join('');
+      const ncRows=ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'$'}${fN(u)}</td><td></td></tr>`;}).join('');
+      return `<div style="margin-bottom:16px;page-break-inside:avoid;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">
+<div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between">
+  <div><strong style="font-size:11px">${g.nombre}</strong> <span style="font-size:9px;color:#94a3b8">${g.rif}</span></div>
+  <div style="font-family:monospace;font-weight:900;font-size:12px;color:#f97316">$${fN(saldoG)}</div>
+</div>
+<table style="width:100%;border-collapse:collapse;font-size:9px">
+<thead><tr style="background:#0f172a"><th style="padding:4px 6px;color:#f97316;text-align:left">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">COND.PAGO</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th><th style="color:#94a3b8;padding:4px 6px">ESTADO</th></tr></thead>
+<tbody>${factRows}${ncRows}</tbody>
+<tfoot><tr style="background:#1e293b;color:#fff"><td colspan="4" style="padding:4px 8px;font-weight:900">Subtotal ${factsProv.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(factsProv.reduce((s,f)=>s+pN(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fN(factsProv.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(saldoG)}</td><td></td></tr></tfoot>
+</table></div>`;
+    }).join('');
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:legal landscape;margin:1.2cm 1.5cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">
+  <div><div style="font-size:14px;font-weight:900">${emp}</div><div style="font-size:8px;color:#666">RIF: ${rifEmp}</div><div style="font-size:7px;color:#999">${settings?.empresaDireccion||''}</div></div>
+  <div style="text-align:right"><div style="font-size:12px;font-weight:900;color:#f97316">ESTADO DE CUENTA — CUENTAS POR PAGAR</div>
+    <div style="font-size:8px;color:#555">Corte: ${ecHasta||hoy} · ${filtrados.length} proveedores · ${filtrados.reduce((s,g)=>s+g.facts.length,0)} docs · Saldo total: $${fN(totalSaldo)}</div></div>
+</div>
+${body}
+<div style="background:#0f172a;color:#fff;padding:8px 12px;margin-top:16px;display:flex;justify-content:space-between;font-weight:900;font-size:11px">
+  <span>SALDO TOTAL · ${filtrados.length} proveedores</span><span style="color:#f97316">$${fN(totalSaldo)}</span>
+</div>
+<script>window.onload=()=>window.print();<\/script></body></html>`;
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  // ── Excel ──────────────────────────────────────────────────────────
+  const exportarExcel = () => {
+    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const ths=['Proveedor','RIF','Facturado','Cobrado','Ret. IVA','Ret. ISLR','NC/ND','Saldo','Estado'];
+    const rows=filtrados.map(g=>{
+      const saldoG=getSaldoProv(g);
+      const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
+      const pagado=g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0);
+      const retIVA=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
+      const retISLR=g.facts.reduce((s,f)=>s+(f.retISLRLista||[]).reduce((ss,r)=>ss+pN(r.monto||0),0),0);
+      const ncNet=(_ncPorProv.get(g.rif)||[]).reduce((s,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return s+(n.tipo==='ND'?u:-u);},0);
+      return [g.nombre,g.rif,facturado,pagado,retIVA,retISLR,ncNet,saldoG,saldoG<-0.01?'A favor':saldoG<0.01?'Saldado':'Pendiente'];
+    });
+    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — ESTADO DE CUENTA PROVEEDORES · Corte: ${ecHasta||hoy}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="7" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalSaldo)}</td><td></td></tr></tfoot></table></body></html>`;
+    Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'EC_Proveedores.xls'}).click();
+  };
+
+  return(
+    <div className="p-4 space-y-4">
+      {/* HEADER */}
+      <div className="bg-white rounded-2xl border p-4 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-black text-xl uppercase flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/>Estado de Cuenta — Proveedores</h2>
+          <p className="text-xs text-gray-500 mt-1">{filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facts.length,0)} documentos · Saldo total: <span className="font-black text-orange-700">${fN(totalSaldo)}</span></p>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <input value={ecSearch} onChange={e=>setEcSearch(e.target.value)} placeholder="Buscar proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] text-gray-400 font-bold">Desde</span>
+            <input type="date" value={ecDesde} onChange={e=>setEcDesde(e.target.value)} className="border border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] text-gray-400 font-bold">Hasta</span>
+            <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+          </div>
+          <button onClick={()=>setEcExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{ecExpandAll?'▲':'▼'} Todo</button>
+          <button onClick={exportarPDF} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
+          <button onClick={exportarExcel} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel</button>
+        </div>
+      </div>
+
+      {/* TABLA */}
+      <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
+        {filtrados.length===0?(
+          <div className="text-center py-16 text-gray-400 font-bold text-xs uppercase">Sin datos para el período seleccionado</div>
+        ):(
+          filtrados.map(g=>{
+            const saldoG=getSaldoProv(g);
+            const isExp=ecExpandAll||!!ecExpanded[g.provId];
+            const ncNDs=_ncPorProv.get(g.rif)||[];
+            const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
+            const pagado=g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0);
+            const retIVAtot=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
+            return(
+            <div key={g.provId} className="border-b-2 border-gray-100 last:border-0">
+              {/* Cabecera proveedor */}
+              <div className="flex items-center justify-between px-5 py-3 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-all" onClick={()=>setEcExpanded(p=>({...p,[g.provId]:!p[g.provId]}))}>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-orange-100 flex items-center justify-center"><span className="font-black text-orange-600 text-[10px]">{(g.nombre||'?')[0].toUpperCase()}</span></div>
+                  <div>
+                    <div className="font-black text-sm text-gray-800">{g.nombre}</div>
+                    <div className="text-[9px] text-gray-400">{g.rif} · {g.facts.length} doc(s)</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-6 text-[10px]">
+                  <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Facturado</div><div className="font-mono font-black">${fN(facturado)}</div></div>
+                  <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Pagado</div><div className="font-mono font-black text-green-700">${fN(pagado)}</div></div>
+                  <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Retención IVA</div><div className="font-mono font-black text-red-600">{retIVAtot>0.001?'$'+fN(retIVAtot):'—'}</div></div>
+                  <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Saldo</div>
+                    <div className={`font-mono font-black text-base ${saldoG<-0.01?'text-teal-700':saldoG>0?'text-orange-700':'text-green-700'}`}>{saldoG<-0.01?'-$'+fN(Math.abs(saldoG)):'$'+fN(saldoG)}</div>
+                  </div>
+                  <div className="text-gray-400 text-lg">{isExp?'▲':'▼'}</div>
+                </div>
+              </div>
+              {/* Detalle */}
+              {isExp&&(
+                <div className="overflow-x-auto bg-white">
+                  <table className="w-full text-[9px]">
+                    <thead>
+                      <tr className="bg-slate-800 text-white">
+                        {['DOCUMENTO','FECHA','COND.','N° CONTROL','DETALLE','CARGO USD','NC/RET.','ABONO','SALDO','ESTADO'].map(h=>(
+                          <th key={h} className="py-2 px-3 font-black text-[8px] text-left">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {g.facts.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
+                        const tasa=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
+                        const pagosF=(_pagosPorFact.get(f.id)||[]).filter(p=>(!ecHasta||(p.fecha||'')<=ecHasta));
+                        const retsF=_retsPorFact.get(f.id)||[];
+                        const retIVA=retsF.reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasa,0);
+                        const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
+                        const saldo=getSaldoFact(f);
+                        const saldoLabel=Math.abs(saldo)<0.01?'Saldado':saldo<-0.01?'A favor':'Pendiente';
+                        const dc=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
+                        return(
+                          <React.Fragment key={f.id}>
+                            <tr className="border-b border-gray-100 hover:bg-blue-50/30">
+                              <td className="py-2 px-3 font-black text-orange-600">{f.nroFactura||f.id}</td>
+                              <td className="py-2 px-3">{fD(f.fecha)}</td>
+                              <td className="py-2 px-3 text-center text-indigo-600">{dc?dc+'d':'—'}</td>
+                              <td className="py-2 px-3 text-blue-600">{f.nroControl||'—'}</td>
+                              <td className="py-2 px-3 text-gray-500 truncate max-w-[180px]">{f.proveedor} · {f.observaciones||'Factura de compra'}</td>
+                              <td className="py-2 px-3 text-right font-mono font-black">${fN(f.total||0)}</td>
+                              <td className="py-2 px-3 text-right font-mono text-red-600">{(retIVA+retISLR)>0.001?'-$'+fN(retIVA+retISLR):'—'}</td>
+                              <td className="py-2 px-3 text-right font-mono text-green-700">{pagosF.reduce((s,p)=>s+pN(p.monto||0),0)>0.001?'$'+fN(pagosF.reduce((s,p)=>s+pN(p.monto||0),0)):'—'}</td>
+                              <td className={`py-2 px-3 text-right font-mono font-black ${saldo<-0.01?'text-teal-700':saldo<0.01?'text-green-600':'text-orange-700'}`}>${fN(saldo)}</td>
+                              <td className="py-2 px-3"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${saldoLabel==='Saldado'?'bg-green-100 text-green-700':saldoLabel==='A favor'?'bg-teal-100 text-teal-700':'bg-orange-100 text-orange-700'}`}>{saldoLabel}</span></td>
+                            </tr>
+                            {pagosF.map((p,pi)=>(
+                              <tr key={pi} className="bg-green-50/80 border-b border-green-100">
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago</td>
+                                <td className="py-1.5 px-3 text-[8px] text-green-600">{fD(p.fecha)}</td>
+                                <td className="py-1.5 px-3"><span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
+                                <td className="py-1.5 px-3 text-[8px] text-green-600">{p.metodo||'—'}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500">{p.banco||''} {p.referencia?'· #'+p.referencia:''}</td>
+                                <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
+                                <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
+                                <td className="py-1.5 px-3 text-right font-mono font-black text-green-700 text-[8px]">-${fN(pN(p.monto||0))}</td>
+                                <td colSpan={2}></td>
+                              </tr>
+                            ))}
+                            {retsF.map((r,ri)=>(
+                              <tr key={ri} className="bg-red-50/80 border-b border-red-100">
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-red-700">↳ Ret. IVA</td>
+                                <td className="py-1.5 px-3 text-[8px] text-red-600">{fD(r.fecha)}</td>
+                                <td className="py-1.5 px-3"><span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret.</span></td>
+                                <td className="py-1.5 px-3 text-[8px] text-red-600">Comp. {r.nroComprobante||'—'}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500">IVA {r.pctRetencion||75}% · Bs.{fN(pN(r.montoBs||0))}</td>
+                                <td></td>
+                                <td className="py-1.5 px-3 text-right font-mono font-black text-red-700 text-[8px]">-${fN(pN(r.montoBs||r.montoRetenido||0)/tasa)}</td>
+                                <td colSpan={3}></td>
+                              </tr>
+                            ))}
+                            {(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map((r,ri)=>(
+                              <tr key={ri} className="bg-purple-50/80 border-b border-purple-100">
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ Ret. ISLR</td>
+                                <td className="py-1.5 px-3 text-[8px]">{fD(f.fecha)}</td>
+                                <td className="py-1.5 px-3"><span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">ISLR</span></td>
+                                <td className="py-1.5 px-3 text-[8px] text-purple-600">{r.codigo||''}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500">ISLR {r.pct||0}% · {r.concepto||''}</td>
+                                <td></td>
+                                <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">-${fN(pN(r.monto||0))}</td>
+                                <td colSpan={3}></td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                      {ncNDs.map((n,ni)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return(
+                        <tr key={ni} className="bg-purple-50/80 border-b border-purple-100">
+                          <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {n.tipo==='NC'?'NC':'ND'} · {n.nroDocumento||'—'}</td>
+                          <td className="py-1.5 px-3 text-[8px]">{fD(n.fecha)}</td>
+                          <td className="py-1.5 px-3"><span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{n.tipo}</span></td>
+                          <td colSpan={2} className="py-1.5 px-3 text-[8px] text-gray-500">{n.descripcion||'Ajuste directo al proveedor'}</td>
+                          <td></td>
+                          <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{n.tipo==='NC'?'-$':'$'}{fN(u)}</td>
+                          <td colSpan={3}></td>
+                        </tr>
+                      );})}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-900 text-white font-black">
+                        <td colSpan={4} className="py-2 px-3 text-[9px]">SUBTOTAL · {g.facts.length} doc(s){ncNDs.length>0?` + ${ncNDs.length} NC/ND directa`:''}</td>
+                        <td></td>
+                        <td className="py-2 px-3 text-right font-mono">${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td>
+                        <td className="py-2 px-3 text-right font-mono text-red-300">${fN(retIVAtot)}</td>
+                        <td className="py-2 px-3 text-right font-mono text-green-400">${fN(g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0))}</td>
+                        <td className={`py-2 px-3 text-right font-mono font-black text-base ${saldoG<-0.01?'text-teal-400':saldoG<0.01?'text-green-400':'text-orange-400'}`}>${fN(saldoG)}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+            );
+          })
+        )}
+        {filtrados.length>0&&(
+          <div className="bg-slate-900 text-white px-5 py-3 flex justify-between items-center font-black">
+            <span className="text-[10px] uppercase">Saldo Total · {filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facts.length,0)} documentos</span>
+            <span className="text-orange-400 text-lg font-mono">${fN(totalSaldo)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4883,10 +5326,11 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     rows.forEach(r => {
       aoa.push([
         r.seq, fmtFE(r.fecha), r.rif, r.nombre, r.tipo,
-        r.nroFactura||'—', r.nroControl||'—', r.retFact||'—', '—', '—', '—',
-        r.impTotal, r.impBase, r.tipo==='FACTURA'?0.16:null, r.impIVA,
-        r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, r.tipo==='FACTURA'?0.16:null, r.ciCred||null,
-        r.crTotal||null, r.crBase||null, r.tipo==='FACTURA'?0.08:null, r.crCred||null,
+        r.nroFactura||'—', r.nroControl||'—', r.retFact||'—',
+        r.impFechaAplic?fmtFE(r.impFechaAplic):'', r.impPlanilla||'', r.impExpediente||'',
+        r.impTotal||null, r.impBase||null, r.impBase>0&&r.tipo==='FACTURA'?0.16:null, r.impIVA||null,
+        r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, r.tipo==='FACTURA'&&r.ciBase>0?0.16:null, r.ciCred||null,
+        r.crTotal||null, r.crBase||null, r.tipo==='FACTURA'&&r.crBase>0?0.08:null, r.crCred||null,
         r.retPct||'—', r.retMonto||null, r.retFact||'—', r.retComp||'—',
       ]);
     });
@@ -5165,21 +5609,40 @@ ${resumenHtml}
     <div className="flex flex-col h-full overflow-hidden bg-slate-50">
       {/* Header + filtros */}
       <div className="flex-shrink-0 px-4 py-3 bg-white border-b border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen size={16} className="text-orange-500"/>
-            <h2 className="font-black text-sm uppercase tracking-widest text-slate-800">Libro de Compras</h2>
-            <span className="text-[10px] text-slate-400 font-mono">{periodoLabel}</span>
+        {/* Membrete: empresa izquierda, IVA/Forma derecha */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-start gap-4">
+            <div>
+              <div className="font-black text-sm text-gray-900">{settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div>
+              <div className="text-[9px] font-black text-gray-600">RIF: {settings?.empresaRif||'J-412309374'}</div>
+              <div className="text-[8px] text-gray-400 max-w-xs">{settings?.empresaDireccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA'}</div>
+              <div className="font-black text-[11px] border-b-2 border-gray-900 pb-0.5 mt-1 uppercase">Libro de Compras</div>
+              <div className="text-[9px] text-slate-400 font-mono mt-0.5">{periodoLabel}</div>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button onClick={exportExcel}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-emerald-700 transition-all shadow">
-              <FileSpreadsheet size={12}/> Excel
-            </button>
-            <button onClick={exportPDF}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700 transition-all shadow">
-              <Printer size={12}/> PDF
-            </button>
+          <div className="flex items-start gap-3">
+            <div className="text-right" style={{minWidth:170}}>
+              <div className="bg-gray-800 text-white text-[9px] font-black px-3 py-1 text-right">IMPUESTO AL VALOR AGREGADO</div>
+              <div className="text-[9px] font-bold text-center border border-gray-200 px-3 py-0.5">FORMA 99030</div>
+              <div className="flex mt-1">
+                <div className="bg-gray-800 text-white text-[9px] font-black px-2 py-0.5">MES</div>
+                <div className="text-[9px] font-black border border-gray-200 px-3 py-0.5 flex-1 text-right">{(MESES[parseInt(filtMes,10)-1]||'').toUpperCase()}</div>
+              </div>
+              <div className="bg-orange-600 text-white text-[8px] font-black px-2 py-0.5 mt-0.5 text-center">
+                PERÍODO: {filtQ==='AMBAS'?'MES COMPLETO':filtQ==='1'?'I QUINCENA':'II QUINCENA'} — {desde} AL {hasta} — {rows.length} reg.
+              </div>
+              <div className="text-[8px] text-center text-gray-500 mt-0.5">DEL {desde} AL {hasta}</div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <button onClick={exportExcel}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-emerald-700 transition-all shadow">
+                <FileSpreadsheet size={12}/> Excel
+              </button>
+              <button onClick={exportPDF}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700 transition-all shadow">
+                <Printer size={12}/> PDF
+              </button>
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
@@ -5434,6 +5897,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
   const [ordenesCompra,setOrdenesCompra]=useState([]);
   const [facturasCompra,setFacturasCompra]=useState([]);
   const [pagosCxP,setPagosCxP]=useState([]);
+  const [cxpPagoModal, setCxpPagoModal] = useState(null); // modal Registrar Pago CxP
   const [tasas,setTasas]=useState([]);
   const [dialog,setDialog]=useState(null);
   const [retIVACompra,setRetIVACompra]=useState([]);
@@ -5460,7 +5924,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,notasCompraCD,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,notasCompraCD,cxpPagoModal,setCxpPagoModal,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -5472,7 +5936,6 @@ function ProcuraApp({fbUser,onBack,settings}) {
     {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>},
     {id:'libro_compras',label:'Libro Compras',   icon:<BookOpen size={13}/>, badge:null},
     {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
-    {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>},
     {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>},
     {id:'nc_nd_compra',label:'NC / ND',              icon:<FileText size={13}/>},
   ];
@@ -5486,8 +5949,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'facturas':return <FacturasCompraView {...sharedProps} facturaPreload={facturaPreload} onPreloadConsumed={()=>setFacturaPreload(null)}/>;
       case 'libro_compras':return <LibroComprasView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
-      case 'historial':return <CxPView {...sharedProps}/>;  // HistorialPagosView → redirigido a CxPView
-      case 'estado':return <CxPView {...sharedProps}/>;
+      case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
       case 'nc_nd_compra':return <NotasCompraNCView {...sharedProps} compraNCForm={compraNCForm} setCompraNCForm={setCompraNCForm} showCompraNCModal={showCompraNCModal} setShowCompraNCModal={setShowCompraNCModal} compraNCBusq={compraNCBusq} setCompraNCBusq={setCompraNCBusq} compraNCBusqCli={compraNCBusqCli} setCompraNCBusqCli={setCompraNCBusqCli}/>;
       default:return null;
     }
