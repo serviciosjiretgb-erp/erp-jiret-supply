@@ -3870,6 +3870,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const CajaOpView = () => {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
+    const [cajaDet, setCajaDet]   = useState(null);   // movimiento seleccionado para ver/editar
+    const [cajaEdit, setCajaEdit] = useState(false);   // modo edición
+    const [cajaPwdModal, setCajaPwdModal] = useState(null); // movimiento a eliminar
+    const [cajaPwd, setCajaPwd]   = useState('');
+    const [cajaPwdErr, setCajaPwdErr] = useState(false);
     const initF = ()=>({fecha:getTodayDate(),tipo:'Ingreso',moneda:'BS',concepto:'',referencia:'',monto:'',tasa:String(tasaActiva),aplicaTercero:false,tipoTercero:'Cliente',terceroId:''});
     const [form, setForm] = useState(initF());
     const monto  = Number(form.monto)||0;
@@ -3877,12 +3882,38 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     const montoBs  = form.moneda==='BS' ? monto : monto*tasa;
     const montoUSD = form.moneda==='BS' ? monto/tasa : monto;
     // Movimientos de caja manuales + movimientos del banco_movimientos (cobros CxC y pagos CxP del ERP)
-    const movBancoEnCaja = movBanco.filter(m=>m.origen==='CxP'||m.origenIngreso==='Cobro NE'||m.origenIngreso==='CobroCxC').map(m=>({
-      ...m,
-      moneda: m.moneda||( m.montoBs>0&&m.montoUSD>0? (m.montoBs/m.montoUSD>5?'BS':'USD') : 'USD' ),
-      tipo: m.tipo==='EGRESO'?'Egreso': m.tipo==='Ingreso'?'Ingreso': m.tipo||'Ingreso',
-      _fromBanco: true
-    }));
+    // Incluir: pagos CxP (origen:'CxP'), cobros simples ('Cobro NE'), cobros multicobro ('Cobro CxC')
+    const movBancoEnCaja = movBanco.filter(m=>
+      m.origen==='CxP' ||
+      m.origenIngreso==='Cobro NE' ||
+      m.origenIngreso==='Cobro CxC' ||
+      m.origenIngreso==='CobroCxC'   // compatibilidad con escrituras antiguas
+    ).map(m=>{
+      const tipoNorm = m.tipo==='EGRESO'?'Egreso': m.tipo==='Ingreso'?'Ingreso': m.tipo||'Ingreso';
+      // Normalizar moneda: CxP escribe 'USD'/'Bs', cobros pueden traer otra clave
+      const monedaNorm = m.moneda==='BS'?'BS': m.moneda==='USD'?'USD':
+        (m.montoBs>0&&m.montoUSD>0?(m.montoBs/m.montoUSD>5?'BS':'USD'):'USD');
+      // Para pagos CxP el campo montoBs puede ser el monto total Bs
+      const montoBsNorm  = m.montoBs   || (m.monto && m.tasa ? m.monto*m.tasa : 0);
+      const montoUSDNorm = m.montoUSD  || (m.monto || 0);
+      // Concepto enriquecido: mostrar factura si existe
+      const facturaInfo = m.facturas?.length>0
+        ? m.facturas.map(f=>`${f.nroFactura||f.id} (${f.fecha||''})`).join(' | ')
+        : m.facturaId ? `Fact. ${m.facturaId}` : '';
+      const conceptoMostrar = m.concepto||`${tipoNorm==='Egreso'?'Pago':'Cobro'} ${m.proveedor||m.clientName||m.terceroNombre||'—'}`;
+      const terceroMostrar  = m.proveedor||m.clientName||m.terceroNombre||'—';
+      return {
+        ...m,
+        moneda: monedaNorm,
+        tipo: tipoNorm,
+        montoBs: montoBsNorm,
+        montoUSD: montoUSDNorm,
+        _concepto: conceptoMostrar,
+        _facturaInfo: facturaInfo,
+        _tercero: terceroMostrar,
+        _fromBanco: true
+      };
+    });
     const allMovsCaja = [...movCaja, ...movBancoEnCaja].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
     const saldoBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
     const saldoUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
@@ -3895,6 +3926,31 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
         const id=bancoGid(); const tercero=form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):provs.find(p=>p.id===form.terceroId);
         await setDoc(getDocRef('caja_movimientos',id),{id,fecha:form.fecha,tipo:form.tipo,moneda:form.moneda,concepto:form.concepto,referencia:form.referencia,monto,montoBs,montoUSD,tasa,aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',ts:serverTimestamp()});
         setModal(false); setForm(initF()); setBusqCtas({});
+      } finally { setBusy(false); }
+    };
+
+    const abrirEditCaja = (m) => {
+      if(m._fromBanco) return alert('Este movimiento proviene del módulo CxC/CxP. Edítelo desde Ventas o Procura.');
+      setCajaDet(m); setCajaEdit(true);
+      setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',monto:String(m.monto||''),tasa:String(m.tasa||tasaActiva),aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||''});
+    };
+
+    const guardarEditCaja = async() => {
+      if(!cajaDet) return;
+      setBusy(true);
+      try {
+        await updateDoc(getDocRef('caja_movimientos',cajaDet.id),{fecha:form.fecha,tipo:form.tipo,moneda:form.moneda,concepto:form.concepto,referencia:form.referencia,updatedAt:Date.now()});
+        setCajaDet(null); setCajaEdit(false); setForm(initF());
+      } finally { setBusy(false); }
+    };
+
+    const confirmarElimCaja = async() => {
+      if(cajaPwd!=='1234'&&cajaPwd.toLowerCase()!=='admin'){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
+      if(!cajaPwdModal) return;
+      setBusy(true);
+      try {
+        await deleteDoc(getDocRef('caja_movimientos',cajaPwdModal.id));
+        setCajaPwdModal(null); setCajaPwd('');
       } finally { setBusy(false); }
     };
 
@@ -3911,24 +3967,90 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
           action={<BBg onClick={()=>{setForm(initF());setModal(true);}}><Plus size={13}/> Nuevo Movimiento</BBg>}>
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh></tr></thead>
+              <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh><BTh>Acciones</BTh></tr></thead>
               <tbody>
-                {allMovsCaja.length===0&&<tr><td colSpan={9}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
-                {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?'bg-blue-50/30':''}`}>
+                {allMovsCaja.length===0&&<tr><td colSpan={10}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
+                {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?(m.tipo==='Egreso'?'bg-red-50/20':'bg-green-50/20'):''}`}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':'red'}>{m.tipo}</BBadge></BTd>
                   <BTd><BPill usd={m.moneda==='USD'}>{m.moneda==='BS'?'Bs':'USD'}</BPill></BTd>
-                  <BTd className="max-w-[180px] truncate" title={m.concepto}>{m.concepto}{m._fromBanco&&<span className="ml-1 text-[8px] font-black text-blue-500 bg-blue-100 px-1 rounded">{m.origen==='CxP'?'CxP':'CxC'}</span>}</BTd>
-                  <BTd className="text-[10px] max-w-[100px] truncate">{m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
+                  <BTd className="max-w-[220px]">
+                    <div className="truncate font-semibold" title={m._concepto||m.concepto}>{m._concepto||m.concepto}</div>
+                    {m._facturaInfo&&<div className="text-[8px] text-blue-600 font-black truncate" title={m._facturaInfo}>📄 {m._facturaInfo}</div>}
+                    {m._fromBanco&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen==='CxP'?'CxP':'CxC'}</span>}
+                  </BTd>
+                  <BTd className="text-[10px] max-w-[120px] truncate">{m._tercero||m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
                   <BTd mono className="text-slate-400 text-[10px]">{m.referencia||'—'}</BTd>
                   <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>Bs.{bancoFmt(m.montoBs)}</BTd>
                   <BTd right mono className={`text-xs ${m.tipo==='Ingreso'?'text-emerald-500':'text-red-400'}`}>{'$'+bancoFmt(m.montoUSD)}</BTd>
                   <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
+                  <BTd>
+                    <div className="flex items-center gap-1">
+                      <button onClick={()=>{setCajaDet(m);setCajaEdit(false);}} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
+                      {!m._fromBanco&&<button onClick={()=>abrirEditCaja(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>}
+                      {!m._fromBanco&&<button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>}
+                    </div>
+                  </BTd>
                 </tr>)}
               </tbody>
             </table>
           </div>
         </BCard>
+
+        {/* ── MODAL VER / EDITAR MOVIMIENTO CAJA ── */}
+        {cajaDet&&(
+          <BModal open={!!cajaDet} onClose={()=>{setCajaDet(null);setCajaEdit(false);setForm(initF());}}
+            title={cajaEdit?`✏ Editando — ${cajaDet.concepto}`:`Movimiento — ${cajaDet.concepto}`} wide
+            footer={cajaEdit
+              ?<><BBo onClick={()=>{setCajaEdit(false);setForm(initF());}}>Cancelar</BBo><BBg onClick={guardarEditCaja} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
+              :<><BBd onClick={()=>{if(cajaDet._fromBanco)return alert('Este movimiento viene de CxC/CxP. Elim. desde el módulo origen.');setCajaPwdModal(cajaDet);setCajaDet(null);}}>🗑 Eliminar</BBd><div className="flex-1"/>{!cajaDet._fromBanco&&<BBg onClick={()=>abrirEditCaja(cajaDet)}>✏ Editar</BBg>}</>
+            }>
+            {cajaEdit?(
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <BFG label="Fecha"><input type="date" className={inp} value={form.fecha} onChange={e=>setForm({...form,fecha:e.target.value})}/></BFG>
+                  <BFG label="Referencia"><input className={inp} value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})}/></BFG>
+                </div>
+                <BFG label="Concepto" full><input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})}/></BFG>
+              </div>
+            ):(
+              <div className="space-y-3">
+                {cajaDet._fromBanco&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] font-black text-blue-700">📌 Movimiento originado en {cajaDet.origen==='CxP'?'Cuentas por Pagar':'Cuentas por Cobrar'} — solo lectura</div>}
+                <div className="grid grid-cols-2 gap-3">
+                  {[['Fecha',bancoDd(cajaDet.fecha)],['Tipo',cajaDet.tipo],['Moneda',cajaDet.moneda==='BS'?'Bolívares':'USD'],
+                    ['Monto Bs.',`Bs.${bancoFmt(cajaDet.montoBs)}`],['Monto USD',`$${bancoFmt(cajaDet.montoUSD)}`],['Tasa',cajaDet.tasa],
+                    ['Concepto',cajaDet._concepto||cajaDet.concepto],['Referencia',cajaDet.referencia||'—'],
+                    ['Tercero',cajaDet._tercero||cajaDet.terceroNombre||'—'],
+                  ].map(([k,v])=>(
+                    <div key={k} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                      <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-0.5">{k}</p>
+                      <p className="font-semibold text-slate-800 text-xs">{v}</p>
+                    </div>
+                  ))}
+                </div>
+                {cajaDet._facturaInfo&&<div className="bg-orange-50 border border-orange-200 rounded-xl p-3"><p className="text-[9px] font-black uppercase text-orange-700 mb-1">Factura(s) Afectada(s)</p><p className="text-xs font-black text-orange-900">📄 {cajaDet._facturaInfo}</p></div>}
+              </div>
+            )}
+          </BModal>
+        )}
+
+        {/* ── MODAL CONTRASEÑA ELIMINAR ── */}
+        {cajaPwdModal&&(
+          <BModal open={!!cajaPwdModal} onClose={()=>{setCajaPwdModal(null);setCajaPwd('');}} title="Confirmar eliminación"
+            footer={<><BBo onClick={()=>{setCajaPwdModal(null);setCajaPwd('');}}>Cancelar</BBo><BBd onClick={confirmarElimCaja} disabled={busy}>{busy?'Eliminando...':'Confirmar eliminación'}</BBd></>}>
+            <div className="space-y-4">
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
+                <Trash2 size={24} className="text-red-500 mx-auto mb-2"/>
+                <p className="font-black text-slate-800">{cajaPwdModal.concepto}</p>
+                <p className="text-sm text-red-600 font-bold mt-1">Monto: Bs.{bancoFmt(cajaPwdModal.montoBs)} · ${bancoFmt(cajaPwdModal.montoUSD)}</p>
+              </div>
+              <BFG label="Clave de administrador">
+                <input type="password" className={`${inp} ${cajaPwdErr?'border-red-500 bg-red-50':''}`} value={cajaPwd} onChange={e=>setCajaPwd(e.target.value)} placeholder="Ingrese clave admin" onKeyDown={e=>e.key==='Enter'&&confirmarElimCaja()}/>
+                {cajaPwdErr&&<p className="text-red-500 text-[10px] font-black mt-1">Clave incorrecta</p>}
+              </BFG>
+            </div>
+          </BModal>
+        )}
 
         <BModal open={modal} onClose={()=>setModal(false)} title="Movimiento de Caja" wide
           footer={<><BBo onClick={()=>setModal(false)}>Cancelar</BBo><BBg onClick={save} disabled={busy}>{busy?'Registrando...':'Registrar'}</BBg></>}>
