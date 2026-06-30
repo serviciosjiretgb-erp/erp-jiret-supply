@@ -3914,7 +3914,7 @@ const CxPView = ({
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
 
   useEffect(()=>{
-    const u = onSnapshot(getColRef('cuentasBancarias'), s=>setCuentasBancarias(s.docs.map(d=>d.data())));
+    const u = onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancarias(s.docs.map(d=>({id:d.id,...d.data()}))));
     return u;
   }, []);
 
@@ -4596,7 +4596,7 @@ ${body}
                       <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Método</label>
                       <select value={pm.lineaActual?.metodo||'Transferencia'} onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,metodo:e.target.value}}))}
                         style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',background:'#fff',boxSizing:'border-box'}}>
-                        {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
+                        {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Tarjeta Internacional (Banplus)'].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </div>
                     <div>
