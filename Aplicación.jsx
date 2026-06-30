@@ -4414,9 +4414,13 @@ ${body}
               batch.set(getDocRef('banco_movimientos',movId),{
                 id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,
                 montoUSD:l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1),
-                tasa,fecha:l.fecha||hoy,concepto:l.concepto||`Pago ${provSel?.nombre||'—'}`,
+                tasa,fecha:l.fecha||hoy,
+                concepto:l.concepto||`EGRESO CxP · ${provSel?.nombre||'—'} · ${distribFacts.map(({f})=>`Fact.${f.nroFactura||f.id} (${f.fecha||''})`.trim()).join(' | ')}`,
+                notas:distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ${f.fecha||''} $${fN(ap)}`).join(' | '),
                 referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
-                proveedor:provSel?.nombre||'—',timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
+                proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
+                facturas:distribFacts.map(({f,ap})=>({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto:ap})),
+                timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
               });
             });
             await batch.commit();
@@ -4719,6 +4723,172 @@ ${body}
 // ══════════════════════════════════════════════════════════════════
 
 
+
+
+
+// ══════════════════════════════════════════════════════════════════════
+// HISTORIAL DE PAGOS — CUENTAS POR PAGAR
+// ══════════════════════════════════════════════════════════════════════
+const HistorialPagosView = ({
+  pagosCxP, facturasCompra, proveedores, tasaBCV, settings, dialog, setDialog
+}) => {
+  const [search, setSearch] = useState('');
+  const [filtMes, setFiltMes] = useState('');
+  const [filtProv, setFiltProv] = useState('');
+
+  const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
+  const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pN(n)); const p=a.toFixed(2).split('.'); return(pN(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
+  const fD = d => { if(!d)return'—'; const pts=String(d).split('-'); return pts.length===3?`${pts[2]}/${pts[1]}/${pts[0]}`:d; };
+
+  const _factMap = useMemo(()=>{ const m=new Map(); (facturasCompra||[]).forEach(f=>m.set(f.id,f)); return m; },[facturasCompra]);
+
+  const pagos = useMemo(()=>{
+    return [...(pagosCxP||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+  },[pagosCxP]);
+
+  const filtrados = pagos.filter(p=>{
+    const pMes=(p.fecha||'').slice(0,7);
+    if(filtMes && pMes!==filtMes) return false;
+    const prov=(p.proveedor||'').toLowerCase();
+    if(filtProv && !prov.includes(filtProv.toLowerCase())) return false;
+    if(search){
+      const q=search.toLowerCase();
+      return prov.includes(q)||(p.referencia||'').toLowerCase().includes(q)||(p.metodo||'').toLowerCase().includes(q)||(_factMap.get(p.facturaId)?.nroFactura||'').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const totalUSD = filtrados.reduce((s,p)=>s+pN(p.monto||0),0);
+  const meses = [...new Set(pagos.map(p=>(p.fecha||'').slice(0,7)).filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+
+  // Exportar Excel
+  const exportExcel = () => {
+    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const ths=['Fecha','Proveedor','Factura Afectada','N° Factura','Monto USD','Método','Banco / Cuenta','N° Referencia','Concepto'];
+    const rows = filtrados.map(p=>{
+      const f=_factMap.get(p.facturaId);
+      return[p.fecha||'—',p.proveedor||'—',f?`${f.nroFactura||f.id} · ${fD(f.fecha)}`:'Proveedor directo',f?.nroControl||'—',pN(p.monto||0),p.metodo||'—',p.banco||'—',p.referencia||'—',p.concepto||'—'];
+    });
+    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — HISTORIAL DE PAGOS A PROVEEDORES</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="4" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalUSD)}</td><td colspan="4"></td></tr></tfoot></table></body></html>`;
+    Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'HistorialPagos.xls'}).click();
+  };
+
+  // Exportar PDF
+  const exportPDF = () => {
+    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp = settings?.empresaRif||'J-41230937-4';
+    const rows = filtrados.map(p=>{
+      const f=_factMap.get(p.facturaId);
+      return `<tr style="border-bottom:1px solid #e5e7eb">
+<td style="padding:3px 6px;font-size:9px">${fD(p.fecha)}</td>
+<td style="padding:3px 6px;font-size:9px;font-weight:700;color:#f97316">${p.proveedor||'—'}</td>
+<td style="padding:3px 6px;font-size:9px;color:#2563eb">${f?`${f.nroFactura||f.id}`:'—'}</td>
+<td style="padding:3px 6px;font-size:9px">${f?fD(f.fecha):'—'}</td>
+<td style="padding:3px 6px;font-size:9px;color:#2563eb">${f?.nroControl||'—'}</td>
+<td style="padding:3px 6px;font-size:9px;font-weight:700;text-align:right;font-family:monospace">$${fN(pN(p.monto||0))}</td>
+<td style="padding:3px 6px;font-size:9px">${p.metodo||'—'}</td>
+<td style="padding:3px 6px;font-size:9px">${p.banco||'—'}</td>
+<td style="padding:3px 6px;font-size:9px">${p.referencia||'—'}</td>
+</tr>`;
+    }).join('');
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:legal landscape;margin:1.2cm 1.5cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">
+  <div><div style="font-size:14px;font-weight:900">${emp}</div><div style="font-size:8px;color:#666">RIF: ${rifEmp}</div></div>
+  <div style="text-align:right"><div style="font-size:12px;font-weight:900;color:#f97316">HISTORIAL DE PAGOS A PROVEEDORES</div>
+    <div style="font-size:8px;color:#555">${filtMes||'Todos los períodos'} · ${filtrados.length} pagos · Total: $${fN(totalUSD)}</div></div>
+</div>
+<table style="width:100%;border-collapse:collapse">
+<thead><tr style="background:#0f172a">
+  <th style="padding:4px 6px;color:#f97316;font-size:8px;text-align:left">FECHA</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">PROVEEDOR</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">N° FACTURA</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">FECHA FACT.</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">N° CONTROL</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px;text-align:right">MONTO USD</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">MÉTODO</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">BANCO</th>
+  <th style="padding:4px 6px;color:#f97316;font-size:8px">REFERENCIA</th>
+</tr></thead>
+<tbody>${rows}</tbody>
+<tfoot><tr style="background:#0f172a;color:#fff">
+  <td colspan="5" style="padding:5px 8px;font-weight:900;font-size:10px">TOTAL · ${filtrados.length} pagos</td>
+  <td style="padding:5px 8px;font-weight:900;font-size:11px;text-align:right;font-family:monospace;color:#f97316">$${fN(totalUSD)}</td>
+  <td colspan="3"></td>
+</tr></tfoot>
+</table>
+<script>window.onload=()=>window.print();<\/script></body></html>`;
+    const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  return(
+    <div className="p-4 space-y-4">
+      {/* HEADER */}
+      <div className="bg-white rounded-2xl border p-4 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-black text-xl uppercase flex items-center gap-2"><Receipt size={20} className="text-orange-500"/>Historial de Pagos</h2>
+          <p className="text-xs text-gray-500 mt-1">{filtrados.length} pagos · Total: <span className="font-black text-orange-700">${fN(totalUSD)}</span></p>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor, ref., factura..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-52"/>
+          <select value={filtMes} onChange={e=>setFiltMes(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+            <option value="">Todos los meses</option>
+            {meses.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+          <input value={filtProv} onChange={e=>setFiltProv(e.target.value)} placeholder="Filtrar proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
+          <button onClick={exportPDF} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
+          <button onClick={exportExcel} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel</button>
+        </div>
+      </div>
+
+      {/* TABLA */}
+      <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-[10px]">
+            <thead className="bg-slate-800 text-white">
+              <tr>
+                {['Fecha Pago','Proveedor','N° Factura','Fecha Factura','N° Control','Monto USD','Método','Banco / Cuenta','N° Referencia'].map(h=>(
+                  <th key={h} className="py-2.5 px-3 text-left font-black text-[8px] uppercase whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.length===0&&(
+                <tr><td colSpan={9} className="text-center py-16 text-gray-400 font-bold text-xs uppercase">Sin pagos registrados</td></tr>
+              )}
+              {filtrados.map((p,i)=>{
+                const f=_factMap.get(p.facturaId);
+                return(
+                  <tr key={p.id||i} className="border-b border-gray-100 hover:bg-orange-50/30">
+                    <td className="py-2.5 px-3 font-bold whitespace-nowrap">{fD(p.fecha)}</td>
+                    <td className="py-2.5 px-3 font-black text-orange-700 max-w-[180px] truncate">{p.proveedor||'—'}</td>
+                    <td className="py-2.5 px-3 font-black text-blue-600">{f?.nroFactura||p.facturaId||'—'}</td>
+                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{f?fD(f.fecha):'—'}</td>
+                    <td className="py-2.5 px-3 text-indigo-600">{f?.nroControl||'—'}</td>
+                    <td className="py-2.5 px-3 text-right font-mono font-black text-green-700">${fN(pN(p.monto||0))}</td>
+                    <td className="py-2.5 px-3">
+                      <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[8px] font-black whitespace-nowrap">{p.metodo||'—'}</span>
+                    </td>
+                    <td className="py-2.5 px-3 text-gray-500 max-w-[160px] truncate">{p.banco||'—'}</td>
+                    <td className="py-2.5 px-3 font-mono text-gray-600">{p.referencia||'—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {filtrados.length>0&&(
+              <tfoot>
+                <tr className="bg-slate-900 text-white font-black">
+                  <td colSpan={5} className="py-3 px-3 text-[10px] uppercase">Total · {filtrados.length} pagos</td>
+                  <td className="py-3 px-3 text-right font-mono text-orange-400 text-sm">${fN(totalUSD)}</td>
+                  <td colSpan={3}></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -6178,6 +6348,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
     {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>},
     {id:'libro_compras',label:'Libro Compras',   icon:<BookOpen size={13}/>, badge:null},
     {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
+    {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>, badge:(pagosCxP||[]).length||null},
     {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>},
     {id:'nc_nd_compra',label:'NC / ND',              icon:<FileText size={13}/>},
   ];
@@ -6191,6 +6362,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
       case 'facturas':return <FacturasCompraView {...sharedProps} facturaPreload={facturaPreload} onPreloadConsumed={()=>setFacturaPreload(null)}/>;
       case 'libro_compras':return <LibroComprasView {...sharedProps}/>;
       case 'cxp':return <CxPView {...sharedProps}/>;
+      case 'historial':return <HistorialPagosView {...sharedProps}/>;
       case 'estado':return <EstadoCuentaProvView {...sharedProps}/>;
       case 'nc_nd_compra':return <NotasCompraNCView {...sharedProps} compraNCForm={compraNCForm} setCompraNCForm={setCompraNCForm} showCompraNCModal={showCompraNCModal} setShowCompraNCModal={setShowCompraNCModal} compraNCBusq={compraNCBusq} setCompraNCBusq={setCompraNCBusq} compraNCBusqCli={compraNCBusqCli} setCompraNCBusqCli={setCompraNCBusqCli}/>;
       default:return null;
