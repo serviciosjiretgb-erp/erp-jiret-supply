@@ -3905,7 +3905,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // ══════════════════════════════════════════════════════════════════════════
 const CxPView = ({
   facturasCompra, pagosCxP, proveedores, retIVACompra, notasCompraCD,
-  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal
+  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal, appUser
 }) => {
   const [cxpSearch, setCxpSearch] = useState('');
   const [cxpFechaRef, setCxpFechaRef] = useState('');
@@ -5035,7 +5035,7 @@ ${body}
 // MÓDULO: NOTAS DE CRÉDITO / DÉBITO — COMPRAS (espejo de Ventas)
 // ══════════════════════════════════════════════════════════════════════
 const NotasCompraNCView = ({
-  dialog, setDialog, proveedores, facturasCompra, notasCompraCD, settings, tasaBCV,
+  dialog, setDialog, proveedores, facturasCompra, notasCompraCD, settings, tasaBCV, appUser,
   compraNCForm, setCompraNCForm,
   showCompraNCModal, setShowCompraNCModal,
   compraNCBusq, setCompraNCBusq,
@@ -6132,7 +6132,7 @@ ${resumenHtml}
 
 
 
-function ProcuraApp({fbUser,onBack,settings}) {
+function ProcuraApp({fbUser,onBack,settings,appUser}) {
   const [sec,setSec]=useState('dashboard');
   const [facturaPreload,setFacturaPreload]=useState(null);
   const [proveedores,setProveedores]=useState([]);
@@ -6166,7 +6166,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,notasCompraCD,cxpPagoModal,setCxpPagoModal,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -37438,7 +37438,7 @@ ${resumenHtml}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
 
           {/* ── PROCURA & COMPRAS ── */}
-           {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
+           {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings} appUser={appUser}/>}
 
           {/* ── IMPUESTOS ── */}
            {activeTab === 'impuestos' && (hasPerm('impuestos')||appUser?.role==='Master') && <ImpuestosApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
