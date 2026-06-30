@@ -4343,6 +4343,384 @@ ${provRows}
 // ══════════════════════════════════════════════════════════════════
 // LIBRO DE COMPRAS VIEW — Módulo Procura
 // ══════════════════════════════════════════════════════════════════
+
+
+
+// ══════════════════════════════════════════════════════════════════════
+// MÓDULO: NOTAS DE CRÉDITO / DÉBITO — COMPRAS (espejo de Ventas)
+// ══════════════════════════════════════════════════════════════════════
+const NotasCompraNCView = ({
+  dialog, setDialog, proveedores, facturasCompra, notasCompraCD, settings, tasaBCV,
+  compraNCForm, setCompraNCForm,
+  showCompraNCModal, setShowCompraNCModal,
+  compraNCBusq, setCompraNCBusq,
+  compraNCBusqCli, setCompraNCBusqCli,
+}) => {
+  const pNum = v => { if(v===''||v===null||v===undefined)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
+  const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pNum(n)||0); const p=a.toFixed(2).split('.'); return(pNum(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
+  const getTodayDate = () => new Date().toISOString().split('T')[0];
+
+  // ── Guardar NC/ND Compra ───────────────────────────────────────────
+  const handleSaveCompraNC = async () => {
+    if(!compraNCForm.fecha||!compraNCForm.nroDocumento)
+      return setDialog({title:'Datos incompletos',text:'Completa N° documento y fecha.',type:'alert'});
+    if(compraNCForm.naturaleza==='FISCAL'&&!compraNCForm.facturaId)
+      return setDialog({title:'Falta factura',text:'Selecciona la factura de compra a la que aplica.',type:'alert'});
+    const esProvDirecto=compraNCForm.naturaleza==='NO_FISCAL'&&compraNCForm._provDirecto;
+    if(compraNCForm.naturaleza==='NO_FISCAL'&&!esProvDirecto&&!compraNCForm.facturaId)
+      return setDialog({title:'Falta factura',text:'Selecciona la factura de compra.',type:'alert'});
+    if(esProvDirecto&&!compraNCForm.provRif)
+      return setDialog({title:'Falta proveedor',text:'Selecciona un proveedor.',type:'alert'});
+    if(esProvDirecto&&!pNum(compraNCForm.montoUSD||0))
+      return setDialog({title:'Falta monto',text:'Ingresa el monto.',type:'alert'});
+    try{
+      const id=`CNC-${Date.now()}`;
+      const facAfect=(facturasCompra||[]).find(i=>i.id===compraNCForm.facturaId);
+      const tasaAfect=esProvDirecto
+        ?(pNum(compraNCForm.tasaDirecta||0)||pNum(settings?.tasaBCV||0)||1)
+        :(pNum(facAfect?.tasa||0)||pNum(settings?.tasaBCV||0)||1);
+      const esND=compraNCForm.tipo==='ND';
+      const modoOp=esND?'ajuste':(compraNCForm.modoOp||'ajuste');
+      const montoFinal=esProvDirecto
+        ?parseFloat((pNum(compraNCForm.montoUSD||0)*tasaAfect).toFixed(2))
+        :(compraNCForm.monto?pNum(compraNCForm.monto):0);
+      const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,...formSafe}=compraNCForm;
+      const cleanForm=Object.fromEntries(Object.entries({...formSafe}).filter(([,v])=>v!==undefined));
+      const batch=writeBatch(db);
+      batch.set(getDocRef('notasCompraCreditoDebito',id),{
+        ...cleanForm,id,monto:montoFinal,tasaFactura:tasaAfect,
+        tieneIva:esProvDirecto?false:true,
+        timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+      });
+      await batch.commit();
+      setShowCompraNCModal(false);setCompraNCBusq('');setCompraNCBusqCli('');
+      setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});
+      setDialog({title:'✅ Guardada',text:`${compraNCForm.tipo} ${compraNCForm.nroDocumento} de compras registrada.`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const ncFiltradas=(notasCompraCD||[]).filter(n=>
+    !compraNCBusq||(n.nroDocumento||'').toUpperCase().includes(compraNCBusq.toUpperCase())||
+    ((facturasCompra||[]).find(i=>i.id===n.facturaId)?.proveedor||'').toUpperCase().includes(compraNCBusq.toUpperCase())
+  );
+
+  const exportNCExcelCompra=()=>{
+    const ths=['Tipo','N° Doc.','Fecha','Naturaleza','Factura Compra Afectada','Proveedor','Monto USD','N° Control','Descripción'];
+    const rH=ncFiltradas.map(n=>{
+      const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
+      const prov=fc?.proveedor||n.provName||'—';
+      const doc=fc?.nroFactura||'—';
+      const t=pNum(n.tasaFactura||0)||1;
+      const usd=t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0);
+      return '<tr>'+[n.tipo,n.nroDocumento,n.fecha,n.naturaleza,doc,prov,fN(usd),n.nroControl||'—',n.descripcion||''].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';
+    }).join('');
+    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'} — NOTAS DE CRÉDITO Y DÉBITO (COMPRAS)</h2><table style="border-collapse:collapse;font-family:Arial"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody></table></body></html>`;
+    Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel'})),download:'NotasCreditoDebitoCompras.xls'}).click();
+  };
+
+  return(
+    <div className="p-4 space-y-4">
+      {/* HEADER */}
+      <div className="bg-white rounded-2xl border p-4 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-black text-xl uppercase flex items-center gap-2"><FileText size={20} className="text-orange-500"/>Notas de Crédito / Débito — Compras</h2>
+          <p className="text-xs text-gray-500 mt-1">NC resta del Libro de Compras (negativo) · ND suma al Libro de Compras</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <input value={compraNCBusq} onChange={e=>setCompraNCBusq(e.target.value)} placeholder="Buscar N° doc, proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-52"/>
+          <button onClick={exportNCExcelCompra} className="flex items-center gap-1 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase hover:bg-emerald-700"><Download size={13}/>Excel</button>
+          <button onClick={()=>{setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});setCompraNCBusq('');setCompraNCBusqCli('');setShowCompraNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
+        </div>
+      </div>
+
+      {/* TABLA */}
+      <div className="bg-white rounded-2xl border overflow-hidden">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-slate-800 text-white">
+              <th className="text-left p-3 font-black uppercase text-[9px]">Tipo</th>
+              <th className="text-left p-3 font-black uppercase text-[9px]">N° Documento</th>
+              <th className="text-left p-3 font-black uppercase text-[9px]">Fecha</th>
+              <th className="text-left p-3 font-black uppercase text-[9px]">Naturaleza</th>
+              <th className="text-left p-3 font-black uppercase text-[9px]">Factura Afectada</th>
+              <th className="text-left p-3 font-black uppercase text-[9px]">Proveedor</th>
+              <th className="text-right p-3 font-black uppercase text-[9px]">Monto USD</th>
+              <th className="text-left p-3 font-black uppercase text-[9px]">Descripción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ncFiltradas.length===0&&(
+              <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm font-bold">No hay notas de crédito/débito de compras registradas</td></tr>
+            )}
+            {ncFiltradas.map(n=>{
+              const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
+              const t=pNum(n.tasaFactura||0)||1;
+              const usd=t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0);
+              return(
+                <tr key={n.id} className="border-b border-gray-100 hover:bg-slate-50">
+                  <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${n.tipo==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{n.tipo}</span></td>
+                  <td className="p-3 font-black">{n.nroDocumento||'—'}</td>
+                  <td className="p-3 text-gray-600">{n.fecha||'—'}</td>
+                  <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${n.naturaleza==='FISCAL'?'bg-purple-100 text-purple-700':'bg-amber-100 text-amber-700'}`}>{n.naturaleza==='FISCAL'?'🏛 FISCAL':'📦 NO FISCAL'}</span></td>
+                  <td className="p-3 text-blue-600 font-bold">{fc?.nroFactura||'—'}</td>
+                  <td className="p-3">{fc?.proveedor||n.provName||'—'}</td>
+                  <td className="p-3 text-right font-mono font-black">{n.tipo==='NC'?'-':'+'}{fN(usd)}</td>
+                  <td className="p-3 text-gray-500 text-[10px]">{n.descripcion||'—'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          {ncFiltradas.length>0&&(()=>{
+            const totNC=ncFiltradas.filter(n=>n.tipo==='NC').reduce((s,n)=>{const t=pNum(n.tasaFactura||0)||1;return s+(t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0));},0);
+            const totND=ncFiltradas.filter(n=>n.tipo==='ND').reduce((s,n)=>{const t=pNum(n.tasaFactura||0)||1;return s+(t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0));},0);
+            return(
+              <tfoot>
+                <tr className="bg-slate-800 text-white font-black">
+                  <td colSpan={6} className="p-3 text-[10px] uppercase">Total {ncFiltradas.length} registros</td>
+                  <td className="p-3 text-right font-mono text-[10px]">
+                    {totNC>0&&<div className="text-red-300">NC: -{fN(totNC)}</div>}
+                    {totND>0&&<div className="text-blue-300">ND: +{fN(totND)}</div>}
+                    <div className="text-orange-400">Neto: {fN(totND-totNC)}</div>
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            );
+          })()}
+        </table>
+      </div>
+
+      {/* MODAL Nueva NC/ND Compra */}
+      {showCompraNCModal&&(()=>{
+        const esFiscal=compraNCForm.naturaleza==='FISCAL';
+        const esND=compraNCForm.tipo==='ND';
+        const esProvDirecto=compraNCForm.naturaleza==='NO_FISCAL'&&compraNCForm._provDirecto;
+        const modoOp=esND?'ajuste':(compraNCForm.modoOp||'ajuste');
+
+        const factsFilt=(facturasCompra||[]).filter(i=>(
+          !compraNCBusq||(i.nroFactura||'').toUpperCase().includes(compraNCBusq.toUpperCase())||(i.proveedor||'').toUpperCase().includes(compraNCBusq.toUpperCase())||(i.nroControl||'').toUpperCase().includes(compraNCBusq.toUpperCase())
+        ));
+        const selFac=esFiscal?(facturasCompra||[]).find(i=>i.id===compraNCForm.facturaId):null;
+        const selFacNF=!esFiscal&&!esProvDirecto?(facturasCompra||[]).find(i=>i.id===compraNCForm.facturaId):null;
+        const docSel=selFac||selFacNF;
+        const tasaNC=pNum(docSel?.tasa||settings?.tasaBCV||1)||1;
+        const baseImpBs=compraNCForm.monto?pNum(compraNCForm.monto):0;
+        const ivaBs16=parseFloat((baseImpBs*0.16).toFixed(2));
+        const totalBs=baseImpBs+ivaBs16;
+
+        return(
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
+            <div className="bg-white rounded-3xl shadow-2xl w-full overflow-hidden" style={{maxWidth:'48rem',maxHeight:'94vh'}}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-3" style={{background:'#0f172a'}}>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">📄</span>
+                  <div>
+                    <h3 className="font-black text-white text-sm uppercase tracking-wide">
+                      Nueva {compraNCForm.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} — Compras
+                      {esND?' — Ajuste':' — Ajuste financiero'}
+                    </h3>
+                    <p className="text-[9px] text-gray-400">{esND?'ND referencial · solo ajusta saldo en Libro de Compras':'NC ajuste financiero · ajusta crédito fiscal en Libro de Compras'}</p>
+                  </div>
+                </div>
+                <button onClick={()=>{setShowCompraNCModal(false);setCompraNCBusqCli('');}} className="text-gray-400 hover:text-red-400 font-black text-lg w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-800">✕</button>
+              </div>
+
+              <div style={{display:'flex',maxHeight:'calc(94vh - 64px)',overflow:'hidden'}}>
+                {/* COL 1 */}
+                <div style={{width:'35%',flexShrink:0,background:'#f8fafc',borderRight:'2px solid #f1f5f9',overflowY:'auto'}}>
+                  <div className="p-4 space-y-4">
+                    {/* Tipo */}
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Tipo de Nota</label>
+                      <div className="flex gap-2">
+                        {['NC','ND'].map(t=>(
+                          <button key={t} onClick={()=>setCompraNCForm(f=>({...f,tipo:t}))}
+                            className={`flex-1 py-2 rounded-xl font-black text-[10px] transition-all ${compraNCForm.tipo===t?(t==='NC'?'bg-red-500 text-white shadow-md':'bg-blue-600 text-white shadow-md'):'bg-white text-gray-600 border-2 border-gray-200 hover:border-gray-300'}`}>
+                            {t==='NC'?'📉 NC':'📈 ND'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Naturaleza */}
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Naturaleza</label>
+                      <div className="flex gap-2">
+                        {['FISCAL','NO_FISCAL'].map(n=>(
+                          <button key={n} onClick={()=>setCompraNCForm(f=>({...f,naturaleza:n,facturaId:'',_provDirecto:false}))}
+                            className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${compraNCForm.naturaleza===n?'bg-purple-600 text-white shadow-md':'bg-white text-gray-600 border-2 border-gray-200 hover:border-gray-300'}`}>
+                            {n==='FISCAL'?'🏛 FISCAL':'📦 NO FISCAL'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Vínculo (NO_FISCAL) */}
+                    {!esFiscal&&(
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Vínculo</label>
+                        <div className="flex gap-2">
+                          <button onClick={()=>setCompraNCForm(f=>({...f,_provDirecto:false,provRif:'',provName:''}))}
+                            className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${!compraNCForm._provDirecto?'bg-orange-500 text-white shadow-md':'bg-white text-gray-600 border-2 border-gray-200'}`}>
+                            🔗 Asociar a factura
+                          </button>
+                          <button onClick={()=>setCompraNCForm(f=>({...f,_provDirecto:true,facturaId:''}))}
+                            className={`flex-1 py-2 rounded-xl font-black text-[9px] transition-all ${compraNCForm._provDirecto?'bg-purple-600 text-white shadow-md':'bg-white text-gray-600 border-2 border-gray-200'}`}>
+                            👤 Proveedor directo
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {/* Buscador factura */}
+                    {!esProvDirecto&&(
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Seleccionar Factura de Compra</label>
+                        <input value={compraNCBusq} onChange={e=>setCompraNCBusq(e.target.value)} placeholder="N° factura, proveedor..." className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 mb-2 bg-white"/>
+                        <select value={compraNCForm.facturaId} onChange={e=>setCompraNCForm(f=>({...f,facturaId:e.target.value}))} size={8} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
+                          <option value="">— Seleccionar —</option>
+                          {factsFilt.slice(0,60).map(f=>(<option key={f.id} value={f.id}>{f.nroFactura||f.id} · {f.proveedor}</option>))}
+                        </select>
+                      </div>
+                    )}
+                    {/* Buscador proveedor directo */}
+                    {esProvDirecto&&(
+                      <div className="relative">
+                        <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Proveedor *</label>
+                        <input value={compraNCBusqCli||compraNCForm.provName||''} onChange={e=>{setCompraNCBusqCli(e.target.value);if(compraNCForm.provRif)setCompraNCForm(f=>({...f,provRif:'',provName:''}));}}
+                          placeholder="Nombre o RIF del proveedor..." className="w-full border-2 border-purple-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-purple-500 bg-white"/>
+                        {compraNCBusqCli&&!compraNCForm.provRif&&(
+                          <div className="absolute z-20 left-0 right-0 mt-1 bg-white border-2 border-purple-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                            {(proveedores||[]).filter(p=>{const q=compraNCBusqCli.toUpperCase();return(p.nombre||p.name||'').toUpperCase().includes(q)||(p.rif||'').toUpperCase().includes(q);}).slice(0,20).map(p=>(
+                              <div key={p.id||p.rif} onClick={()=>{setCompraNCForm(f=>({...f,provRif:p.rif,provName:p.nombre||p.name}));setCompraNCBusqCli('');}}
+                                className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-0">
+                                <div className="font-bold text-xs">{p.nombre||p.name}</div>
+                                <div className="text-[9px] text-purple-600 font-bold">{p.rif}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {compraNCForm.provRif&&<div className="text-[9px] font-black text-green-700 mt-1">✓ {compraNCForm.provName} — {compraNCForm.provRif}</div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* COL 2 — Montos + Datos */}
+                <div style={{flex:1,display:'flex',flexDirection:'column',overflowY:'auto',padding:'16px',gap:'12px'}}>
+                  {/* Info factura referencia */}
+                  {docSel&&(
+                    <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+                      <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">📋 Factura de referencia</p>
+                      <p className="font-black text-sm text-gray-800">{docSel.proveedor}</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[9px] text-gray-500 mt-2">
+                        <div><span className="font-black">N° Factura:</span> {docSel.nroFactura||'—'}</div>
+                        <div><span className="font-black">Control:</span> {docSel.nroControl||'—'}</div>
+                        <div><span className="font-black">Fecha:</span> {docSel.fecha}</div>
+                        <div><span className="font-black">Tasa:</span> <span className="font-black text-blue-600">{fN(tasaNC)} Bs/$</span></div>
+                      </div>
+                    </div>
+                  )}
+                  {esProvDirecto&&compraNCForm.provRif&&(
+                    <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-4">
+                      <p className="text-[8px] font-black text-purple-600 uppercase tracking-widest mb-2">👤 Proveedor directo · sin factura</p>
+                      <p className="font-black text-sm text-gray-800">{compraNCForm.provName}</p>
+                      <p className="text-[9px] text-gray-500 mt-1">{compraNCForm.provRif}</p>
+                    </div>
+                  )}
+                  {!docSel&&!esProvDirecto&&(
+                    <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-5 text-center text-gray-400 text-xs font-bold">
+                      ← Seleccione una factura de compra de referencia
+                    </div>
+                  )}
+
+                  {/* Montos */}
+                  {!esProvDirecto?(
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 space-y-3">
+                      <p className="text-[9px] font-black text-blue-600 uppercase tracking-widest">💰 Montos de la {compraNCForm.tipo} (Bs.)</p>
+                      <div>
+                        <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Base Imponible (Bs.) — ingreso manual</label>
+                        <input type="number" step="0.01" value={compraNCForm.monto||''} onChange={e=>setCompraNCForm(f=>({...f,monto:e.target.value}))}
+                          placeholder="0,00" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.)</label>
+                          <input type="number" value={ivaBs16.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-white rounded-xl px-3 py-2 text-xs font-bold"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total (Bs.)</label>
+                          <input type="number" value={totalBs.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-orange-50 rounded-xl px-3 py-2 text-xs font-black text-orange-600"/>
+                        </div>
+                      </div>
+                      {tasaNC>1&&baseImpBs>0&&(
+                        <div className="bg-white border border-blue-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-[9px]">
+                          <div><p className="text-gray-400 uppercase font-bold text-[8px]">Base USD (tasa {fN(tasaNC)})</p><p className="font-black text-blue-700 text-base">${fN(baseImpBs/tasaNC)}</p></div>
+                          <div><p className="text-gray-400 uppercase font-bold text-[8px]">Total USD con IVA</p><p className="font-black text-blue-700 text-base">${fN(totalBs/tasaNC)}</p></div>
+                        </div>
+                      )}
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste financiero · afecta Libro de Compras · sin movimiento de inventario</div>
+                    </div>
+                  ):(
+                    <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-4 space-y-3">
+                      <p className="text-[9px] font-black text-purple-600 uppercase tracking-widest">💰 Monto de la {compraNCForm.tipo} (USD · sin IVA)</p>
+                      <div>
+                        <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto (USD) — ingreso manual</label>
+                        <input type="number" step="0.01" value={compraNCForm.montoUSD||''} onChange={e=>setCompraNCForm(f=>({...f,montoUSD:e.target.value}))}
+                          placeholder="0,00" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$ (referencial)</label>
+                        <input type="number" step="0.0001" value={compraNCForm.tasaDirecta||''} onChange={e=>setCompraNCForm(f=>({...f,tasaDirecta:e.target.value}))}
+                          placeholder={String(pNum(settings?.tasaBCV||0))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-400"/>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste directo al proveedor · sin IVA · sin movimiento de inventario</div>
+                    </div>
+                  )}
+
+                  {/* Datos del documento */}
+                  <div className="bg-white border-2 border-gray-100 rounded-2xl p-4 space-y-3">
+                    <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest">📋 Datos del Documento</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Documento *</label>
+                        <input value={compraNCForm.nroDocumento||''} onChange={e=>setCompraNCForm(f=>({...f,nroDocumento:e.target.value}))}
+                          placeholder="NC-00001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-400"/>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha *</label>
+                        <input type="date" value={compraNCForm.fecha||getTodayDate()} onChange={e=>setCompraNCForm(f=>({...f,fecha:e.target.value}))}
+                          className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control</label>
+                        <input value={compraNCForm.nroControl||''} onChange={e=>setCompraNCForm(f=>({...f,nroControl:e.target.value}))}
+                          placeholder="00-00001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción / Concepto</label>
+                      <input value={compraNCForm.descripcion||''} onChange={e=>setCompraNCForm(f=>({...f,descripcion:e.target.value}))}
+                        placeholder="Ajuste por diferencial cambiario, error de precio..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-orange-400"/>
+                    </div>
+                  </div>
+
+                  {/* Botones */}
+                  <div className="flex gap-3">
+                    <button onClick={()=>{setShowCompraNCModal(false);setCompraNCBusqCli('');}} className="flex-1 py-3 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
+                    <button onClick={handleSaveCompraNC} className={`flex-1 py-3 text-white rounded-xl font-black text-xs transition-all ${compraNCForm.tipo==='NC'?'bg-red-500 hover:bg-red-600':'bg-blue-600 hover:bg-blue-700'}`}>
+                      ✅ Guardar {compraNCForm.tipo} Compra
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+};
+
+
 const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, setDialog, settings}) => {
   const anioAct = new Date().getFullYear();
   const mesAct = String(new Date().getMonth()+1).padStart(2,'0');
@@ -5059,6 +5437,13 @@ function ProcuraApp({fbUser,onBack,settings}) {
   const [tasas,setTasas]=useState([]);
   const [dialog,setDialog]=useState(null);
   const [retIVACompra,setRetIVACompra]=useState([]);
+  // ── Compras: Notas de Crédito / Débito ──────────────────────────────────────
+  const [notasCompraCD, setNotasCompraCD] = useState([]);
+  const [showCompraNCModal, setShowCompraNCModal] = useState(false);
+  const [compraNCForm, setCompraNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
+  const [compraNCBusq, setCompraNCBusq] = useState('');
+  const [compraNCBusqCli, setCompraNCBusqCli] = useState('');
+  const [procCompraView, setProcCompraView] = useState('lista');
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -5066,6 +5451,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       onSnapshot(getColRef('procura_proveedores'),s=>setProveedores(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('procura_ordenes_compra'),s=>setOrdenesCompra(s.docs.map(d=>d.data()).sort((a,b)=>(b.creadoEn||0)-(a.creadoEn||0)))),
       onSnapshot(query(getColRef('procura_facturas_compra'),orderBy('fecha','desc')),s=>setFacturasCompra(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('notasCompraCreditoDebito'),s=>setNotasCompraCD(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVACompra(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_pagos_cxp'),orderBy('fecha','desc')),s=>setPagosCxP(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'),orderBy('fecha','desc')),s=>setTasas(s.docs.map(d=>d.data()))),
@@ -5074,7 +5460,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,notasCompraCD,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -5088,6 +5474,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
     {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
     {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>},
     {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>},
+    {id:'nc_nd_compra',label:'NC / ND',              icon:<FileText size={13}/>},
   ];
 
   const renderView=()=>{
@@ -5101,6 +5488,7 @@ function ProcuraApp({fbUser,onBack,settings}) {
       case 'cxp':return <CxPView {...sharedProps}/>;
       case 'historial':return <CxPView {...sharedProps}/>;  // HistorialPagosView → redirigido a CxPView
       case 'estado':return <CxPView {...sharedProps}/>;
+      case 'nc_nd_compra':return <NotasCompraNCView {...sharedProps} compraNCForm={compraNCForm} setCompraNCForm={setCompraNCForm} showCompraNCModal={showCompraNCModal} setShowCompraNCModal={setShowCompraNCModal} compraNCBusq={compraNCBusq} setCompraNCBusq={setCompraNCBusq} compraNCBusqCli={compraNCBusqCli} setCompraNCBusqCli={setCompraNCBusqCli}/>;
       default:return null;
     }
   };
