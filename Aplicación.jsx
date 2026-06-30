@@ -4430,14 +4430,14 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
       impTotal:  f.esImportacion&&imp ? pNum(imp.totalImportacion||0) : 0,
       impBase:   f.esImportacion&&imp ? pNum(imp.baseImponible||0) : 0,
       impIVA:    f.esImportacion&&imp ? pNum(imp.iva||0) : 0,
-      // Compras internas — vacíos si es importación (ya están en IMPORTACIONES section)
-      ciTotal:   f.esImportacion ? 0 : totalBs,
-      ciSinDer:  f.esImportacion ? 0 : exentoBs,
-      ciBase:    f.esImportacion ? 0 : base16Bs,
-      ciCred:    f.esImportacion ? 0 : iva16Bs,
-      crTotal:   f.esImportacion ? 0 : base8Bs+iva8Bs,
-      crBase:    f.esImportacion ? 0 : base8Bs,
-      crCred:    f.esImportacion ? 0 : iva8Bs,
+      // Compras internas — se incluyen siempre; una factura con DUA lleva datos en AMBAS secciones
+      ciTotal:   totalBs,
+      ciSinDer:  exentoBs,
+      ciBase:    base16Bs,
+      ciCred:    iva16Bs,
+      crTotal:   base8Bs+iva8Bs,
+      crBase:    base8Bs,
+      crCred:    iva8Bs,
       retPct:'', retMonto:0, retFact:'', retComp:'', _id:f.id,
     });
     const ret = (retIVACompra||[]).find(r => r.facturaId === f.id);
@@ -4929,108 +4929,115 @@ ${resumenHtml}
         </table>
       </div>
 
-      {/* ── Resumen Forma 99030 — CRÉDITOS FISCALES ── */}
-      <div className="flex-shrink-0 bg-slate-900 border-t border-slate-700 px-4 py-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <span className="font-black text-white text-xs uppercase tracking-widest">📋 Resumen — Forma 99030 · Créditos Fiscales</span>
-            <span className="ml-3 text-[9px] text-slate-400">Los campos en azul se calculan automáticamente · Los blancos son de edición manual</span>
+      {/* ── Resumen Forma 99030 — CRÉDITOS FISCALES (compacto, blanco) ── */}
+      <div className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <span className="font-black text-gray-700 text-[11px] uppercase tracking-widest">📋 Forma 99030 — Créditos Fiscales</span>
+            <span className="text-[9px] text-gray-400">●AUTO = calculado del libro &nbsp;·&nbsp; campo blanco = edición manual</span>
           </div>
           <button onClick={guardarResumenLC} disabled={lcSaving}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-500 transition-all disabled:opacity-50">
-            <Save size={12}/>{lcSaving?'Guardando...':'Guardar resumen'}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-blue-700 transition-all disabled:opacity-50">
+            <Save size={11}/>{lcSaving?'Guardando...':'Guardar resumen'}
           </button>
         </div>
-
-        <div className="overflow-x-auto">
-          <table style={{borderCollapse:'collapse',width:'100%',fontSize:9,fontFamily:'Arial'}}>
-            <colgroup>
-              <col style={{width:24}}/><col style={{width:'40%'}}/><col style={{width:50}}/><col style={{width:'25%'}}/><col style={{width:50}}/><col style={{width:'25%'}}/>
-            </colgroup>
+        <div className="grid grid-cols-2 gap-3">
+          {/* Columna izquierda: ítems 10-17 */}
+          <table style={{borderCollapse:'collapse',width:'100%',fontSize:9}}>
             <thead>
               <tr style={{background:'#1e40af',color:'#fff'}}>
-                <th style={{padding:'4px 6px',textAlign:'center',border:'1px solid #334155'}}>N°</th>
-                <th style={{padding:'4px 6px',textAlign:'left',border:'1px solid #334155'}}>Concepto</th>
-                <th style={{padding:'4px 6px',textAlign:'center',border:'1px solid #334155',fontSize:8}}>Campo</th>
-                <th style={{padding:'4px 6px',textAlign:'right',border:'1px solid #334155'}}>Base Imponible</th>
-                <th style={{padding:'4px 6px',textAlign:'center',border:'1px solid #334155',fontSize:8}}>Campo</th>
-                <th style={{padding:'4px 6px',textAlign:'right',border:'1px solid #334155'}}>Crédito Fiscal</th>
+                <th style={{padding:'3px 5px',width:18,textAlign:'center',border:'1px solid #d1d5db'}}>N°</th>
+                <th style={{padding:'3px 5px',textAlign:'left',border:'1px solid #d1d5db'}}>Concepto</th>
+                <th style={{padding:'3px 4px',width:26,textAlign:'center',border:'1px solid #d1d5db',fontSize:8}}>C.</th>
+                <th style={{padding:'3px 5px',width:90,textAlign:'right',border:'1px solid #d1d5db'}}>Base Imp.</th>
+                <th style={{padding:'3px 4px',width:26,textAlign:'center',border:'1px solid #d1d5db',fontSize:8}}>C.</th>
+                <th style={{padding:'3px 5px',width:90,textAlign:'right',border:'1px solid #d1d5db'}}>Créd. Fiscal</th>
               </tr>
             </thead>
             <tbody>
-              {/* Fila auto */}
               {[
-                {n:10,lbl:'Compras no gravadas y/o sin derecho a crédito fiscal',c1:30,v1:c30,c2:null,v2:null,auto:true},
-                {n:11,lbl:'Importaciones gravadas por alícuota general',c1:31,v1:c31,c2:32,v2:c32,auto:true},
-                {n:12,lbl:'Importaciones gravadas por alícuota general más adicional',c1:312,v1:'c312',c2:322,v2:'c322',auto:false},
-                {n:13,lbl:'Importaciones gravadas por alícuota reducida',c1:313,v1:'c313',c2:323,v2:'c323',auto:false},
-                {n:14,lbl:'Compras internas gravadas solo por alícuota general (16%)',c1:33,v1:c33,c2:34,v2:c34,auto:true},
-                {n:15,lbl:'Compras internas gravadas por alícuota general más adicional',c1:332,v1:'c332',c2:342,v2:'c342',auto:false},
-                {n:16,lbl:'Compras internas gravadas por alícuota reducida',c1:333,v1:'c333',c2:343,v2:'c343',auto:false},
-              ].map(row=>(
-                <tr key={row.n} style={{background:row.auto?'#1e3a5f':'#1e293b',borderBottom:'1px solid #334155'}}>
-                  <td style={{padding:'3px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:9}}>{row.n}</td>
-                  <td style={{padding:'3px 6px',color:row.auto?'#93c5fd':'#e2e8f0',border:'1px solid #334155'}}>{row.lbl}{row.auto&&<span style={{fontSize:7,color:'#60a5fa',marginLeft:4}}>●AUTO</span>}</td>
-                  <td style={{padding:'3px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:8}}>{row.c1}</td>
-                  <td style={{padding:'2px 4px',border:'1px solid #334155'}}>
-                    {row.auto
-                      ?<span style={{display:'block',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#38bdf8',padding:'1px 4px'}}>{fmtV(row.v1)}</span>
-                      :(row.v1?<input type="number" step="0.01" value={lcRes[row.v1]||''} onChange={e=>setR(row.v1,e.target.value)} placeholder="0,00"
-                          style={{width:'100%',background:'#0f172a',border:'1px solid #475569',borderRadius:4,padding:'2px 4px',color:'#f1f5f9',fontFamily:'monospace',fontSize:9,textAlign:'right'}}/>:null)
-                    }
+                {n:10,lbl:'Compras no gravadas / sin derecho CF',c1:30,v1:c30,c2:'',v2:null,auto:true},
+                {n:11,lbl:'Importaciones gravadas alícuota general',c1:31,v1:c31,c2:32,v2:c32,auto:true},
+                {n:12,lbl:'Importaciones al. general + adicional',c1:312,k1:'c312',c2:322,k2:'c322',auto:false},
+                {n:13,lbl:'Importaciones alícuota reducida',c1:313,k1:'c313',c2:323,k2:'c323',auto:false},
+                {n:14,lbl:'Compras internas alícuota general 16%',c1:33,v1:c33,c2:34,v2:c34,auto:true},
+                {n:15,lbl:'Compras internas al. general + adicional',c1:332,k1:'c332',c2:342,k2:'c342',auto:false},
+                {n:16,lbl:'Compras internas alícuota reducida',c1:333,k1:'c333',c2:343,k2:'c343',auto:false},
+              ].map(row=>{
+                const bg=row.n===17?'#fffbeb':row.auto?'#eff6ff':'#fff';
+                const inputSt={width:'100%',border:'1px solid #d1d5db',borderRadius:3,padding:'1px 3px',fontFamily:'monospace',fontSize:9,textAlign:'right',background:'#f8fafc'};
+                return(
+                <tr key={row.n} style={{background:bg,borderBottom:'1px solid #e5e7eb'}}>
+                  <td style={{padding:'2px 4px',textAlign:'center',color:'#6b7280',border:'1px solid #e5e7eb',fontSize:8}}>{row.n}</td>
+                  <td style={{padding:'2px 5px',color:row.auto?'#1e40af':'#374151',border:'1px solid #e5e7eb',fontWeight:row.auto?700:400}}>
+                    {row.lbl}{row.auto&&<span style={{fontSize:7,color:'#93c5fd',marginLeft:4}}>●AUTO</span>}
                   </td>
-                  <td style={{padding:'3px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:8}}>{row.c2||''}</td>
-                  <td style={{padding:'2px 4px',border:'1px solid #334155'}}>
-                    {row.c2===null?<span style={{color:'#475569',textAlign:'center',display:'block'}}>—</span>
+                  <td style={{padding:'2px 4px',textAlign:'center',color:'#9ca3af',border:'1px solid #e5e7eb',fontSize:8}}>{row.c1}</td>
+                  <td style={{padding:'2px 3px',border:'1px solid #e5e7eb'}}>
+                    {row.auto
+                      ?<span style={{display:'block',textAlign:'right',fontFamily:'monospace',fontWeight:700,color:'#1d4ed8',padding:'1px 3px'}}>{fmtV(row.v1)}</span>
+                      :<input type="number" step="0.01" value={lcRes[row.k1]||''} onChange={e=>setR(row.k1,e.target.value)} placeholder="0,00" style={inputSt}/>}
+                  </td>
+                  <td style={{padding:'2px 4px',textAlign:'center',color:'#9ca3af',border:'1px solid #e5e7eb',fontSize:8}}>{row.c2||''}</td>
+                  <td style={{padding:'2px 3px',border:'1px solid #e5e7eb'}}>
+                    {row.v2===null||row.c2===''?<span style={{color:'#d1d5db',textAlign:'center',display:'block',fontSize:8}}>—</span>
                       :row.auto
-                        ?<span style={{display:'block',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#6ee7b7',padding:'1px 4px'}}>{fmtV(row.v2)}</span>
-                        :<input type="number" step="0.01" value={lcRes[row.v2]||''} onChange={e=>setR(row.v2,e.target.value)} placeholder="0,00"
-                            style={{width:'100%',background:'#0f172a',border:'1px solid #475569',borderRadius:4,padding:'2px 4px',color:'#f1f5f9',fontFamily:'monospace',fontSize:9,textAlign:'right'}}/>
-                    }
+                        ?<span style={{display:'block',textAlign:'right',fontFamily:'monospace',fontWeight:700,color:'#059669',padding:'1px 3px'}}>{fmtV(row.v2)}</span>
+                        :<input type="number" step="0.01" value={lcRes[row.k2]||''} onChange={e=>setR(row.k2,e.target.value)} placeholder="0,00" style={inputSt}/>}
                   </td>
-                </tr>
-              ))}
-              {/* Fila 17 — Totales calculados */}
-              <tr style={{background:'#0f172a',borderBottom:'2px solid #3b82f6'}}>
-                <td style={{padding:'4px 6px',textAlign:'center',color:'#f97316',border:'1px solid #334155',fontWeight:900}}>17</td>
-                <td style={{padding:'4px 6px',color:'#f97316',border:'1px solid #334155',fontWeight:900}}>Total compras y créditos fiscales del período <span style={{fontSize:7,color:'#f97316',marginLeft:4}}>●AUTO</span></td>
-                <td style={{padding:'4px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:8}}>35</td>
-                <td style={{padding:'4px 6px',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#f97316',border:'1px solid #334155'}}>{fmtV(c35)}</td>
-                <td style={{padding:'4px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:8}}>36</td>
-                <td style={{padding:'4px 6px',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#f97316',border:'1px solid #334155'}}>{fmtV(c36)}</td>
+                </tr>);
+              })}
+              <tr style={{background:'#fef3c7',borderTop:'2px solid #f59e0b'}}>
+                <td style={{padding:'3px 4px',textAlign:'center',color:'#92400e',border:'1px solid #e5e7eb',fontWeight:900}}>17</td>
+                <td style={{padding:'3px 5px',color:'#92400e',border:'1px solid #e5e7eb',fontWeight:900}}>Total compras y CF del período <span style={{fontSize:7,color:'#f59e0b'}}>●AUTO</span></td>
+                <td style={{padding:'3px 4px',textAlign:'center',color:'#9ca3af',border:'1px solid #e5e7eb',fontSize:8}}>35</td>
+                <td style={{padding:'3px 5px',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#92400e',border:'1px solid #e5e7eb'}}>{fmtV(c35)}</td>
+                <td style={{padding:'3px 4px',textAlign:'center',color:'#9ca3af',border:'1px solid #e5e7eb',fontSize:8}}>36</td>
+                <td style={{padding:'3px 5px',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#92400e',border:'1px solid #e5e7eb'}}>{fmtV(c36)}</td>
               </tr>
-              {/* Filas 18-26 — manuales */}
+            </tbody>
+          </table>
+          {/* Columna derecha: ítems 18-26 */}
+          <table style={{borderCollapse:'collapse',width:'100%',fontSize:9}}>
+            <thead>
+              <tr style={{background:'#374151',color:'#fff'}}>
+                <th style={{padding:'3px 5px',width:18,textAlign:'center',border:'1px solid #d1d5db'}}>N°</th>
+                <th style={{padding:'3px 5px',textAlign:'left',border:'1px solid #d1d5db'}}>Concepto</th>
+                <th style={{padding:'3px 4px',width:26,textAlign:'center',border:'1px solid #d1d5db',fontSize:8}}>C.</th>
+                <th style={{padding:'3px 5px',width:100,textAlign:'right',border:'1px solid #d1d5db'}}>Valor Bs.</th>
+              </tr>
+            </thead>
+            <tbody>
               {[
-                {n:18,lbl:'Créditos fiscales totalmente deducibles',c:70,k:'c70'},
-                {n:19,lbl:'Créditos fiscales producto de la aplicación de la prorrata',c:37,k:'c37'},
-                {n:20,lbl:'Total créditos fiscales deducibles (18+19)',c:71,v:c71,auto:true},
-                {n:21,lbl:'Excedente créditos fiscales del mes anterior (ítem 60 de dec. anterior)',c:20,k:'c20'},
-                {n:22,lbl:'Reintegro solicitado (solo exportadores)',c:21,k:'c21'},
-                {n:23,lbl:'Reintegro solicitado (solo bienes/servicios a entes exonerados)',c:81,k:'c81'},
-                {n:24,lbl:'Ajuste a los créditos fiscales de períodos anteriores',c:38,k:'c38'},
-                {n:25,lbl:'Registrados en el período',c:82,k:'c82'},
-              ].map(row=>(
-                <tr key={row.n} style={{background:row.auto?'#0f172a':'#1e293b',borderBottom:'1px solid #334155'}}>
-                  <td style={{padding:'3px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:9}}>{row.n}</td>
-                  <td colSpan={3} style={{padding:'3px 6px',color:row.auto?'#f97316':'#e2e8f0',border:'1px solid #334155',fontWeight:row.auto?900:400}}>
-                    {row.lbl}{row.auto&&<span style={{fontSize:7,color:'#f97316',marginLeft:4}}>●AUTO</span>}
+                {n:18,lbl:'CF totalmente deducibles',c:70,k:'c70',auto:false},
+                {n:19,lbl:'CF producto de la prorrata',c:37,k:'c37',auto:false},
+                {n:20,lbl:'Total CF deducibles (18+19)',c:71,v:c71,auto:true},
+                {n:21,lbl:'Excedente CF mes anterior (ítem 60)',c:20,k:'c20',auto:false},
+                {n:22,lbl:'Reintegro solicitado (exportadores)',c:21,k:'c21',auto:false},
+                {n:23,lbl:'Reintegro solicitado (exonerados)',c:81,k:'c81',auto:false},
+                {n:24,lbl:'Ajuste CF períodos anteriores',c:38,k:'c38',auto:false},
+                {n:25,lbl:'Registrados en el período',c:82,k:'c82',auto:false},
+              ].map(row=>{
+                const bg=row.auto?'#eff6ff':'#fff';
+                const inputSt={width:'100%',border:'1px solid #d1d5db',borderRadius:3,padding:'1px 3px',fontFamily:'monospace',fontSize:9,textAlign:'right',background:'#f8fafc'};
+                return(
+                <tr key={row.n} style={{background:bg,borderBottom:'1px solid #e5e7eb'}}>
+                  <td style={{padding:'2px 4px',textAlign:'center',color:'#6b7280',border:'1px solid #e5e7eb',fontSize:8}}>{row.n}</td>
+                  <td style={{padding:'2px 5px',color:row.auto?'#1e40af':'#374151',border:'1px solid #e5e7eb',fontWeight:row.auto?700:400}}>
+                    {row.lbl}{row.auto&&<span style={{fontSize:7,color:'#93c5fd',marginLeft:4}}>●AUTO</span>}
                   </td>
-                  <td style={{padding:'3px 6px',textAlign:'center',color:'#94a3b8',border:'1px solid #334155',fontSize:8}}>{row.c}</td>
-                  <td style={{padding:'2px 4px',border:'1px solid #334155'}}>
+                  <td style={{padding:'2px 4px',textAlign:'center',color:'#9ca3af',border:'1px solid #e5e7eb',fontSize:8}}>{row.c}</td>
+                  <td style={{padding:'2px 3px',border:'1px solid #e5e7eb'}}>
                     {row.auto
-                      ?<span style={{display:'block',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#f97316',padding:'1px 4px'}}>{fmtV(row.v)}</span>
-                      :<input type="number" step="0.01" value={lcRes[row.k]||''} onChange={e=>setR(row.k,e.target.value)} placeholder="0,00"
-                          style={{width:'100%',background:'#0f172a',border:'1px solid #475569',borderRadius:4,padding:'2px 4px',color:'#f1f5f9',fontFamily:'monospace',fontSize:9,textAlign:'right'}}/>
-                    }
+                      ?<span style={{display:'block',textAlign:'right',fontFamily:'monospace',fontWeight:700,color:'#1d4ed8',padding:'1px 3px'}}>{fmtV(row.v)}</span>
+                      :<input type="number" step="0.01" value={lcRes[row.k]||''} onChange={e=>setR(row.k,e.target.value)} placeholder="0,00" style={inputSt}/>}
                   </td>
-                </tr>
-              ))}
-              {/* Fila 26 — Total CF final calculado */}
-              <tr style={{background:'#7c2d12'}}>
-                <td style={{padding:'5px 6px',textAlign:'center',color:'#fff',border:'1px solid #334155',fontWeight:900}}>26</td>
-                <td colSpan={3} style={{padding:'5px 6px',color:'#fff',border:'1px solid #334155',fontWeight:900}}>Total créditos fiscales <span style={{fontSize:7,color:'#fcd34d',marginLeft:4}}>●AUTO (20+21−22−23+24−25)</span></td>
-                <td style={{padding:'5px 6px',textAlign:'center',color:'#fcd34d',border:'1px solid #334155',fontSize:8}}>39</td>
-                <td style={{padding:'5px 6px',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#fcd34d',border:'1px solid #334155',fontSize:11}}>{fmtV(c39)}</td>
+                </tr>);
+              })}
+              <tr style={{background:'#fef2f2',borderTop:'2px solid #ef4444'}}>
+                <td style={{padding:'3px 4px',textAlign:'center',color:'#7f1d1d',border:'1px solid #e5e7eb',fontWeight:900}}>26</td>
+                <td style={{padding:'3px 5px',color:'#7f1d1d',border:'1px solid #e5e7eb',fontWeight:900}} colSpan={2}>Total CF &nbsp;<span style={{fontSize:7,color:'#f87171'}}>●AUTO (20+21−22−23+24−25)</span></td>
+                <td style={{padding:'3px 5px',textAlign:'right',fontFamily:'monospace',fontWeight:900,color:'#991b1b',border:'1px solid #e5e7eb',fontSize:11}}>{fmtV(c39)}</td>
               </tr>
             </tbody>
           </table>
