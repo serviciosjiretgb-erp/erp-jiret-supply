@@ -22249,7 +22249,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               }else{
                 await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               }
-              setShowRetModal(false);setRetBusqFact('');
+              setShowRetModal(false);setRetBusqFact('');setRetFactManual(false);
               setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});
               setDialog({title:'✅ Retención guardada',text:`Comprobante ${retForm.nroRetencion} ${isEditing?'actualizado':'registrado'}.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -22583,7 +22583,7 @@ ${resumenHtml}
                     <option value="1">I Quincena (01–15)</option>
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
-                <button onClick={()=>{setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
+                <button onClick={()=>{setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
@@ -22957,7 +22957,7 @@ ${resumenHtml}
                             <td className="py-2 px-3 text-right font-black text-green-700">{retMontoUSD>0?'$'+formatNum(retMontoUSD):<span className="text-red-400 text-[9px]">—</span>}</td>
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{(ret.quincena||((parseInt((ret.fechaComprobante||'').split('-')[2]||'16')<=15)?'1':'2'))==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
-                              <button onClick={()=>{setRetForm({...ret});setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
+                              <button onClick={()=>{setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
                               <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
