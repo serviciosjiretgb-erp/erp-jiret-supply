@@ -3880,6 +3880,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const CajaOpView = () => {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
+    // Filtros
+    const [cajFiltMoneda, setCajFiltMoneda] = useState('USD');  // 'BS'|'USD'|'AMBAS'
+    const [cajFiltCaja,   setCajFiltCaja]   = useState('');     // cajaId o ''
+    const [cajFiltDesde,  setCajFiltDesde]  = useState('');
+    const [cajFiltHasta,  setCajFiltHasta]  = useState('');
     const [cajaDet, setCajaDet]   = useState(null);   // movimiento seleccionado para ver/editar
     const [cajaEdit, setCajaEdit] = useState(false);   // modo edición
     const [cajaPwdModal, setCajaPwdModal] = useState(null); // movimiento a eliminar
@@ -3924,7 +3929,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
         _fromBanco: true
       };
     });
-    const allMovsCaja = [...movCaja, ...movBancoEnCaja].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
+    // Movimientos banco: solo USD (cobros/pagos del ERP son en dólares)
+    const movBancoEnCajaUSD = movBancoEnCaja.filter(m=>m.moneda==='USD'||m.montoUSD>0.001);
+    const allMovsCajaBase = [...movCaja, ...movBancoEnCajaUSD].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
+
+    // Aplicar filtros
+    const allMovsCaja = allMovsCajaBase.filter(m=>{
+      if(cajFiltMoneda==='BS'  && m.moneda!=='BS')  return false;
+      if(cajFiltMoneda==='USD' && m.moneda==='BS')  return false;
+      if(cajFiltCaja && !m._fromBanco && m.cajaId && m.cajaId!==cajFiltCaja) return false;
+      if(cajFiltDesde && (m.fecha||'') < cajFiltDesde) return false;
+      if(cajFiltHasta && (m.fecha||'') > cajFiltHasta) return false;
+      return true;
+    });
     const saldoBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
     const saldoUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
 
@@ -3964,6 +3981,36 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       } finally { setBusy(false); }
     };
 
+
+    const exportarExcelCaja = () => {
+      const rows = allMovsCaja.map((m,i)=>`<tr>
+        <td>${i+1}</td><td>${bancoDd(m.fecha)}</td>
+        <td style="color:${m.tipo==='Ingreso'?'#16a34a':'#dc2626'};font-weight:bold">${m.tipo}</td>
+        <td>${m.moneda==='BS'?'Bs.':'USD'}</td>
+        <td>${m._concepto||m.concepto||''}</td>
+        <td>${m._facturaInfo||''}</td>
+        <td>${m._tercero||m.terceroNombre||'—'}</td>
+        <td style="font-family:monospace">${m.referencia||'—'}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:bold">Bs.${bancoFmt(m.montoBs)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:bold">$${bancoFmt(m.montoUSD)}</td>
+        <td>${m.tasa||''}</td>
+      </tr>`).join('');
+      const totBsE=allMovsCaja.reduce((s,m)=>m.tipo==='Egreso'?s+Number(m.montoBs||0):s,0);
+      const totBsI=allMovsCaja.reduce((s,m)=>m.tipo==='Ingreso'?s+Number(m.montoBs||0):s,0);
+      const totUSDI=allMovsCaja.reduce((s,m)=>m.tipo==='Ingreso'?s+Number(m.montoUSD||0):s,0);
+      const totUSOE=allMovsCaja.reduce((s,m)=>m.tipo==='Egreso'?s+Number(m.montoUSD||0):s,0);
+      const html=bancoLetterheadOpen('Movimientos de Caja',`${cajFiltDesde||'Inicio'} al ${cajFiltHasta||bancoDd(getTodayDate())} · ${allMovsCaja.length} movimientos`)+
+        `<table><thead><tr><th>#</th><th>Fecha</th><th>Tipo</th><th>Moneda</th><th>Concepto</th><th>Factura</th><th>Tercero</th><th>Referencia</th><th>Monto Bs.</th><th>Monto USD</th><th>Tasa</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="background:#000"><td colspan="8" style="color:#94a3b8;font-weight:bold;font-size:9px">TOTALES</td>
+        <td style="text-align:right;color:#4ade80">Ing: Bs.${bancoFmt(totBsI)}<br>Egr: Bs.${bancoFmt(totBsE)}</td>
+        <td style="text-align:right;color:#4ade80">Ing: $${bancoFmt(totUSDI)}<br>Egr: $${bancoFmt(totUSOE)}</td><td></td></tr></tfoot></table>`+
+        bancoLetterheadClose(`Módulo: Caja · ${bancoDd(getTodayDate())}`);
+      const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');
+      a.href=url;a.download=`movimientos_caja_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+    };
+
     return (
       <div className="space-y-5">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -3973,8 +4020,39 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
           <BKPI label="Total Movimientos" value={allMovsCaja.length} accent="purple" Icon={FileText}/>
         </div>
 
-        <BCard title="Movimientos de Caja" subtitle="Efectivo Bs. y Divisas"
-          action={<BBg onClick={()=>{setForm(initF());setModal(true);}}><Plus size={13}/> Nuevo Movimiento</BBg>}>
+        <BCard title="Movimientos de Caja" subtitle="Efectivo Bs. y Divisas">
+          {/* ── BARRA DE FILTROS ── */}
+          <div className="flex flex-wrap items-center gap-2 pb-4 border-b border-slate-100 mb-3">
+            {/* Moneda tabs */}
+            <div className="flex rounded-xl border border-slate-200 overflow-hidden">
+              {[['BS','BS.'],['USD','USD $'],['AMBAS','AMBAS']].map(([k,l])=>(
+                <button key={k} onClick={()=>setCajFiltMoneda(k)}
+                  className={`px-3 py-1.5 text-[10px] font-black uppercase transition-all ${cajFiltMoneda===k?k==='BS'?'bg-slate-900 text-white':k==='USD'?'bg-emerald-600 text-white':'bg-orange-500 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            {/* Selector de caja */}
+            <select value={cajFiltCaja} onChange={e=>setCajFiltCaja(e.target.value)}
+              className="border border-slate-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 min-w-[160px]">
+              <option value="">Todas las cajas</option>
+              {cajas.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            {/* Fechas */}
+            <input type="date" value={cajFiltDesde} onChange={e=>setCajFiltDesde(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400"/>
+            <span className="text-slate-400 text-[10px] font-bold">—</span>
+            <input type="date" value={cajFiltHasta} onChange={e=>setCajFiltHasta(e.target.value)}
+              className="border border-slate-200 rounded-xl px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400"/>
+            {(cajFiltCaja||cajFiltDesde||cajFiltHasta)&&(
+              <button onClick={()=>{setCajFiltCaja('');setCajFiltDesde('');setCajFiltHasta('');}}
+                className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-all">× LIMPIAR</button>
+            )}
+            <div className="ml-auto flex gap-2">
+              <BBp onClick={exportarExcelCaja} sm><FileSpreadsheet size={12}/> Excel</BBp>
+              <BBg onClick={()=>{setForm(initF());setModal(true);}} sm><Plus size={12}/> Nuevo</BBg>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh><BTh>Acciones</BTh></tr></thead>
