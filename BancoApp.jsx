@@ -1795,12 +1795,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const [provs,      setProvs]    = useState([]);
   const [contCuentas,setContC]    = useState([]);
   const [asientosBanco, setAsientosBanco] = useState([]);
-  const [systemUsers, setSystemUsers] = useState([]);
+  const [systemUsers,   setSystemUsers]   = useState([]);
+  const [cobrosCajaCxc, setCobrosCajaCxc] = useState([]); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
+  const [pagosCajaCxP,  setPagosCajaCxP]  = useState([]); // procura_pagos_cxp donde cuentaId empieza con CAJA::
 
   useEffect(() => {
     if (!fbUser) return;
     const subs = [
       onSnapshot(getColRef('users'), s => setSystemUsers(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(query(getColRef('cobros_cxc'), orderBy('fecha','desc')), s => {
+        setCobrosCajaCxc(s.docs.map(d=>d.data()).filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
+      }),
+      onSnapshot(query(getColRef('procura_pagos_cxp'), orderBy('fecha','desc')), s => {
+        setPagosCajaCxP(s.docs.map(d=>d.data()).filter(p=>(p.cuentaId||'').startsWith('CAJA::')));
+      }),
       onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),,
       onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>d.data()))),
@@ -1820,12 +1828,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const tasaActiva = tasas.find(t=>t.modulo==='Banco'||t.modulo==='Todos')?.tasaRef || tasas[0]?.tasaRef || 39.50;
   const cuentasContables = contCuentas; // alias para compatibilidad con MovimientosView
 
-  // Validar clave de admin contra usuarios con rol Master/Admin en Firestore
+  // Validar clave de admin — acepta la contraseña de CUALQUIER usuario registrado en el ERP
   const validarClaveAdmin = (pwd) => {
     if(!pwd) return false;
-    // Buscar en la lista de usuarios del ERP (colección 'users')
-    const adminUsers = (systemUsers||[]).filter(u=>u.role==='Master'||u.role==='Admin'||u.username==='admin');
-    return adminUsers.some(u=>u.password===pwd||u.pin===pwd||u.clave===pwd);
+    return (systemUsers||[]).some(u=>
+      u.password===pwd || u.pin===pwd || u.clave===pwd || u.contraseña===pwd
+    );
   };
 
   // ══════════════════════════════════════════════════════════════════════
@@ -3897,53 +3905,97 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     const montoBs  = form.moneda==='BS' ? monto : monto*tasa;
     const montoUSD = form.moneda==='BS' ? monto/tasa : monto;
     // Movimientos de caja manuales + movimientos del banco_movimientos (cobros CxC y pagos CxP del ERP)
-    // Incluir: pagos CxP (origen:'CxP'), cobros simples ('Cobro NE'), cobros multicobro ('Cobro CxC')
-    const movBancoEnCaja = movBanco.filter(m=>
-      m.origen==='CxP' ||
-      m.origenIngreso==='Cobro NE' ||
-      m.origenIngreso==='Cobro CxC' ||
-      m.origenIngreso==='CobroCxC'   // compatibilidad con escrituras antiguas
-    ).map(m=>{
-      const tipoNorm = m.tipo==='EGRESO'?'Egreso': m.tipo==='Ingreso'?'Ingreso': m.tipo||'Ingreso';
-      // Normalizar moneda: CxP escribe 'USD'/'Bs', cobros pueden traer otra clave
-      const monedaNorm = m.moneda==='BS'?'BS': m.moneda==='USD'?'USD':
-        (m.montoBs>0&&m.montoUSD>0?(m.montoBs/m.montoUSD>5?'BS':'USD'):'USD');
-      // Para pagos CxP el campo montoBs puede ser el monto total Bs
-      const montoBsNorm  = m.montoBs   || (m.monto && m.tasa ? m.monto*m.tasa : 0);
-      const montoUSDNorm = m.montoUSD  || (m.monto || 0);
-      // Concepto enriquecido: mostrar factura si existe
-      const facturaInfo = m.facturas?.length>0
-        ? m.facturas.map(f=>`${f.nroFactura||f.id} (${f.fecha||''})`).join(' | ')
-        : m.facturaId ? `Fact. ${m.facturaId}` : '';
-      const conceptoMostrar = m.concepto||`${tipoNorm==='Egreso'?'Pago':'Cobro'} ${m.proveedor||m.clientName||m.terceroNombre||'—'}`;
-      const terceroMostrar  = m.proveedor||m.clientName||m.terceroNombre||'—';
+    // ── Cobros CxC registrados a través de cajas (cobros_cxc con CAJA::) ──
+    const movDesdeCobrosCaja = cobrosCajaCxc.map(c=>{
+      const cajaId = (c.cuentaBancariaId||'').replace('CAJA::','');
+      const caja   = cajas.find(ca=>ca.id===cajaId);
+      const tasa   = Number(c.tasa||tasaActiva)||tasaActiva;
+      const mUSD   = Number(c.monto||0);
+      const mBs    = Number(c.montoBs||0)||(mUSD*tasa);
       return {
-        ...m,
-        moneda: monedaNorm,
-        tipo: tipoNorm,
-        montoBs: montoBsNorm,
-        montoUSD: montoUSDNorm,
-        _concepto: conceptoMostrar,
-        _facturaInfo: facturaInfo,
-        _tercero: terceroMostrar,
-        _fromBanco: true
+        id: c.id, fecha: c.fecha, tipo: 'Ingreso',
+        moneda: c.moneda==='BS'?'BS':'USD',
+        montoBs: mBs, montoUSD: mUSD, tasa,
+        concepto: c.concepto||`Cobro ${c.metodo||''} · ${c.neDocumento||''}`,
+        referencia: c.referencia||'',
+        _concepto: `Cobro ${c.metodo||''} · ${c.neDocumento||''} · ${c.clientName||''}`,
+        _facturaInfo: c.neDocumento||'',
+        _tercero: c.clientName||'—',
+        _cajaId: cajaId,
+        _cajaNombre: caja?.nombre||c.cuentaBancoNombre||'Caja',
+        _fromBanco: true, origen:'CxC',
+        timestamp: c.timestamp||0
       };
     });
-    // Movimientos banco: solo USD (cobros/pagos del ERP son en dólares)
-    const movBancoEnCajaUSD = movBancoEnCaja.filter(m=>m.moneda==='USD'||m.montoUSD>0.001);
-    const allMovsCajaBase = [...movCaja, ...movBancoEnCajaUSD].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
+
+    // ── Pagos CxP registrados a través de cajas (procura_pagos_cxp con CAJA::) ──
+    const movDesdePagosCaja = pagosCajaCxP.map(p=>{
+      const cajaId = (p.cuentaId||'').replace('CAJA::','');
+      const caja   = cajas.find(ca=>ca.id===cajaId);
+      const tasa   = Number(p.tasa||tasaActiva)||tasaActiva;
+      const mUSD   = Number(p.monto||0);
+      const mBs    = Number(p.montoBs||0)||(mUSD*tasa);
+      return {
+        id: p.id, fecha: p.fecha, tipo: 'Egreso',
+        moneda: p.moneda==='BS'?'BS':'USD',
+        montoBs: mBs, montoUSD: mUSD, tasa,
+        concepto: p.concepto||`Pago ${p.proveedor||''} · ${p.referencia||''}`,
+        referencia: p.referencia||'',
+        _concepto: `Pago ${p.proveedor||''} · ${p.referencia||''}`,
+        _facturaInfo: p.facturas?.map(f=>`${f.nroFactura||f.id}`).join(' | ')||'',
+        _tercero: p.proveedor||'—',
+        _cajaId: cajaId,
+        _cajaNombre: caja?.nombre||p.banco||'Caja',
+        _fromBanco: true, origen:'CxP',
+        timestamp: p.timestamp||0
+      };
+    });
+
+    // También incluir banco_movimientos de CxC/CxP que sí llegaron a banco (compatibilidad)
+    const movBancoEnCaja = movBanco.filter(m=>
+      m.origen==='CxP' || m.origenIngreso==='Cobro NE' ||
+      m.origenIngreso==='Cobro CxC' || m.origenIngreso==='CobroCxC'
+    ).map(m=>{
+      const tipoNorm = m.tipo==='EGRESO'?'Egreso': m.tipo==='Ingreso'?'Ingreso': m.tipo||'Ingreso';
+      const monedaNorm = m.moneda==='BS'?'BS': m.moneda==='USD'?'USD':
+        (m.montoBs>0&&m.montoUSD>0?(m.montoBs/m.montoUSD>5?'BS':'USD'):'USD');
+      const montoBsNorm  = m.montoBs||(m.monto&&m.tasa?m.monto*m.tasa:0);
+      const montoUSDNorm = m.montoUSD||(m.monto||0);
+      const facturaInfo  = m.facturas?.length>0?m.facturas.map(f=>`${f.nroFactura||f.id} (${f.fecha||''})`).join(' | '):m.facturaId?`Fact. ${m.facturaId}`:'';
+      return {
+        ...m, moneda:monedaNorm, tipo:tipoNorm, montoBs:montoBsNorm, montoUSD:montoUSDNorm,
+        _concepto:m.concepto||`${tipoNorm==='Egreso'?'Pago':'Cobro'} ${m.proveedor||m.clientName||m.terceroNombre||'—'}`,
+        _facturaInfo:facturaInfo, _tercero:m.proveedor||m.clientName||m.terceroNombre||'—',
+        _fromBanco:true
+      };
+    }).filter(m=>m.moneda==='USD'||m.montoUSD>0.001);
+
+    const allMovsCajaBase = [
+      ...movCaja,
+      ...movDesdeCobrosCaja,
+      ...movDesdePagosCaja,
+      ...movBancoEnCaja
+    ].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
 
     // Aplicar filtros
     const allMovsCaja = allMovsCajaBase.filter(m=>{
       if(cajFiltMoneda==='BS'  && m.moneda!=='BS')  return false;
       if(cajFiltMoneda==='USD' && m.moneda==='BS')  return false;
-      if(cajFiltCaja && !m._fromBanco && m.cajaId && m.cajaId!==cajFiltCaja) return false;
+      if(cajFiltCaja){
+        const mid = m._cajaId||m.cajaId||'';
+        if(mid && mid!==cajFiltCaja) return false;
+        if(!mid && !m._fromBanco) return false; // manual sin caja asignada: excluir si hay filtro
+      }
       if(cajFiltDesde && (m.fecha||'') < cajFiltDesde) return false;
       if(cajFiltHasta && (m.fecha||'') > cajFiltHasta) return false;
       return true;
     });
-    const saldoBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
-    const saldoUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+    // Saldo calculado de TODOS los movimientos (manuales + ERP cobros/pagos)
+    // Nota: allMovsCajaBase aún no está definida aquí; se calcula antes del return
+    const saldoBsM  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
+    const saldoUSDBancoC = [...movDesdeCobrosCaja,...movDesdePagosCaja,...movBancoEnCaja].filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+    const saldoBs  = saldoBsM;
+    const saldoUSD = saldoUSDBancoC + movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
 
     const save = async()=>{
       if(!form.monto||monto<=0) return alert('Ingrese un monto válido');
@@ -3957,8 +4009,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     };
 
     const abrirEditCaja = (m) => {
-      if(m._fromBanco) return alert('Este movimiento proviene del módulo CxC/CxP. Edítelo desde Ventas o Procura.');
-      setCajaDet(m); setCajaEdit(true);
+      setCajaDet(m); setCajaEdit(false); // siempre abre en modo vista; editar solo manual
+      if(m._fromBanco) return; // para ERP solo vista
+      setCajaEdit(true);
       setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',monto:String(m.monto||''),tasa:String(m.tasa||tasaActiva),aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||''});
     };
 
@@ -3973,14 +4026,46 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
 
     const confirmarElimCaja = async() => {
       if(!validarClaveAdmin(cajaPwd)){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
-      if(!cajaPwdModal) return;
+      const m = cajaPwdModal; if(!m) return;
       setBusy(true);
       try {
-        await deleteDoc(getDocRef('caja_movimientos',cajaPwdModal.id));
+        if(m.origen==='CxC' && m._fromBanco){
+          // Eliminar de cobros_cxc y restaurar saldo NE
+          await deleteDoc(getDocRef('cobros_cxc', m.id));
+        } else if(m.origen==='CxP' && m._fromBanco){
+          // Eliminar de procura_pagos_cxp y restaurar saldo factura
+          await deleteDoc(getDocRef('procura_pagos_cxp', m.id));
+        } else {
+          // Movimiento manual de caja
+          await deleteDoc(getDocRef('caja_movimientos', m.id));
+        }
         setCajaPwdModal(null); setCajaPwd('');
       } finally { setBusy(false); }
     };
 
+
+    const generarPDFMovCaja = (m) => {
+      const html=bancoLetterheadOpen('Comprobante de Movimiento de Caja',`Fecha: ${bancoDd(m.fecha)} · Ref: ${m.referencia||'—'}`)+
+        `<table>
+          <thead><tr><th>Campo</th><th>Detalle</th></tr></thead>
+          <tbody>
+            <tr><td>Tipo</td><td style="font-weight:900;color:${m.tipo==='Ingreso'?'#16a34a':'#dc2626'}">${m.tipo}</td></tr>
+            <tr><td>Fecha</td><td>${bancoDd(m.fecha)}</td></tr>
+            <tr><td>Concepto</td><td>${m._concepto||m.concepto||'—'}</td></tr>
+            ${m._facturaInfo?`<tr><td>Factura(s)</td><td style="color:#2563eb;font-weight:bold">${m._facturaInfo}</td></tr>`:''}
+            <tr><td>Tercero</td><td>${m._tercero||m.terceroNombre||'—'}</td></tr>
+            <tr><td>Método</td><td>${m.metodo||'Efectivo'}</td></tr>
+            <tr><td>Referencia</td><td style="font-family:monospace">${m.referencia||'—'}</td></tr>
+            ${m._cajaNombre?`<tr><td>Caja</td><td>${m._cajaNombre}</td></tr>`:''}
+            <tr><td>Monto USD</td><td style="font-family:monospace;font-weight:900;color:#16a34a">$${bancoFmt(m.montoUSD)}</td></tr>
+            <tr><td>Monto Bs.</td><td style="font-family:monospace;font-weight:900;color:#2563eb">Bs.${bancoFmt(m.montoBs)}</td></tr>
+            <tr><td>Tasa Bs/$</td><td>${m.tasa||tasaActiva}</td></tr>
+            <tr><td>Origen</td><td>${m.origen==='CxP'?'Cuentas por Pagar (CxP)':m.origen==='CxC'||m._fromBanco?'Cuentas por Cobrar (CxC)':'Manual'}</td></tr>
+          </tbody>
+        </table>`+
+        bancoLetterheadClose(`Módulo Caja · ${bancoDd(getTodayDate())}`);
+      bancoPrintWindow(html);
+    };
 
     const exportarExcelCaja = () => {
       const rows = allMovsCaja.map((m,i)=>`<tr>
@@ -4065,7 +4150,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
                   <BTd className="max-w-[220px]">
                     <div className="truncate font-semibold" title={m._concepto||m.concepto}>{m._concepto||m.concepto}</div>
                     {m._facturaInfo&&<div className="text-[8px] text-blue-600 font-black truncate" title={m._facturaInfo}>📄 {m._facturaInfo}</div>}
-                    {m._fromBanco&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen==='CxP'?'CxP':'CxC'}</span>}
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {m._cajaNombre&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-slate-700">🏦 {m._cajaNombre}</span>}
+                      {m._fromBanco&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen==='CxP'?'CxP':'CxC'}</span>}
+                    </div>
                   </BTd>
                   <BTd className="text-[10px] max-w-[120px] truncate">{m._tercero||m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
                   <BTd mono className="text-slate-400 text-[10px]">{m.referencia||'—'}</BTd>
@@ -4074,9 +4162,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
                   <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
                   <BTd>
                     <div className="flex items-center gap-1">
-                      <button onClick={()=>{setCajaDet(m);setCajaEdit(false);}} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
-                      {!m._fromBanco&&<button onClick={()=>abrirEditCaja(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>}
-                      {!m._fromBanco&&<button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>}
+                      <button onClick={()=>generarPDFMovCaja(m)} className="p-1.5 text-slate-700 hover:bg-slate-100 rounded-lg" title="Comprobante PDF"><FileText size={12}/></button>
+                      <button onClick={()=>{setCajaDet(m);setCajaEdit(false);}} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver / Editar"><Settings size={12}/></button>
+                      <button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>
                     </div>
                   </BTd>
                 </tr>)}
