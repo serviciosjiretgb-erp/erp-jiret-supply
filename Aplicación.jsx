@@ -4163,7 +4163,7 @@ ${body}
           <input type="date" value={cxpFechaRef} onChange={e=>setCxpFechaRef(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" title="Corte"/>
           {cxpFechaRef&&<button onClick={()=>setCxpFechaRef('')} className="text-xs text-red-500 font-bold hover:underline">✕ Hoy</button>}
           <button onClick={()=>setCxpExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{cxpExpandAll?'▲ Contraer':'▼ Expandir'} todo</button>
-          <button onClick={()=>setCxpPagoModal({provSearch:'',provRif:'',nombre:'',facts:[],selec:{},montos:{},lp:{metodo:'Transferencia',fecha:hoy,moneda:'USD',tasa:String(tasaBCV||1),banco:'',referencia:'',concepto:'',cuentaId:''}})}
+          <button onClick={()=>setCxpPagoModal({provSearch:'',provId:'',nombre:'',lineasPago:[],lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV||1),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',fecha:hoy}})}
             className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:shadow-xl transition-all" style={{background:'linear-gradient(135deg,#ea580c,#c2410c)'}}>
             <DollarSign size={13}/> 💸 Registrar Pago
           </button>
@@ -4331,138 +4331,380 @@ ${body}
         )}
       </div>
 
-      {/* ── MODAL REGISTRAR PAGO ── */}
+      {/* ── MODAL REGISTRAR PAGO (4 columnas — espejo de Registrar Cobro) ── */}
       {cxpPagoModal&&(()=>{
-        const pm=cxpPagoModal;
-        const setPM=u=>setCxpPagoModal(prev=>({...prev,...(typeof u==='function'?u(prev):u)}));
-        // Proveedor seleccionado
-        const provFacts=pm.provRif?(facturasCompra||[]).filter(f=>(f.proveedorId===pm.provRif||f.proveedor===pm.nombre)&&f.status!=='ANULADA'&&getSaldoFact(f)>0.01):[];
-        const totalSelec=provFacts.filter(f=>pm.selec[f.id]).reduce((s,f)=>s+pN(pm.montos[f.id]||0),0);
-        const provsFilt=(proveedores||[]).filter(p=>(p.nombre||'').toLowerCase().includes((pm.provSearch||'').toLowerCase())||(p.rif||'').includes(pm.provSearch||''));
+        const pm = cxpPagoModal;
+        const setPM = u => setCxpPagoModal(prev=>({...prev,...(typeof u==='function'?u(prev):u)}));
+
+        // Lista de proveedores con saldo
+        const provConSaldo = proveedores.filter(p=>{
+          const facts=(facturasCompra||[]).filter(f=>f.proveedorId===p.id&&f.status!=='ANULADA'&&getSaldoFact(f)>0.01);
+          return facts.length>0;
+        }).map(p=>{
+          const facts=(facturasCompra||[]).filter(f=>f.proveedorId===p.id&&f.status!=='ANULADA'&&getSaldoFact(f)>0.01);
+          return {...p, saldo:facts.reduce((s,f)=>s+getSaldoFact(f),0), facts};
+        }).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+
+        const busqProv=(pm.provSearch||'').toLowerCase();
+        const provFilt=busqProv?provConSaldo.filter(p=>(p.nombre||'').toLowerCase().includes(busqProv)||(p.rif||'').includes(busqProv)):provConSaldo;
+        const provSel=provConSaldo.find(p=>p.id===pm.provId);
+
+        // Facturas pendientes del proveedor seleccionado
+        const factsPendProv=(provSel?.facts||[]).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+        // Totales de líneas de pago
+        const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
+        const saldoTrasPago=Math.max(0,(provSel?.saldo||0)-totalLineasUSD);
+
+        // Distribución automática en facturas (más antigua primero)
+        let distRestante=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1));
+        const distMap={};
+        factsPendProv.forEach(f=>{
+          if(distRestante<=0.001){distMap[f.id]=0;return;}
+          const s=getSaldoFact(f); const ap=Math.min(distRestante,s);
+          distMap[f.id]=ap; distRestante-=ap;
+        });
+
+        // Bancos
+        const bancosBS=(cuentasBancarias||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT'&&c.moneda!=='$');
+        const bancosUSD=(cuentasBancarias||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT'||c.moneda==='$');
+
+        // Guardar pago con múltiples líneas
+        const confirmarYRegistrar = async () => {
+          if(!pm.provId) return setDialog({title:'Falta proveedor',text:'Selecciona un proveedor.',type:'alert'});
+          if((pm.lineasPago||[]).length===0) return setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});
+          try{
+            const batch=writeBatch(db);
+            const totalUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
+            // Distribuir entre facturas (más antigua primero)
+            let restante=totalUSD;
+            const distribFacts=[];
+            factsPendProv.forEach(f=>{
+              if(restante<=0.001) return;
+              const s=getSaldoFact(f); const ap=Math.min(restante,s);
+              if(ap>0.001){distribFacts.push({f,ap});restante-=ap;}
+            });
+            // Registrar pagos por factura
+            distribFacts.forEach(({f,ap})=>{
+              const pagoId=`PAGCXP-${Date.now()}-${f.id.slice(-5)}`;
+              (pm.lineasPago||[]).forEach((l,li)=>{
+                const lUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1);
+                const montoPago=Math.min(ap,lUSD);
+                if(montoPago<0.001) return;
+                const pid=`${pagoId}-L${li}`;
+                batch.set(getDocRef('procura_pagos_cxp',pid),{
+                  id:pid,facturaId:f.id,proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',
+                  monto:montoPago,fecha:l.fecha||hoy,metodo:l.metodo||'Transferencia',
+                  banco:l.cuentaNombre||'',referencia:l.referencia||'',concepto:l.concepto||'Pago CxP',
+                  cuentaId:l.cuentaId||'',moneda:l.moneda||'USD',tasa:pN(l.tasa||tasaBCV||1),
+                  timestamp:Date.now(),user:appUser?.name||'Sistema'
+                });
+              });
+              const nuevoSaldo=Math.max(0,getSaldoFact(f)-ap);
+              batch.update(getDocRef('procura_facturas_compra',f.id),{
+                saldoPendiente:nuevoSaldo,status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE',updatedAt:Date.now()
+              });
+            });
+            // Movimientos bancarios (EGRESO)
+            (pm.lineasPago||[]).forEach((l,li)=>{
+              if(!l.cuentaId||l.cuentaId.startsWith('CAJA::')) return;
+              const tasa=pN(l.tasa||tasaBCV||1);
+              const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
+              const movId=`MOV-PAGCXP-${Date.now().toString(36)}-${li}`;
+              batch.set(getDocRef('banco_movimientos',movId),{
+                id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,
+                montoUSD:l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1),
+                tasa,fecha:l.fecha||hoy,concepto:l.concepto||`Pago ${provSel?.nombre||'—'}`,
+                referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
+                proveedor:provSel?.nombre||'—',timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
+              });
+            });
+            await batch.commit();
+            setCxpPagoModal(null);
+            setDialog({title:'✅ Pago registrado',text:`Pago de $${fN(totalUSD)} a ${provSel?.nombre||'—'} registrado con ${(pm.lineasPago||[]).length} línea(s) de pago.`,type:'alert'});
+          }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+        };
+
         return(
-          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={e=>{if(e.target===e.currentTarget)setCxpPagoModal(null);}}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden" style={{maxWidth:'72rem',maxHeight:'92vh',display:'flex',flexDirection:'column'}}>
-              {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{background:'linear-gradient(135deg,#ea580c,#7c2d12)'}}>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center"><DollarSign size={20} className="text-white"/></div>
-                  <div>
-                    <div className="font-black text-white text-base">Registrar Pago</div>
-                    <div className="text-orange-200 text-[10px]">Cuentas por Pagar — {settings?.empresaRazonSocial||'SERVICIOS JIRET G&B'}</div>
-                  </div>
+        <div className="fixed inset-0 z-[300]" style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(3px)',display:'flex',alignItems:'stretch',justifyContent:'center',padding:'20px'}}>
+          <div style={{background:'#fff',borderRadius:20,boxShadow:'0 25px 80px rgba(0,0,0,0.25)',width:'100%',maxWidth:1300,display:'flex',flexDirection:'column',overflow:'hidden',border:'1px solid #e5e7eb'}}>
+
+            {/* ── HEADER ── */}
+            <div style={{background:'linear-gradient(135deg,#E8541A,#c2410c)',padding:'14px 28px',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                <div style={{width:36,height:36,background:'rgba(255,255,255,0.2)',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <DollarSign size={18} style={{color:'#fff'}}/>
                 </div>
-                <button onClick={()=>setCxpPagoModal(null)} className="w-8 h-8 rounded-lg bg-white/15 text-white hover:bg-white/30 flex items-center justify-center text-lg font-black">×</button>
+                <div>
+                  <div style={{color:'#fff',fontWeight:900,fontSize:16,letterSpacing:0.5}}>Registrar Pago</div>
+                  <div style={{color:'rgba(255,255,255,0.7)',fontSize:10}}>Cuentas por Pagar — {settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div>
+                </div>
               </div>
-              <div className="flex flex-1 overflow-hidden">
-                {/* COL 1 — Proveedor + Facturas */}
-                <div className="w-80 flex-shrink-0 border-r border-gray-200 overflow-y-auto bg-gray-50">
-                  <div className="p-4 space-y-3">
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar Proveedor</label>
-                      <input value={pm.provSearch||''} onChange={e=>setPM({provSearch:e.target.value,provRif:'',nombre:'',facts:[],selec:{},montos:{}})} placeholder="Nombre o RIF..." className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
-                      {(pm.provSearch&&!pm.provRif)&&(
-                        <div className="mt-1 bg-white border-2 border-orange-200 rounded-xl shadow-lg max-h-40 overflow-y-auto">
-                          {provsFilt.slice(0,20).map(p=>(
-                            <button key={p.id||p.rif} onClick={()=>setPM({provSearch:p.nombre||p.name,provRif:p.rif,nombre:p.nombre||p.name,selec:{},montos:{}})} className="w-full text-left px-3 py-2 hover:bg-orange-50 border-b border-gray-100 last:border-0">
-                              <div className="font-bold text-xs">{p.nombre||p.name}</div>
-                              <div className="text-[9px] text-orange-600">{p.rif}</div>
-                            </button>
-                          ))}
-                          {provsFilt.length===0&&<div className="px-3 py-3 text-[10px] text-gray-400 text-center">Sin resultados</div>}
-                        </div>
-                      )}
-                      {pm.provRif&&<div className="mt-1 text-[9px] font-black text-green-700">✓ {pm.nombre} — {pm.provRif}</div>}
+              <button onClick={()=>setCxpPagoModal(null)} style={{width:32,height:32,borderRadius:8,border:'none',background:'rgba(255,255,255,0.15)',color:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:900}}>×</button>
+            </div>
+
+            {/* ── BODY 3 columnas ── */}
+            <div style={{display:'flex',flex:1,overflow:'hidden',minHeight:0}}>
+
+              {/* COL 1 — Proveedor + Facturas */}
+              <div style={{width:300,borderRight:'2px solid #f3f4f6',display:'flex',flexDirection:'column',flexShrink:0,background:'#fafafa'}}>
+                <div style={{padding:'16px 18px',borderBottom:'1px solid #f3f4f6',flexShrink:0}}>
+                  <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:10}}>1 · Proveedor</div>
+                  <div style={{position:'relative',marginBottom:8}}>
+                    <Search size={12} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#9ca3af'}}/>
+                    <input type="text" value={pm.provSearch||''} onChange={e=>setPM({provSearch:e.target.value,provId:'',selec:{},montos:{}})}
+                      placeholder="Buscar proveedor..." style={{width:'100%',paddingLeft:30,paddingRight:10,paddingTop:9,paddingBottom:9,border:'2px solid #e5e7eb',borderRadius:10,fontSize:11,outline:'none',background:'#fff',boxSizing:'border-box'}}/>
+                  </div>
+                  {!pm.provId && provFilt.length>0 && (
+                    <div style={{background:'#fff',border:'2px solid #e5e7eb',borderRadius:10,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
+                      {provFilt.map(p=>(
+                        <button key={p.id} onClick={()=>setPM({provSearch:p.nombre,provId:p.id,nombre:p.nombre,selec:{},lineasPago:[]})}
+                          style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',border:'none',borderBottom:'1px solid #f9fafb',background:'transparent',cursor:'pointer',textAlign:'left'}}
+                          onMouseEnter={e=>e.currentTarget.style.background='#fff7ed'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,fontWeight:700,color:'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.nombre}</div>
+                            <div style={{fontSize:9,color:'#9ca3af'}}>{p.rif}</div>
+                          </div>
+                          <span style={{fontSize:10,fontWeight:900,color:'#E8541A',marginLeft:8,flexShrink:0}}>${fN(p.saldo)}</span>
+                        </button>
+                      ))}
                     </div>
-                    {pm.provRif&&(
+                  )}
+                  {provSel && (
+                    <div style={{background:'#fff7ed',border:'2px solid #fed7aa',borderRadius:10,padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                       <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-[9px] font-black text-gray-500 uppercase">Facturas pendientes</label>
-                          <button onClick={()=>{const all={};const mon={};provFacts.forEach(f=>{all[f.id]=true;mon[f.id]=String(getSaldoFact(f));});setPM({selec:all,montos:mon});}} className="text-[9px] text-orange-600 font-black hover:underline">✓ Todas</button>
-                        </div>
-                        <div className="space-y-2">
-                          {provFacts.length===0&&<div className="text-[10px] text-gray-400 text-center py-4">Sin facturas pendientes</div>}
-                          {provFacts.map(f=>{
-                            const saldo=getSaldoFact(f);
-                            return(
-                              <div key={f.id} onClick={()=>setPM(prev=>{const s={...prev.selec,[f.id]:!prev.selec[f.id]};const m={...prev.montos};if(s[f.id]&&!m[f.id])m[f.id]=String(saldo);return{selec:s,montos:m};})}
-                                className={`p-2.5 rounded-xl border-2 cursor-pointer transition-all ${pm.selec[f.id]?'border-orange-400 bg-orange-50':'border-gray-200 bg-white hover:border-orange-200'}`}>
-                                <div className="flex justify-between items-start">
-                                  <div>
-                                    <span className="font-black text-orange-600 text-[10px]">{f.nroFactura||f.id}</span>
-                                    <span className="ml-2 text-gray-400 text-[9px]">{fD(f.fecha)}</span>
-                                  </div>
-                                  <span className="font-mono font-black text-[10px] text-orange-700">${fN(saldo)}</span>
-                                </div>
-                                {pm.selec[f.id]&&(
-                                  <div className="mt-1.5" onClick={e=>e.stopPropagation()}>
-                                    <input type="number" step="0.01" value={pm.montos[f.id]||''} onChange={e=>setPM(prev=>({montos:{...prev.montos,[f.id]:e.target.value}}))}
-                                      placeholder={saldo.toFixed(2)} className="w-full border-2 border-orange-300 rounded-lg px-2 py-1 text-xs font-black outline-none focus:border-orange-500" onClick={e=>e.stopPropagation()}/>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <div style={{fontWeight:900,fontSize:11,color:'#111'}}>{provSel.nombre}</div>
+                        <div style={{fontSize:9,color:'#9ca3af'}}>{provSel.rif}</div>
+                        <div style={{fontSize:10,color:'#E8541A',fontWeight:700}}>Saldo: ${fN(provSel.saldo)}</div>
                       </div>
+                      <button onClick={()=>setPM({provId:'',provSearch:'',nombre:'',selec:{},lineasPago:[]})} style={{border:'none',background:'none',color:'#9ca3af',cursor:'pointer',fontSize:16,fontWeight:900}}>×</button>
+                    </div>
+                  )}
+                </div>
+                {/* Facturas pendientes */}
+                {provSel && <div style={{flex:1,overflowY:'auto'}}>
+                  <div style={{padding:'8px 18px',borderBottom:'1px solid #f3f4f6',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fff',position:'sticky',top:0,zIndex:1}}>
+                    <span style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:1}}>2 · Facturas</span>
+                    <span style={{fontSize:9,color:'#9ca3af',fontStyle:'italic'}}>Distribución automática</span>
+                  </div>
+                  {factsPendProv.map((f,i)=>{
+                    const s=getSaldoFact(f); const ap=distMap[f.id]||0;
+                    const montoLA=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1));
+                    return(
+                    <div key={f.id} style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',background:i%2===0?'#fff':'#fafafa'}}>
+                      <div style={{display:'flex',justifyContent:'space-between'}}>
+                        <span style={{fontWeight:900,fontSize:11,color:'#E8541A'}}>{f.nroFactura||f.id}</span>
+                        <span style={{fontWeight:900,fontSize:11,color:'#dc2626'}}>${fN(s)}</span>
+                      </div>
+                      <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+                        <span style={{fontSize:9,color:'#9ca3af'}}>{f.fecha}</span>
+                        {montoLA>0&&ap>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${fN(Math.max(0,s-ap))}</span>}
+                      </div>
+                      {f.nroControl&&<span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Control: {f.nroControl}</span>}
+                    </div>);
+                  })}
+                </div>}
+              </div>
+
+              {/* COL 2 — Líneas de Pago */}
+              <div style={{flex:1,overflowY:'auto',background:'#fff',padding:'20px 24px',display:'flex',flexDirection:'column',gap:16}}>
+                <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2}}>3 · Métodos de Pago</div>
+
+                {provSel&&(
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+                    <div style={{background:'#f8fafc',borderRadius:10,padding:'10px 12px',textAlign:'center',border:'1px solid #e2e8f0'}}>
+                      <div style={{fontSize:8,fontWeight:900,color:'#64748b',textTransform:'uppercase',marginBottom:3}}>Deuda Total</div>
+                      <div style={{fontSize:15,fontWeight:900,color:'#dc2626'}}>${fN(provSel.saldo)}</div>
+                    </div>
+                    <div style={{background:'#f0fdf4',borderRadius:10,padding:'10px 12px',textAlign:'center',border:'1px solid #86efac'}}>
+                      <div style={{fontSize:8,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:3}}>Pagando ahora</div>
+                      <div style={{fontSize:15,fontWeight:900,color:'#16a34a'}}>${fN(totalLineasUSD)}</div>
+                    </div>
+                    <div style={{background:saldoTrasPago<0.01?'#f0fdf4':'#fffbeb',borderRadius:10,padding:'10px 12px',textAlign:'center',border:`1px solid ${saldoTrasPago<0.01?'#86efac':'#fed7aa'}`}}>
+                      <div style={{fontSize:8,fontWeight:900,color:saldoTrasPago<0.01?'#15803d':'#92400e',textTransform:'uppercase',marginBottom:3}}>Saldo tras pago</div>
+                      <div style={{fontSize:15,fontWeight:900,color:saldoTrasPago<0.01?'#16a34a':'#f97316'}}>${fN(saldoTrasPago)}</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Líneas agregadas */}
+                {(pm.lineasPago||[]).length>0&&(
+                  <div style={{background:'#f8fafc',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+                    <div style={{padding:'8px 12px',background:'#0f172a',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:9,fontWeight:900,color:'#94a3b8',textTransform:'uppercase',letterSpacing:1}}>Pagos agregados</span>
+                      <span style={{fontSize:11,fontWeight:900,color:'#4ade80'}}>Total: ${fN(totalLineasUSD)}</span>
+                    </div>
+                    {(pm.lineasPago||[]).map((l,i)=>{
+                      const lUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1);
+                      return(
+                      <div key={i} style={{padding:'10px 12px',borderBottom:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:8,background:'#fff'}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:2}}>
+                            <span style={{fontSize:10,fontWeight:900,color:'#111'}}>{l.metodo}</span>
+                            <span style={{fontSize:10,fontWeight:900,color:'#16a34a'}}>${fN(lUSD)}</span>
+                            {l.moneda==='Bs'&&<span style={{fontSize:9,color:'#64748b'}}>Bs.{fN(pN(l.monto))}</span>}
+                          </div>
+                          <div style={{display:'flex',gap:10,fontSize:9,color:'#64748b'}}>
+                            <span>{l.cuentaNombre||'Sin cuenta'}</span>
+                            {l.referencia&&<span>Ref: {l.referencia}</span>}
+                            <span>{l.fecha}</span>
+                          </div>
+                        </div>
+                        <button onClick={()=>setPM(m=>({lineasPago:(m.lineasPago||[]).filter((_,j)=>j!==i)}))}
+                          style={{padding:'4px 8px',background:'#fee2e2',color:'#dc2626',border:'none',borderRadius:6,fontSize:9,fontWeight:900,cursor:'pointer'}}>✕</button>
+                      </div>);
+                    })}
+                  </div>
+                )}
+
+                {/* Formulario nueva línea */}
+                <div style={{background:'#fffbeb',borderRadius:12,border:'2px solid #fed7aa',padding:'16px'}}>
+                  <div style={{fontSize:9,fontWeight:900,color:'#92400e',textTransform:'uppercase',marginBottom:12}}>➕ Nueva línea de pago</div>
+
+                  {/* Moneda */}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+                    {[{k:'USD',emoji:'💵',label:'Dólares'},{k:'Bs',emoji:'🇻🇪',label:'Bolívares'}].map(cur=>(
+                      <button key={cur.k} onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,moneda:cur.k,monto:''}}))}
+                        style={{padding:'8px 12px',borderRadius:10,border:`2px solid ${(pm.lineaActual?.moneda||'USD')===cur.k?'#E8541A':'#e5e7eb'}`,background:(pm.lineaActual?.moneda||'USD')===cur.k?'#fff7ed':'#fafafa',cursor:'pointer',textAlign:'left'}}>
+                        <div style={{fontWeight:900,fontSize:11,color:(pm.lineaActual?.moneda||'USD')===cur.k?'#E8541A':'#374151'}}>{cur.emoji} {cur.label}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Monto */}
+                  <div style={{marginBottom:10}}>
+                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Monto {(pm.lineaActual?.moneda||'USD')==='Bs'?'(Bs)':'(USD)'}</label>
+                    <input type="number" step="0.01" placeholder="0.00" value={pm.lineaActual?.monto||''}
+                      onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,monto:e.target.value}}))}
+                      style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:14,fontWeight:900,outline:'none',boxSizing:'border-box'}}/>
+                    {(pm.lineaActual?.moneda||'USD')==='Bs'&&pN(pm.lineaActual?.monto)>0&&pN(pm.lineaActual?.tasa)>0&&(
+                      <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= ${fN(pN(pm.lineaActual.monto)/pN(pm.lineaActual.tasa))} USD</div>
                     )}
                   </div>
-                </div>
-                {/* COL 2 — Datos del Pago */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                  <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
-                    <div className="text-[9px] font-black text-orange-600 uppercase mb-2">💸 Resumen del Pago</div>
-                    <div className="font-black text-2xl text-orange-700">${fN(totalSelec)}</div>
-                    <div className="text-[9px] text-gray-500 mt-1">{provFacts.filter(f=>pm.selec[f.id]).length} factura(s) seleccionada(s)</div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
+
+                  {(pm.lineaActual?.moneda||'USD')==='Bs'&&(
+                    <div style={{marginBottom:10}}>
+                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                      <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
+                        onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                        style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
+                    </div>
+                  )}
+
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
                     <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método de pago *</label>
-                      <select value={pm.lp?.metodo||'Transferencia'} onChange={e=>setPM(prev=>({lp:{...prev.lp,metodo:e.target.value}}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                        {['Transferencia','Zelle','Efectivo USD','Efectivo Bs.','Cheque','Débito Bancario'].map(m=><option key={m}>{m}</option>)}
+                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Método</label>
+                      <select value={pm.lineaActual?.metodo||'Transferencia'} onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,metodo:e.target.value}}))}
+                        style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',background:'#fff',boxSizing:'border-box'}}>
+                        {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha *</label>
-                      <input type="date" value={pm.lp?.fecha||hoy} onChange={e=>setPM(prev=>({lp:{...prev.lp,fecha:e.target.value}}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Moneda</label>
-                      <select value={pm.lp?.moneda||'USD'} onChange={e=>setPM(prev=>({lp:{...prev.lp,moneda:e.target.value}}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                        <option value="USD">USD</option><option value="BS">Bs.</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
-                      <input type="number" step="0.0001" value={pm.lp?.tasa||''} onChange={e=>setPM(prev=>({lp:{...prev.lp,tasa:e.target.value}}))} placeholder={String(tasaBCV||1)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia</label>
-                      <input value={pm.lp?.referencia||''} onChange={e=>setPM(prev=>({lp:{...prev.lp,referencia:e.target.value}}))} placeholder="N° de transferencia" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                    </div>
-                    <div>
-                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Bancaria</label>
-                      <select value={pm.lp?.cuentaId||''} onChange={e=>{const c=cuentasBancarias.find(b=>b.id===e.target.value);setPM(prev=>({lp:{...prev.lp,cuentaId:e.target.value,banco:c?c.banco+' '+c.numero:''}}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                        <option value="">— Sin afectar banco —</option>
-                        {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco} {c.numero} ({c.moneda||'Bs.'})</option>)}
-                      </select>
+                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Fecha</label>
+                      <input type="date" value={pm.lineaActual?.fecha||hoy} onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,fecha:e.target.value}}))}
+                        style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',boxSizing:'border-box'}}/>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto / Observación</label>
-                    <input value={pm.lp?.concepto||''} onChange={e=>setPM(prev=>({lp:{...prev.lp,concepto:e.target.value}}))} placeholder="Pago factura de compra..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+
+                  <div style={{marginBottom:12}}>
+                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>N° Referencia</label>
+                    <input type="text" placeholder="REF-0000000" value={pm.lineaActual?.referencia||''}
+                      onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,referencia:e.target.value.toUpperCase()}}))}
+                      style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box',textTransform:'uppercase'}}/>
                   </div>
-                  <div className="flex gap-3 pt-2">
-                    <button onClick={()=>setCxpPagoModal(null)} className="flex-1 py-3 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
-                    <button onClick={guardarPago} className="flex-1 py-3 text-white rounded-xl font-black text-xs transition-all" style={{background:'linear-gradient(135deg,#ea580c,#c2410c)'}}>
-                      💸 Registrar Pago {totalSelec>0&&`— $${fN(totalSelec)}`}
-                    </button>
-                  </div>
+
+                  {pm.lineaActual?.cuentaId&&(
+                    <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'8px 12px',marginBottom:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:10,fontWeight:900,color:'#15803d'}}>✓ {pm.lineaActual.cuentaNombre}</span>
+                      <button onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,cuentaId:'',cuentaNombre:''}}))}
+                        style={{fontSize:9,color:'#dc2626',background:'none',border:'none',cursor:'pointer',fontWeight:900}}>✕ Quitar</button>
+                    </div>
+                  )}
+
+                  <button onClick={()=>{
+                    const la=pm.lineaActual||{};
+                    if(!pN(la.monto)){setDialog({title:'Monto requerido',text:'Ingresa el monto a pagar.',type:'alert'});return;}
+                    if(!la.cuentaId){setDialog({title:'Cuenta requerida',text:'Selecciona la cuenta o caja (panel derecho).',type:'alert'});return;}
+                    const nuevaLinea={...la,monto:la.monto,tasa:la.tasa||String(tasaBCV)};
+                    setPM(m=>({lineasPago:[...(m.lineasPago||[]),nuevaLinea],
+                      lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',fecha:hoy}}));
+                  }} style={{width:'100%',padding:'11px',background:'linear-gradient(135deg,#E8541A,#c2410c)',color:'#fff',border:'none',borderRadius:10,fontWeight:900,fontSize:12,cursor:'pointer',textTransform:'uppercase',letterSpacing:1}}>
+                    ➕ Agregar este pago
+                  </button>
                 </div>
               </div>
+
+              {/* COL 3 — Cuenta Bancaria + Confirmar */}
+              <div style={{width:270,borderLeft:'2px solid #f3f4f6',display:'flex',flexDirection:'column',flexShrink:0,background:'#fafafa'}}>
+                <div style={{flex:1,overflowY:'auto',padding:'16px 14px'}}>
+                  <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:12}}>4 · Cuenta Bancaria</div>
+                  {bancosBS.length>0&&<div style={{marginBottom:16}}>
+                    <div style={{fontSize:9,fontWeight:900,color:'#1d4ed8',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>🏦 Nacionales (Bs)</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {bancosBS.map(ct=>(
+                        <button key={ct.id} onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta||ct.numero||''}`}}))}
+                          style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                          <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                            <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta||ct.numero||''}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>}
+                  {bancosUSD.length>0&&<div style={{marginBottom:16}}>
+                    <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Internacionales / USD</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {bancosUSD.map(ct=>(
+                        <button key={ct.id} onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta||ct.numero||''}`}}))}
+                          style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8}}>
+                          <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                            <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta||ct.numero||''}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>}
+                </div>
+
+                {/* Resumen + botones */}
+                <div style={{borderTop:'2px solid #f3f4f6',padding:'14px',flexShrink:0}}>
+                  {(pm.lineasPago||[]).length>0&&(
+                    <div style={{background:'#fff',border:'2px solid #f3f4f6',borderRadius:12,padding:'12px 14px',marginBottom:12}}>
+                      <div style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',marginBottom:8}}>Resumen</div>
+                      {[
+                        ['Proveedor',provSel?.nombre||'—'],
+                        ['Facturas',`${factsPendProv.length} pendiente(s)`],
+                        ['Total USD',`$${fN(totalLineasUSD)}`],
+                        ['Líneas de pago',`${(pm.lineasPago||[]).length} método(s)`],
+                      ].map(([k,v])=>(
+                        <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:4}}>
+                          <span style={{color:'#9ca3af'}}>{k}</span>
+                          <span style={{fontWeight:900,color:'#111'}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={confirmarYRegistrar}
+                    disabled={!pm.provId||(pm.lineasPago||[]).length===0}
+                    style={{width:'100%',padding:'13px',borderRadius:12,border:'none',background:(!pm.provId||(pm.lineasPago||[]).length===0)?'#e5e7eb':'linear-gradient(135deg,#E8541A,#c2410c)',color:(!pm.provId||(pm.lineasPago||[]).length===0)?'#9ca3af':'#fff',fontWeight:900,fontSize:12,textTransform:'uppercase',cursor:(!pm.provId||(pm.lineasPago||[]).length===0)?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:8,letterSpacing:1}}>
+                    <CheckCircle size={15}/> Confirmar y Registrar
+                  </button>
+                  <button onClick={()=>setCxpPagoModal(null)}
+                    style={{width:'100%',padding:'10px',borderRadius:12,border:'2px solid #e5e7eb',background:'transparent',color:'#9ca3af',fontWeight:900,fontSize:11,textTransform:'uppercase',cursor:'pointer',letterSpacing:1}}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+
             </div>
           </div>
-        );
+        </div>);
       })()}
+
     </div>
   );
 };
