@@ -1119,7 +1119,7 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
     const [busy, setBusy]         = useState(false);
     const [search, setSearch]     = useState('');
     const [contCuentas, setContCuentas] = useState([]);
-    useEffect(()=>{ const u=onSnapshot(getColRef('cont_cuentas'),s=>setContCuentas(s.docs.map(d=>d.data()))); return()=>u(); },[]);
+    useEffect(()=>{ const u=onSnapshot(getColRef('planDeCuentas'),s=>setContCuentas(s.docs.map(d=>({id:d.id,...d.data()})))); return()=>u(); },[]);
 
     const rifToCodigo = (rif) => (rif||'').toUpperCase().replace(/[-\s]/g,'');
     const filtered = clientes.filter(c=>
@@ -1823,7 +1823,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       onSnapshot(getColRef('facturacion_clientes'), s => setClientes(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('facturacion_facturas'), orderBy('fechaEmision','desc')), s => setFacturas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('compras_proveedores'), s => setProvs(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('cont_cuentas'), s => setContC(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('planDeCuentas'), s => setContC(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientosBanco(s.docs.map(d=>d.data()))),
     ];
     return () => subs.forEach(u=>u());
@@ -3738,10 +3738,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
 
     const getSaldoCaja = (cajaId)=>{
+      const esBs = m => String(m||'').toUpperCase()==='BS';
       const movs = movCaja.filter(m=>m.cajaId===cajaId);
-      const bs  = movs.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
-      const usd = movs.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
-      return {bs,usd};
+      const bs  = movs.filter(m=>esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
+      const usd = movs.filter(m=>!esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+      // Cobros CxC registrados a través de esta caja (cobros_cxc con CAJA::<cajaId>)
+      const cobrosCaja = cobrosCajaCxc.filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId);
+      const bsCobros  = cobrosCaja.filter(c=>esBs(c.moneda)).reduce((a,c)=>{const tasa=Number(c.tasa||tasaActiva)||tasaActiva;return a+(Number(c.montoBs||0)||(Number(c.monto||0)*tasa));},0);
+      const usdCobros = cobrosCaja.filter(c=>!esBs(c.moneda)).reduce((a,c)=>a+Number(c.monto||0),0);
+      // Pagos CxP registrados a través de esta caja (procura_pagos_cxp con CAJA::<cajaId>)
+      const pagosCaja = pagosCajaCxP.filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId);
+      const bsPagos  = pagosCaja.filter(p=>esBs(p.moneda)).reduce((a,p)=>{const tasa=Number(p.tasa||tasaActiva)||tasaActiva;return a+(Number(p.montoBs||0)||(Number(p.monto||0)*tasa));},0);
+      const usdPagos = pagosCaja.filter(p=>!esBs(p.moneda)).reduce((a,p)=>a+Number(p.monto||0),0);
+      return {bs: bs+bsCobros-bsPagos, usd: usd+usdCobros-usdPagos};
     };
 
     return (
@@ -4337,7 +4346,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const s1=onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')),s=>setVales(s.docs.map(d=>d.data())));
       const s2=onSnapshot(getColRef('facturacion_clientes'),s=>setClientes2(s.docs.map(d=>d.data())));
       const s3=onSnapshot(getColRef('compras_proveedores'),s=>setProvs2(s.docs.map(d=>d.data())));
-      const s4=onSnapshot(getColRef('cont_cuentas'),s=>setCuentas2(s.docs.map(d=>d.data())));
+      const s4=onSnapshot(getColRef('planDeCuentas'),s=>setCuentas2(s.docs.map(d=>({id:d.id,...d.data()}))));
       return()=>{s1();s2();s3();s4();};
     },[]);
 
@@ -5303,7 +5312,7 @@ function ContabilidadApp({ fbUser, onBack }) {
   useEffect(() => {
     if (!fbUser) return;
     const subs = [
-      onSnapshot(getColRef('cont_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('planDeCuentas'), s => setCuentas(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('caja_movimientos'),  orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'), orderBy('fecha','desc')), s => setTasas(s.docs.map(d=>d.data()))),
@@ -5332,7 +5341,7 @@ function ContabilidadApp({ fbUser, onBack }) {
       sorted.forEach(c=>{
         const cod=String(c.codigo); const partes=cod.split('.');
         const grKey=partes[0]||cod.charAt(0); const grNom=grupoNames[grKey]||c.grupo||grKey;
-        const subgr=c.subgrupo||(partes.length>=2?partes.slice(0,2).join('.'):cod);
+        const subgr=c.subGrupo||c.subgrupo||(partes.length>=2?partes.slice(0,2).join('.'):cod);
         const cta=c.cuenta||(partes.length>=4?partes.slice(0,4).join('.'):cod);
         const subc=c.subcuenta||(partes.length>4?cod:'');
         html+=`<tr><td style="font-family:Courier New;font-weight:bold;color:#1e40af">${cod}</td><td style="font-weight:500">${c.nombre}</td><td>${grNom}</td><td>${subgr}</td><td>${cta}</td><td>${subc}</td><td>${c.tipo||''}</td><td>${c.naturaleza||''}</td></tr>`;
@@ -5345,7 +5354,7 @@ function ContabilidadApp({ fbUser, onBack }) {
     const rows=sorted.map(c=>{
       const cod=String(c.codigo);const partes=cod.split('.');const grKey=partes[0]||cod.charAt(0);
       const gN={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5':'COSTOS','6':'GASTOS'};
-      return[cod,c.nombre,gN[grKey]||c.grupo||grKey,c.subgrupo||(partes.length>=2?partes.slice(0,2).join('.'):cod),c.cuenta||(partes.length>=4?partes.slice(0,4).join('.'):cod),c.subcuenta||(partes.length>4?cod:'')];
+      return[cod,c.nombre,gN[grKey]||c.grupo||grKey,c.subGrupo||c.subgrupo||(partes.length>=2?partes.slice(0,2).join('.'):cod),c.cuenta||(partes.length>=4?partes.slice(0,4).join('.'):cod),c.subcuenta||(partes.length>4?cod:'')];
     });
     const content=[HEADERS,...rows].map(row=>row.join('\t')).join('\r\n');
     const blob=new Blob(['\uFEFF'+content],{type:'text/plain;charset=utf-8'});
@@ -5364,6 +5373,7 @@ function ContabilidadApp({ fbUser, onBack }) {
     const existentes=new Set(cuentas.map(c=>String(c.codigo)));
     const batch=writeBatch(db);let importados=0,omitidos=0;
     const grupoMap={'ACTIVOS':'1','ACTIVO':'1','PASIVOS':'2','PASIVO':'2','PATRIMONIO':'3','INGRESOS':'4','INGRESO':'4','COSTOS':'5','COSTO':'5','GASTOS':'6','GASTO':'6','GASTOS ISLR':'6'};
+    const gNombre={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5':'COSTOS','6':'GASTOS'};
     for(const line of dataLines){
       const parts=line.split('\t').map(v=>v.trim());
       if(parts.length<2)continue;
@@ -5373,7 +5383,7 @@ function ContabilidadApp({ fbUser, onBack }) {
       const grupoNum=grupoMap[grupoTxt.toUpperCase().trim()]||codigo.charAt(0);
       const naturaleza=['1','5','6'].includes(grupoNum)?'Deudora':'Acreedora';
       const partesCod=codigo.split('.');const tipo=partesCod.length<=2?'Mayor':partesCod.length<=4?'Auxiliar':'Analítica';
-      const id=bancoGid();batch.set(getDocRef('cont_cuentas',id),{id,codigo,nombre:nombre.toUpperCase(),grupo:grupoNum,subgrupo,cuenta,subcuenta,tipo,naturaleza,descripcion:'',ts:serverTimestamp()});
+      const id=bancoGid();batch.set(getDocRef('planDeCuentas',id),{id,codigo,nombre:nombre.toUpperCase(),grupo:(gNombre[grupoNum]||grupoTxt||'').toUpperCase(),subGrupo:(subgrupo||'').toUpperCase(),cuenta,subcuenta,tipo,naturaleza,descripcion:'',timestamp:Date.now()});
       importados++;
     }
     if(importados===0){alert(`No se importaron cuentas.${omitidos>0?` (${omitidos} ya existían)`:' Verifique el formato.'}`);event.target.value='';return;}
@@ -5413,7 +5423,9 @@ function ContabilidadApp({ fbUser, onBack }) {
     const [form,setForm]=useState(initF());
     const filtered=cuentas.filter(c=>c.nombre?.toUpperCase().includes(search.toUpperCase())||String(c.codigo).includes(search));
 
-    const openEdit=(c)=>{setEditC(c);setForm({codigo:c.codigo,nombre:c.nombre,grupo:c.grupo||'1',tipo:c.tipo||'Auxiliar',naturaleza:c.naturaleza||'Deudora',descripcion:c.descripcion||'',subgrupo:c.subgrupo||'',cuenta:c.cuenta||'',subcuenta:c.subcuenta||''});setModal(true);};
+    const gNombrePDC={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5':'COSTOS','6':'GASTOS'};
+    const gCodigoPDC={'ACTIVOS':'1','PASIVOS':'2','PATRIMONIO':'3','INGRESOS':'4','COSTOS':'5','GASTOS':'6'};
+    const openEdit=(c)=>{setEditC(c);setForm({codigo:c.codigo,nombre:c.nombre,grupo:gCodigoPDC[(c.grupo||'').toUpperCase()]||c.grupo||'1',tipo:c.tipo||'Auxiliar',naturaleza:c.naturaleza||'Deudora',descripcion:c.descripcion||'',subgrupo:c.subGrupo||c.subgrupo||'',cuenta:c.cuenta||'',subcuenta:c.subcuenta||''});setModal(true);};
     const openNew=()=>{setEditC(null);setForm(initF());setModal(true);};
 
     const save=async()=>{
@@ -5421,8 +5433,9 @@ function ContabilidadApp({ fbUser, onBack }) {
       if(!editCuenta&&cuentas.find(c=>String(c.codigo)===String(form.codigo)))return alert('El código ya existe');
       setBusy(true);
       try{
-        if(editCuenta){await updateDoc(getDocRef('cont_cuentas',editCuenta.id),{...form});}
-        else{const id=bancoGid();await setDoc(getDocRef('cont_cuentas',id),{...form,id,ts:serverTimestamp()});}
+        const payload={codigo:form.codigo,nombre:form.nombre,grupo:gNombrePDC[form.grupo]||form.grupo,subGrupo:form.subgrupo,cuenta:form.cuenta,subcuenta:form.subcuenta,tipo:form.tipo,naturaleza:form.naturaleza,descripcion:form.descripcion};
+        if(editCuenta){await updateDoc(getDocRef('planDeCuentas',editCuenta.id),payload);}
+        else{const id=bancoGid();await setDoc(getDocRef('planDeCuentas',id),{...payload,id,timestamp:Date.now()});}
         setModal(false);setEditC(null);setForm(initF());
       }finally{setBusy(false);}
     };
@@ -5454,7 +5467,7 @@ function ContabilidadApp({ fbUser, onBack }) {
                 {[...filtered].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=>{
                   const cod=String(c.codigo);const partes=cod.split('.');const grKey=partes[0]||cod.charAt(0);
                   const gN={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5':'COSTOS','6':'GASTOS'};
-                  const subgr=c.subgrupo||(partes.length>=2?partes.slice(0,2).join('.'):cod);
+                  const subgr=c.subGrupo||c.subgrupo||(partes.length>=2?partes.slice(0,2).join('.'):cod);
                   const ctaCol=c.cuenta||(partes.length>=4?partes.slice(0,4).join('.'):cod);
                   const subc=c.subcuenta||(partes.length>4?cod:'—');
                   return<tr key={c.id} className="hover:bg-slate-50">
@@ -5468,7 +5481,7 @@ function ContabilidadApp({ fbUser, onBack }) {
                     <BTd><BBadge v={c.naturaleza==='Deudora'?'blue':'red'}>{c.naturaleza}</BBadge></BTd>
                     <BTd><div className="flex gap-1">
                       <button onClick={()=>openEdit(c)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
-                      <button onClick={()=>deleteDoc(getDocRef('cont_cuentas',c.id))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
+                      <button onClick={()=>deleteDoc(getDocRef('planDeCuentas',c.id))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
                     </div></BTd>
                   </tr>;
                 })}
@@ -5706,7 +5719,7 @@ function AsientosApp({ fbUser, onBack }) {
     if (!fbUser) return;
     const subs = [
       onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientos(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('cont_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('planDeCuentas'), s => setCuentas(s.docs.map(d=>({id:d.id,...d.data()})))),
     ];
     return () => subs.forEach(u=>u());
   }, [fbUser]);
@@ -6100,7 +6113,7 @@ function BalancesApp({ fbUser, onBack }) {
   useEffect(()=>{
     if(!fbUser) return;
     const subs=[
-      onSnapshot(getColRef('cont_cuentas'), s=>setCuentas(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('planDeCuentas'), s=>setCuentas(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s=>setAsientos(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('cont_periodos'), s=>setPeriodos(s.docs.map(d=>d.data()))),
     ];
