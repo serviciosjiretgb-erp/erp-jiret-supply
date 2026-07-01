@@ -19968,7 +19968,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">FIRMA AUTORIZADA / VENDEDOR</div></div>
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
   </div>
-</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all" title="PDF"><Printer size={11}/></button>
+</div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all"><Printer size={11}/></button>
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
@@ -22399,7 +22399,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(lineas.length===0){setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});return;}
             try{
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
-              const allNesCliente=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+              const ndsDirectasCliente=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif===m.clientRif||n.clientName===m.clientName))
+                .map(n=>{
+                  const total=parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCV||1);
+                  const yaCobrado=(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                  return {
+                    id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,_yaCobrado:yaCobrado,
+                    clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
+                    fecha:n.fecha||n.createdAt||getTodayDate(),total,
+                  };
+                })
+                .filter(nd=>(nd.total-nd._yaCobrado)>0.01);
+              const allNesCliente=[...(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)),...ndsDirectasCliente].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
               const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
               const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
               const batch=writeBatch(db);
@@ -22457,11 +22468,19 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     });
                   }
                 }
-                batch.update(getDocRef('notasEntrega',ne.id),{
-                  statusCxC:nuevoStatus,montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
-                  saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
-                  refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
-                });
+                if(ne._esNDDirecta){
+                  batch.update(getDocRef('notasVentaCreditoDebito',ne._ndOrigId),{
+                    statusCxC:nuevoStatus,montoCobrado:parseFloat(((ne._yaCobrado||0)+montoNE).toFixed(2)),
+                    saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
+                    refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
+                  });
+                } else {
+                  batch.update(getDocRef('notasEntrega',ne.id),{
+                    statusCxC:nuevoStatus,montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
+                    saldoPendiente:nuevoSaldo,fechaUltimoCobro:lineas[0]?.fecha,
+                    refUltimoCobro:lineas.map(l=>l.referencia).filter(Boolean).join(' | ')
+                  });
+                }
                 cobrosGenerados.push({ne,montoNE,nuevoStatus});
               }
               await batch.commit();
@@ -22538,8 +22557,24 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const pm=cxcPagoModal;
             // Construir lista de clientes con saldo independiente de filtros
             const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01);
+            // ND de cliente directo (sin NE, sin factura) — cuenta por cobrar propia, tratada como pseudo-NE
+            const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
+              .map(n=>({
+                id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,
+                clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
+                fecha:n.fecha||n.createdAt||getTodayDate(),
+                total:parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCV||1),
+                nroFiscal:n.nroDocumento||n.id,tasa:parseNum(n.tasaFactura||0)||tasaBCV,
+                montoBase:parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCV||1),
+                _ndDescripcion:n.descripcion||'',
+              }))
+              .filter(nd=>{
+                const yaCobrado=(cobrosCxc||[]).filter(c=>c.neId===nd.id).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                return (nd.total-yaCobrado)>0.01;
+              });
+            const allCobrables=[...allNesAbiertas,...ndsDirectas];
             const porClienteModal={};
-            allNesAbiertas.forEach(ne=>{
+            allCobrables.forEach(ne=>{
               const k=ne.clientRif||ne.clientName||'SIN-RIF';
               if(!porClienteModal[k]) porClienteModal[k]={clientName:ne.clientName||k,clientRif:k,total:0,nes:[]};
               porClienteModal[k].total+=getSaldoNEAtFecha(ne,null);
@@ -22647,14 +22682,16 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const saldo=getSaldoNEAtFecha(ne,null);
                         const sel=!!pm.nesSelec?.[ne.id];
                         const aplicado=distMap[ne.id]||0;
-                        const invVinc=ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
-                        const nroFiscal=invVinc?.nroFiscal||ne.nroFiscal||null;
+                        const invVinc=ne._esNDDirecta?null:(ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())));
+                        const nroFiscal=ne._esNDDirecta?ne.nroFiscal:(invVinc?.nroFiscal||ne.nroFiscal||null);
                         const tasa=parseNum(invVinc?.tasa||ne.tasa||tasaBCV||1);
                         const baseUSD=parseNum(invVinc?.montoBase||ne.montoBase||ne.total||0);
-                        const ivaPct=invVinc?.aplicaIva==='NO'?0:0.16;
+                        const ivaPct=ne._esNDDirecta?0:(invVinc?.aplicaIva==='NO'?0:0.16);
                         const baseBs=baseUSD*tasa;
                         const ivaBs=baseBs*ivaPct;
                         const totalBs=baseBs+ivaBs;
+                        // NC/ND aplicadas a esta NE/factura, para mostrarlas desglosadas igual que las retenciones
+                        const ncsAplicadas=ne._esNDDirecta?[]:(_ncsByNe.get(ne.id)||_ncsByNe.get(ne.documento)||_ncsByNe.get(ne.facturaId)||[]).filter((n,idx,arr)=>arr.findIndex(x=>x.id===n.id)===idx);
                         return(
                         <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
                           style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',cursor:'pointer',background:sel?'#fff7ed':i%2===0?'#fff':'#fafafa',display:'flex',gap:10,alignItems:'center'}}
@@ -22664,14 +22701,15 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                           </div>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{display:'flex',justifyContent:'space-between'}}>
-                              <span style={{fontWeight:900,fontSize:11,color:'#E8541A'}}>{ne.id}</span>
+                              <span style={{fontWeight:900,fontSize:11,color:ne._esNDDirecta?'#9333ea':'#E8541A'}}>{ne._esNDDirecta?`ND ${ne.nroFiscal}`:ne.id}</span>
                               <span style={{fontWeight:900,fontSize:11,color:'#dc2626'}}>${formatNum(saldo)}</span>
                             </div>
                             <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
-                              <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}</span>
+                              <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}{ne._esNDDirecta&&ne._ndDescripcion?` · ${ne._ndDescripcion}`:''}</span>
                               {montoUSD>0&&aplicado>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
                             </div>
-                            {nroFiscal&&<div style={{marginTop:3,display:'flex',flexWrap:'wrap',gap:4,alignItems:'center'}}>
+                            {ne._esNDDirecta&&<div style={{marginTop:3}}><span style={{fontSize:8,fontWeight:900,color:'#9333ea',background:'#f3e8ff',padding:'1px 6px',borderRadius:4}}>Nota de Débito — sin factura asociada</span></div>}
+                            {nroFiscal&&!ne._esNDDirecta&&<div style={{marginTop:3,display:'flex',flexWrap:'wrap',gap:4,alignItems:'center'}}>
                               <span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Fac. {nroFiscal}</span>
                               {baseBs>0&&<>
                                 <span style={{fontSize:8,color:'#64748b',fontWeight:700}}>Base: <b style={{color:'#1e293b'}}>Bs.{formatNum(baseBs)}</b></span>
@@ -22679,10 +22717,25 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 <span style={{fontSize:8,color:'#64748b',fontWeight:700}}>Total: <b style={{color:'#15803d'}}>Bs.{formatNum(totalBs)}</b></span>
                               </>}
                             </div>}
+                            {ncsAplicadas.length>0&&(
+                              <div style={{marginTop:4,paddingTop:4,borderTop:'1px dashed #ddd6fe'}}>
+                                {ncsAplicadas.map((n,ni)=>{
+                                  const t=parseNum(n.tasaFactura||0)||tasaBCV;
+                                  const baseBsNc=parseNum(n.monto||0);
+                                  const usdNc=(t>1)?((n.tieneIva===false?baseBsNc:baseBsNc*1.16)/t):0;
+                                  return(
+                                    <div key={ni} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
+                                      <span style={{fontSize:8,color:'#7c3aed',fontWeight:700}}>{n.tipo==='NC'?'📋 N.Crédito':'📋 N.Débito'} · Doc.{n.nroDocumento||n.id}</span>
+                                      <span style={{fontSize:8,fontWeight:900,color:n.tipo==='NC'?'#7c3aed':'#0891b2'}}>{n.tipo==='NC'?'-':'+'}${formatNum(usdNc)}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                             {(()=>{
                               const rDet=getRetsDetalleNE(ne);
                               const retUSD=rDet.ivaUSD+rDet.otrasUSD;
-                              const saldoNeto=saldo; // ya incluye retenciones en getSaldoNEAtFecha
+                              const saldoNeto=saldo; // ya incluye retenciones y NC/ND en getSaldoNEAtFecha
                               if(!rDet.iva.length&&!rDet.otras.length) return null;
                               return(
                                 <div style={{marginTop:4,paddingTop:4,borderTop:'1px dashed #fed7aa'}}>
@@ -34139,6 +34192,7 @@ const VincularNEFacturasView = ({settings, appUser}) => {
 };
 
 
+const RestaurarCobrosView = ({settings, appUser}) => {
   const [rcBusq,      setRcBusq]      = useState('');
   const [rcNEs,       setRcNEs]       = useState([]);
   const [rcNESel,     setRcNESel]     = useState(null);
