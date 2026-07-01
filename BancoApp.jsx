@@ -1829,11 +1829,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const cuentasContables = contCuentas; // alias para compatibilidad con MovimientosView
 
   // Validar clave de admin — acepta la contraseña de CUALQUIER usuario registrado en el ERP
-  const validarClaveAdmin = (pwd) => {
+  // Versión async: si systemUsers aún no cargó, hace un getDocs en vivo
+  const validarClaveAdmin = async (pwd) => {
     if(!pwd) return false;
-    return (systemUsers||[]).some(u=>
-      u.password===pwd || u.pin===pwd || u.clave===pwd || u.contraseña===pwd
-    );
+    let users = systemUsers||[];
+    if(users.length === 0) {
+      try {
+        const snap = await getDocs(getColRef('users'));
+        users = snap.docs.map(d=>d.data());
+      } catch(e) { console.warn('validarClaveAdmin getDocs error:', e); }
+    }
+    return users.some(u => u.password===pwd || u.pin===pwd || u.clave===pwd || u.contraseña===pwd);
   };
 
   // ══════════════════════════════════════════════════════════════════════
@@ -2737,7 +2743,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     };
 
     const confirmarEliminar = async() => {
-      if(!validarClaveAdmin(adminPwd)) {
+      if(!await validarClaveAdmin(adminPwd)) {
         setPwdError(true); setTimeout(()=>setPwdError(false),1500); return;
       }
       setBusy(true);
@@ -4025,7 +4031,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     };
 
     const confirmarElimCaja = async() => {
-      if(!validarClaveAdmin(cajaPwd)){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
+      if(!await validarClaveAdmin(cajaPwd)){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
       const m = cajaPwdModal; if(!m) return;
       setBusy(true);
       try {
