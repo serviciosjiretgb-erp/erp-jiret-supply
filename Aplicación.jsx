@@ -1609,12 +1609,16 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
   const [invEditItem,setInvEditItem]=useState(null);
   const [invEditForm,setInvEditForm]=useState({});
+  const [categoriasSrv,setCategoriasSrv]=useState([]);
+  const [catForm,setCatForm]=useState({});
+  const [catModal,setCatModal]=useState(false);
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
-    return()=>{u1();u2();u3();};
+    const u4=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
+    return()=>{u1();u2();u3();u4();};
   },[]);
 
   const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
@@ -1636,6 +1640,8 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   },[inventory,invCat,search]);
 
   const srvFiltrado=servicios.filter(s=>!search||(s.nombre||'').toLowerCase().includes(search.toLowerCase())||(s.categoria||'').toLowerCase().includes(search.toLowerCase()));
+
+  const catFiltrado=categoriasSrv.filter(c=>!search||(c.nombre||'').toLowerCase().includes(search.toLowerCase()));
 
   const initSrv=()=>({nombre:'',descripcion:'',categoria:'MANTENIMIENTO',unidad:'Serv.',precio:'',cuentaContableId:'',cuentaContableNombre:'',activo:true});
 
@@ -1677,10 +1683,31 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
 
+  const initCat=()=>({nombre:'',unidad:'und',precioRef:'',cuentaContableId:'',cuentaContableNombre:'',activo:true});
+
+  const guardarCat=async()=>{
+    if(!catForm.nombre){setDialog({title:'Aviso',text:'El nombre de la categoría es obligatorio.',type:'alert'});return;}
+    try{
+      const id=catForm.id||`CATSRV-${pId()}`;
+      const yaExiste=categoriasSrv.find(c=>c.id!==id&&(c.nombre||'').toUpperCase()===(catForm.nombre||'').toUpperCase());
+      if(yaExiste){setDialog({title:'Aviso',text:'Ya existe una categoría con ese nombre.',type:'alert'});return;}
+      await setDoc(getDocRef('procura_categorias_servicio',id),{...catForm,id,nombre:(catForm.nombre||'').toUpperCase(),updatedAt:Date.now()});
+      setCatModal(false);
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const elimCat=(c)=>setDialog({title:'¿Eliminar categoría?',text:`Se eliminará "${c.nombre}". Las órdenes de compra ya registradas con esta categoría no se ven afectadas.`,type:'confirm',onConfirm:async()=>{
+    try{await deleteDoc(getDocRef('procura_categorias_servicio',c.id));}
+    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  }});
+
   return (
     <div>
       {/* Tabs */}
       <div className="flex gap-2 mb-4">
+        <button onClick={()=>setTab('categorias')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='categorias'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+          🗂️ Categorías de Servicio
+        </button>
         <button onClick={()=>setTab('servicios')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='servicios'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
           ⚙️ Servicios
         </button>
@@ -1691,8 +1718,38 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." className={`${inp} pl-9 h-full`}/>
         </div>
+        {tab==='categorias'&&<PBg onClick={()=>{setCatForm(initCat());setCatModal(true);}}><Plus size={14}/> Nueva categoría</PBg>}
         {tab==='servicios'&&<PBg onClick={()=>{setForm(initSrv());setModal('srv');}}><Plus size={14}/> Nuevo servicio</PBg>}
       </div>
+
+      {/* CATEGORÍAS DE SERVICIO */}
+      {tab==='categorias'&&(
+        <PCard noPad>
+          <table className="w-full">
+            <thead><tr>
+              <PTh>Categoría</PTh><PTh>Cuenta Contable</PTh><PTh>Unidad ref.</PTh><PTh right>Precio ref.</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
+            </tr></thead>
+            <tbody>
+              {catFiltrado.length===0?<tr><td colSpan={6} className="py-12"><PEmpty icon={Layers} title="Sin categorías" desc="Registra tu primera categoría de servicio"/></td></tr>:
+              catFiltrado.map(c=>(
+                <tr key={c.id} className="hover:bg-slate-50">
+                  <PTd><span className="font-black text-slate-800 text-xs">{c.nombre||'—'}</span></PTd>
+                  <PTd><span className="text-[10px] text-blue-600">{c.cuentaContableNombre||<span className="text-slate-400">Sin asignar</span>}</span></PTd>
+                  <PTd>{c.unidad||'und'}</PTd>
+                  <PTd right mono><span className="font-black">{c.precioRef?`$${pFmt(c.precioRef)}`:'—'}</span></PTd>
+                  <PTd><PBadge v={c.activo!==false?'green':'gray'}>{c.activo!==false?'Activo':'Inactivo'}</PBadge></PTd>
+                  <PTd>
+                    <div className="flex gap-2">
+                      <PBp sm onClick={()=>{setCatForm({...c});setCatModal(true);}}><Edit size={11}/></PBp>
+                      <PBd sm onClick={()=>elimCat(c)}><Trash2 size={11}/></PBd>
+                    </div>
+                  </PTd>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </PCard>
+      )}
 
       {/* SERVICIOS */}
       {tab==='servicios'&&(
@@ -1802,6 +1859,40 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
         </PModal>
       )}
 
+      {/* Modal Categoría de Servicio */}
+      <PModal open={catModal} onClose={()=>setCatModal(false)} title={catForm.id?'Editar categoría':'Nueva categoría de servicio'}
+        footer={<><PBo onClick={()=>setCatModal(false)}>Cancelar</PBo><PBg onClick={guardarCat}><Save size={14}/> Guardar</PBg></>}>
+        <div className="grid grid-cols-2 gap-4">
+          <PFG label="Nombre de la categoría *" full>
+            <input className={inp} value={catForm.nombre||''} onChange={e=>setCatForm({...catForm,nombre:e.target.value.toUpperCase()})} placeholder="Ej: REPARACIONES Y MANTENIMIENTO, TRANSPORTE..."/>
+          </PFG>
+          <PFG label="Cuenta contable" full>
+            <select className={sel} value={catForm.cuentaContableId||''} onChange={e=>{
+              const cta=planDeCuentas.find(c=>c.id===e.target.value);
+              setCatForm({...catForm,cuentaContableId:e.target.value,cuentaContableNombre:cta?`${cta.codigo} — ${cta.nombre}`:''});
+            }}>
+              <option value="">— Seleccionar cuenta contable —</option>
+              {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+            </select>
+            {catForm.cuentaContableNombre&&<p className="text-[10px] text-blue-600 font-medium mt-1">{catForm.cuentaContableNombre}</p>}
+          </PFG>
+          <PFG label="Unidad de referencia">
+            <select className={sel} value={catForm.unidad||'und'} onChange={e=>setCatForm({...catForm,unidad:e.target.value})}>
+              {['und','serv.','hrs','día','mes','km','m²','viaje'].map(u=><option key={u} value={u}>{u}</option>)}
+            </select>
+          </PFG>
+          <PFG label="Precio de referencia ($)">
+            <input type="number" className={inp} value={catForm.precioRef||''} onChange={e=>setCatForm({...catForm,precioRef:e.target.value})} placeholder="0.00"/>
+            <p className="text-[9px] text-slate-400 mt-1">Se actualiza solo con el precio que escribas en cada orden de compra. Puedes ajustarlo aquí en cualquier momento.</p>
+          </PFG>
+          <PFG label="Estado">
+            <select className={sel} value={catForm.activo!==false?'true':'false'} onChange={e=>setCatForm({...catForm,activo:e.target.value==='true'})}>
+              <option value="true">Activo</option><option value="false">Inactivo</option>
+            </select>
+          </PFG>
+        </div>
+      </PModal>
+
       {/* Modal Servicio */}
       <PModal open={modal==='srv'} onClose={()=>setModal(null)} title={form.id?'Editar servicio':'Nuevo servicio'}
         footer={<><PBo onClick={()=>setModal(null)}>Cancelar</PBo><PBg onClick={guardarSrv}><Save size={14}/> Guardar</PBg></>}>
@@ -1862,11 +1953,13 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
   const [invTab,setInvTab]=useState('TODOS');
   const [invSearch,setInvSearch]=useState('');
   const [srvSearch,setSrvSearch]=useState('');
+  const [categoriasSrv,setCategoriasSrv]=useState([]);
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();};
+    const u3=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.activo!==false).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
+    return()=>{u1();u2();u3();};
   },[]);
 
   const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
@@ -1894,6 +1987,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
   });
 
   const srvFiltrado=servicios.filter(s=>!srvSearch||(s.nombre||'').toLowerCase().includes(srvSearch.toLowerCase())||(s.categoria||'').toLowerCase().includes(srvSearch.toLowerCase()));
+
+  const catSrvFiltrado=categoriasSrv.filter(c=>!srvSearch||(c.nombre||'').toLowerCase().includes(srvSearch.toLowerCase()));
 
   const filtradas=ordenesCompra.filter(o=>{
     const ms=(o.nroOC||'').toLowerCase().includes(search.toLowerCase())||(o.proveedor||'').toLowerCase().includes(search.toLowerCase());
@@ -1949,7 +2044,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
     }
     const total=pNum(itemForm.cantidad)*pNum(itemForm.precioUnit);
     setItems([...items,{...itemForm,id:pId(),total}]);
-    setItemForm({tipo:itemForm.tipo,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und',iva:'GRAVADO',invId:null,srvId:null});
+    setItemForm({tipo:itemForm.tipo,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:'Und',iva:'GRAVADO',invId:null,srvId:null,catSrvId:null,cuentaContableId:'',cuentaContableNombre:''});
     setItemModal(false);
   };
 
@@ -1959,9 +2054,15 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
     try{
       const t=calcTotales(items,form.tasa);
       const id=form.id||`OC-${pId()}`;
-      await setDoc(getDocRef('procura_ordenes_compra',id),{
+      const batch=writeBatch(db);
+      batch.set(getDocRef('procura_ordenes_compra',id),{
         ...form,id,items,total:t.totalUSD,totales:t,updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
       });
+      // Actualiza el precio de referencia de cada categoría de servicio usada, con el último precio escrito en esta OC
+      items.filter(it=>it.tipo==='SERVICIO'&&it.catSrvId&&pNum(it.precioUnit)>0).forEach(it=>{
+        batch.update(getDocRef('procura_categorias_servicio',it.catSrvId),{precioRef:pNum(it.precioUnit),updatedAt:Date.now()});
+      });
+      await batch.commit();
       setModal(null);
       setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -2379,7 +2480,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
               {/* Tipo */}
               <div className="flex gap-2 mb-3">
                 {[['PRODUCTO','🏭 Producto inventario'],['SERVICIO','⚙️ Servicio'],['MANUAL','✏️ Manual']].map(([t,l])=>(
-                  <button key={t} onClick={()=>setItemForm({...itemForm,tipo:t,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:t==='SERVICIO'?'Serv.':'Und',iva:'GRAVADO',invId:null,srvId:null})}
+                  <button key={t} onClick={()=>setItemForm({...itemForm,tipo:t,desc:'',categoria:'',cantidad:'',precioUnit:'',unidad:t==='SERVICIO'?'und':'Und',iva:'GRAVADO',invId:null,srvId:null,catSrvId:null,cuentaContableId:'',cuentaContableNombre:''})}
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all ${itemForm.tipo===t?'bg-slate-900 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{l}</button>
                 ))}
               </div>
@@ -2433,30 +2534,31 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                 <div className="mb-3">
                   <div className="relative mb-2">
                     <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-                    <input value={srvSearch} onChange={e=>setSrvSearch(e.target.value)} placeholder="Buscar servicio..." className={`${inp} pl-8 text-xs py-1.5`}/>
+                    <input value={srvSearch} onChange={e=>setSrvSearch(e.target.value)} placeholder="Buscar categoría de servicio..." className={`${inp} pl-8 text-xs py-1.5`}/>
                   </div>
-                  {srvFiltrado.length===0?(
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center text-xs text-amber-700">No hay servicios. Ve a <strong>Catálogo Prod/Serv</strong> para agregar.</div>
+                  {catSrvFiltrado.length===0?(
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-center text-xs text-amber-700">No hay categorías de servicio. Ve a <strong>Catálogo Prod/Serv</strong> para agregar.</div>
                   ):(
                     <div className="border border-slate-200 rounded-lg overflow-hidden" style={{maxHeight:'200px',overflowY:'auto'}}>
                       <table className="w-full">
                         <thead className="sticky top-0"><tr style={{background:'#0f172a'}}>
-                          <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Servicio</th>
                           <th className="px-2 py-1.5 text-left text-[8px] text-orange-400 font-black uppercase">Categoría</th>
                           <th className="px-2 py-1.5 text-right text-[8px] text-orange-400 font-black uppercase">Precio ref.</th>
                         </tr></thead>
                         <tbody>
-                          {srvFiltrado.map(srv=>(
-                            <tr key={srv.id} className={`hover:bg-blue-50 cursor-pointer text-xs ${itemForm.srvId===srv.id?'bg-blue-50 border-l-2 border-blue-500':''}`}
-                              onClick={()=>setItemForm({...itemForm,desc:srv.nombre||'',categoria:srv.categoria||'',unidad:srv.unidad||'Serv.',precioUnit:srv.precio||'',srvId:srv.id,cantidad:itemForm.cantidad})}>
-                              <td className="px-2 py-1.5 font-black text-slate-800">{srv.nombre||'—'}</td>
-                              <td className="px-2 py-1.5 text-[9px] text-slate-500">{srv.categoria||'—'}</td>
-                              <td className="px-2 py-1.5 text-right font-black">{srv.precio?`$${pFmt(srv.precio)}`:'—'}</td>
+                          {catSrvFiltrado.map(cat=>(
+                            <tr key={cat.id} className={`hover:bg-blue-50 cursor-pointer text-xs ${itemForm.catSrvId===cat.id?'bg-blue-50 border-l-2 border-blue-500':''}`}
+                              onClick={()=>setItemForm({...itemForm,desc:'',categoria:cat.nombre||'',unidad:cat.unidad||'und',precioUnit:cat.precioRef||'',catSrvId:cat.id,cuentaContableId:cat.cuentaContableId||'',cuentaContableNombre:cat.cuentaContableNombre||'',srvId:null,cantidad:itemForm.cantidad})}>
+                              <td className="px-2 py-1.5 font-black text-slate-800">{cat.nombre||'—'}</td>
+                              <td className="px-2 py-1.5 text-right font-black">{cat.precioRef?`$${pFmt(cat.precioRef)}`:'—'}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+                  )}
+                  {itemForm.catSrvId&&(
+                    <p className="text-[9px] text-blue-500 mt-1.5">✓ Categoría seleccionada — escribe abajo el nombre del servicio que debe salir en la orden de compra.</p>
                   )}
                 </div>
               )}
@@ -2468,8 +2570,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                 </p>
                 <div className="grid grid-cols-4 gap-2">
                   <div className="col-span-2">
-                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Descripción *</label>
-                    <input className={`${inp} text-xs py-1.5`} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder="Descripción"/>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">{itemForm.tipo==='SERVICIO'?'Nombre del servicio *':'Descripción *'}</label>
+                    <input className={`${inp} text-xs py-1.5`} value={itemForm.desc||''} onChange={e=>setItemForm({...itemForm,desc:e.target.value})} placeholder={itemForm.tipo==='SERVICIO'?'Ej: Reparación de puerta X':'Descripción'}/>
                   </div>
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Categoría</label>
@@ -2478,7 +2580,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Unidad</label>
                     <select className={`${sel} text-xs py-1.5`} value={itemForm.unidad||'Und'} onChange={e=>setItemForm({...itemForm,unidad:e.target.value})}>
-                      {['Und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
+                      {['Und','und','KG','Millares','LT','MT','GL','Caja','Rollo','Serv.','M²','HRS'].map(u=><option key={u}>{u}</option>)}
                     </select>
                   </div>
                   <div>
@@ -2507,8 +2609,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                     )}
                   </div>
                 </div>
-                {/* Cuenta contable auto-asignada */}
-                {itemForm.cuentaContableNombre&&(
+                {/* Cuenta contable auto-asignada — oculta para servicios, la categoría la resuelve por detrás */}
+                {itemForm.cuentaContableNombre&&itemForm.tipo!=='SERVICIO'&&(
                   <div className="mt-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5 flex items-center gap-2">
                     <span className="text-[9px] font-black text-blue-400 uppercase">Cuenta Contable:</span>
                     <span className="text-[10px] font-black text-blue-700">{itemForm.cuentaContableNombre}</span>
