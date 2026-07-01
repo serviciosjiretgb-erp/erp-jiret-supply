@@ -3912,9 +3912,15 @@ const CxPView = ({
   const [cxpExpandAll, setCxpExpandAll] = useState(false);
   const [cxpExpanded, setCxpExpanded] = useState({});
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
+  const [cajasCuentasCxp, setCajasCuentasCxp] = useState([]);
 
   useEffect(()=>{
     const u = onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancarias(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return u;
+  }, []);
+
+  useEffect(()=>{
+    const u = onSnapshot(getColRef('caja_cuentas'), s=>setCajasCuentasCxp(s.docs.map(d=>({id:d.id,...d.data()}))));
     return u;
   }, []);
 
@@ -4368,6 +4374,7 @@ ${body}
         // Bancos
         const bancosBS=(cuentasBancarias||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT'&&c.moneda!=='$');
         const bancosUSD=(cuentasBancarias||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT'||c.moneda==='$');
+        const cajasDisponiblesCxp=(cajasCuentasCxp||[]).filter(c=>c.activo!==false);
 
         // Guardar pago con múltiples líneas
         const confirmarYRegistrar = async () => {
@@ -4405,23 +4412,42 @@ ${body}
                 saldoPendiente:nuevoSaldo,status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE',updatedAt:Date.now()
               });
             });
-            // Movimientos bancarios (EGRESO)
+            // Movimientos bancarios / de caja (EGRESO)
             (pm.lineasPago||[]).forEach((l,li)=>{
-              if(!l.cuentaId||l.cuentaId.startsWith('CAJA::')) return;
+              if(!l.cuentaId) return;
               const tasa=pN(l.tasa||tasaBCV||1);
-              const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
-              const movId=`MOV-PAGCXP-${Date.now().toString(36)}-${li}`;
-              batch.set(getDocRef('banco_movimientos',movId),{
-                id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,
-                montoUSD:l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1),
-                tasa,fecha:l.fecha||hoy,
-                concepto:l.concepto||`EGRESO CxP · ${provSel?.nombre||'—'} · ${distribFacts.map(({f})=>`Fact.${f.nroFactura||f.id} (${f.fecha||''})`.trim()).join(' | ')}`,
-                notas:distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ${f.fecha||''} $${fN(ap)}`).join(' | '),
-                referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
-                proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
-                facturas:distribFacts.map(({f,ap})=>({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto:ap})),
-                timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
-              });
+              const esCajaLinea=l.cuentaId.startsWith('CAJA::');
+              if(!esCajaLinea){
+                const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
+                const movId=`MOV-PAGCXP-${Date.now().toString(36)}-${li}`;
+                batch.set(getDocRef('banco_movimientos',movId),{
+                  id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,
+                  montoUSD:l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1),
+                  tasa,fecha:l.fecha||hoy,
+                  concepto:l.concepto||`EGRESO CxP · ${provSel?.nombre||'—'} · ${distribFacts.map(({f})=>`Fact.${f.nroFactura||f.id} (${f.fecha||''})`.trim()).join(' | ')}`,
+                  notas:distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ${f.fecha||''} $${fN(ap)}`).join(' | '),
+                  referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
+                  proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
+                  facturas:distribFacts.map(({f,ap})=>({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto:ap})),
+                  timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
+                });
+              } else {
+                const cajaId=l.cuentaId.replace('CAJA::','');
+                const cajaObj=(cajasCuentasCxp||[]).find(c=>c.id===cajaId);
+                const montoUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1);
+                const movId=`MOVC-PAGCXP-${Date.now().toString(36)}-${li}`;
+                batch.set(getDocRef('caja_movimientos',movId),{
+                  id:movId,cajaId,tipo:'Egreso',
+                  moneda:cajaObj?.moneda||'USD',
+                  monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,
+                  fecha:l.fecha||hoy,
+                  concepto:l.concepto||`EGRESO CxP · ${provSel?.nombre||'—'} · ${distribFacts.map(({f})=>`Fact.${f.nroFactura||f.id} (${f.fecha||''})`.trim()).join(' | ')}`,
+                  referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
+                  aplicaTercero:true,tipoTercero:'Proveedor',terceroId:provSel?.id||'',terceroNombre:provSel?.nombre||'',
+                  proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
+                  timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
+                });
+              }
             });
             await batch.commit();
             setCxpPagoModal(null);
@@ -4673,6 +4699,21 @@ ${body}
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
                             <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta||ct.numero||''}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>}
+                  {cajasDisponiblesCxp.length>0&&<div>
+                    <div style={{fontSize:9,fontWeight:900,color:'#10b981',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💰 Cajas de Efectivo</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {cajasDisponiblesCxp.map(cj=>(
+                        <button key={cj.id} onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,cuentaId:`CAJA::${cj.id}`,cuentaNombre:`CAJA: ${cj.nombre}`}}))}
+                          style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#10b981':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#f0fdf4':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                          <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#10b981':'#d1d5db',flexShrink:0}}/>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===`CAJA::${cj.id}`?'#10b981':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cj.nombre}</div>
+                            <div style={{fontSize:9,color:'#9ca3af'}}>{cj.moneda==='BS'?'Bolívares (Bs)':'Dólares (USD)'}{cj.descripcion?` · ${cj.descripcion}`:''}</div>
                           </div>
                         </button>
                       ))}
@@ -33596,7 +33637,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
       const ne = rcNESel;
       if(esCaja){
         const id = `CAJMOV-REST-${Date.now()}`;
-        await setDoc(getDocRef('caja_movimientos',id),{id,neId:ne._id,fecha:cobro.fecha,tipo:'Ingreso',moneda:'USD',concepto:`Cobro ${ne.documento||ne.id} · ${ne.clientName||''} (REST.)`,referencia:cobro.referencia||'',monto:mU,montoBs:mB,montoUSD:mU,tasa:t,aplicaTercero:true,tipoTercero:'Cliente',terceroNombre:ne.clientName||'',cajaId,ts:serverTimestamp(),timestamp:Date.now()});
+        await setDoc(getDocRef('caja_movimientos',id),{id,neId:ne._id,fecha:cobro.fecha,tipo:'Ingreso',moneda:'USD',concepto:`Cobro ${ne.documento||ne.id} · ${ne.clientName||''} (REST.)`,referencia:cobro.referencia||'',monto:mU,montoBs:mB,montoUSD:mU,tasa:t,aplicaTercero:true,tipoTercero:'Cliente',terceroNombre:ne.clientName||'',cajaId,timestamp:Date.now()});
         setRcMovsCaja(prev=>[...prev,{referencia:cobro.referencia,montoUSD:mU}]);
         setRcMsg({type:'ok',text:`✅ Movimiento creado en caja_movimientos (${cobro.cuentaBancoNombre||cajaId})`});
       } else {
