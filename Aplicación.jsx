@@ -4730,165 +4730,321 @@ ${body}
 // HISTORIAL DE PAGOS — CUENTAS POR PAGAR
 // ══════════════════════════════════════════════════════════════════════
 const HistorialPagosView = ({
-  pagosCxP, facturasCompra, proveedores, tasaBCV, settings, dialog, setDialog
+  pagosCxP, facturasCompra, proveedores, tasaBCV, settings, dialog, setDialog, appUser
 }) => {
-  const [search, setSearch] = useState('');
-  const [filtMes, setFiltMes] = useState('');
-  const [filtProv, setFiltProv] = useState('');
+  const [histSearch, setHistSearch] = useState('');
+  const [histFiltMes, setHistFiltMes] = useState('');
+  const [histFiltMetodo, setHistFiltMetodo] = useState('TODOS');
+  const [histPage, setHistPage] = useState(0);
+  const [editPago, setEditPago] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const HIST_PER_PAGE = 50;
 
   const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
   const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pN(n)); const p=a.toFixed(2).split('.'); return(pN(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
   const fD = d => { if(!d)return'—'; const pts=String(d).split('-'); return pts.length===3?`${pts[2]}/${pts[1]}/${pts[0]}`:d; };
+  const hoy = getTodayDate();
 
   const _factMap = useMemo(()=>{ const m=new Map(); (facturasCompra||[]).forEach(f=>m.set(f.id,f)); return m; },[facturasCompra]);
 
-  const pagos = useMemo(()=>{
-    return [...(pagosCxP||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-  },[pagosCxP]);
+  const metodos = ['TODOS','Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Tarjeta Internacional (Banplus)'];
 
-  const filtrados = pagos.filter(p=>{
-    const pMes=(p.fecha||'').slice(0,7);
-    if(filtMes && pMes!==filtMes) return false;
-    const prov=(p.proveedor||'').toLowerCase();
-    if(filtProv && !prov.includes(filtProv.toLowerCase())) return false;
-    if(search){
-      const q=search.toLowerCase();
-      return prov.includes(q)||(p.referencia||'').toLowerCase().includes(q)||(p.metodo||'').toLowerCase().includes(q)||(_factMap.get(p.facturaId)?.nroFactura||'').toLowerCase().includes(q);
+  const allPagos = useMemo(()=>[...(pagosCxP||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)),[pagosCxP]);
+
+  const histFiltered = allPagos.filter(p=>{
+    if(histSearch){
+      const q=histSearch.toLowerCase();
+      const f=_factMap.get(p.facturaId);
+      if(!(
+        (p.proveedor||'').toLowerCase().includes(q)||
+        (f?.nroFactura||'').toLowerCase().includes(q)||
+        (p.referencia||'').toLowerCase().includes(q)||
+        (p.metodo||'').toLowerCase().includes(q)||
+        (p.banco||'').toLowerCase().includes(q)
+      )) return false;
     }
+    if(histFiltMes && !(p.fecha||'').startsWith(histFiltMes)) return false;
+    if(histFiltMetodo!=='TODOS' && (p.metodo||'')!==histFiltMetodo) return false;
     return true;
   });
 
-  const totalUSD = filtrados.reduce((s,p)=>s+pN(p.monto||0),0);
-  const meses = [...new Set(pagos.map(p=>(p.fecha||'').slice(0,7)).filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+  const totalPages = Math.ceil(histFiltered.length / HIST_PER_PAGE);
+  const paginated = histFiltered.slice(histPage*HIST_PER_PAGE, (histPage+1)*HIST_PER_PAGE);
+  const totalFiltrado = histFiltered.reduce((s,p)=>s+pN(p.monto||0),0);
+  const totalBsFiltrado = histFiltered.reduce((s,p)=>s+pN(p.monto||0)*(pN(p.tasa||tasaBCV||1)),0);
 
-  // Exportar Excel
-  const exportExcel = () => {
+  // ── PDF Historial ──────────────────────────────────────────────────
+  const generarPDFHistorial = () => {
     const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const ths=['Fecha','Proveedor','Factura Afectada','N° Factura','Monto USD','Método','Banco / Cuenta','N° Referencia','Concepto'];
-    const rows = filtrados.map(p=>{
+    const rif = settings?.empresaRif||'J-41230937-4';
+    const rows = histFiltered.map(p=>{
       const f=_factMap.get(p.facturaId);
-      return[p.fecha||'—',p.proveedor||'—',f?`${f.nroFactura||f.id} · ${fD(f.fecha)}`:'Proveedor directo',f?.nroControl||'—',pN(p.monto||0),p.metodo||'—',p.banco||'—',p.referencia||'—',p.concepto||'—'];
-    });
-    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — HISTORIAL DE PAGOS A PROVEEDORES</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="4" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalUSD)}</td><td colspan="4"></td></tr></tfoot></table></body></html>`;
-    Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'HistorialPagos.xls'}).click();
-  };
-
-  // Exportar PDF
-  const exportPDF = () => {
-    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const rifEmp = settings?.empresaRif||'J-41230937-4';
-    const rows = filtrados.map(p=>{
-      const f=_factMap.get(p.facturaId);
-      return `<tr style="border-bottom:1px solid #e5e7eb">
-<td style="padding:3px 6px;font-size:9px">${fD(p.fecha)}</td>
-<td style="padding:3px 6px;font-size:9px;font-weight:700;color:#f97316">${p.proveedor||'—'}</td>
-<td style="padding:3px 6px;font-size:9px;color:#2563eb">${f?`${f.nroFactura||f.id}`:'—'}</td>
-<td style="padding:3px 6px;font-size:9px">${f?fD(f.fecha):'—'}</td>
-<td style="padding:3px 6px;font-size:9px;color:#2563eb">${f?.nroControl||'—'}</td>
-<td style="padding:3px 6px;font-size:9px;font-weight:700;text-align:right;font-family:monospace">$${fN(pN(p.monto||0))}</td>
-<td style="padding:3px 6px;font-size:9px">${p.metodo||'—'}</td>
-<td style="padding:3px 6px;font-size:9px">${p.banco||'—'}</td>
-<td style="padding:3px 6px;font-size:9px">${p.referencia||'—'}</td>
+      const tasa=pN(p.tasa||tasaBCV||1);
+      const montoBs=p.moneda==='Bs'?pN(p.monto||0):pN(p.monto||0)*tasa;
+      return `<tr style="border-bottom:1px solid #f3f4f6">
+<td style="padding:6px 10px;color:#64748b">${p.fecha||'—'}</td>
+<td style="padding:6px 10px;font-weight:700;color:#f97316">${f?.nroFactura||'—'}</td>
+<td style="padding:6px 10px;font-weight:600">${p.proveedor||'—'}</td>
+<td style="padding:6px 10px;color:#64748b;font-size:9px">${p.banco||'—'}</td>
+<td style="padding:6px 10px">${p.metodo||'—'}</td>
+<td style="padding:6px 10px;font-size:9px;color:#94a3b8;font-family:monospace">${p.referencia||'—'}</td>
+<td style="padding:6px 10px;text-align:right;font-weight:900;color:#3b82f6">${montoBs>0?`Bs.${fN(montoBs)}`:'—'}</td>
+<td style="padding:6px 10px;text-align:right;font-weight:900;color:#16a34a">$${fN(pN(p.monto||0))}</td>
 </tr>`;
     }).join('');
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:legal landscape;margin:1.2cm 1.5cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
-<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">
-  <div><div style="font-size:14px;font-weight:900">${emp}</div><div style="font-size:8px;color:#666">RIF: ${rifEmp}</div></div>
-  <div style="text-align:right"><div style="font-size:12px;font-weight:900;color:#f97316">HISTORIAL DE PAGOS A PROVEEDORES</div>
-    <div style="font-size:8px;color:#555">${filtMes||'Todos los períodos'} · ${filtrados.length} pagos · Total: $${fN(totalUSD)}</div></div>
-</div>
-<table style="width:100%;border-collapse:collapse">
-<thead><tr style="background:#0f172a">
-  <th style="padding:4px 6px;color:#f97316;font-size:8px;text-align:left">FECHA</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">PROVEEDOR</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">N° FACTURA</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">FECHA FACT.</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">N° CONTROL</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px;text-align:right">MONTO USD</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">MÉTODO</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">BANCO</th>
-  <th style="padding:4px 6px;color:#f97316;font-size:8px">REFERENCIA</th>
-</tr></thead>
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Historial de Pagos</title>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:10px;color:#111;}
+.header{background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;}
+.logo{color:#f97316;font-size:18px;font-weight:900;}.logo span{color:#fff;}
+.hr{color:#94a3b8;font-size:9px;text-align:right;}table{width:100%;border-collapse:collapse;}
+thead tr{background:#0f172a;color:#fff;}thead th{padding:8px 10px;text-align:left;font-size:8px;font-weight:900;text-transform:uppercase;}
+tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+<div class="header"><div><div class="logo">Supply <span>G&B</span></div><div style="color:#94a3b8;font-size:9px;margin-top:2px">${emp} · RIF: ${rif}</div></div>
+<div class="hr"><h2 style="color:#fff;font-size:12px;font-weight:900;text-transform:uppercase">Historial de Pagos a Proveedores</h2>
+<div>${histFiltMes||'Todos los períodos'} · ${histFiltered.length} pagos · Total: $${fN(totalFiltrado)}</div></div></div>
+<table><thead><tr><th>FECHA</th><th>N° FACTURA</th><th>PROVEEDOR</th><th>CUENTA/BANCO</th><th>MÉTODO</th><th>REFERENCIA</th><th style="text-align:right">MONTO Bs.</th><th style="text-align:right">MONTO USD</th></tr></thead>
 <tbody>${rows}</tbody>
-<tfoot><tr style="background:#0f172a;color:#fff">
-  <td colspan="5" style="padding:5px 8px;font-weight:900;font-size:10px">TOTAL · ${filtrados.length} pagos</td>
-  <td style="padding:5px 8px;font-weight:900;font-size:11px;text-align:right;font-family:monospace;color:#f97316">$${fN(totalUSD)}</td>
-  <td colspan="3"></td>
-</tr></tfoot>
-</table>
+<tfoot><tr><td colspan="6" style="text-align:right">TOTAL</td><td style="text-align:right;color:#3b82f6">Bs.${fN(totalBsFiltrado)}</td><td style="text-align:right;color:#16a34a">$${fN(totalFiltrado)}</td></tr></tfoot></table>
 <script>window.onload=()=>window.print();<\/script></body></html>`;
     const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+  };
+
+  // ── PDF Individual ─────────────────────────────────────────────────
+  const generarPDFPago = (p) => {
+    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rif = settings?.empresaRif||'J-41230937-4';
+    const f = _factMap.get(p.facturaId);
+    const tasa=pN(p.tasa||tasaBCV||1);
+    const montoBs=p.moneda==='Bs'?pN(p.monto||0):pN(p.monto||0)*tasa;
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de Pago</title>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
+.hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
+.logo{color:#f97316;font-size:20px;font-weight:900;}.logo span{color:#fff;}
+.bar{background:#f97316;height:3px;}.body{padding:20px 24px;}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+.kpi{border:1px solid #e2e8f0;border-radius:10px;padding:12px;text-align:center;}
+.kpi-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px;}
+.kpi-value{font-size:18px;font-weight:900;}
+.detalle{border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-top:16px;}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;}
+.row:last-child{border-bottom:none;font-weight:900;background:#f8fafc;margin:-16px;padding:10px 16px;border-radius:0 0 10px 10px;}
+.footer{text-align:center;font-size:8px;color:#94a3b8;margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+<div class="hdr"><div><div class="logo">Supply <span>G&B</span></div><div style="color:#94a3b8;font-size:9px;margin-top:2px">${emp} · RIF: ${rif}</div></div>
+<div style="text-align:right"><h2 style="color:#fff;font-size:13px;font-weight:900;text-transform:uppercase">Comprobante de Pago</h2>
+<div style="color:#94a3b8;font-size:9px">Fecha: ${p.fecha||hoy} · ID: ${p.id||'—'}</div></div></div>
+<div class="bar"></div>
+<div class="body">
+<div class="kpis">
+  <div class="kpi"><div class="kpi-label">Proveedor</div><div class="kpi-value" style="font-size:12px;color:#111">${p.proveedor||'—'}</div></div>
+  <div class="kpi"><div class="kpi-label">Total Pagado USD</div><div class="kpi-value" style="color:#ea580c">$${fN(pN(p.monto||0))}</div></div>
+  <div class="kpi"><div class="kpi-label">Total Pagado Bs.</div><div class="kpi-value" style="color:#2563eb">Bs.${fN(montoBs)}</div></div>
+</div>
+<div class="detalle">
+  <div class="row"><span style="color:#64748b">N° Factura</span><span style="font-weight:700;color:#f97316">${f?.nroFactura||'—'}</span></div>
+  <div class="row"><span style="color:#64748b">Fecha Factura</span><span style="font-weight:700">${fD(f?.fecha)}</span></div>
+  <div class="row"><span style="color:#64748b">N° Control</span><span style="font-weight:700">${f?.nroControl||'—'}</span></div>
+  <div class="row"><span style="color:#64748b">Método de Pago</span><span style="font-weight:700">${p.metodo||'—'}</span></div>
+  <div class="row"><span style="color:#64748b">Banco / Cuenta</span><span style="font-weight:700">${p.banco||'—'}</span></div>
+  <div class="row"><span style="color:#64748b">N° Referencia</span><span style="font-weight:700;font-family:monospace">${p.referencia||'—'}</span></div>
+  <div class="row"><span style="color:#64748b">Tasa Bs/$</span><span style="font-weight:700">${fN(tasa)}</span></div>
+  <div class="row"><span>TOTAL PAGADO</span><span style="color:#16a34a;font-size:15px">$${fN(pN(p.monto||0))}</span></div>
+</div>
+<div class="footer">${emp} · Generado: ${hoy} · Usuario: ${appUser?.name||'—'}</div>
+</div>
+<script>window.onload=()=>window.print();<\/script></body></html>`;
+    const w=window.open('','_blank','width=700,height=600');if(w){w.document.write(html);w.document.close();}
+  };
+
+  // ── Reversar Pago ──────────────────────────────────────────────────
+  const reversarPago = async (p) => {
+    if(!window.confirm(`¿Reversar el pago de $${fN(pN(p.monto||0))} a ${p.proveedor||'—'}? Esta acción restaura el saldo de la factura.`)) return;
+    try{
+      const batch = writeBatch(db);
+      batch.delete(getDocRef('procura_pagos_cxp', p.id));
+      const f = _factMap.get(p.facturaId);
+      if(f){
+        const saldoActual = pN(f.saldoPendiente||0);
+        const nuevoSaldo = saldoActual + pN(p.monto||0);
+        batch.update(getDocRef('procura_facturas_compra',f.id),{
+          saldoPendiente: nuevoSaldo, status:'PENDIENTE', updatedAt:Date.now()
+        });
+      }
+      await batch.commit();
+      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. El saldo de la factura fue restaurado.`,type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  // ── Guardar edición ────────────────────────────────────────────────
+  const guardarEdicion = async () => {
+    if(!editPago) return;
+    try{
+      await updateDoc(getDocRef('procura_pagos_cxp',editPago.id),{
+        fecha: editForm.fecha||editPago.fecha,
+        metodo: editForm.metodo||editPago.metodo,
+        referencia: editForm.referencia||'',
+        banco: editForm.banco||editPago.banco||'',
+        updatedAt: Date.now(), updatedBy: appUser?.name||'Sistema'
+      });
+      setEditPago(null);
+      setDialog({title:'✅ Guardado',text:'Pago actualizado.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
   return(
     <div className="p-4 space-y-4">
       {/* HEADER */}
-      <div className="bg-white rounded-2xl border p-4 flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="font-black text-xl uppercase flex items-center gap-2"><Receipt size={20} className="text-orange-500"/>Historial de Pagos</h2>
-          <p className="text-xs text-gray-500 mt-1">{filtrados.length} pagos · Total: <span className="font-black text-orange-700">${fN(totalUSD)}</span></p>
-        </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor, ref., factura..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-52"/>
-          <select value={filtMes} onChange={e=>setFiltMes(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-            <option value="">Todos los meses</option>
-            {meses.map(m=><option key={m} value={m}>{m}</option>)}
-          </select>
-          <input value={filtProv} onChange={e=>setFiltProv(e.target.value)} placeholder="Filtrar proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
-          <button onClick={exportPDF} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
-          <button onClick={exportExcel} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel</button>
-        </div>
-      </div>
-
-      {/* TABLA */}
       <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b-2 border-gray-100">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="font-black text-sm uppercase text-gray-800 flex items-center gap-2">
+              <CheckCircle size={16} className="text-orange-500"/>Historial de Pagos
+            </h3>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-400 font-bold">{histFiltered.length} registros · ${fN(totalFiltrado)}</span>
+              <button onClick={generarPDFHistorial} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-xl text-[9px] font-black uppercase hover:bg-gray-700 transition-all">
+                <Printer size={11}/> PDF
+              </button>
+            </div>
+          </div>
+          {/* Filtros */}
+          <div className="flex flex-wrap gap-2">
+            <input value={histSearch} onChange={e=>{setHistSearch(e.target.value);setHistPage(0);}} placeholder="🔍 Buscar proveedor, N° factura, referencia..."
+              className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[200px]"/>
+            <input type="month" value={histFiltMes} onChange={e=>{setHistFiltMes(e.target.value);setHistPage(0);}}
+              className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400"/>
+            <select value={histFiltMetodo} onChange={e=>{setHistFiltMetodo(e.target.value);setHistPage(0);}}
+              className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
+              {metodos.map(m=><option key={m} value={m}>{m==='TODOS'?'Todos los métodos':m}</option>)}
+            </select>
+            {(histSearch||histFiltMes||histFiltMetodo!=='TODOS')&&<button onClick={()=>{setHistSearch('');setHistFiltMes('');setHistFiltMetodo('TODOS');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+          </div>
+        </div>
+
+        {/* Tabla */}
         <div className="overflow-x-auto">
           <table className="w-full text-[10px]">
-            <thead className="bg-slate-800 text-white">
-              <tr>
-                {['Fecha Pago','Proveedor','N° Factura','Fecha Factura','N° Control','Monto USD','Método','Banco / Cuenta','N° Referencia'].map(h=>(
-                  <th key={h} className="py-2.5 px-3 text-left font-black text-[8px] uppercase whitespace-nowrap">{h}</th>
-                ))}
+            <thead className="bg-gray-50 border-b-2 border-gray-100">
+              <tr className="font-black text-gray-400 uppercase">
+                <th className="py-3 px-4 text-left">Fecha</th>
+                <th className="py-3 px-4 text-left">N° Factura</th>
+                <th className="py-3 px-4 text-left">Proveedor</th>
+                <th className="py-3 px-4 text-left">Cuenta / Banco</th>
+                <th className="py-3 px-4 text-left">Método</th>
+                <th className="py-3 px-4 text-left">Referencia</th>
+                <th className="py-3 px-4 text-right">Monto Bs.</th>
+                <th className="py-3 px-4 text-right">Monto USD</th>
+                <th className="py-3 px-4 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {filtrados.length===0&&(
-                <tr><td colSpan={9} className="text-center py-16 text-gray-400 font-bold text-xs uppercase">Sin pagos registrados</td></tr>
-              )}
-              {filtrados.map((p,i)=>{
-                const f=_factMap.get(p.facturaId);
+              {paginated.map(p=>{
+                const f = _factMap.get(p.facturaId);
+                const tasa = pN(p.tasa||tasaBCV||1);
+                const montoBs = p.moneda==='Bs'?pN(p.monto||0):pN(p.monto||0)*tasa;
                 return(
-                  <tr key={p.id||i} className="border-b border-gray-100 hover:bg-orange-50/30">
-                    <td className="py-2.5 px-3 font-bold whitespace-nowrap">{fD(p.fecha)}</td>
-                    <td className="py-2.5 px-3 font-black text-orange-700 max-w-[180px] truncate">{p.proveedor||'—'}</td>
-                    <td className="py-2.5 px-3 font-black text-blue-600">{f?.nroFactura||p.facturaId||'—'}</td>
-                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{f?fD(f.fecha):'—'}</td>
-                    <td className="py-2.5 px-3 text-indigo-600">{f?.nroControl||'—'}</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-black text-green-700">${fN(pN(p.monto||0))}</td>
-                    <td className="py-2.5 px-3">
-                      <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[8px] font-black whitespace-nowrap">{p.metodo||'—'}</span>
+                  <tr key={p.id} className="border-b border-gray-100 hover:bg-orange-50/30">
+                    <td className="py-2.5 px-4 text-gray-500 whitespace-nowrap">{p.fecha||'—'}</td>
+                    <td className="py-2.5 px-4 font-bold text-orange-600">{f?.nroFactura||'—'}</td>
+                    <td className="py-2.5 px-4 font-bold text-gray-700 max-w-[180px] truncate">{p.proveedor||'—'}</td>
+                    <td className="py-2.5 px-4 text-gray-500 text-[9px]">{p.banco||'—'}</td>
+                    <td className="py-2.5 px-4 text-gray-500">{p.metodo||'—'}</td>
+                    <td className="py-2.5 px-4 text-gray-400 text-[9px] font-mono">{p.referencia||'—'}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-blue-600">{montoBs>0.01?`Bs.${fN(montoBs)}`:<span className="text-gray-300 text-[9px]">—</span>}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-green-700">${fN(pN(p.monto||0))}</td>
+                    <td className="py-2.5 px-4 text-center">
+                      <div className="flex items-center gap-1 justify-center">
+                        <button onClick={()=>generarPDFPago(p)} title="Comprobante PDF"
+                          className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
+                          🖨 PDF
+                        </button>
+                        <button onClick={()=>{setEditPago(p);setEditForm({fecha:p.fecha||'',metodo:p.metodo||'',referencia:p.referencia||'',banco:p.banco||'',monto:String(p.monto||'')});}} title="Editar pago"
+                          className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
+                          ✏️ Editar
+                        </button>
+                        <button onClick={()=>reversarPago(p)} title="Reversar pago"
+                          className="px-2 py-1 bg-red-50 text-red-500 border border-red-200 rounded-lg text-[8px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                          ↩ Reversar
+                        </button>
+                      </div>
                     </td>
-                    <td className="py-2.5 px-3 text-gray-500 max-w-[160px] truncate">{p.banco||'—'}</td>
-                    <td className="py-2.5 px-3 font-mono text-gray-600">{p.referencia||'—'}</td>
                   </tr>
                 );
               })}
+              {paginated.length===0&&<tr><td colSpan={9} className="py-12 text-center text-gray-400 font-bold text-xs uppercase">Sin pagos registrados</td></tr>}
             </tbody>
-            {filtrados.length>0&&(
-              <tfoot>
-                <tr className="bg-slate-900 text-white font-black">
-                  <td colSpan={5} className="py-3 px-3 text-[10px] uppercase">Total · {filtrados.length} pagos</td>
-                  <td className="py-3 px-3 text-right font-mono text-orange-400 text-sm">${fN(totalUSD)}</td>
-                  <td colSpan={3}></td>
-                </tr>
-              </tfoot>
-            )}
+            <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+              <tr>
+                <td colSpan={6} className="py-2.5 px-4 text-right font-black text-gray-600 uppercase text-[9px]">Total filtrado:</td>
+                <td className="py-2.5 px-4 text-right font-black text-blue-600">Bs.{fN(totalBsFiltrado)}</td>
+                <td className="py-2.5 px-4 text-right font-black text-green-700">${fN(totalFiltrado)}</td>
+                <td/>
+              </tr>
+            </tfoot>
           </table>
         </div>
+
+        {/* Paginación */}
+        {totalPages>1&&(
+          <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+            <span className="text-[9px] text-gray-400 font-bold">Pág. {histPage+1} de {totalPages} · {histFiltered.length} registros</span>
+            <div className="flex items-center gap-1">
+              <button onClick={()=>setHistPage(0)} disabled={histPage===0} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">«</button>
+              <button onClick={()=>setHistPage(p=>Math.max(0,p-1))} disabled={histPage===0} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">‹</button>
+              {Array.from({length:Math.min(7,totalPages)},(_,i)=>{
+                let page=i;
+                if(totalPages>7){if(histPage<4)page=i;else if(histPage>totalPages-4)page=totalPages-7+i;else page=histPage-3+i;}
+                return <button key={page} onClick={()=>setHistPage(page)} className={`px-2 py-1 rounded-lg border text-[9px] font-black ${page===histPage?'bg-orange-500 text-white border-orange-500':'hover:bg-gray-100'}`}>{page+1}</button>;
+              })}
+              <button onClick={()=>setHistPage(p=>Math.min(totalPages-1,p+1))} disabled={histPage===totalPages-1} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">›</button>
+              <button onClick={()=>setHistPage(totalPages-1)} disabled={histPage===totalPages-1} className="px-2 py-1 rounded-lg border text-[9px] font-black disabled:opacity-40 hover:bg-gray-100">»</button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* MODAL EDITAR PAGO */}
+      {editPago&&(
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <h3 className="font-black text-sm uppercase mb-4 flex items-center gap-2"><DollarSign size={16} className="text-orange-500"/>Editar Pago</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                <input type="date" value={editForm.fecha||''} onChange={e=>setEditForm(f=>({...f,fecha:e.target.value}))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método</label>
+                <select value={editForm.metodo||''} onChange={e=>setEditForm(f=>({...f,metodo:e.target.value}))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                  {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Tarjeta Internacional (Banplus)'].map(m=><option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Referencia</label>
+                <input value={editForm.referencia||''} onChange={e=>setEditForm(f=>({...f,referencia:e.target.value}))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Banco / Cuenta</label>
+                <input value={editForm.banco||''} onChange={e=>setEditForm(f=>({...f,banco:e.target.value}))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={()=>setEditPago(null)} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
+              <button onClick={guardarEdicion} className="flex-1 py-2.5 bg-orange-500 text-white rounded-xl font-black text-xs hover:bg-orange-600">Guardar cambios</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+
 
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -20205,7 +20361,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const rH=ncFiltradas.map(n=>{
               const inv=(invoices||[]).find(i=>i.id===n.facturaId);
               const ne=(notasEntrega||[]).find(e=>e.id===n.neId);
-              const cli=inv?.clientName||ne?.clientName||'—';
+              const cli=inv?.clientName||ne?.clientName||n.clientName||'—';
               const doc=inv?.nroFiscal||ne?.id||'—';
               return '<tr>'+[n.tipo,n.nroDocumento,n.fecha,n.naturaleza,doc,cli,formatNum(n.monto||0),n.nroControl||'—',n.descripcion||''].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';
             }).join('');
@@ -20245,7 +20401,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       : ncFiltradas.map(n=>{
                           const inv=(invoices||[]).find(i=>i.id===n.facturaId);
                           const ne=(notasEntrega||[]).find(e=>e.id===n.neId);
-                          const cli=inv?.clientName||ne?.clientName||'—';
+                          const cli=inv?.clientName||ne?.clientName||n.clientName||'—';
                           const docRef=inv?.nroFiscal||ne?.id||'—';
                           const isNC=n.tipo==='NC';
                           return(
@@ -20269,7 +20425,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      const _nc=n.tipo==='NC';
                                      const _inv=(invoices||[]).find(x=>x.id===n.facturaId);
                                      const _ne=(notasEntrega||[]).find(x=>x.id===n.neId);
-                                     const _cli=_inv?.clientName||_ne?.clientName||'—';
+                                     const _cli=_inv?.clientName||_ne?.clientName||n.clientName||'—';
                                      const _rif=_inv?.clientRif||_ne?.clientRif||'—';
                                      const _t=parseNum(n.tasaFactura||_inv?.tasa||_ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
                                      const _baseUSD=_t>1?parseFloat((parseNum(n.monto||0)/_t).toFixed(2)):parseNum(n.monto||0);
@@ -31891,7 +32047,7 @@ ${resumenHtml}
       const baseImpBs = parseNum(nc.monto||0);
       const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : baseImpBs;
       const ajuste = nc.tipo==='NC' ? -baseUsd : baseUsd;
-      ncRows.push({ tipo:nc.tipo||'NC', doc:nc.nroDocumento||nc.id, fecha:nc.fecha||'', cliente:ne?.clientName||inv?.clientName||'—', monto:ajuste });
+      ncRows.push({ tipo:nc.tipo||'NC', doc:nc.nroDocumento||nc.id, fecha:nc.fecha||'', cliente:ne?.clientName||inv?.clientName||n.clientName||'—', monto:ajuste });
       return s + ajuste;
     }, 0);
 
@@ -34335,6 +34491,150 @@ ${resumenHtml}
           </div>
         </div>
 
+
+      {/* ── RESTAURADOR DE COBROS — solo Master ── */}
+      {appUser?.role==='Master'&&(()=>{
+        const [rcBusq,   setRcBusq]   = useState('');
+        const [rcNEs,    setRcNEs]    = useState([]);
+        const [rcNESel,  setRcNESel]  = useState(null);
+        const [rcCobros, setRcCobros] = useState([]);
+        const [rcBusy,   setRcBusy]   = useState(false);
+        const [rcForm,   setRcForm]   = useState({fecha:getTodayDate(),metodo:'Transferencia',montoUSD:'',montoBs:'',tasa:'',referencia:'',banco:'',vendedor:'',tipo:'Pago'});
+        const [rcMsg,    setRcMsg]    = useState(null);
+
+        const rcBuscar = async () => {
+          if(!rcBusq.trim()) return;
+          setRcBusy(true); setRcNEs([]); setRcNESel(null); setRcMsg(null);
+          try{
+            const snap = await getDocs(getColRef('notasEntrega'));
+            const q = rcBusq.trim().toUpperCase();
+            const found = snap.docs.map(d=>({_id:d.id,...d.data()}))
+              .filter(ne=>(ne.documento||'').toUpperCase().includes(q)||(ne.clientName||'').toUpperCase().includes(q));
+            setRcNEs(found.slice(0,20));
+          }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
+          finally{setRcBusy(false);}
+        };
+
+        const rcSelecionar = async (ne) => {
+          setRcNESel(ne); setRcMsg(null);
+          const snap = await getDocs(query(getColRef('cobros_cxc'),where('neId','==',ne._id)));
+          setRcCobros(snap.docs.map(d=>d.data()));
+        };
+
+        const rcRestaurar = async () => {
+          if(!rcNESel) return;
+          if(!rcForm.montoUSD||!rcForm.montoBs||!rcForm.fecha){setRcMsg({type:'err',text:'Fecha, Monto USD y Monto Bs. son obligatorios.'});return;}
+          setRcBusy(true);
+          try{
+            const cId=`COBRO-REST-${Date.now()}`;
+            const mId=`MOV-REST-${Date.now()}`;
+            const mU=parseNum(rcForm.montoUSD); const mB=parseNum(rcForm.montoBs); const t=parseNum(rcForm.tasa)||1;
+            await setDoc(getDocRef('cobros_cxc',cId),{id:cId,neId:rcNESel._id,neDocumento:rcNESel.documento||rcNESel.id,clientName:rcNESel.clientName||'',monto:mU,montoBs:mB,tasa:t,moneda:'USD',metodo:rcForm.metodo,referencia:rcForm.referencia,cuentaBancariaId:'',cuentaBancoNombre:rcForm.banco,fecha:rcForm.fecha,vendedor:rcForm.vendedor,tipo:rcForm.tipo,estatus:'RESTAURADO',timestamp:Date.now()});
+            await setDoc(getDocRef('banco_movimientos',mId),{id:mId,fecha:rcForm.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',neId:rcNESel._id,concepto:`Cobro ${rcNESel.documento||rcNESel.id} · ${rcNESel.clientName||''}`,referencia:rcForm.referencia,cuentaBancoNombre:rcForm.banco,montoUSD:mU,montoBs:mB,tasa:t,terceroNombre:rcNESel.clientName||'',estatus:'No Conciliado',timestamp:Date.now()});
+            const nuevoMontoCobrado=(rcNESel.montoCobrado||0)+mU;
+            const nuevoSaldo=Math.max(0,(rcNESel.total||0)-nuevoMontoCobrado);
+            const nuevoStatus=nuevoSaldo<0.01?'PAGADA':nuevoMontoCobrado>0.01?'PARCIAL':'PENDIENTE';
+            await updateDoc(getDocRef('notasEntrega',rcNESel._id),{montoCobrado:nuevoMontoCobrado,saldoPendiente:nuevoSaldo,statusCxC:nuevoStatus,fechaUltimoCobro:rcForm.fecha,refUltimoCobro:rcForm.referencia});
+            setRcMsg({type:'ok',text:`✅ Cobro restaurado. NE → ${nuevoStatus}, saldo: $${pFmt(nuevoSaldo)}`});
+            setRcCobros(prev=>[...prev,{fecha:rcForm.fecha,metodo:rcForm.metodo,referencia:rcForm.referencia,monto:mU,cuentaBancoNombre:rcForm.banco}]);
+            setRcNESel(prev=>({...prev,montoCobrado:nuevoMontoCobrado,saldoPendiente:nuevoSaldo,statusCxC:nuevoStatus}));
+            setRcForm(f=>({...f,montoUSD:'',montoBs:'',referencia:'',banco:'',vendedor:'',tasa:''}));
+          }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
+          finally{setRcBusy(false);}
+        };
+
+        return(
+        <div className="bg-white p-6 rounded-3xl shadow-sm border-2 border-red-200">
+          <h2 className="text-xl font-black uppercase text-black mb-1 flex items-center gap-3"><RefreshCw className="text-red-500"/> Restaurar Cobros Eliminados</h2>
+          <p className="text-xs text-gray-500 mb-4">Solo visible para usuarios Master. Restaura cobros que hayan sido eliminados accidentalmente.</p>
+
+          {/* Búsqueda */}
+          <div className="flex gap-2 mb-3">
+            <input value={rcBusq} onChange={e=>setRcBusq(e.target.value)} onKeyDown={e=>e.key==='Enter'&&rcBuscar()}
+              placeholder="NE-00113 o nombre del cliente..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-red-400"/>
+            <button onClick={rcBuscar} disabled={rcBusy} className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 disabled:opacity-50">
+              {rcBusy?'...':'🔍 Buscar'}
+            </button>
+          </div>
+
+          {/* Resultados */}
+          {rcNEs.length>0&&!rcNESel&&(
+            <div className="border-2 border-gray-100 rounded-xl overflow-hidden mb-3 max-h-48 overflow-y-auto">
+              {rcNEs.map(ne=>(
+                <div key={ne._id} onClick={()=>rcSelecionar(ne)} className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer border-b border-gray-100 last:border-0">
+                  <div>
+                    <span className="font-black text-orange-600 text-xs">{ne.documento||ne.id}</span>
+                    <span className="ml-2 text-gray-500 text-[10px]">{ne.clientName}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-black text-xs">${pFmt(ne.total||0)}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${ne.statusCxC==='PAGADA'?'bg-green-100 text-green-700':ne.statusCxC==='PARCIAL'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>{ne.statusCxC||'PENDIENTE'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* NE Seleccionada */}
+          {rcNESel&&(
+            <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="font-black text-sm">{rcNESel.documento} · {rcNESel.clientName}</div>
+                  <div className="text-[10px] text-gray-500 mt-0.5">Fecha: {rcNESel.fecha} · Total: ${pFmt(rcNESel.total||0)}</div>
+                </div>
+                <button onClick={()=>{setRcNESel(null);setRcCobros([]);setRcMsg(null);}} className="text-gray-400 hover:text-red-500 font-black text-lg">×</button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {[['Total Fact.',$`$${pFmt(rcNESel.total||0)}`],['Cobrado',$`$${pFmt(rcNESel.montoCobrado||0)}`],['Saldo',$`$${pFmt(rcNESel.saldoPendiente??0)}`]].map(([l,v])=>(
+                  <div key={l} className="bg-white rounded-xl p-2.5 border border-orange-200 text-center">
+                    <div className="text-[8px] font-black text-gray-400 uppercase">{l}</div>
+                    <div className="font-black text-sm text-gray-800">{v}</div>
+                  </div>
+                ))}
+              </div>
+              {rcCobros.length>0&&(
+                <div className="mb-3">
+                  <div className="text-[9px] font-black text-gray-500 uppercase mb-1">Cobros existentes ({rcCobros.length})</div>
+                  {rcCobros.map((c,i)=>(
+                    <div key={i} className="flex justify-between items-center bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 mb-1 text-[10px]">
+                      <span className="font-bold">{c.fecha} · {c.metodo} · {c.referencia||'—'} · <span className="text-gray-500 text-[9px]">{c.cuentaBancoNombre||'—'}</span></span>
+                      <span className="font-black text-green-700">${pFmt(c.monto||0)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Formulario del cobro a restaurar */}
+              <div className="bg-white rounded-xl border border-orange-200 p-3">
+                <div className="text-[9px] font-black text-red-600 uppercase mb-2">Datos del cobro a restaurar</div>
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Fecha *</label><input type="date" value={rcForm.fecha} onChange={e=>setRcForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-red-400"/></div>
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Monto USD *</label><input type="number" step="0.01" value={rcForm.montoUSD} onChange={e=>setRcForm(f=>({...f,montoUSD:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-red-400"/></div>
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Monto Bs. *</label><input type="number" step="0.01" value={rcForm.montoBs} onChange={e=>setRcForm(f=>({...f,montoBs:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-red-400"/></div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Método</label>
+                    <select value={rcForm.metodo} onChange={e=>setRcForm(f=>({...f,metodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-red-400">
+                      {['Transferencia','Zelle','Efectivo USD','Efectivo Bs.','Pago Móvil','Cheque','Tarjeta Internacional (Banplus)'].map(m=><option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Tasa Bs/$</label><input type="number" step="0.0001" value={rcForm.tasa} onChange={e=>setRcForm(f=>({...f,tasa:e.target.value}))} placeholder="558.5132" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">N° Referencia</label><input value={rcForm.referencia} onChange={e=>setRcForm(f=>({...f,referencia:e.target.value}))} placeholder="7783" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Banco / Cuenta</label><input value={rcForm.banco} onChange={e=>setRcForm(f=>({...f,banco:e.target.value}))} placeholder="BANCARIBE · 0114-..." className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
+                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Vendedor</label><input value={rcForm.vendedor} onChange={e=>setRcForm(f=>({...f,vendedor:e.target.value}))} placeholder="Nombre del vendedor" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
+                </div>
+                <button onClick={rcRestaurar} disabled={rcBusy} className="w-full py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 disabled:opacity-50 transition-all">
+                  {rcBusy?'Restaurando...':'↩ Restaurar este Cobro'}
+                </button>
+              </div>
+            </div>
+          )}
+          {rcMsg&&<div className={`mt-2 px-4 py-3 rounded-xl text-xs font-bold border-2 ${rcMsg.type==='ok'?'bg-green-50 border-green-200 text-green-700':'bg-red-50 border-red-200 text-red-700'}`}>{rcMsg.text}</div>}
+        </div>
+        );
+      })()}
 
       </div>
     );
