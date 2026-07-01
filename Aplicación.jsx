@@ -21439,41 +21439,36 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
           }
 
-          // Mapa SEGURO: NE.id → retenciones vinculadas, usando ÚNICAMENTE
-          // facturaId → invoice → invoice.neOrigen → NE (mismo método ya verificado
-          // en la columna NE del Libro de Ventas). Nunca confía en r.neId/r.neOrigen
-          // guardados directamente — eso fue la causa del cruce de datos anterior.
-          const _retsPorNE = new Map();
-          const _findNEforInv=(inv)=>{
-            if(!inv) return null;
-            const invRif=(inv.clientRif||'').trim().toUpperCase();
-            // GUARDA: si el RIF del cliente de la NE encontrada no coincide con el RIF de la factura,
-            // se descarta — es una NE de OTRO cliente (dato mal cargado), no un vínculo válido.
-            const _rifOk=n=>{
-              const neRif=(n.clientRif||'').trim().toUpperCase();
-              return !invRif||!neRif||neRif===invRif;
-            };
-            // 1. Directo: inv.neOrigen === NE.id o NE.documento
-            let nt=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen)&&_rifOk(n));
-            if(nt) return nt;
-            // 2. Normalizado (sin importar mayúsculas/espacios) por si hay diferencias de formato
-            const norm=(inv.neOrigen||'').toString().trim().toUpperCase();
-            if(norm){
-              nt=(notasEntrega||[]).find(n=>((n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm)&&_rifOk(n));
-              if(nt) return nt;
+          // ── Mapa NE-first: nroFiscal/nroControl → NE ──────────────────────────────
+          // Construido DESDE las NEs (fuente de verdad), usando la misma lógica del modal
+          // de cobro que muestra correctamente qué número fiscal va con qué NE.
+          // Esto evita el problema de _findNEforInv que retornaba la NE equivocada
+          // cuando el facturaId de una NE apuntaba a la factura de otra NE.
+          const _neByFiscal = new Map();
+          for(const ne of (notasEntrega||[])){
+            const neRif=(ne.clientRif||'').trim().toUpperCase();
+            const rifOk=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
+            // Misma lógica que invVinc en el modal cobro
+            const inv = ne.facturaId
+              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOk(i))
+              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOk(i));
+            if(!inv) continue;
+            // Indexar por todos los identificadores posibles de la factura
+            for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
+              if(!_neByFiscal.has(k)) _neByFiscal.set(k, {ne, inv});
             }
-            // 3. Inverso: la NE tiene su propio facturaId apuntando a esta factura
-            nt=(notasEntrega||[]).find(n=>n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento)&&_rifOk(n));
-            return nt||null;
-          };
+          }
+
+          const _retsPorNE = new Map();
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            // Prioridad: nroFactura (número fiscal visible y verificable por el usuario)
-            // luego nroControl, luego facturaId (ID Firestore que puede haberse guardado mal)
-            const inv = findInv(r.nroFactura) || findInv(r.nroControl) || findInv(r.facturaId);
-            if(!inv) continue;
-            const neTarget=_findNEforInv(inv);
-            if(!neTarget) continue;
+            // Buscar la NE directamente por nroFactura (número fiscal visible en la retención)
+            // Fallback: nroControl, luego facturaId (Firestore ID)
+            const hit = _neByFiscal.get(r.nroFactura)
+                     || _neByFiscal.get(r.nroControl)
+                     || _neByFiscal.get(r.facturaId);
+            if(!hit) continue;
+            const {ne: neTarget, inv} = hit;
             const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
             const sinTasa=!(tasa>1);
@@ -23150,35 +23145,29 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
 
         {ventasView === 'estado_cuenta' && (() => {
           const tasaBCVec = parseNum(settings?.tasaBCV||0)||1;
-          // Mapa SEGURO: NE.id → retenciones, usando facturaId → invoice → invoice.neOrigen → NE
-          // (mismo método verificado en la columna NE de Libro de Ventas — nunca confía en r.neId/r.neOrigen guardados).
-          const _retsPorNEec = new Map();
-          const _findNEforInvEc=(inv)=>{
-            if(!inv) return null;
-            const invRifEc=(inv.clientRif||'').trim().toUpperCase();
-            const _rifOkEc=n=>{
-              const neRif=(n.clientRif||'').trim().toUpperCase();
-              return !invRifEc||!neRif||neRif===invRifEc;
-            };
-            let nt=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen)&&_rifOkEc(n));
-            if(nt) return nt;
-            const norm=(inv.neOrigen||'').toString().trim().toUpperCase();
-            if(norm){
-              nt=(notasEntrega||[]).find(n=>((n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm)&&_rifOkEc(n));
-              if(nt) return nt;
+          // ── Mapa NE-first para Estado de Cuenta ───────────────────────────────────
+          // Misma lógica NE-first que _retsPorNE (CxC): construido DESDE las NEs
+          // para evitar que _findNEforInvEc retorne la NE equivocada.
+          const _neByFiscalEc = new Map();
+          for(const ne of (notasEntrega||[])){
+            const neRif=(ne.clientRif||'').trim().toUpperCase();
+            const rifOkEc=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
+            const inv = ne.facturaId
+              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkEc(i))
+              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOkEc(i));
+            if(!inv) continue;
+            for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
+              if(!_neByFiscalEc.has(k)) _neByFiscalEc.set(k, {ne, inv});
             }
-            nt=(notasEntrega||[]).find(n=>n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento)&&_rifOkEc(n));
-            return nt||null;
-          };
+          }
+          const _retsPorNEec = new Map();
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            // Prioridad: nroFactura (fiscal, verificable) → nroControl → facturaId (Firestore ID)
-            const inv=(invoices||[]).find(i=>r.nroFactura&&(i.nroFiscal===r.nroFactura||i.documento===r.nroFactura))
-              ||(invoices||[]).find(i=>r.nroControl&&(i.nroFiscal===r.nroControl||i.documento===r.nroControl))
-              ||(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
-            if(!inv) continue;
-            const neTarget=_findNEforInvEc(inv);
-            if(!neTarget) continue;
+            const hit = _neByFiscalEc.get(r.nroFactura)
+                     || _neByFiscalEc.get(r.nroControl)
+                     || _neByFiscalEc.get(r.facturaId);
+            if(!hit) continue;
+            const {ne: neTarget, inv} = hit;
             const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
             const sinTasa=!(tasa>1);
@@ -38018,6 +38007,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
+             systemUsers={systemUsers}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
 
           {/* ── PROCURA & COMPRAS ── */}
