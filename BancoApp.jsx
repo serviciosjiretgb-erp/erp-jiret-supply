@@ -1779,7 +1779,7 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 
 // --- FIN CONSTANTES ---
 
-function BancoApp({ fbUser, onBack, ventasMode = false }) {
+function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [] }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
   const [submodulo, setSubmodulo] = useState(null); // null | 'banco' | 'caja'
@@ -1795,14 +1795,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   const [provs,      setProvs]    = useState([]);
   const [contCuentas,setContC]    = useState([]);
   const [asientosBanco, setAsientosBanco] = useState([]);
-  const [systemUsers,   setSystemUsers]   = useState([]);
+  // systemUsers viene de Aplicación.jsx (que sí tiene acceso a la BD correcta)
+  // Se mantiene el estado interno para el onSnapshot de respaldo
+  const [systemUsersLocal, setSystemUsersLocal] = useState([]);
+  // Combinar: primero el prop (más confiable), luego el local
+  const systemUsers = systemUsersProp.length > 0 ? systemUsersProp : systemUsersLocal;
   const [cobrosCajaCxc, setCobrosCajaCxc] = useState([]); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
   const [pagosCajaCxP,  setPagosCajaCxP]  = useState([]); // procura_pagos_cxp donde cuentaId empieza con CAJA::
 
   useEffect(() => {
     if (!fbUser) return;
     const subs = [
-      onSnapshot(getColRef('users'), s => setSystemUsers(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('users'), s => setSystemUsersLocal(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('cobros_cxc'), orderBy('fecha','desc')), s => {
         setCobrosCajaCxc(s.docs.map(d=>d.data()).filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
       }),
@@ -1832,14 +1836,23 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
   // Versión async: si systemUsers aún no cargó, hace un getDocs en vivo
   const validarClaveAdmin = async (pwd) => {
     if(!pwd) return false;
+    // 1. Intentar con los usuarios que tenemos (prop de Aplicación o suscripción local)
     let users = systemUsers||[];
+    // 2. Si aún vacío, hacer fetch directo (fallback)
     if(users.length === 0) {
       try {
         const snap = await getDocs(getColRef('users'));
         users = snap.docs.map(d=>d.data());
       } catch(e) { console.warn('validarClaveAdmin getDocs error:', e); }
     }
-    return users.some(u => u.password===pwd || u.pin===pwd || u.clave===pwd || u.contraseña===pwd);
+    if(users.length > 0){
+      return users.some(u =>
+        u.password===pwd || u.pin===pwd || u.clave===pwd ||
+        u.contraseña===pwd || u.contrasena===pwd || u.pass===pwd
+      );
+    }
+    // 3. Último recurso: validar contra Firebase Auth uid (si el pwd coincide con uid del usuario logueado)
+    return false;
   };
 
   // ══════════════════════════════════════════════════════════════════════
