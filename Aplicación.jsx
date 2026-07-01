@@ -7,7 +7,7 @@ import {
   ArrowDownToLine, ArrowUpFromLine, BarChart3, ShieldCheck, Box, Home, Edit, Printer, X, Search, Loader2, FileCheck, Beaker, CheckCircle, CheckCircle2, Receipt, ArrowRight, User, ArrowRightLeft, ClipboardEdit, Download, Thermometer, Gauge, Save, ShoppingCart, DollarSign, Eye, RefreshCw, Warehouse, Mail, Bell, BellRing, Upload,
   Menu, ChevronLeft, Smartphone, Wifi, WifiOff,
   Activity, Timer, Award, PackageCheck, Calendar, CalendarDays, ChevronDown, CheckSquare, RotateCcw, Settings, BookOpen, Building2, Paperclip, Camera,
-  ArrowLeft, Ban, Check, ChevronRight, CreditCard, FileSpreadsheet, Send, Truck, Layers} from 'lucide-react';
+  ArrowLeft, Ban, Check, ChevronRight, CreditCard, FileSpreadsheet, Send, Truck, Layers, ExternalLink} from 'lucide-react';
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
@@ -1394,6 +1394,126 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
         <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
         <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
         <PBg onClick={()=>{setForm(initForm());setModal('form');}}><Plus size={14}/> Nuevo proveedor</PBg>
+        <label className="cursor-pointer px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
+          <Download size={13}/> Importar Excel
+          <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={async(e)=>{
+            const file=e.target.files?.[0];
+            if(!file) return;
+            e.target.value='';
+            try{
+              const arrayBuffer=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsArrayBuffer(file);});
+              let XLSX; try{XLSX=window.XLSX;}catch(_){}
+              if(!XLSX){
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                XLSX=window.XLSX;
+              }
+              const wb=XLSX.read(arrayBuffer,{type:'array'});
+              const ws=wb.Sheets[wb.SheetNames[0]];
+              const rows=XLSX.utils.sheet_to_json(ws,{defval:null});
+              if(!rows.length){setDialog({title:'Aviso',text:'Archivo vacío.',type:'alert'});return;}
+
+              // ── Corrección de texto: codificación rota + patrón "J-" → "J" ──
+              const fixEncoding=(s)=>{
+                if(typeof s!=='string') return s;
+                return s.replace(/ｰ/g,'°').replace(/ﾑ/g,'Ñ').replace(/ﾍ/g,'Í').replace(/ﾓ/g,'Ó').replace(/ﾁ/g,'Á').replace(/ﾉ/g,'É');
+              };
+              const fixJota=(s)=>{
+                if(typeof s!=='string') return s;
+                return s.replace(/J-([A-ZÁÉÍÓÚÑ])/g,'J$1');
+              };
+              const cleanText=(s)=>{
+                if(s===null||s===undefined) return '';
+                return fixJota(fixEncoding(String(s))).trim().replace(/\s*"\s*$/,'');
+              };
+              const normRif=(s)=>{
+                const v=cleanText(s).toUpperCase().replace(/\s+/g,'');
+                return v&&v!=='"'?v:'';
+              };
+
+              // ── Deduplicar por RIF dentro del propio archivo ──
+              // 6 pares de RIF repetido detectados manualmente: se usa el nombre indicado por el usuario.
+              const NOMBRE_ELEGIDO_POR_RIF={
+                'J-50057012-0':'MULTITIENDA FARMA SERVICIOS BELLA VISTA COMPAﾑIA',
+                'J-00271144-2':'FERRETERIA EPA, C.A.',
+                'J-31710345-9':'HOTEL LAS VILLAS, C.A.',
+                'V109177314':'J-OSE LUIS BOHORQUEZ URDANETA',
+                'J-40926329-0':'TECNOMAS VENEZUELA, CA',
+                'J-40457554-5':'VERDE PISTACHO FIT Y SALUDABLE, C.A',
+              };
+              const porRif=new Map(); // rif normalizado -> fila
+              const sinRif=[]; // filas sin RIF válido (van todas, usando nombre como id)
+              for(const r of rows){
+                const rifNorm=normRif(r['RIF']);
+                if(!rifNorm){ sinRif.push(r); continue; }
+                const nombreElegido=NOMBRE_ELEGIDO_POR_RIF[rifNorm];
+                if(nombreElegido){
+                  // Solo toma esta fila si su nombre es el elegido, o si aún no hay ninguna guardada para ese RIF
+                  if(String(r['Razón Social']||'').trim()===nombreElegido || !porRif.has(rifNorm)){
+                    if(String(r['Razón Social']||'').trim()===nombreElegido) porRif.set(rifNorm,r);
+                  }
+                } else {
+                  porRif.set(rifNorm,r); // sin conflicto conocido: última fila con ese RIF gana
+                }
+              }
+              const filasFinales=[...porRif.entries()].map(([rif,r])=>({...r,_rifNorm:rif})).concat(sinRif.map(r=>({...r,_rifNorm:''})));
+
+              const BATCH_LIMIT=450;
+              let batch=writeBatch(db);
+              let opsEnBatch=0;
+              const batches=[batch];
+              let creados=0,actualizados=0;
+              const proveedoresPorRif=new Map((proveedores||[]).map(p=>[String(p.rif||'').toUpperCase().replace(/\s+/g,''),p]));
+
+              for(const r of filasFinales){
+                const nombre=cleanText(r['Razón Social']).toUpperCase();
+                if(!nombre) continue;
+                const rifFinal = r._rifNorm || `SIN-RIF-${nombre.replace(/[^A-Z0-9]/g,'').substring(0,20)}`;
+
+                let pctRaw=r['% Ret. IVA'];
+                let pct = typeof pctRaw==='number' ? Math.round(pctRaw*100) : parseFloat(String(pctRaw||'0').replace(',','.').replace('%',''))||0;
+                if(pct===10) pct=100; // corrección acordada: 10% era un error de captura, debía ser 100%
+
+                const cuentaTxt=cleanText(r['Cuenta Contable']);
+                const codigoMatch=cuentaTxt.match(/^([\d.]+)/);
+                const codigo=codigoMatch?codigoMatch[1]:'';
+                const cta=codigo?planDeCuentas.find(c=>c.codigo===codigo):null;
+
+                const existente=rifFinal?proveedoresPorRif.get(rifFinal):null;
+                const id=existente?.id||`PROV-${pId()}`;
+
+                const payload={
+                  id,
+                  nombre,
+                  rif:rifFinal,
+                  tipoContribuyente: pct>0?'ESPECIAL':'ORDINARIO',
+                  pctRetencion: pct>0?String(pct):'',
+                  categoria: existente?.categoria||'INSUMOS',
+                  contacto: cleanText(r['Persona Contacto'])||existente?.contacto||'',
+                  telefono: cleanText(r['Teléfono'])||existente?.telefono||'',
+                  email: cleanText(r['Email']).toLowerCase()||existente?.email||'',
+                  pais: cleanText(r['País'])||'Venezuela',
+                  ciudad: cleanText(r['Ciudad'])||existente?.ciudad||'',
+                  estadoProv: cleanText(r['Estado/Prov.'])||existente?.estadoProv||'',
+                  direccion: cleanText(r['Dirección Fiscal'])||existente?.direccion||'',
+                  moneda: cleanText(r['Moneda'])||'USD',
+                  condPago: cleanText(r['Condición Pago'])||existente?.condPago||'',
+                  cuentaContableId: cta?.id||existente?.cuentaContableId||'',
+                  cuentaContableNombre: cta?`${cta.codigo} — ${cta.nombre}`:(existente?.cuentaContableNombre||''),
+                  fechaCreacion: existente?.fechaCreacion||getTodayDate(),
+                  activo: String(r['Status']||'').toLowerCase().startsWith('inactiv')?false:true,
+                  observaciones: existente?.observaciones||'',
+                  updatedAt: Date.now()
+                };
+                if(opsEnBatch>=BATCH_LIMIT){ batch=writeBatch(db); batches.push(batch); opsEnBatch=0; }
+                batch.set(getDocRef('procura_proveedores',id),payload,{merge:true});
+                opsEnBatch++;
+                if(existente) actualizados++; else creados++;
+              }
+              for(const b of batches){ await b.commit(); }
+              setDialog({title:'✅ Importación completa',text:`${creados} proveedor(es) nuevo(s), ${actualizados} actualizado(s).`,type:'alert'});
+            }catch(err){setDialog({title:'Error al importar',text:err.message,type:'alert'});}
+          }}/>
+        </label>
       </div>
 
       {/* Tabla */}
@@ -1572,6 +1692,18 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
                     <input type="date" className={inp} value={form.fechaCreacion||getTodayDate()} onChange={e=>setForm({...form,fechaCreacion:e.target.value})}/>
                   </PFG>
 
+                  <div className="bg-blue-50/60 border-2 border-blue-100 rounded-xl p-3">
+                    <p className="text-[9px] font-black text-blue-700 uppercase tracking-widest mb-2">Consulta SENIAT</p>
+                    <button type="button" onClick={()=>{
+                      const rifLimpio=(form.rif||'').toUpperCase().replace(/[-\s]/g,'');
+                      if(!rifLimpio){setDialog({title:'Falta el RIF',text:'Escribe el RIF del proveedor antes de consultar en el SENIAT.',type:'alert'});return;}
+                      window.open(`http://contribuyente.seniat.gob.ve/BuscaRif/BuscaRif.jsp?p_rif=${rifLimpio}`,'_blank');
+                    }} className="w-full border-2 border-blue-300 bg-white text-blue-700 rounded-xl p-2.5 text-[10px] font-black uppercase hover:bg-blue-50 transition-all flex items-center justify-center gap-2">
+                      <ExternalLink size={13}/> Abrir consulta de RIF en el SENIAT
+                    </button>
+                    <p className="text-[9px] text-gray-400 mt-2">Se abre con el RIF ya escrito. El SENIAT pide un código de seguridad que debes ingresar tú mismo. Copia el % de retención en el campo de arriba y guarda.</p>
+                  </div>
+
                   {/* Resumen si es especial */}
                   {form.tipoContribuyente==='ESPECIAL'&&(
                     <div className="bg-red-50 border border-red-200 rounded-xl p-3">
@@ -1599,7 +1731,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
 // CATÁLOGO DE PRODUCTOS Y SERVICIOS (Sub-módulo Procura)
 // ══════════════════════════════════════════════════════════════════════
 const CatalogoServiciosView = ({dialog,setDialog}) => {
-  const [tab,setTab]=useState('servicios');
+  const [tab,setTab]=useState('categorias');
   const [servicios,setServicios]=useState([]);
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
@@ -1708,9 +1840,6 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
         <button onClick={()=>setTab('categorias')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='categorias'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
           🗂️ Categorías de Servicio
         </button>
-        <button onClick={()=>setTab('servicios')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='servicios'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
-          ⚙️ Servicios
-        </button>
         <button onClick={()=>setTab('inventario')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='inventario'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
           🏭 Productos (Inventario)
         </button>
@@ -1783,7 +1912,6 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
             }}/>
           </label>
         </>}
-        {tab==='servicios'&&<PBg onClick={()=>{setForm(initSrv());setModal('srv');}}><Plus size={14}/> Nuevo servicio</PBg>}
       </div>
 
       {/* CATEGORÍAS DE SERVICIO */}
@@ -7604,7 +7732,7 @@ function App() {
   const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
-  const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate(), cuentaContableId: '', cuentaContableNombre: '' };
+  const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate(), cuentaContableId: '', cuentaContableNombre: '', pctRetencionIva: '' };
 // ── Ciudades de Venezuela con su Estado ─────────────────────────────────────
   const VE_CIUDADES = [
     ['Acarigua','Portuguesa'],['Barinas','Barinas'],['Barcelona','Anzoátegui'],
@@ -20074,6 +20202,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
                     </select>
                     {newClientForm.cuentaContableNombre&&<p className="text-[10px] text-blue-600 font-medium mt-1 px-1">{newClientForm.cuentaContableNombre}</p>}
+                  </div>
+                </div>
+                <div className="bg-blue-50/60 border-2 border-blue-100 rounded-2xl p-5">
+                  <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-3">Consulta SENIAT</p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">% Retención IVA</label>
+                      <input type="number" min="0" max="100" step="0.01" value={newClientForm.pctRetencionIva||''} onChange={e=>setNewClientForm({...newClientForm,pctRetencionIva:e.target.value})}
+                        className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400" placeholder="Ej: 75"/>
+                    </div>
+                    <div className="md:col-span-2">
+                      <button type="button" onClick={()=>{
+                        const rifLimpio=(newClientForm.rif||'').toUpperCase().replace(/[-\s]/g,'');
+                        if(!rifLimpio){setDialog({title:'Falta el RIF',text:'Escribe el RIF del cliente antes de consultar en el SENIAT.',type:'alert'});return;}
+                        window.open(`http://contribuyente.seniat.gob.ve/BuscaRif/BuscaRif.jsp?p_rif=${rifLimpio}`,'_blank');
+                      }} className="w-full border-2 border-blue-300 bg-white text-blue-700 rounded-2xl p-3 text-xs font-black uppercase hover:bg-blue-50 transition-all flex items-center justify-center gap-2">
+                        <ExternalLink size={14}/> Abrir consulta de RIF en el SENIAT
+                      </button>
+                      <p className="text-[9px] text-gray-400 mt-2 px-1">Se abre en una pestaña nueva con el RIF ya escrito. El SENIAT pide un código de seguridad que debes ingresar tú mismo. Copia aquí el % de retención que te muestre y guarda el directorio.</p>
+                    </div>
                   </div>
                 </div>
                 <div className="flex justify-end pt-4">
