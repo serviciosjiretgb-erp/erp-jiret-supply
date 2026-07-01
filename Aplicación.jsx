@@ -33492,7 +33492,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
         setRcMsg({type:'ok',text:`✅ Movimiento creado en caja_movimientos (${cobro.cuentaBancoNombre||cajaId})`});
       } else {
         const id = `MOV-REST-${Date.now()}`;
-        await setDoc(getDocRef('banco_movimientos',id),{id,neId:ne._id,fecha:cobro.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',concepto:`Cobro ${ne.documento||ne.id} · ${ne.clientName||''} (REST.)`,referencia:cobro.referencia||'',cuentaBancoNombre:cobro.cuentaBancoNombre||'',cuentaId:cobro.cuentaBancariaId||'',montoUSD:mU,montoBs:mB,tasa:t,terceroNombre:ne.clientName||'',estatus:'No Conciliado',timestamp:Date.now()});
+        await setDoc(getDocRef('banco_movimientos',id),{id,neId:ne._id,fecha:cobro.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',moneda:'USD',concepto:`Cobro ${ne.documento||ne.id} · ${ne.clientName||''} (REST.)`,referencia:cobro.referencia||'',cuentaNombre:cobro.cuentaBancoNombre||'',cuentaBancoNombre:cobro.cuentaBancoNombre||'',cuentaId:cobro.cuentaBancariaId||'',montoUSD:mU,montoBs:mB,tasa:t,aplicaTercero:true,terceroNombre:ne.clientName||'',estatus:'No Conciliado',timestamp:Date.now()});
         setRcMovsBanco(prev=>[...prev,{referencia:cobro.referencia,montoUSD:mU}]);
         setRcMsg({type:'ok',text:`✅ Movimiento restaurado en banco_movimientos (${cobro.cuentaBancoNombre||'—'})`});
       }
