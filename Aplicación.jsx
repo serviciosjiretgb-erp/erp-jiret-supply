@@ -21998,6 +21998,19 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     });
                     batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoLineaNE});
                   }
+                  if(cajaCob){
+                    const mvId=`MVC-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
+                    batch.set(getDocRef('caja_movimientos',mvId),{
+                      id:mvId,cajaId:cajaCob.id,fecha:linea.fecha,tipo:'Ingreso',
+                      moneda:cajaCob.moneda||'USD',
+                      concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
+                      referencia:linea.referencia,
+                      monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
+                      aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
+                      metodo:linea.metodo,neId:ne.id,neDocumento:ne.id,grupoCobroId:grupoId,
+                      timestamp:Date.now()
+                    });
+                  }
                 }
                 batch.update(getDocRef('notasEntrega',ne.id),{
                   statusCxC:nuevoStatus,montoCobrado:(getCobradoNEAtFecha(ne,null)||0)+montoNE,
@@ -22941,7 +22954,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const totalFiltrado = histFiltered.reduce((s,c)=>s+parseNum(c.monto||0),0);
 
                 const generarPDFHistorial = () => {
-                  const totalFiltradoBs = histFiltered.filter(c=>c.moneda==='Bs').reduce((s,c)=>s+parseNum(c.montoBs||0),0);
+                  const totalFiltradoBs = histFiltered.reduce((s,c)=>s+parseNum(c.montoBs||0),0);
                   const rows = histFiltered.map(cb=>`<tr style="border-bottom:1px solid #f3f4f6">
                     <td style="padding:6px 10px;color:#64748b">${cb.fecha||'—'}</td>
                     <td style="padding:6px 10px;font-weight:700;color:#f97316">${cb.neDocumento||cb.neId||'—'}</td>
@@ -22950,7 +22963,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     <td style="padding:6px 10px;color:#64748b">${cb.cuentaBancoNombre||'—'}</td>
                     <td style="padding:6px 10px">${cb.metodo||'—'}</td>
                     <td style="padding:6px 10px;font-size:9px;color:#94a3b8">${cb.referencia||'—'}</td>
-                    <td style="padding:6px 10px;text-align:right;font-weight:900;color:#3b82f6">${cb.moneda==='Bs'&&parseNum(cb.montoBs||0)>0?`Bs.${formatNum(parseNum(cb.montoBs))}`:'—'}</td>
+                    <td style="padding:6px 10px;text-align:right;font-weight:900;color:#3b82f6">${parseNum(cb.montoBs||0)>0?`Bs.${formatNum(parseNum(cb.montoBs))}`:'—'}</td>
                     <td style="padding:6px 10px;text-align:right;font-weight:900;color:#16a34a">$${formatNum(parseNum(cb.monto))}</td>
                     <td style="padding:6px 10px;text-align:center"><span style="background:${cb.tipo==='Abono'?'#fef3c7':'#dcfce7'};color:${cb.tipo==='Abono'?'#92400e':'#15803d'};padding:2px 6px;border-radius:6px;font-size:9px;font-weight:700">${cb.tipo||'Pago'}</span></td>
                   </tr>`).join('');
@@ -23027,7 +23040,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                             <td className="py-2.5 px-4 text-gray-500">{cb.metodo||'—'}</td>
                             <td className="py-2.5 px-4 text-gray-400 text-[9px] font-mono">{cb.referencia||'—'}</td>
                             <td className="py-2.5 px-4 text-right font-black text-blue-600">
-                              {cb.moneda==='Bs'&&parseNum(cb.montoBs||0)>0
+                              {parseNum(cb.montoBs||0)>0
                                 ? `Bs.${formatNum(parseNum(cb.montoBs))}`
                                 : <span className="text-gray-300 text-[9px]">—</span>}
                             </td>
@@ -23048,10 +23061,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                     <td style="padding:8px 12px;color:#64748b">${c.cuentaBancoNombre||'—'}</td>
                                     <td style="padding:8px 12px;font-family:monospace;color:#94a3b8;font-size:10px">${c.referencia||'—'}</td>
                                     <td style="padding:8px 12px">${c.fecha||'—'}</td>
-                                    <td style="padding:8px 12px;text-align:right;font-weight:900;color:#3b82f6">${c.moneda==='Bs'&&parseNum(c.montoBs||0)>0?`Bs.${formatNum(parseNum(c.montoBs))}`:'—'}</td>
+                                    <td style="padding:8px 12px;text-align:right;font-weight:900;color:#3b82f6">${parseNum(c.montoBs||0)>0?`Bs.${formatNum(parseNum(c.montoBs))}`:'—'}</td>
                                     <td style="padding:8px 12px;text-align:right;font-weight:900;color:#16a34a">$${formatNum(parseNum(c.monto))}</td>
                                   </tr>`).join('');
-                                  const totalBsGrupo=lineasGrupo.filter(c=>c.moneda==='Bs').reduce((s,c)=>s+parseNum(c.montoBs||0),0);
+                                  const totalBsGrupo=lineasGrupo.reduce((s,c)=>s+parseNum(c.montoBs||0),0);
                                   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de Cobro</title>
                                   <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
                                   .hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
@@ -23109,7 +23122,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                         <tr>
                           <td colSpan={7} className="py-2.5 px-4 text-right font-black text-gray-600 uppercase text-[9px]">Total filtrado:</td>
-                          <td className="py-2.5 px-4 text-right font-black text-blue-600">Bs.{formatNum(histFiltered.filter(c=>c.moneda==='Bs').reduce((s,c)=>s+parseNum(c.montoBs||0),0))}</td>
+                          <td className="py-2.5 px-4 text-right font-black text-blue-600">Bs.{formatNum(histFiltered.reduce((s,c)=>s+parseNum(c.montoBs||0),0))}</td>
                           <td className="py-2.5 px-4 text-right font-black text-green-700">${formatNum(totalFiltrado)}</td>
                           <td colSpan={2}/>
                         </tr>
