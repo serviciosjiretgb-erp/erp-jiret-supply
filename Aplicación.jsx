@@ -10102,6 +10102,7 @@ function App() {
   };
   
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
+  const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -10177,6 +10178,26 @@ function App() {
         } catch(e) { console.error('Error actualizando NE:', e); }
       }
 
+      // ── Edición: si el vínculo NE Origen cambió, sincronizar ambas notas de entrega ──
+      if (editingInvoiceId) {
+        const neOrigenAnterior = invoiceOriginalNeOrigen; // capturado al abrir la edición
+        const neOrigenNueva = newInvoiceForm.neOrigen || '';
+        if (neOrigenAnterior !== neOrigenNueva) {
+          try {
+            if (neOrigenAnterior) {
+              // Solo desvincular si de verdad apuntaba a ESTA factura (evita pisar otra NE ajena)
+              const neVieja = (notasEntrega||[]).find(n=>n.id===neOrigenAnterior);
+              if (neVieja && neVieja.facturaId === id) {
+                await updateDoc(getDocRef('notasEntrega', neOrigenAnterior), { facturaId: '', status: 'TRANSITO', updatedAt: Date.now() });
+              }
+            }
+            if (neOrigenNueva) {
+              await updateDoc(getDocRef('notasEntrega', neOrigenNueva), { facturaId: id, status: 'PROCESADA', updatedAt: Date.now() });
+            }
+          } catch(e) { console.error('Error sincronizando NE Origen en edición:', e); }
+        }
+      }
+
       // ── DESCUENTO DE INVENTARIO: DESHABILITADO EN FACTURACIÓN ──────────────
       // El descuento de inventario ahora se realiza SOLO desde Nota de Entrega.
       // Ver handleSaveNE para la lógica de descuento.
@@ -10210,7 +10231,7 @@ function App() {
         }
       }
 
-      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
+      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setInvoiceOriginalNeOrigen(''); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
@@ -10274,6 +10295,7 @@ function App() {
   };
   const startEditInvoice = (inv) => {
     setEditingInvoiceId(inv.id);
+    setInvoiceOriginalNeOrigen(inv.neOrigen || '');
     setNewInvoiceForm({
       fecha:             inv.fecha || getTodayDate(),
       clientRif:         inv.clientRif || '',
@@ -17955,7 +17977,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+              rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{
+                if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
+                const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
+                return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
+              })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
@@ -18068,7 +18094,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
-                rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{const _ne=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento);return _ne?.documento||_ne?.id||inv.neOrigen||'—';})(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{
+                  if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
+                  const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
+                  return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
+                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
@@ -20376,7 +20406,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               placeholder="00-001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold w-28 outline-none focus:border-orange-400"/>
                           </div>
                         </div>
-                        <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                        <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setInvoiceOriginalNeOrigen('');setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
 
@@ -20390,11 +20420,31 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <select id="_ne_inv" value={newInvoiceForm.neOrigen||''} onChange={e=>{const neId=e.target.value;if(!neId){setNewInvoiceForm(f=>({...f,neOrigen:'',clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:''}));setFgItems([]);return;}const ne=(notasEntrega||[]).find(n=>n.id===neId);if(ne){setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));setNewInvoiceForm(f=>({...f,neOrigen:neId,fecha:ne.fecha||f.fecha,clientRif:ne.clientRif||'',clientName:ne.clientName||'',clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',opAsignada:ne.opRelacionada||'',aplicaIva:ne.aplicaIva||'SI'}));}}} size={5} className="w-full border-2 border-blue-300 rounded-xl p-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
                             <option value="">— Sin NE (factura directa) —</option>
                             {(notasEntrega||[]).filter(ne=>!ne.facturaId&&(ne.status==='TRANSITO'||ne.status==='TRÁNSITO'||!ne.status)).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>))}
+                            {/* Incluye también la NE ya vinculada a esta factura (si existía) para no perderla del listado */}
+                            {(notasEntrega||[]).filter(ne=>ne.facturaId===newInvoiceForm.documento).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)} (ya vinculada)</option>))}
                           </select>
                         </div>
                         {newInvoiceForm.neOrigen && <div className="text-[10px] text-blue-700 font-bold bg-blue-100 px-3 py-2.5 rounded-xl whitespace-nowrap">✅ {newInvoiceForm.neOrigen}</div>}
                       </div>
                       <p className="text-[9px] text-blue-500 mt-1">Solo NEs sin factura. Al guardar, la NE se marcará PROCESADA.</p>
+                    </div>
+                    )}
+
+                    {editingInvoiceId && (
+                    <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 mb-2">
+                      <label className="text-[10px] font-black text-amber-700 uppercase block mb-2 tracking-widest">📋 NE Origen (vínculo con la Nota de Entrega)</label>
+                      <div className="flex gap-3 items-center flex-wrap">
+                        <select value={newInvoiceForm.neOrigen||''} onChange={e=>setNewInvoiceForm(f=>({...f,neOrigen:e.target.value}))}
+                          className="flex-1 min-w-[240px] border-2 border-amber-300 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-amber-500 bg-white">
+                          <option value="">— Sin NE vinculada —</option>
+                          {(notasEntrega||[])
+                            .filter(ne=>!ne.facturaId||ne.facturaId===newInvoiceForm.documento||ne.id===newInvoiceForm.neOrigen)
+                            .sort((a,b)=>(b.id||'').localeCompare(a.id||''))
+                            .map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha}{ne.facturaId&&ne.facturaId!==newInvoiceForm.documento?` (vinculada a ${ne.facturaId})`:''}</option>))}
+                        </select>
+                        {newInvoiceForm.neOrigen && <div className="text-[10px] text-amber-700 font-bold bg-amber-100 px-3 py-2.5 rounded-xl whitespace-nowrap">✅ {newInvoiceForm.neOrigen}</div>}
+                      </div>
+                      <p className="text-[9px] text-amber-600 mt-1">Corrige aquí si el vínculo con la Nota de Entrega quedó vacío o apuntando a la NE equivocada. No cambia los ítems ya facturados, solo el número de NE que se muestra en los reportes.</p>
                     </div>
                     )}
                     
@@ -33936,7 +33986,159 @@ ${resumenHtml}
 
 
 // ── Restaurador de Cobros — componente propio (evita hooks condicionales) ──
-const RestaurarCobrosView = ({settings, appUser}) => {
+// ── Vincular NE Origen en facturas migradas de mayo 2026 — componente propio ──
+const VincularNEFacturasView = ({settings, appUser}) => {
+  const [vnBusy, setVnBusy] = useState(false);
+  const [vnMsg, setVnMsg] = useState(null);
+  const [vnPreview, setVnPreview] = useState(null);
+
+  const vnAnalizar = async () => {
+    setVnBusy(true); setVnMsg(null); setVnPreview(null);
+    try {
+      const [neSnap, invSnap] = await Promise.all([
+        getDocs(getColRef('notasEntrega')),
+        getDocs(getColRef('maquilaInvoices')),
+      ]);
+      const nes = neSnap.docs.map(d=>({_id:d.id,...d.data()}));
+      const invs = invSnap.docs.map(d=>({_id:d.id,...d.data()}));
+      const invById = new Map(invs.map(i=>[i.id||i._id,i]));
+
+      const nesMigradas = nes.filter(n=>n.user==='MIGRACIÓN MAYO 2026'&&n.facturaId);
+      const filas = [];
+      for(const ne of nesMigradas) {
+        const inv = invById.get(ne.facturaId) || invs.find(i=>i.documento===ne.facturaId);
+        if(!inv) { filas.push({ne, inv:null, accion:'sin_factura'}); continue; }
+        if(inv.neOrigen === ne.id) { filas.push({ne, inv, accion:'ya_ok'}); continue; }
+        if(inv.neOrigen && inv.neOrigen !== ne.id) { filas.push({ne, inv, accion:'conflicto'}); continue; }
+        filas.push({ne, inv, accion:'reparar'});
+      }
+      setVnPreview(filas);
+    } catch(err) { setVnMsg({type:'error', text: err.message}); }
+    setVnBusy(false);
+  };
+
+  const vnEjecutar = async () => {
+    if(!vnPreview) return;
+    const aReparar = vnPreview.filter(f=>f.accion==='reparar');
+    if(aReparar.length===0) { setVnMsg({type:'ok', text:'No hay nada pendiente por reparar.'}); return; }
+    setVnBusy(true);
+    try {
+      const BATCH_LIMIT=450;
+      let batch=writeBatch(db); let ops=0; const batches=[batch];
+      for(const f of aReparar) {
+        if(ops>=BATCH_LIMIT){ batch=writeBatch(db); batches.push(batch); ops=0; }
+        batch.update(getDocRef('maquilaInvoices', f.inv._id), { neOrigen: f.ne.id, updatedAt: Date.now() });
+        ops++;
+      }
+      for(const b of batches) await b.commit();
+      setVnMsg({type:'ok', text:`✅ ${aReparar.length} factura(s) vinculada(s) correctamente con su Nota de Entrega.`});
+      setVnPreview(null);
+    } catch(err) { setVnMsg({type:'error', text: err.message}); }
+    setVnBusy(false);
+  };
+
+  if(appUser?.role!=='Master') return null;
+
+  const contador = vnPreview ? {
+    reparar: vnPreview.filter(f=>f.accion==='reparar').length,
+    ya_ok: vnPreview.filter(f=>f.accion==='ya_ok').length,
+    conflicto: vnPreview.filter(f=>f.accion==='conflicto').length,
+    sin_factura: vnPreview.filter(f=>f.accion==='sin_factura').length,
+  } : null;
+
+  return (
+    <div className="bg-white rounded-3xl border-2 border-amber-200 p-6 mt-8">
+      <h3 className="text-lg font-black uppercase mb-1 text-amber-700 flex items-center gap-2">🔗 Vincular NE Origen — Facturas Migradas de Mayo 2026</h3>
+      <p className="text-xs text-gray-500 mb-4">Solo Master. Completa el campo "NE Origen" en facturas cuya Nota de Entrega ya existe (creada por la migración de mayo) pero cuyo vínculo inverso quedó vacío. No modifica montos, ítems ni ningún otro dato — solo el campo neOrigen.</p>
+
+      <div className="flex gap-3 mb-4">
+        <button onClick={vnAnalizar} disabled={vnBusy} className="bg-amber-500 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+          {vnBusy?<Loader2 size={14} className="animate-spin"/>:<Search size={14}/>} Analizar
+        </button>
+        {vnPreview && contador.reparar>0 && (
+          <button onClick={vnEjecutar} disabled={vnBusy} className="bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+            {vnBusy?<Loader2 size={14} className="animate-spin"/>:<CheckCircle size={14}/>} Reparar {contador.reparar} factura(s)
+          </button>
+        )}
+      </div>
+
+      {vnMsg && (
+        <div className={`mb-4 p-3 rounded-xl text-xs font-bold ${vnMsg.type==='error'?'bg-red-50 text-red-700 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}`}>{vnMsg.text}</div>
+      )}
+
+      {contador && (
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+            <div className="text-2xl font-black text-green-700">{contador.reparar}</div>
+            <div className="text-[9px] font-black text-green-600 uppercase">Por reparar</div>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
+            <div className="text-2xl font-black text-gray-500">{contador.ya_ok}</div>
+            <div className="text-[9px] font-black text-gray-400 uppercase">Ya estaban OK</div>
+          </div>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+            <div className="text-2xl font-black text-red-600">{contador.conflicto}</div>
+            <div className="text-[9px] font-black text-red-500 uppercase">En conflicto</div>
+          </div>
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-center">
+            <div className="text-2xl font-black text-orange-600">{contador.sin_factura}</div>
+            <div className="text-[9px] font-black text-orange-500 uppercase">Sin factura</div>
+          </div>
+        </div>
+      )}
+
+      {vnPreview && contador.conflicto>0 && (
+        <div className="mb-4">
+          <p className="text-[10px] font-black text-red-600 uppercase mb-2">⚠️ En conflicto — la factura ya tiene otra NE vinculada, requieren revisión manual:</p>
+          <div className="max-h-48 overflow-y-auto border border-red-200 rounded-xl">
+            <table className="w-full text-[10px]">
+              <thead className="bg-red-50 sticky top-0"><tr>
+                <th className="px-2 py-1.5 text-left font-black text-red-700">NE (migrada)</th>
+                <th className="px-2 py-1.5 text-left font-black text-red-700">Factura</th>
+                <th className="px-2 py-1.5 text-left font-black text-red-700">NE actual en la factura</th>
+              </tr></thead>
+              <tbody>
+                {vnPreview.filter(f=>f.accion==='conflicto').map(f=>(
+                  <tr key={f.ne._id} className="border-t border-red-100">
+                    <td className="px-2 py-1.5 font-bold">{f.ne.id}</td>
+                    <td className="px-2 py-1.5">{f.inv.documento}</td>
+                    <td className="px-2 py-1.5 text-red-600 font-bold">{f.inv.neOrigen}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {vnPreview && contador.reparar>0 && (
+        <div>
+          <p className="text-[10px] font-black text-green-600 uppercase mb-2">Vista previa — se completará así:</p>
+          <div className="max-h-64 overflow-y-auto border border-green-200 rounded-xl">
+            <table className="w-full text-[10px]">
+              <thead className="bg-green-50 sticky top-0"><tr>
+                <th className="px-2 py-1.5 text-left font-black text-green-700">Factura</th>
+                <th className="px-2 py-1.5 text-left font-black text-green-700">Cliente</th>
+                <th className="px-2 py-1.5 text-left font-black text-green-700">NE Origen (nuevo)</th>
+              </tr></thead>
+              <tbody>
+                {vnPreview.filter(f=>f.accion==='reparar').map(f=>(
+                  <tr key={f.ne._id} className="border-t border-green-100">
+                    <td className="px-2 py-1.5 font-bold">{f.inv.documento}</td>
+                    <td className="px-2 py-1.5">{f.inv.clientName}</td>
+                    <td className="px-2 py-1.5 text-green-700 font-bold">{f.ne.id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
   const [rcBusq,      setRcBusq]      = useState('');
   const [rcNEs,       setRcNEs]       = useState([]);
   const [rcNESel,     setRcNESel]     = useState(null);
@@ -35143,6 +35345,9 @@ const RestaurarCobrosView = ({settings, appUser}) => {
           </div>
         </div>
 
+
+      {/* ── VINCULAR NE ORIGEN EN FACTURAS MIGRADAS — solo Master ── */}
+      {appUser?.role==='Master'&&<VincularNEFacturasView settings={settings} appUser={appUser}/>}
 
       {/* ── RESTAURADOR DE COBROS — solo Master ── */}
       {appUser?.role==='Master'&&<RestaurarCobrosView settings={settings} appUser={appUser}/>}
