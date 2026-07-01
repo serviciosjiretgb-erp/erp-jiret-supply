@@ -4616,6 +4616,12 @@ ${body}
                       onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,referencia:e.target.value.toUpperCase()}}))}
                       style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box',textTransform:'uppercase'}}/>
                   </div>
+                  <div style={{marginBottom:12}}>
+                    <label style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',display:'block',marginBottom:4}}>📝 Descripción / Detalle</label>
+                    <input type="text" placeholder="Detalle del pago..." value={pm.lineaActual?.concepto||''}
+                      onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,concepto:e.target.value}}))}
+                      style={{width:'100%',padding:'10px 12px',border:'2px solid #fed7aa',borderRadius:10,fontSize:12,outline:'none',boxSizing:'border-box'}}/>
+                  </div>
 
                   {pm.lineaActual?.cuentaId&&(
                     <div style={{background:'#f0fdf4',border:'1px solid #86efac',borderRadius:8,padding:'8px 12px',marginBottom:12,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -4631,7 +4637,7 @@ ${body}
                     if(!la.cuentaId){setDialog({title:'Cuenta requerida',text:'Selecciona la cuenta o caja (panel derecho).',type:'alert'});return;}
                     const nuevaLinea={...la,monto:la.monto,tasa:la.tasa||String(tasaBCV)};
                     setPM(m=>({lineasPago:[...(m.lineasPago||[]),nuevaLinea],
-                      lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',fecha:hoy}}));
+                      lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:hoy}}));
                   }} style={{width:'100%',padding:'11px',background:'linear-gradient(135deg,#E8541A,#c2410c)',color:'#fff',border:'none',borderRadius:10,fontWeight:900,fontSize:12,cursor:'pointer',textTransform:'uppercase',letterSpacing:1}}>
                     ➕ Agregar este pago
                   </button>
@@ -6909,8 +6915,32 @@ const SYSTEM_MODULES = [
     ]
   },
   {
+    id: 'procura',
+    label: '14. MÓDULO Procura & Compras',
+    icon: '🛒',
+    submodules: [
+      { id: 'procura_facturas',    label: 'Facturas de Compra' },
+      { id: 'procura_cxp',         label: 'Cuentas por Pagar (CxP)' },
+      { id: 'procura_pagos',       label: 'Historial de Pagos' },
+      { id: 'procura_estado',      label: 'Estado de Cuenta Proveedor' },
+      { id: 'procura_nc_nd',       label: 'NC / ND Compras' },
+      { id: 'procura_libro',       label: 'Libro de Compras' },
+    ]
+  },
+  {
+    id: 'impuestos',
+    label: '15. MÓDULO Impuestos / SENIAT',
+    icon: '📋',
+    submodules: [
+      { id: 'impuestos_libros',    label: 'Libros de Ventas y Compras' },
+      { id: 'impuestos_retenciones', label: 'Retenciones IVA / ISLR' },
+      { id: 'impuestos_forma99030', label: 'Forma 99030' },
+      { id: 'impuestos_dua',       label: 'DUA / Importaciones' },
+    ]
+  },
+  {
     id: 'vendedores',
-    label: '13. MÓDULO Portal de Vendedores',
+    label: '16. MÓDULO Portal de Vendedores',
     icon: '🤝',
     submodules: [
       { id: 'vend_cotizaciones',  label: 'Cotizaciones (vista propia)' },
@@ -16879,7 +16909,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </div>
                         <div>
                           <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Condición de Venta</label>
-                          <select value={newCotizForm.condicionId||''} onChange={e=>setNewCotizForm({...newCotizForm,condicionId:e.target.value})}
+                          <select value={newCotizForm.condicionId||''} onChange={e=>{
+                              const cId=e.target.value;
+                              const cond=(condicionesCotiz||[]).find(c=>c.id===cId);
+                              // Extraer info de la condición seleccionada
+                              const det=cond?.detalle||'';
+                              const fpMatch=det.match(/forma[s]?\s*de\s*pago[^:]*:([^.|]+)/i);
+                              const fpStr=fpMatch?fpMatch[1].trim():undefined;
+                              const tipoPago=det.toLowerCase().includes('crédito')||det.toLowerCase().includes('credito')?'CREDITO':'CONTADO';
+                              const diasMatch=det.match(/(\d+)\s*(?:\/\s*(\d+))?\s*días/i);
+                              const tiempoMatch=det.match(/tiempo de entrega\s*:?\s*([^.|]+)/i);
+                              setNewCotizForm(f=>({
+                                ...f,condicionId:cId,
+                                condicionPago:tipoPago,
+                                formaPago:fpStr||f.formaPago,
+                                tiempoEntrega:tiempoMatch?tiempoMatch[1].trim():f.tiempoEntrega,
+                              }));
+                            }}
                             className="border-2 border-orange-200 rounded-xl p-2 text-xs font-black outline-none focus:border-orange-500 bg-orange-50" style={{maxWidth:220}}>
                             <option value="">— Sin condición —</option>
                             {(condicionesCotiz||[]).map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -16961,12 +17007,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           </div>
                           <div>
                             <label className="block text-[9px] font-black text-gray-500 uppercase mb-1">Forma de Pago</label>
-                            <select value={newCotizForm.formaPago||'BS A TASA BCV'} onChange={e=>setNewCotizForm({...newCotizForm,formaPago:e.target.value})}
+                            <select value={newCotizForm.formaPago||''} onChange={e=>setNewCotizForm({...newCotizForm,formaPago:e.target.value})}
                               className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                              <option value="BS A TASA BCV">Bs. a tasa BCV</option>
-                              <option value="TRANSFERENCIA EN DIVISAS">Transferencia en Divisas</option>
-                              <option value="EFECTIVO DIVISAS">Efectivo en Divisas</option>
-                              <option value="ZELLE">Zelle</option>
+                              <option value="">— Seleccionar —</option>
+                              <option value="Bolívares al tipo de cambio BCV">Bs. a tasa BCV</option>
+                              <option value="Transferencia en Divisas">Transferencia en Divisas</option>
+                              <option value="Efectivo en Divisas">Efectivo en Divisas</option>
+                              <option value="Zelle">Zelle</option>
+                              <option value="Zelle / Efectivo en Divisas">Zelle / Efectivo en Divisas</option>
+                              <option value="Transferencia en Divisas / Zelle">Transferencia / Zelle</option>
+                              <option value="Transferencia en Divisas / Efectivo en Divisas">Transferencia / Efectivo</option>
+                              <option value="Zelle / Transferencia en Divisas / Efectivo en Divisas">Zelle / Transf. / Efectivo</option>
                             </select>
                           </div>
                         </div>
@@ -17471,7 +17522,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 tiempoEntrega: teStr||f.tiempoEntrega,
                                 condicionPago: condForm.tipoPago==='credito' ? 'CREDITO' : 'CONTADO',
                                 diasCredito: condForm.tipoPago==='credito' ? (condForm.diasCredito||'') : '',
-                                porcentajeAnticipo: condForm.tieneAnticipo ? (condForm.pctAnticipo||'') : ''
+                                porcentajeAnticipo: condForm.tieneAnticipo ? (condForm.pctAnticipo||'') : '',
+                                formaPago: fp.length>0 ? fp.join(' / ') : f.formaPago,
+                                formasPagoCotiz: condForm.formasPago||[]
                               }));
                               setNewCondForm({nombre:'',detalle:'',tipoPago:'',diasCredito:'',tieneAnticipo:false,pctAnticipo:'',tiempoEntrega:'',entregaCustom:'',formasPago:[]});
                               setShowCondManager(false);
@@ -19040,8 +19093,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {/* ── NOTAS DE ENTREGA ── */}
         {ventasView === 'notas_entrega' && (() => {
           const PAGE_SIZE = 25;
+          const ESTADOS_VE = ['Amazonas','Anzoátegui','Apure','Aragua','Barinas','Bolívar','Carabobo','Cojedes','Delta Amacuro','Distrito Capital','Falcón','Guárico','Lara','Mérida','Miranda','Monagas','Nueva Esparta','Portuguesa','Sucre','Táchira','Trujillo','La Guaira','Yaracuy','Zulia'];
           const initNEForm = () => ({
             fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
+            territorio:'',
             items:[], aplicaIva:'SI', status:'TRANSITO', observaciones:'',
             facturaId:'', opRelacionada:'', ncConsignacion:'', diasCredito:'0',
             canal:'TRADICIONAL',
@@ -19225,7 +19280,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <input value={form.neClientSearch!==undefined?form.neClientSearch:form.clientName} onChange={e=>setForm(f=>({...f,neClientSearch:e.target.value}))} onFocus={()=>setForm(f=>({...f,neShowClientDrop:true}))} onBlur={()=>setTimeout(()=>setForm(f=>({...f,neShowClientDrop:false})),200)}
                         className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="Buscar cliente..."/>
                       {form.neShowClientDrop&&clientResults.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-48 overflow-y-auto">
-                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',neClientSearch:c.name||c.nombre||'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
+                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',territorio:c.estado||c.territory||f.territorio||'',neClientSearch:c.name||c.nombre||'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
                       </div>)}
                     </div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">RIF</label>
@@ -19236,6 +19291,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <select value={form.vendedor||''} onChange={e=>setForm(f=>({...f,vendedor:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
                         <option value="">— Seleccionar —</option>
                         {vendedoresList.map(v=><option key={v} value={v}>{v}</option>)}
+                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">🗺 Territorio</label>
+                      <select value={form.territorio||''} onChange={e=>setForm(f=>({...f,territorio:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
+                        <option value="">— Estado —</option>
+                        {ESTADOS_VE.map(e=><option key={e} value={e}>{e}</option>)}
                       </select></div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">OP Relacionada</label>
                       <select value={form.opRelacionada||''} onChange={e=>setForm(f=>({...f,opRelacionada:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
@@ -19431,6 +19491,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-3 px-3 text-gray-500 whitespace-nowrap">{ne.fecha}</td>
                           <td className="py-3 px-3 font-bold text-gray-900 max-w-[160px] truncate" title={ne.clientName}>{ne.clientName}</td>
                           <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.clientRif}</td>
+                          <td className="py-3 px-3 text-purple-700 font-bold text-[10px] whitespace-nowrap">{ne.territorio||'—'}</td>
                           <td className="py-3 px-3 text-blue-700 font-bold whitespace-nowrap">{ne.vendedor||'—'}</td>
                           <td className="py-3 px-3 text-gray-500 text-[10px] whitespace-nowrap">{ne.opRelacionada||'—'}</td>
                           <td className="py-3 px-3 text-right font-black">${formatNum(ne.montoBase||0)}</td>
@@ -21834,7 +21895,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const cobrosNE=(cobrosCxc||[]).filter(cx=>cx.neId===ne.id&&(!fechaRef||(cx.fecha||'')<=fechaRef));
                   // Factura fiscal
                   if(invVinc){const baseBsA=parseNum(invVinc.baseImponible||invVinc.montoBase||0);const ivaA=parseNum(invVinc.montoIVA||invVinc.iva||0);const totalBsA=parseNum(invVinc.totalBs||0);const tasaA=parseNum(invVinc.tasa||0);detRows+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:16px;color:#4338ca;font-weight:bold">📋 Fac. ${invVinc.nroFiscal||invVinc.documento||'—'}</td><td class="left">${invVinc.fecha||'—'}</td><td class="left" colspan="2">${invVinc.nroControl?'Ctrl. '+invVinc.nroControl:''}</td><td colspan="3"></td><td class="left" style="color:#4338ca">${baseBsA>0?'Base: Bs.'+formatNum(baseBsA):''}${ivaA>0?' IVA: Bs.'+formatNum(ivaA):''}${totalBsA>0?' Tot: Bs.'+formatNum(totalBsA):''}${tasaA>0?' Tasa: '+formatNum(tasaA):''}  </td><td colspan="3"></td></tr>`;}
-                  cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">💰 Pago · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}${parseNum(cb.montoBs||0)>0?' / Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td colspan="3"></td></tr>`;});
+                  cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">💰 Pago · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}${cb.concepto?' · <i>'+cb.concepto+'</i>':''}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}${parseNum(cb.montoBs||0)>0?' / Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td colspan="3"></td></tr>`;});
                   retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const lblX=r.tipoExtra?(r.tipoLabel||r.tipo||'Otra Ret.'):'Ret. IVA';const valX=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 ${lblX} · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td class="left">${r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}</td><td colspan="6"></td><td class="a">${valX}</td><td></td></tr>`;});
                 });
                 const manualRetsClAg=(_manualRetsPorCliente.get(cl.clientRif)||[]);
@@ -21869,7 +21930,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                   // Factura fiscal
                   if(invVincXLS){const bBs=parseNum(invVincXLS.baseImponible||invVincXLS.montoBase||0);const ivaD=parseNum(invVincXLS.montoIVA||invVincXLS.iva||0);const tBs=parseNum(invVincXLS.totalBs||0);const tD=parseNum(invVincXLS.tasa||0);body+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:20px;color:#4338ca;font-weight:bold">📋 Fac. ${invVincXLS.nroFiscal||invVincXLS.documento||'—'}</td><td class="left">${invVincXLS.fecha||'—'}</td><td class="left" colspan="3">${bBs>0?'Base Bs.'+formatNum(bBs)+' · ':''}${ivaD>0?'IVA Bs.'+formatNum(ivaD)+' · ':''}${tBs>0?'Total Bs.'+formatNum(tBs)+' · ':''}${tD>0?'Tasa: '+formatNum(tD):''}  </td><td colspan="7"></td></tr>`;}
-                  cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">💰 Pago</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td></td></tr>`;});
+                  cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">💰 Pago</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}${cb.concepto?' · <i>'+cb.concepto+'</i>':''}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td></td></tr>`;});
                   const ncsNEd=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return (ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
                   ncsNEd.forEach(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${nc.tipo||'NC'}</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed;font-style:italic">${nc.descripcion||'—'}</td><td class="b">-$${formatNum(u)}</td><td class="left">${b>0?'Bs.'+formatNum(b):''}</td><td colspan="5"></td></tr>`;});
                   const retDetalleXLS=getRetsDetalleNE(ne);
@@ -22230,6 +22291,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               <div style={{display:'flex',gap:10,fontSize:9,color:'#64748b'}}>
                                 <span>{l.cuentaNombre||'Sin cuenta'}</span>
                                 {l.referencia&&<span>Ref: {l.referencia}</span>}
+                                {l.concepto&&<span style={{fontStyle:'italic',color:'#92400e'}}>"{l.concepto}"</span>}
                                 <span>{l.fecha}</span>
                               </div>
                             </div>
@@ -22294,12 +22356,20 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       </div>
 
                       {/* Referencia */}
-                      <div style={{marginBottom:12}}>
+                      <div style={{marginBottom:10}}>
                         <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>N° Referencia</label>
                         <input type="text" placeholder="REF-0000000"
                           value={pm.lineaActual?.referencia||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,referencia:e.target.value.toUpperCase()}}))}
                           style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box',textTransform:'uppercase'}}
                           onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                      </div>
+                      {/* Descripción */}
+                      <div style={{marginBottom:12}}>
+                        <label style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',display:'block',marginBottom:4}}>📝 Descripción / Detalle</label>
+                        <input type="text" placeholder="Descripción del cobro..."
+                          value={pm.lineaActual?.concepto||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,concepto:e.target.value}}))}
+                          style={{width:'100%',padding:'10px 12px',border:'2px solid #fed7aa',borderRadius:10,fontSize:12,outline:'none',boxSizing:'border-box'}}
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#fed7aa'}/>
                       </div>
 
                       {/* Cuenta seleccionada */}
@@ -23276,7 +23346,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 });
                 // Cobro sub-rows
                 cobrosNE.forEach((cb,ci)=>{
-                  const detalle=(cb.metodo||'—')+(cb.cuentaBancoNombre?' · '+cb.cuentaBancoNombre:'')+(cb.referencia?' · '+cb.referencia:'')+(parseNum(cb.montoBs||0)>0?' · Bs.'+fV(parseNum(cb.montoBs)):' · Bs.'+fV(parseNum(cb.monto||0)*parseNum(invV?.tasa||1)));
+                  const detalle=(cb.metodo||'—')+(cb.cuentaBancoNombre?' · '+cb.cuentaBancoNombre:'')+(cb.referencia?' · Ref:'+cb.referencia:'')+(cb.concepto?' · «'+cb.concepto+'»':'')+(parseNum(cb.montoBs||0)>0?' · Bs.'+fV(parseNum(cb.montoBs)):' · Bs.'+fV(parseNum(cb.monto||0)*parseNum(invV?.tasa||1)));
                   neRowsHtml+='<tr style="background:#f0fdf4;border-bottom:1px solid #bbf7d0">'
                     +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:#166534;font-weight:700">↳ Pago'+(cobrosNE.length>1?' '+(ci+1):'')+'</td>'
                     +'<td style="padding:2px 6px;font-size:8px;color:#16a34a">'+fD(cb.fecha)+'</td>'
