@@ -21014,7 +21014,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             fecha:ne.fecha||'',cliente:ne.clientName||ne.clientNombre||'',
             rif:ne.clientRif||'',vendedor:ne.vendedor||'Directa',
             montoBase:parseNum(ne.montoBase||0),
-            localidad:getLoc(ne.clientRif||'',ne.clientName||''),
+            localidad:ne.territorio||getLoc(ne.clientRif||'',ne.clientName||'')||'Sin territorio',
             items:(ne.items||[]).map(it=>{
               const tipo=getTipo(it.invCode||it.codigo,it.desc||it.descripcion);
               const cant=parseNum(it.cantidad||it.qty||0);
@@ -21173,31 +21173,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <div className="text-right"><div className="text-xl font-black text-orange-600">{formatNum(kgT)}</div><div className="text-[7px] font-black text-gray-400 uppercase">Termo</div></div>
                   </div>
                 </div>
-                {/* Comisiones card */}
-                <div className="bg-gray-900 rounded-2xl shadow-sm p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <DollarSign size={14} className="text-amber-400"/>
-                    <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Comisiones</div>
-                  </div>
-                  {comList.length===0?(
-                    <p className="text-[9px] text-gray-500 italic">Sin comisiones en el período</p>
-                  ):comList.map(([vend,com])=>(
-                    <div key={vend} className="flex justify-between items-center mb-1.5 bg-gray-800 rounded-lg px-2 py-1">
-                      <span className="text-[9px] font-black text-gray-400 uppercase truncate max-w-[90px]">{vend}</span>
-                      <span className="text-xs font-black text-amber-400">{fU(com)}</span>
-                    </div>
-                  ))}
-                  <div className="pt-2 border-t border-gray-700 flex justify-between items-center mt-1">
-                    <span className="text-[9px] font-black text-gray-500 uppercase">Total</span>
-                    <span className="text-xl font-black text-amber-400">{fU(comTotal)}</span>
-                  </div>
-                </div>
+
               </div>
 
               {/* GRÁFICAS TABS */}
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 <div className="flex gap-1 p-3 bg-gray-50 border-b border-gray-100 flex-wrap">
-                  {[{k:'productos',l:'📦 Productos'},{k:'clientes',l:'🏢 Clientes'},{k:'vendedores',l:'👤 Vendedores'},{k:'localidad',l:'📍 Localidad'},{k:'categorias',l:'🏷️ Categorías'},{k:'canal',l:'📡 Canal'}].map(tab=>(
+                  {[{k:'productos',l:'📦 Productos'},{k:'clientes',l:'🏢 Clientes'},{k:'vendedores',l:'👤 Vendedores'},{k:'localidad',l:'🗺️ Territorio'},{k:'categorias',l:'🏷️ Categorías'},{k:'canal',l:'📡 Canal'}].map(tab=>(
                     <button key={tab.k} onClick={()=>setFVF('tabActiva',tab.k)}
                       className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${fVF.tabActiva===tab.k?'bg-blue-600 text-white':'text-gray-500 hover:bg-gray-100'}`}>
                       {tab.l}
@@ -21304,8 +21286,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                   {fVF.tabActiva==='localidad'&&(
                     <div>
-                      <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">Ventas por Localidad</h3>
-                      {tL.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos — verifica que los clientes tengan dirección registrada</p>:(
+                      <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">Ventas por Territorio (Estado)</h3>
+                      {tL.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos — agrega el campo Territorio en las Notas de Entrega</p>:(
                         <div className="space-y-3">
                           {tL.map(([loc,val],i)=>(
                             <div key={loc} className="group flex items-center gap-3">
@@ -21486,7 +21468,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            const inv=findInv(r.facturaId);
+            // Prioridad: nroFactura (número fiscal visible y verificable por el usuario)
+            // luego nroControl, luego facturaId (ID Firestore que puede haberse guardado mal)
+            const inv = findInv(r.nroFactura) || findInv(r.nroControl) || findInv(r.facturaId);
             if(!inv) continue;
             const neTarget=_findNEforInv(inv);
             if(!neTarget) continue;
@@ -22241,6 +22225,32 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 <span style={{fontSize:8,color:'#64748b',fontWeight:700}}>Total: <b style={{color:'#15803d'}}>Bs.{formatNum(totalBs)}</b></span>
                               </>}
                             </div>}
+                            {(()=>{
+                              const rDet=getRetsDetalleNE(ne);
+                              const retUSD=rDet.ivaUSD+rDet.otrasUSD;
+                              const saldoNeto=saldo; // ya incluye retenciones en getSaldoNEAtFecha
+                              if(!rDet.iva.length&&!rDet.otras.length) return null;
+                              return(
+                                <div style={{marginTop:4,paddingTop:4,borderTop:'1px dashed #fed7aa'}}>
+                                  {rDet.iva.map((r,ri)=>(
+                                    <div key={ri} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
+                                      <span style={{fontSize:8,color:'#92400e',fontWeight:700}}>🧾 Ret.IVA · Comp.{r.nroComprobante||r.nroRetencion||'—'} · Fac.{r._invNroFiscal||r.nroFactura||'—'}</span>
+                                      <span style={{fontSize:8,fontWeight:900,color:'#b45309'}}>-${formatNum(r._montoUSD)}</span>
+                                    </div>
+                                  ))}
+                                  {rDet.otras.map((r,ri)=>(
+                                    <div key={ri} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
+                                      <span style={{fontSize:8,color:'#0f766e',fontWeight:700}}>🧾 {r.tipoLabel||'Ret.'} · Comp.{r.nroComprobante||r.nroRetencion||'—'}</span>
+                                      <span style={{fontSize:8,fontWeight:900,color:'#0f766e'}}>-${formatNum(r._montoUSD)}</span>
+                                    </div>
+                                  ))}
+                                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:3,paddingTop:3,borderTop:'1px solid #fed7aa'}}>
+                                    <span style={{fontSize:8,fontWeight:900,color:'#15803d',textTransform:'uppercase'}}>Saldo neto a cobrar</span>
+                                    <span style={{fontSize:9,fontWeight:900,color:'#15803d'}}>${formatNum(Math.max(0,saldoNeto))}</span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>);
                       })}
@@ -23084,7 +23094,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 </button>
                                 <button onClick={()=>{
                                   setCxcEditCobro(cb);
-                                  setCxcEditForm({fecha:cb.fecha||'',metodo:cb.metodo||'',referencia:cb.referencia||'',cuentaBancoNombre:cb.cuentaBancoNombre||'',monto:String(cb.monto||''),montoBs:String(cb.montoBs||''),moneda:cb.moneda||'USD',tipo:cb.tipo||'Pago'});
+                                  setCxcEditForm({fecha:cb.fecha||'',metodo:cb.metodo||'',referencia:cb.referencia||'',cuentaBancoNombre:cb.cuentaBancoNombre||'',monto:String(cb.monto||''),montoBs:String(cb.montoBs||''),moneda:cb.moneda||'USD',tipo:cb.tipo||'Pago',tasa:String(cb.tasa||settings?.tasaBCV||'')});
                                 }} title="Editar cobro"
                                   className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
                                   ✏️ Editar
@@ -23162,7 +23172,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           };
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            const inv=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+            // Prioridad: nroFactura (fiscal, verificable) → nroControl → facturaId (Firestore ID)
+            const inv=(invoices||[]).find(i=>r.nroFactura&&(i.nroFiscal===r.nroFactura||i.documento===r.nroFactura))
+              ||(invoices||[]).find(i=>r.nroControl&&(i.nroFiscal===r.nroControl||i.documento===r.nroControl))
+              ||(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
             if(!inv) continue;
             const neTarget=_findNEforInvEc(inv);
             if(!neTarget) continue;
@@ -23945,7 +23958,24 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 <div>
                   <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Monto USD *</label>
                   <input type="number" step="0.01" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
-                    value={cxcEditForm.monto||''} onChange={e=>setCxcEditForm(f=>({...f,monto:e.target.value}))}/>
+                    value={cxcEditForm.monto||''} onChange={e=>{
+                      const mUSD=parseNum(e.target.value);
+                      const tasa=parseNum(cxcEditForm.tasa||0);
+                      setCxcEditForm(f=>({...f,monto:e.target.value,montoBs:tasa>0?String((mUSD*tasa).toFixed(2)):f.montoBs}));
+                    }}/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-orange-500 uppercase block mb-1">Tasa Bs/$</label>
+                  <input type="number" step="0.0001" className="w-full border-2 border-orange-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    placeholder={String(settings?.tasaBCV||'')}
+                    value={cxcEditForm.tasa||''} onChange={e=>{
+                      const tasa=parseNum(e.target.value);
+                      const mUSD=parseNum(cxcEditForm.monto||0);
+                      setCxcEditForm(f=>({...f,tasa:e.target.value,montoBs:tasa>0&&mUSD>0?String((mUSD*tasa).toFixed(2)):f.montoBs}));
+                    }}/>
+                  {parseNum(cxcEditForm.tasa||0)>0&&parseNum(cxcEditForm.monto||0)>0&&(
+                    <p className="text-[9px] text-orange-600 font-black mt-0.5">= Bs.{(parseNum(cxcEditForm.monto||0)*parseNum(cxcEditForm.tasa||0)).toLocaleString('es-VE',{minimumFractionDigits:2})}</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Monto Bs.</label>
@@ -23992,12 +24022,15 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     const montoNuevo=parseNum(cxcEditForm.monto||0);
                     const montoAnterior=parseNum(cxcEditCobro.monto||0);
                     const batch=writeBatch(db);
+                    const tasaEdit=parseNum(cxcEditForm.tasa||0);
+                    const montoBsEdit=parseNum(cxcEditForm.montoBs||0)||(tasaEdit>0?montoNuevo*tasaEdit:0);
                     batch.update(getDocRef('cobros_cxc',cxcEditCobro.id),{
                       fecha:cxcEditForm.fecha||cxcEditCobro.fecha,
                       metodo:cxcEditForm.metodo||cxcEditCobro.metodo,
                       referencia:(cxcEditForm.referencia||'').toUpperCase(),
                       cuentaBancoNombre:cxcEditForm.cuentaBancoNombre||'',
-                      monto:montoNuevo,montoBs:parseNum(cxcEditForm.montoBs||0),
+                      monto:montoNuevo,montoBs:montoBsEdit,
+                      tasa:tasaEdit||cxcEditCobro.tasa||0,
                       moneda:cxcEditForm.moneda||'USD',tipo:cxcEditForm.tipo||'Pago',
                       updatedAt:Date.now()
                     });
