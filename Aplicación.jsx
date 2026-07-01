@@ -1718,7 +1718,71 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." className={`${inp} pl-9 h-full`}/>
         </div>
-        {tab==='categorias'&&<PBg onClick={()=>{setCatForm(initCat());setCatModal(true);}}><Plus size={14}/> Nueva categoría</PBg>}
+        {tab==='categorias'&&<>
+          <PBg onClick={()=>{setCatForm(initCat());setCatModal(true);}}><Plus size={14}/> Nueva categoría</PBg>
+          <label className="cursor-pointer px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
+            <Download size={13}/> Importar Excel
+            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={async(e)=>{
+              const file=e.target.files?.[0];
+              if(!file) return;
+              e.target.value='';
+              try{
+                const arrayBuffer=await new Promise((res,rej)=>{const r=new FileReader();r.onload=ev=>res(ev.target.result);r.onerror=rej;r.readAsArrayBuffer(file);});
+                let XLSX; try{XLSX=window.XLSX;}catch(_){}
+                if(!XLSX){
+                  await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+                  XLSX=window.XLSX;
+                }
+                const wb=XLSX.read(arrayBuffer,{type:'array'});
+                const ws=wb.Sheets[wb.SheetNames[0]];
+                const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
+                if(!rows.length){setDialog({title:'Aviso',text:'Archivo vacío.',type:'alert'});return;}
+                // Detectar fila de encabezado: busca "categoria" en alguna columna de las primeras filas
+                let headerRowIdx=-1,colCat=-1,colCta=-1;
+                for(let i=0;i<Math.min(5,rows.length);i++){
+                  const r=rows[i]||[];
+                  const idxCat=r.findIndex(v=>String(v||'').toLowerCase().trim().startsWith('categor'));
+                  const idxCta=r.findIndex(v=>String(v||'').toLowerCase().includes('cuenta'));
+                  if(idxCat>=0&&idxCta>=0){headerRowIdx=i;colCat=idxCat;colCta=idxCta;break;}
+                }
+                if(headerRowIdx<0){
+                  // Sin encabezado reconocible: asume columna 0 = categoría, columna 1 = cuenta contable
+                  headerRowIdx=-1;colCat=0;colCta=1;
+                }
+                const dataRows=rows.slice(headerRowIdx+1).filter(r=>r&&(r[colCat]||r[colCta]));
+                if(!dataRows.length){setDialog({title:'Aviso',text:'Sin datos para importar.',type:'alert'});return;}
+                const batch=writeBatch(db);
+                let creadas=0,actualizadas=0;const sinCuenta=[];
+                for(const r of dataRows){
+                  const nombreCat=String(r[colCat]||'').trim().toUpperCase();
+                  const cuentaTxt=String(r[colCta]||'').trim();
+                  if(!nombreCat) continue;
+                  // Extrae el código: lo que viene antes del primer guion o espacio-guion
+                  const codigoMatch=cuentaTxt.match(/^([\d.]+)/);
+                  const codigo=codigoMatch?codigoMatch[1]:'';
+                  const cta=codigo?planDeCuentas.find(c=>c.codigo===codigo):null;
+                  const existente=categoriasSrv.find(c=>(c.nombre||'').toUpperCase()===nombreCat);
+                  const id=existente?.id||`CATSRV-${pId()}`;
+                  const payload={
+                    id,nombre:nombreCat,
+                    unidad:existente?.unidad||'und',
+                    precioRef:existente?.precioRef||'',
+                    cuentaContableId:cta?.id||existente?.cuentaContableId||'',
+                    cuentaContableNombre:cta?`${cta.codigo} — ${cta.nombre}`:(existente?.cuentaContableNombre||''),
+                    activo:true,updatedAt:Date.now()
+                  };
+                  batch.set(getDocRef('procura_categorias_servicio',id),payload,{merge:true});
+                  if(existente) actualizadas++; else creadas++;
+                  if(codigo&&!cta) sinCuenta.push(`${nombreCat} (${codigo})`);
+                }
+                await batch.commit();
+                const resumen=`${creadas} categoría(s) nueva(s), ${actualizadas} actualizada(s).`;
+                const aviso=sinCuenta.length?` ⚠ Sin cuenta contable encontrada para: ${sinCuenta.slice(0,6).join(', ')}${sinCuenta.length>6?` y ${sinCuenta.length-6} más`:''}.`:'';
+                setDialog({title:'✅ Importación completa',text:resumen+aviso,type:'alert'});
+              }catch(err){setDialog({title:'Error al importar',text:err.message,type:'alert'});}
+            }}/>
+          </label>
+        </>}
         {tab==='servicios'&&<PBg onClick={()=>{setForm(initSrv());setModal('srv');}}><Plus size={14}/> Nuevo servicio</PBg>}
       </div>
 
