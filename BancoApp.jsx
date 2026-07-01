@@ -2451,6 +2451,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     const [filtC,    setFiltC]   = useState('');
     const [filtDesde,setFiltD]   = useState(bancoMesActual()+'-01');
     const [filtHasta,setFiltH]   = useState(getTodayDate());
+    const [busqCli,  setBusqCli] = useState('');
+    const [busqRef,  setBusqRef] = useState('');
     const [detalleId,setDetalle] = useState(null);
     const [editId,   setEditId]  = useState(null);
     const [modal,    setModal]   = useState(ventasOnlyIngreso); // auto-open for ventas
@@ -2856,6 +2858,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       if(filtC     && m.cuentaId!==filtC)   return false;
       if(filtDesde && m.fecha<filtDesde)     return false;
       if(filtHasta && m.fecha>filtHasta)     return false;
+      if(busqCli && !(m.terceroNombre||m.clientName||m.proveedor||m.concepto||'').toUpperCase().includes(busqCli.toUpperCase())) return false;
+      if(busqRef && !(m.referencia||'').toUpperCase().includes(busqRef.toUpperCase())) return false;
       return true;
     });
     // Split by moneda de la cuenta
@@ -3142,7 +3146,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
             <span className="text-slate-400 text-xs font-bold">—</span>
             <input type="date" className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500" value={filtHasta} onChange={e=>setFiltH(e.target.value)} title="Hasta"/>
           </div>
-          {(filtC||filtDesde||filtHasta)&&<button onClick={()=>{setFiltC('');setFiltD('');setFiltH('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
+          {/* Buscadores cliente y referencia */}
+          <div className="relative">
+            <Users size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={busqCli} onChange={e=>setBusqCli(e.target.value)} placeholder="Buscar cliente..." className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-36"/>
+          </div>
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={busqRef} onChange={e=>setBusqRef(e.target.value)} placeholder="Referencia..." className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
+          </div>
+          {(filtC||filtDesde||filtHasta||busqCli||busqRef)&&<button onClick={()=>{setFiltC('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
           <BBg onClick={()=>{setForm(initF());setModal(true);}}><Plus size={13}/> Nuevo</BBg>
         </div>
@@ -3893,6 +3906,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
     const [cajFiltCaja,   setCajFiltCaja]   = useState('');     // cajaId o ''
     const [cajFiltDesde,  setCajFiltDesde]  = useState('');
     const [cajFiltHasta,  setCajFiltHasta]  = useState('');
+    const [cajBusqCli,    setCajBusqCli]    = useState('');
+    const [cajBusqRef,    setCajBusqRef]    = useState('');
     const [cajaDet, setCajaDet]   = useState(null);   // movimiento seleccionado para ver/editar
     const [cajaEdit, setCajaEdit] = useState(false);   // modo edición
     const [cajaPwdModal, setCajaPwdModal] = useState(null); // movimiento a eliminar
@@ -3951,30 +3966,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       };
     });
 
-    // También incluir banco_movimientos de CxC/CxP que sí llegaron a banco (compatibilidad)
-    const movBancoEnCaja = movBanco.filter(m=>
-      m.origen==='CxP' || m.origenIngreso==='Cobro NE' ||
-      m.origenIngreso==='Cobro CxC' || m.origenIngreso==='CobroCxC'
-    ).map(m=>{
-      const tipoNorm = m.tipo==='EGRESO'?'Egreso': m.tipo==='Ingreso'?'Ingreso': m.tipo||'Ingreso';
-      const monedaNorm = m.moneda==='BS'?'BS': m.moneda==='USD'?'USD':
-        (m.montoBs>0&&m.montoUSD>0?(m.montoBs/m.montoUSD>5?'BS':'USD'):'USD');
-      const montoBsNorm  = m.montoBs||(m.monto&&m.tasa?m.monto*m.tasa:0);
-      const montoUSDNorm = m.montoUSD||(m.monto||0);
-      const facturaInfo  = m.facturas?.length>0?m.facturas.map(f=>`${f.nroFactura||f.id} (${f.fecha||''})`).join(' | '):m.facturaId?`Fact. ${m.facturaId}`:'';
-      return {
-        ...m, moneda:monedaNorm, tipo:tipoNorm, montoBs:montoBsNorm, montoUSD:montoUSDNorm,
-        _concepto:m.concepto||`${tipoNorm==='Egreso'?'Pago':'Cobro'} ${m.proveedor||m.clientName||m.terceroNombre||'—'}`,
-        _facturaInfo:facturaInfo, _tercero:m.proveedor||m.clientName||m.terceroNombre||'—',
-        _fromBanco:true
-      };
-    }).filter(m=>m.moneda==='USD'||m.montoUSD>0.001);
-
+    // allMovsCajaBase: SOLO movimientos que realmente pasaron por cajas físicas
+    // NO incluir movBancoEnCaja (esos son cobros/pagos bancarios, van en módulo Banco)
     const allMovsCajaBase = [
-      ...movCaja,
-      ...movDesdeCobrosCaja,
-      ...movDesdePagosCaja,
-      ...movBancoEnCaja
+      ...movCaja,           // entradas manuales de caja
+      ...movDesdeCobrosCaja, // cobros CxC que fueron a CAJA:: (cobros_cxc)
+      ...movDesdePagosCaja,  // pagos CxP que fueron a CAJA:: (procura_pagos_cxp)
     ].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
 
     // Aplicar filtros
@@ -3984,18 +3981,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       if(cajFiltCaja){
         const mid = m._cajaId||m.cajaId||'';
         if(mid && mid!==cajFiltCaja) return false;
-        if(!mid && !m._fromBanco) return false; // manual sin caja asignada: excluir si hay filtro
+        if(!mid && m._fromBanco) return false;
       }
       if(cajFiltDesde && (m.fecha||'') < cajFiltDesde) return false;
       if(cajFiltHasta && (m.fecha||'') > cajFiltHasta) return false;
+      if(cajBusqCli && !(m._tercero||m.terceroNombre||m.clientName||m.concepto||'').toUpperCase().includes(cajBusqCli.toUpperCase())) return false;
+      if(cajBusqRef && !(m.referencia||'').toUpperCase().includes(cajBusqRef.toUpperCase())) return false;
       return true;
     });
-    // Saldo calculado de TODOS los movimientos (manuales + ERP cobros/pagos)
-    // Nota: allMovsCajaBase aún no está definida aquí; se calcula antes del return
-    const saldoBsM  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
-    const saldoUSDBancoC = [...movDesdeCobrosCaja,...movDesdePagosCaja,...movBancoEnCaja].filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
-    const saldoBs  = saldoBsM;
-    const saldoUSD = saldoUSDBancoC + movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+    // Saldo: suma manual caja + cobros caja CxC + pagos caja CxP
+    const saldoBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0)
+                   + movDesdeCobrosCaja.filter(m=>m.moneda==='BS').reduce((a,m)=>a+Number(m.montoBs||0),0)
+                   - movDesdePagosCaja.filter(m=>m.moneda==='BS').reduce((a,m)=>a+Number(m.montoBs||0),0);
+    const saldoUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0)
+                   + movDesdeCobrosCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+Number(m.montoUSD||0),0)
+                   - movDesdePagosCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+Number(m.montoUSD||0),0);
 
     const save = async()=>{
       if(!form.monto||monto<=0) return alert('Ingrese un monto válido');
@@ -4129,8 +4129,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
             <span className="text-slate-400 text-[10px] font-bold">—</span>
             <input type="date" value={cajFiltHasta} onChange={e=>setCajFiltHasta(e.target.value)}
               className="border border-slate-200 rounded-xl px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400"/>
-            {(cajFiltCaja||cajFiltDesde||cajFiltHasta)&&(
-              <button onClick={()=>{setCajFiltCaja('');setCajFiltDesde('');setCajFiltHasta('');}}
+            {/* Buscadores cliente y referencia */}
+            <div className="relative">
+              <Users size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={cajBusqCli} onChange={e=>setCajBusqCli(e.target.value)} placeholder="Buscar cliente..." className="border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-36"/>
+            </div>
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={cajBusqRef} onChange={e=>setCajBusqRef(e.target.value)} placeholder="Referencia..." className="border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
+            </div>
+            {(cajFiltCaja||cajFiltDesde||cajFiltHasta||cajBusqCli||cajBusqRef)&&(
+              <button onClick={()=>{setCajFiltCaja('');setCajFiltDesde('');setCajFiltHasta('');setCajBusqCli('');setCajBusqRef('');}}
                 className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-all">× LIMPIAR</button>
             )}
             <div className="ml-auto flex gap-2">
