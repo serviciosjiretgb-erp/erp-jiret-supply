@@ -3932,11 +3932,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(c.tasa||tasaActiva)||tasaActiva;
       const mUSD   = Number(c.monto||0);
+      // Si montoBs no está guardado, lo calculamos con la tasa registrada
       const mBs    = Number(c.montoBs||0)||(mUSD*tasa);
       return {
         id: c.id, fecha: c.fecha, tipo: 'Ingreso',
         moneda: c.moneda==='BS'?'BS':'USD',
-        montoBs: mBs, montoUSD: mUSD, tasa,
+        montoBs: mBs, montoUSD: mUSD, tasa: tasa||tasaActiva,
         concepto: c.concepto||`Cobro ${c.metodo||''} · ${c.neDocumento||''}`,
         referencia: c.referencia||'',
         _concepto: `Cobro ${c.metodo||''} · ${c.neDocumento||''} · ${c.clientName||''}`,
@@ -3959,7 +3960,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false }) {
       return {
         id: p.id, fecha: p.fecha, tipo: 'Egreso',
         moneda: p.moneda==='BS'?'BS':'USD',
-        montoBs: mBs, montoUSD: mUSD, tasa,
+        montoBs: mBs, montoUSD: mUSD, tasa: tasa||tasaActiva,
         concepto: p.concepto||`Pago ${p.proveedor||''} · ${p.referencia||''}`,
         referencia: p.referencia||'',
         _concepto: `Pago ${p.proveedor||''} · ${p.referencia||''}`,
