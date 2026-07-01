@@ -1170,6 +1170,31 @@ const DashboardView = ({proveedores,ordenesCompra,facturasCompra,pagosCxP}) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════
+// PAGINACIÓN — helper reutilizable por cualquier vista del archivo
+// ══════════════════════════════════════════════════════════════════════
+const PAGE_SIZE_DEFAULT = 25;
+const PaginadorUI = ({total, pagina, setPagina, pageSize=PAGE_SIZE_DEFAULT}) => {
+  const totalPages = Math.ceil(total/pageSize)||1;
+  if(totalPages<=1) return null;
+  const pg = Math.max(0,Math.min(pagina,totalPages-1));
+  return (
+    <div className="flex items-center gap-1.5 text-xs font-black text-gray-600 flex-wrap">
+      <button onClick={()=>setPagina(0)} disabled={pg===0} className="px-2 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200 text-[10px]">««</button>
+      <button onClick={()=>setPagina(p=>Math.max(0,p-1))} disabled={pg===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200">← Ant.</button>
+      {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+        const start=Math.max(0,Math.min(totalPages-5,pg-2));
+        const page=start+i;
+        if(page>=totalPages) return null;
+        return(<button key={page} onClick={()=>setPagina(page)} className={`px-3 py-1.5 rounded-lg ${page===pg?'bg-orange-500 text-white shadow-sm':'bg-gray-100 hover:bg-gray-200'}`}>{page+1}</button>);
+      })}
+      <button onClick={()=>setPagina(p=>Math.min(totalPages-1,p+1))} disabled={pg>=totalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200">Sig. →</button>
+      <button onClick={()=>setPagina(totalPages-1)} disabled={pg>=totalPages-1} className="px-2 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200 text-[10px]">»»</button>
+      <span className="ml-2 text-gray-400 font-normal text-[10px]">Mostrando {pg*pageSize+1}–{Math.min((pg+1)*pageSize,total)} de {total}</span>
+    </div>
+  );
+};
+
+// ══════════════════════════════════════════════════════════════════════
 // MÓDULO 2: PROVEEDORES
 // ══════════════════════════════════════════════════════════════════════
 const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
@@ -1183,10 +1208,15 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     return()=>unsub();
   },[]);
 
+  const [proveedoresPagina,setProveedoresPagina]=useState(0);
+
   const filtrados = proveedores.filter(p=>
     (p.nombre||'').toLowerCase().includes(search.toLowerCase())||
     (p.rif||'').toLowerCase().includes(search.toLowerCase())
   );
+
+  const pgProv=Math.max(0,Math.min(proveedoresPagina,Math.ceil(filtrados.length/PAGE_SIZE_DEFAULT)-1));
+  const pageProv=filtrados.slice(pgProv*PAGE_SIZE_DEFAULT,(pgProv+1)*PAGE_SIZE_DEFAULT);
 
   const initForm = () => ({
     nombre:'',rif:'',email:'',telefono:'',direccion:'',
@@ -1389,7 +1419,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
       <div className="flex items-center gap-3 mb-5">
         <div className="flex-1 relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o RIF..." className={`${inp} pl-9`}/>
+          <input value={search} onChange={e=>{setSearch(e.target.value);setProveedoresPagina(0);}} placeholder="Buscar proveedor o RIF..." className={`${inp} pl-9`}/>
         </div>
         <PBo onClick={exportPDF} sm><Printer size={13}/> PDF</PBo>
         <PBo onClick={exportXLS} sm><FileSpreadsheet size={13}/> Excel</PBo>
@@ -1517,6 +1547,10 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
       </div>
 
       {/* Tabla */}
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <span className="text-[10px] text-gray-500 font-bold">{filtrados.length} proveedor{filtrados.length!==1?'es':''} registrado{filtrados.length!==1?'s':''}</span>
+        <PaginadorUI total={filtrados.length} pagina={pgProv} setPagina={setProveedoresPagina}/>
+      </div>
       <PCard noPad>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -1525,7 +1559,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
             </tr></thead>
             <tbody>
               {filtrados.length===0?<tr><td colSpan={12} className="py-12"><PEmpty icon={Building2} title="Sin proveedores" desc="Registra tu primer proveedor"/></td></tr>:
-              filtrados.map(p=>(
+              pageProv.map(p=>(
                 <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                   <PTd>
                     <div className="font-black text-slate-800 text-xs">{p.nombre||'—'}</div>
@@ -1554,6 +1588,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
           </table>
         </div>
       </PCard>
+      {filtrados.length>PAGE_SIZE_DEFAULT&&<div className="mt-4 flex justify-center"><PaginadorUI total={filtrados.length} pagina={pgProv} setPagina={setProveedoresPagina}/></div>}
 
       {/* Modal Proveedor — layout horizontal en 3 columnas */}
       {modal==='form'&&(
@@ -2146,6 +2181,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
   const [invSearch,setInvSearch]=useState('');
   const [srvSearch,setSrvSearch]=useState('');
   const [categoriasSrv,setCategoriasSrv]=useState([]);
+  const [provSearch,setProvSearch]=useState('');
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -2181,6 +2217,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
   const srvFiltrado=servicios.filter(s=>!srvSearch||(s.nombre||'').toLowerCase().includes(srvSearch.toLowerCase())||(s.categoria||'').toLowerCase().includes(srvSearch.toLowerCase()));
 
   const catSrvFiltrado=categoriasSrv.filter(c=>!srvSearch||(c.nombre||'').toLowerCase().includes(srvSearch.toLowerCase()));
+
+  const provFiltrado=proveedores.filter(p=>p.activo!==false&&(!provSearch||(p.nombre||'').toLowerCase().includes(provSearch.toLowerCase())||(p.rif||'').toLowerCase().includes(provSearch.toLowerCase())));
 
   const filtradas=ordenesCompra.filter(o=>{
     const ms=(o.nroOC||'').toLowerCase().includes(search.toLowerCase())||(o.proveedor||'').toLowerCase().includes(search.toLowerCase());
@@ -2457,7 +2495,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
             <button key={s} onClick={()=>setFiltStatus(s)} className={`text-[9px] font-black uppercase px-2.5 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white bg-slate-900':'text-slate-500 bg-white border border-slate-200 hover:bg-slate-100'}`}>{s}</button>
           ))}
         </div>
-        <PBg onClick={()=>{setForm(initForm());setItems([]);setModal('form');}}><Plus size={13}/> Nueva OC</PBg>
+        <PBg onClick={()=>{setForm(initForm());setItems([]);setProvSearch('');setModal('form');}}><Plus size={13}/> Nueva OC</PBg>
       </div>
 
       {/* Tabla OC */}
@@ -2483,7 +2521,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                     <PTd>
                       <div className="flex gap-1 flex-wrap">
                         <PBp sm onClick={()=>imprimirOC(oc)}><Printer size={11}/></PBp>
-                        <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setModal('form');}}><Edit size={11}/></PBp>
+                        <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setProvSearch('');setModal('form');}}><Edit size={11}/></PBp>
                         {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')} title="Aprobar"><Check size={11}/></PBg>}
                         {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'EN TRÁNSITO')} title="Enviar / En tránsito"><Send size={11}/></PBo>}
                         {['APROBADA','EN TRÁNSITO'].includes(oc.status)&&(
@@ -2525,18 +2563,42 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                 <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
                   <p className="text-[8px] font-black text-orange-600 uppercase tracking-widest mb-2">Proveedor</p>
                   <div className="space-y-2">
-                    <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Seleccionar *</label>
-                      <select className={`${sel} text-xs py-1.5`} value={form.proveedorId||''} onChange={e=>{
-                        const p=proveedores.find(x=>x.id===e.target.value);
-                        if(p) setForm({...form,proveedorId:p.id,proveedor:p.nombre,rif:p.rif||'',
-                          direccion:p.direccion||'',contacto:p.contacto||'',telefono:p.telefono||'',
-                          diasCredito:parseInt(p.condPago)||'',moneda:p.moneda||'USD'});
-                      }}>
-                        <option value="">— Seleccionar —</option>
-                        {proveedores.filter(p=>p.activo!==false).map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
-                      </select>
-                    </div>
+                    {!form.proveedorId?(
+                      <div>
+                        <label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Buscar *</label>
+                        <div className="relative mb-1">
+                          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+                          <input type="text" value={provSearch} onChange={e=>setProvSearch(e.target.value)}
+                            placeholder="Buscar por nombre o RIF..." className={`${inp} pl-8 text-xs py-1.5`}/>
+                        </div>
+                        {provSearch&&(
+                          <div className="border border-slate-200 rounded-lg overflow-hidden" style={{maxHeight:'160px',overflowY:'auto'}}>
+                            {provFiltrado.length===0?(
+                              <div className="px-3 py-3 text-center text-slate-400 text-[10px]">Sin resultados</div>
+                            ):provFiltrado.slice(0,50).map(p=>(
+                              <button key={p.id} type="button" onClick={()=>{
+                                setForm({...form,proveedorId:p.id,proveedor:p.nombre,rif:p.rif||'',
+                                  direccion:p.direccion||'',contacto:p.contacto||'',telefono:p.telefono||'',
+                                  diasCredito:parseInt(p.condPago)||'',moneda:p.moneda||'USD'});
+                                setProvSearch('');
+                              }} className="w-full text-left px-3 py-2 hover:bg-orange-50 border-b border-slate-100 last:border-b-0 flex items-center justify-between gap-2">
+                                <span className="font-black text-slate-800 text-xs truncate">{p.nombre}</span>
+                                <span className="text-[9px] text-slate-400 flex-shrink-0">{p.rif}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ):(
+                      <div className="bg-white border-2 border-orange-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-black text-slate-800 text-xs truncate">{form.proveedor}</p>
+                          <p className="text-[9px] text-slate-400">{form.rif}</p>
+                        </div>
+                        <button type="button" onClick={()=>{setForm({...form,proveedorId:'',proveedor:''});setProvSearch('');}}
+                          className="text-slate-400 hover:text-red-500 flex-shrink-0"><X size={14}/></button>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-2">
                       <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">RIF</label><div className="text-xs font-black text-slate-700 bg-slate-100 rounded px-2 py-1">{form.rif||'—'}</div></div>
                       <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-0.5">Teléfono</label><div className="text-xs font-black text-slate-700 bg-slate-100 rounded px-2 py-1">{form.telefono||'—'}</div></div>
@@ -7590,28 +7652,6 @@ function App() {
   const [editTrasladoA, setEditTrasladoA] = useState('');
   const [histTrasladoHasta, setHistTrasladoHasta] = useState('');
   const [histTrasladoProd, setHistTrasladoProd] = useState('');
-  const PAGE_SIZE_DEFAULT = 25;
-  // Helper: componente de paginación reutilizable
-  const PaginadorUI = ({total, pagina, setPagina, pageSize=PAGE_SIZE_DEFAULT}) => {
-    const totalPages = Math.ceil(total/pageSize)||1;
-    if(totalPages<=1) return null;
-    const pg = Math.max(0,Math.min(pagina,totalPages-1));
-    return (
-      <div className="flex items-center gap-1.5 text-xs font-black text-gray-600 flex-wrap">
-        <button onClick={()=>setPagina(0)} disabled={pg===0} className="px-2 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200 text-[10px]">««</button>
-        <button onClick={()=>setPagina(p=>Math.max(0,p-1))} disabled={pg===0} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200">← Ant.</button>
-        {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
-          const start=Math.max(0,Math.min(totalPages-5,pg-2));
-          const page=start+i;
-          if(page>=totalPages) return null;
-          return(<button key={page} onClick={()=>setPagina(page)} className={`px-3 py-1.5 rounded-lg ${page===pg?'bg-orange-500 text-white shadow-sm':'bg-gray-100 hover:bg-gray-200'}`}>{page+1}</button>);
-        })}
-        <button onClick={()=>setPagina(p=>Math.min(totalPages-1,p+1))} disabled={pg>=totalPages-1} className="px-3 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200">Sig. →</button>
-        <button onClick={()=>setPagina(totalPages-1)} disabled={pg>=totalPages-1} className="px-2 py-1.5 bg-gray-100 rounded-lg disabled:opacity-30 hover:bg-gray-200 text-[10px]">»»</button>
-        <span className="ml-2 text-gray-400 font-normal text-[10px]">Mostrando {pg*pageSize+1}–{Math.min((pg+1)*pageSize,total)} de {total}</span>
-      </div>
-    );
-  };
   const [invRequisitions, setInvRequisitions] = useState([]);
   const [reqFilter, setReqFilter] = useState('');
 
