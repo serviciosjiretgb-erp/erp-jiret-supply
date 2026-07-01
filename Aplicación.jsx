@@ -33430,6 +33430,154 @@ ${resumenHtml}
     );
   };
 
+
+// ── Restaurador de Cobros — componente propio (evita hooks condicionales) ──
+const RestaurarCobrosView = ({settings, appUser}) => {
+  const [rcBusq,      setRcBusq]      = useState('');
+  const [rcNEs,       setRcNEs]       = useState([]);
+  const [rcNESel,     setRcNESel]     = useState(null);
+  const [rcCobros,    setRcCobros]    = useState([]);
+  const [rcMovsBanco, setRcMovsBanco] = useState([]);
+  const [rcMovsCaja,  setRcMovsCaja]  = useState([]);
+  const [rcBusy,      setRcBusy]      = useState(false);
+  const [rcMsg,       setRcMsg]       = useState(null);
+  const [rcMode,      setRcMode]      = useState('buscar');
+
+  const rcFmt = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(Number(n)||0); const p=a.toFixed(2).split('.'); return(Number(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
+
+  const rcBuscar = async () => {
+    if(!rcBusq.trim()) return;
+    setRcBusy(true); setRcNEs([]); setRcNESel(null); setRcMsg(null); setRcMode('buscar');
+    try{
+      const snap = await getDocs(getColRef('notasEntrega'));
+      const q = rcBusq.trim().toUpperCase();
+      const found = snap.docs.map(d=>({_id:d.id,...d.data()}))
+        .filter(ne=>(ne.documento||'').toUpperCase().includes(q)||(ne.clientName||'').toUpperCase().includes(q));
+      setRcNEs(found.slice(0,20));
+    }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
+    finally{setRcBusy(false);}
+  };
+
+  const rcSelecionar = async (ne) => {
+    setRcNESel(ne); setRcMsg(null); setRcBusy(true);
+    try{
+      const cSnap = await getDocs(query(getColRef('cobros_cxc'), where('neId','==',ne._id)));
+      setRcCobros(cSnap.docs.map(d=>d.data()));
+      const bSnap = await getDocs(query(getColRef('banco_movimientos'), where('neId','==',ne._id)));
+      setRcMovsBanco(bSnap.docs.map(d=>d.data()));
+      const kSnap = await getDocs(query(getColRef('caja_movimientos'), where('neId','==',ne._id)));
+      setRcMovsCaja(kSnap.docs.map(d=>d.data()));
+      setRcMode('cobros');
+    }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
+    finally{setRcBusy(false);}
+  };
+
+  const tieneMov = (cobro) => {
+    const esCaja = (cobro.cuentaBancariaId||'').startsWith('CAJA::');
+    if(esCaja) return rcMovsCaja.some(m=>m.referencia===cobro.referencia&&Math.abs(Number(m.montoUSD||0)-Number(cobro.monto||0))<0.05);
+    return rcMovsBanco.some(m=>m.referencia===cobro.referencia&&Math.abs(Number(m.montoUSD||0)-Number(cobro.monto||0))<0.05);
+  };
+
+  const rcCrearMovimiento = async (cobro) => {
+    setRcBusy(true); setRcMsg(null);
+    try{
+      const esCaja = (cobro.cuentaBancariaId||'').startsWith('CAJA::');
+      const cajaId = esCaja ? cobro.cuentaBancariaId.replace('CAJA::','') : '';
+      const mU = Number(cobro.monto||0); const mB = Number(cobro.montoBs||0)||(mU*(Number(cobro.tasa||1))); const t = Number(cobro.tasa||1);
+      const ne = rcNESel;
+      if(esCaja){
+        const id = `CAJMOV-REST-${Date.now()}`;
+        await setDoc(getDocRef('caja_movimientos',id),{id,neId:ne._id,fecha:cobro.fecha,tipo:'Ingreso',moneda:'USD',concepto:`Cobro ${ne.documento||ne.id} · ${ne.clientName||''} (REST.)`,referencia:cobro.referencia||'',monto:mU,montoBs:mB,montoUSD:mU,tasa:t,aplicaTercero:true,tipoTercero:'Cliente',terceroNombre:ne.clientName||'',cajaId,ts:serverTimestamp(),timestamp:Date.now()});
+        setRcMovsCaja(prev=>[...prev,{referencia:cobro.referencia,montoUSD:mU}]);
+        setRcMsg({type:'ok',text:`✅ Movimiento creado en caja_movimientos (${cobro.cuentaBancoNombre||cajaId})`});
+      } else {
+        const id = `MOV-REST-${Date.now()}`;
+        await setDoc(getDocRef('banco_movimientos',id),{id,neId:ne._id,fecha:cobro.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',concepto:`Cobro ${ne.documento||ne.id} · ${ne.clientName||''} (REST.)`,referencia:cobro.referencia||'',cuentaBancoNombre:cobro.cuentaBancoNombre||'',cuentaId:cobro.cuentaBancariaId||'',montoUSD:mU,montoBs:mB,tasa:t,terceroNombre:ne.clientName||'',estatus:'No Conciliado',timestamp:Date.now()});
+        setRcMovsBanco(prev=>[...prev,{referencia:cobro.referencia,montoUSD:mU}]);
+        setRcMsg({type:'ok',text:`✅ Movimiento restaurado en banco_movimientos (${cobro.cuentaBancoNombre||'—'})`});
+      }
+    }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
+    finally{setRcBusy(false);}
+  };
+
+  return(
+    <div className="bg-white p-6 rounded-3xl shadow-sm border-2 border-red-200">
+      <h2 className="text-xl font-black uppercase text-black mb-1 flex items-center gap-3"><RefreshCw className="text-red-500"/> Restaurar Movimientos de Cobro</h2>
+      <p className="text-xs text-gray-500 mb-4">Solo Master. Restaura movimientos faltantes en <b>banco_movimientos</b> o <b>caja_movimientos</b> para cobros que ya existen en el sistema.</p>
+      <div className="flex gap-2 mb-3">
+        <input value={rcBusq} onChange={e=>setRcBusq(e.target.value)} onKeyDown={e=>e.key==='Enter'&&rcBuscar()}
+          placeholder="NE-00113 o nombre del cliente..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-red-400"/>
+        <button onClick={rcBuscar} disabled={rcBusy} className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 disabled:opacity-50">
+          {rcBusy?'...':'🔍 Buscar'}
+        </button>
+      </div>
+      {rcNEs.length>0&&rcMode==='buscar'&&(
+        <div className="border-2 border-gray-100 rounded-xl overflow-hidden mb-3 max-h-48 overflow-y-auto">
+          {rcNEs.map(ne=>(
+            <div key={ne._id} onClick={()=>rcSelecionar(ne)} className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer border-b border-gray-100 last:border-0">
+              <div><span className="font-black text-orange-600 text-xs">{ne.documento||ne.id}</span><span className="ml-2 text-gray-500 text-[10px]">{ne.clientName}</span></div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-black text-xs">${rcFmt(ne.total||0)}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${ne.statusCxC==='PAGADA'?'bg-green-100 text-green-700':ne.statusCxC==='PARCIAL'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>{ne.statusCxC||'PENDIENTE'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {rcNESel&&rcMode==='cobros'&&(
+        <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="font-black text-sm">{rcNESel.documento} · {rcNESel.clientName}</div>
+              <div className="text-[10px] text-gray-500">Total: ${rcFmt(rcNESel.total||0)} · Cobrado: ${rcFmt(rcNESel.montoCobrado||0)}</div>
+            </div>
+            <button onClick={()=>{setRcNESel(null);setRcCobros([]);setRcNEs([]);setRcMode('buscar');setRcMsg(null);}} className="text-gray-400 hover:text-red-500 font-black text-lg">×</button>
+          </div>
+          {rcCobros.length===0?(
+            <div className="text-xs text-red-600 font-bold text-center py-4">No hay cobros en cobros_cxc para esta NE</div>
+          ):(
+            <div className="space-y-2">
+              <div className="text-[9px] font-black text-gray-500 uppercase mb-1">{rcCobros.length} cobro(s) — verifica cuál le falta el movimiento bancario/caja</div>
+              {rcCobros.map((c,i)=>{
+                const esCaja=(c.cuentaBancariaId||'').startsWith('CAJA::');
+                const yaExiste=tieneMov(c);
+                return(
+                <div key={i} className={`rounded-xl border-2 p-3 ${yaExiste?'bg-green-50 border-green-200':'bg-white border-orange-300'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-xs">{c.fecha}</span>
+                        <span className="text-[10px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-bold">{c.metodo||'—'}</span>
+                        <span className={`text-[9px] px-2 py-0.5 rounded font-black ${esCaja?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'}`}>{esCaja?'💰 CAJA':'🏦 BANCO'}</span>
+                        <span className="text-[10px] text-gray-500 font-mono">Ref: {c.referencia||'—'}</span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">{c.cuentaBancoNombre||'Sin cuenta'}</div>
+                    </div>
+                    <div className="text-right ml-3">
+                      <div className="font-black text-sm text-green-700">${rcFmt(c.monto||0)}</div>
+                      {yaExiste?(
+                        <span className="text-[9px] font-black text-green-600">✅ Movimiento OK</span>
+                      ):(
+                        <button onClick={()=>rcCrearMovimiento(c)} disabled={rcBusy}
+                          className="mt-1 px-3 py-1 bg-red-600 text-white rounded-lg font-black text-[9px] uppercase hover:bg-red-700 disabled:opacity-50">
+                          {rcBusy?'...':esCaja?'↩ Crear en Caja':'↩ Crear en Banco'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+          )}
+          {rcMsg&&<div className={`mt-3 px-4 py-3 rounded-xl text-xs font-bold border-2 ${rcMsg.type==='ok'?'bg-green-50 border-green-200 text-green-700':'bg-red-50 border-red-200 text-red-700'}`}>{rcMsg.text}</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
     const renderConfiguracionModule = () => {
     try {
     if (!settings || !systemUsers) {
@@ -34493,148 +34641,7 @@ ${resumenHtml}
 
 
       {/* ── RESTAURADOR DE COBROS — solo Master ── */}
-      {appUser?.role==='Master'&&(()=>{
-        const [rcBusq,   setRcBusq]   = useState('');
-        const [rcNEs,    setRcNEs]    = useState([]);
-        const [rcNESel,  setRcNESel]  = useState(null);
-        const [rcCobros, setRcCobros] = useState([]);
-        const [rcBusy,   setRcBusy]   = useState(false);
-        const [rcForm,   setRcForm]   = useState({fecha:getTodayDate(),metodo:'Transferencia',montoUSD:'',montoBs:'',tasa:'',referencia:'',banco:'',vendedor:'',tipo:'Pago'});
-        const [rcMsg,    setRcMsg]    = useState(null);
-
-        const rcBuscar = async () => {
-          if(!rcBusq.trim()) return;
-          setRcBusy(true); setRcNEs([]); setRcNESel(null); setRcMsg(null);
-          try{
-            const snap = await getDocs(getColRef('notasEntrega'));
-            const q = rcBusq.trim().toUpperCase();
-            const found = snap.docs.map(d=>({_id:d.id,...d.data()}))
-              .filter(ne=>(ne.documento||'').toUpperCase().includes(q)||(ne.clientName||'').toUpperCase().includes(q));
-            setRcNEs(found.slice(0,20));
-          }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
-          finally{setRcBusy(false);}
-        };
-
-        const rcSelecionar = async (ne) => {
-          setRcNESel(ne); setRcMsg(null);
-          const snap = await getDocs(query(getColRef('cobros_cxc'),where('neId','==',ne._id)));
-          setRcCobros(snap.docs.map(d=>d.data()));
-        };
-
-        const rcRestaurar = async () => {
-          if(!rcNESel) return;
-          if(!rcForm.montoUSD||!rcForm.montoBs||!rcForm.fecha){setRcMsg({type:'err',text:'Fecha, Monto USD y Monto Bs. son obligatorios.'});return;}
-          setRcBusy(true);
-          try{
-            const cId=`COBRO-REST-${Date.now()}`;
-            const mId=`MOV-REST-${Date.now()}`;
-            const mU=parseNum(rcForm.montoUSD); const mB=parseNum(rcForm.montoBs); const t=parseNum(rcForm.tasa)||1;
-            await setDoc(getDocRef('cobros_cxc',cId),{id:cId,neId:rcNESel._id,neDocumento:rcNESel.documento||rcNESel.id,clientName:rcNESel.clientName||'',monto:mU,montoBs:mB,tasa:t,moneda:'USD',metodo:rcForm.metodo,referencia:rcForm.referencia,cuentaBancariaId:'',cuentaBancoNombre:rcForm.banco,fecha:rcForm.fecha,vendedor:rcForm.vendedor,tipo:rcForm.tipo,estatus:'RESTAURADO',timestamp:Date.now()});
-            await setDoc(getDocRef('banco_movimientos',mId),{id:mId,fecha:rcForm.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',neId:rcNESel._id,concepto:`Cobro ${rcNESel.documento||rcNESel.id} · ${rcNESel.clientName||''}`,referencia:rcForm.referencia,cuentaBancoNombre:rcForm.banco,montoUSD:mU,montoBs:mB,tasa:t,terceroNombre:rcNESel.clientName||'',estatus:'No Conciliado',timestamp:Date.now()});
-            const nuevoMontoCobrado=(rcNESel.montoCobrado||0)+mU;
-            const nuevoSaldo=Math.max(0,(rcNESel.total||0)-nuevoMontoCobrado);
-            const nuevoStatus=nuevoSaldo<0.01?'PAGADA':nuevoMontoCobrado>0.01?'PARCIAL':'PENDIENTE';
-            await updateDoc(getDocRef('notasEntrega',rcNESel._id),{montoCobrado:nuevoMontoCobrado,saldoPendiente:nuevoSaldo,statusCxC:nuevoStatus,fechaUltimoCobro:rcForm.fecha,refUltimoCobro:rcForm.referencia});
-            setRcMsg({type:'ok',text:`✅ Cobro restaurado. NE → ${nuevoStatus}, saldo: $${pFmt(nuevoSaldo)}`});
-            setRcCobros(prev=>[...prev,{fecha:rcForm.fecha,metodo:rcForm.metodo,referencia:rcForm.referencia,monto:mU,cuentaBancoNombre:rcForm.banco}]);
-            setRcNESel(prev=>({...prev,montoCobrado:nuevoMontoCobrado,saldoPendiente:nuevoSaldo,statusCxC:nuevoStatus}));
-            setRcForm(f=>({...f,montoUSD:'',montoBs:'',referencia:'',banco:'',vendedor:'',tasa:''}));
-          }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
-          finally{setRcBusy(false);}
-        };
-
-        return(
-        <div className="bg-white p-6 rounded-3xl shadow-sm border-2 border-red-200">
-          <h2 className="text-xl font-black uppercase text-black mb-1 flex items-center gap-3"><RefreshCw className="text-red-500"/> Restaurar Cobros Eliminados</h2>
-          <p className="text-xs text-gray-500 mb-4">Solo visible para usuarios Master. Restaura cobros que hayan sido eliminados accidentalmente.</p>
-
-          {/* Búsqueda */}
-          <div className="flex gap-2 mb-3">
-            <input value={rcBusq} onChange={e=>setRcBusq(e.target.value)} onKeyDown={e=>e.key==='Enter'&&rcBuscar()}
-              placeholder="NE-00113 o nombre del cliente..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-red-400"/>
-            <button onClick={rcBuscar} disabled={rcBusy} className="px-4 py-2 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 disabled:opacity-50">
-              {rcBusy?'...':'🔍 Buscar'}
-            </button>
-          </div>
-
-          {/* Resultados */}
-          {rcNEs.length>0&&!rcNESel&&(
-            <div className="border-2 border-gray-100 rounded-xl overflow-hidden mb-3 max-h-48 overflow-y-auto">
-              {rcNEs.map(ne=>(
-                <div key={ne._id} onClick={()=>rcSelecionar(ne)} className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer border-b border-gray-100 last:border-0">
-                  <div>
-                    <span className="font-black text-orange-600 text-xs">{ne.documento||ne.id}</span>
-                    <span className="ml-2 text-gray-500 text-[10px]">{ne.clientName}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-black text-xs">${pFmt(ne.total||0)}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${ne.statusCxC==='PAGADA'?'bg-green-100 text-green-700':ne.statusCxC==='PARCIAL'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>{ne.statusCxC||'PENDIENTE'}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* NE Seleccionada */}
-          {rcNESel&&(
-            <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-4 mb-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="font-black text-sm">{rcNESel.documento} · {rcNESel.clientName}</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Fecha: {rcNESel.fecha} · Total: ${pFmt(rcNESel.total||0)}</div>
-                </div>
-                <button onClick={()=>{setRcNESel(null);setRcCobros([]);setRcMsg(null);}} className="text-gray-400 hover:text-red-500 font-black text-lg">×</button>
-              </div>
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {[['Total Fact.',$`$${pFmt(rcNESel.total||0)}`],['Cobrado',$`$${pFmt(rcNESel.montoCobrado||0)}`],['Saldo',$`$${pFmt(rcNESel.saldoPendiente??0)}`]].map(([l,v])=>(
-                  <div key={l} className="bg-white rounded-xl p-2.5 border border-orange-200 text-center">
-                    <div className="text-[8px] font-black text-gray-400 uppercase">{l}</div>
-                    <div className="font-black text-sm text-gray-800">{v}</div>
-                  </div>
-                ))}
-              </div>
-              {rcCobros.length>0&&(
-                <div className="mb-3">
-                  <div className="text-[9px] font-black text-gray-500 uppercase mb-1">Cobros existentes ({rcCobros.length})</div>
-                  {rcCobros.map((c,i)=>(
-                    <div key={i} className="flex justify-between items-center bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 mb-1 text-[10px]">
-                      <span className="font-bold">{c.fecha} · {c.metodo} · {c.referencia||'—'} · <span className="text-gray-500 text-[9px]">{c.cuentaBancoNombre||'—'}</span></span>
-                      <span className="font-black text-green-700">${pFmt(c.monto||0)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {/* Formulario del cobro a restaurar */}
-              <div className="bg-white rounded-xl border border-orange-200 p-3">
-                <div className="text-[9px] font-black text-red-600 uppercase mb-2">Datos del cobro a restaurar</div>
-                <div className="grid grid-cols-3 gap-2 mb-2">
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Fecha *</label><input type="date" value={rcForm.fecha} onChange={e=>setRcForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-red-400"/></div>
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Monto USD *</label><input type="number" step="0.01" value={rcForm.montoUSD} onChange={e=>setRcForm(f=>({...f,montoUSD:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-red-400"/></div>
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Monto Bs. *</label><input type="number" step="0.01" value={rcForm.montoBs} onChange={e=>setRcForm(f=>({...f,montoBs:e.target.value}))} placeholder="0.00" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-red-400"/></div>
-                </div>
-                <div className="grid grid-cols-3 gap-2 mb-2">
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Método</label>
-                    <select value={rcForm.metodo} onChange={e=>setRcForm(f=>({...f,metodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-red-400">
-                      {['Transferencia','Zelle','Efectivo USD','Efectivo Bs.','Pago Móvil','Cheque','Tarjeta Internacional (Banplus)'].map(m=><option key={m}>{m}</option>)}
-                    </select>
-                  </div>
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Tasa Bs/$</label><input type="number" step="0.0001" value={rcForm.tasa} onChange={e=>setRcForm(f=>({...f,tasa:e.target.value}))} placeholder="558.5132" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">N° Referencia</label><input value={rcForm.referencia} onChange={e=>setRcForm(f=>({...f,referencia:e.target.value}))} placeholder="7783" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Banco / Cuenta</label><input value={rcForm.banco} onChange={e=>setRcForm(f=>({...f,banco:e.target.value}))} placeholder="BANCARIBE · 0114-..." className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
-                  <div><label className="text-[8px] font-black text-gray-400 uppercase block mb-0.5">Vendedor</label><input value={rcForm.vendedor} onChange={e=>setRcForm(f=>({...f,vendedor:e.target.value}))} placeholder="Nombre del vendedor" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-400"/></div>
-                </div>
-                <button onClick={rcRestaurar} disabled={rcBusy} className="w-full py-2.5 bg-red-600 text-white rounded-xl font-black text-xs uppercase hover:bg-red-700 disabled:opacity-50 transition-all">
-                  {rcBusy?'Restaurando...':'↩ Restaurar este Cobro'}
-                </button>
-              </div>
-            </div>
-          )}
-          {rcMsg&&<div className={`mt-2 px-4 py-3 rounded-xl text-xs font-bold border-2 ${rcMsg.type==='ok'?'bg-green-50 border-green-200 text-green-700':'bg-red-50 border-red-200 text-red-700'}`}>{rcMsg.text}</div>}
-        </div>
-        );
-      })()}
+      {appUser?.role==='Master'&&<RestaurarCobrosView settings={settings} appUser={appUser}/>}
 
       </div>
     );
@@ -34643,7 +34650,7 @@ ${resumenHtml}
       return (<div className="max-w-2xl mx-auto mt-12 bg-red-50 border-2 border-red-300 rounded-3xl p-8 text-center"><div className="text-red-500 font-black text-lg uppercase mb-2">Error en Configuración</div><div className="text-red-700 text-xs font-bold bg-red-100 rounded-xl p-3 font-mono">{err.message}</div><button onClick={()=>window.location.reload()} className="mt-4 bg-black text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase">Recargar</button></div>);
     }
   };
-  if (!appUser) {
+    if (!appUser) {
     return (
       <div className="min-h-screen w-full relative overflow-hidden" style={{background:'#111'}}>
         {/* ── FONDO FULL con video/imagen ── */}
@@ -34775,6 +34782,7 @@ ${resumenHtml}
       </div>
     );
   }
+
 
 
 
