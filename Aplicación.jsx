@@ -21200,7 +21200,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <div className="flex-1 relative">
                                 <div className="bg-gray-100 rounded-full h-6 overflow-hidden">
                                   <div className="h-full rounded-full flex items-center px-2 transition-all duration-500" style={{width:`${Math.max(3,(val/t10P[0][1]*100)).toFixed(1)}%`,background:CLRS[i%CLRS.length]}}>
-                                    <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,t10P[0][1])}</span>
+                                    <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,totV)}</span>
                                   </div>
                                 </div>
                                 <div className="absolute -top-10 left-0 bg-gray-900 text-white text-[10px] font-black px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none shadow-xl">
@@ -21227,7 +21227,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <div className="flex-1 relative">
                                 <div className="bg-gray-100 rounded-full h-6 overflow-hidden">
                                   <div className="h-full rounded-full flex items-center px-2 transition-all duration-500" style={{width:`${Math.max(3,(val/t10C[0][1]*100)).toFixed(1)}%`,background:CLRS[i%CLRS.length]}}>
-                                    <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,t10C[0][1])}</span>
+                                    <span className="text-[8px] font-black text-white whitespace-nowrap">{fp(val,totV)}</span>
                                   </div>
                                 </div>
                                 <div className="absolute -top-10 left-0 bg-gray-900 text-white text-[10px] font-black px-3 py-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity z-20 whitespace-nowrap pointer-events-none shadow-xl">
@@ -21600,9 +21600,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               continue;
             }
             // No manual: si ya se resuelve a una NE real, se maneja en _retsPorNE (más abajo) — no duplicar aquí.
-            const invHist=findInv(r.facturaId);
+            const invHist=findInv(r.nroFactura)||findInv(r.nroControl)||findInv(r.facturaId);
             if(!invHist) continue;
-            if(_findNEforInv(invHist)) continue;
+            // Si la factura tiene una NE en el mapa, no duplicar (ya la maneja _retsPorNE)
+            if(_neByFiscal.get(invHist.nroFiscal)||_neByFiscal.get(invHist.documento)||_neByFiscal.get(invHist.id)) continue;
             // Factura real sin NE (época pre-NE) → mismo tratamiento que manual, usando datos reales de la factura.
             const rifHist=(invHist.clientRif||r.clientRif||'').trim();
             if(!rifHist) continue;
@@ -23215,9 +23216,11 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               _manualRetsPorClienteEc.get(rif).push({...r,_montoUSD:montoUSD,_sinTasa:sinTasa,_tasa:tasa});
               continue;
             }
-            const invHistEc=(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
+            const invHistEc=(invoices||[]).find(i=>r.nroFactura&&(i.nroFiscal===r.nroFactura||i.documento===r.nroFactura))
+              ||(invoices||[]).find(i=>r.nroControl&&(i.nroFiscal===r.nroControl||i.documento===r.nroControl))
+              ||(invoices||[]).find(i=>i.id===r.facturaId||i.documento===r.facturaId);
             if(!invHistEc) continue;
-            if(_findNEforInvEc(invHistEc)) continue;
+            if(_neByFiscalEc.get(invHistEc.nroFiscal)||_neByFiscalEc.get(invHistEc.documento)||_neByFiscalEc.get(invHistEc.id)) continue;
             const rifHistEc=(invHistEc.clientRif||r.clientRif||'').trim();
             if(!rifHistEc) continue;
             const tasaHistEc=parseNum(r.tasa||invHistEc.tasa||invHistEc.tasaFactura||0)||tasaBCVec;
