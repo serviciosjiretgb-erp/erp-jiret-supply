@@ -19732,11 +19732,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <div className="space-y-2">
                         {form.items.map((it,idx)=>{
                           const code=(it.invCode||'').split('___')[0];
-                          const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code&&parseNum(i.stock||0)>0);
                           // Para Bolsas/Termoencogibles en ALMACEN ZI se permiten cantidades mayores al stock (negativo controlado)
                           const invRef=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code);
                           const esProdPropiaNE=invRef?.isFG===true||(invRef?.tipoProducto==='BOLSAS'||invRef?.tipoProducto==='TERMOENCOGIBLE')||
                             (invRef?.subcategory||'').toUpperCase().includes('BOLSA')||(invRef?.subcategory||'').toUpperCase().includes('TERMO');
+                          const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code);
                           const wqty=it.warehouseQtys||{};
                           const totalCant=Object.values(wqty).reduce((s,v)=>s+parseNum(v||0),0);
                           // Sincronizar cantidad total
@@ -19855,7 +19855,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="overflow-x-auto rounded-2xl border border-gray-200">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-gray-900 text-white">
-                      {['NE#','Fecha','Cliente','RIF','Vendedor','OP','Monto','IVA','Total','Estatus','Factura','Acciones'].map(h=>(
+                      {['NE#','Fecha','Cliente','RIF','Territorio','Vendedor','OP','Monto','IVA','Total','Estatus','Factura','Acciones'].map(h=>(
                         <th key={h} className="py-3 px-3 text-left font-black text-[9px] uppercase whitespace-nowrap">{h}</th>
                       ))}
                     </tr></thead>
