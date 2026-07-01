@@ -22332,17 +22332,18 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         {pm.lineaActual?.moneda==='Bs'&&parseNum(pm.lineaActual?.monto)>0&&parseNum(pm.lineaActual?.tasa)>0&&(
                           <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= ${formatNum(parseNum(pm.lineaActual.monto)/parseNum(pm.lineaActual.tasa))} USD</div>
                         )}
+                        {pm.lineaActual?.moneda==='USD'&&parseNum(pm.lineaActual?.monto)>0&&parseNum(pm.lineaActual?.tasa)>0&&(
+                          <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= Bs. {formatNum(parseNum(pm.lineaActual.monto)*parseNum(pm.lineaActual.tasa))}</div>
+                        )}
                       </div>
 
-                      {pm.lineaActual?.moneda==='Bs'&&(
-                        <div style={{marginBottom:10}}>
-                          <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
-                          <input type="number" step="0.01"
-                            value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
-                            style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
-                            onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
-                        </div>
-                      )}
+                      <div style={{marginBottom:10}}>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                        <input type="number" step="0.01"
+                          value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
+                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                      </div>
 
                       {/* Método */}
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
