@@ -16942,9 +16942,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const ivaAmt = inv.aplicaIva==='SI' ? parseNum(inv.iva||0)||parseFloat((base*0.16).toFixed(2)) : 0;
                 const totalFinal = parseNum(inv.total||0) > 0 ? parseNum(inv.total) : base+ivaAmt;
                 const tasa=parseNum(inv.tasa)||0;
-                const baseBs=tasa>0?parseFloat((base*tasa).toFixed(2)):0;
-                const ivaBs=tasa>0?parseFloat((ivaAmt*tasa).toFixed(2)):0;
-                const totalBs=tasa>0?parseFloat((totalFinal*tasa).toFixed(2)):0;
+                // Bs del Libro de Ventas (ingreso manual) tienen prioridad; la tasa queda referencial
+                const baseBs=parseNum(inv.baseGravableBs||0)>0?parseNum(inv.baseGravableBs):(tasa>0?parseFloat((base*tasa).toFixed(2)):0);
+                const ivaBs=parseNum(inv.ivaBs||0)>0?parseNum(inv.ivaBs):(tasa>0?parseFloat((ivaAmt*tasa).toFixed(2)):0);
+                const totalBs=parseNum(inv.totalBs||0)>0?parseNum(inv.totalBs):(tasa>0?parseFloat((totalFinal*tasa).toFixed(2)):0);
                 const descUsd=parseNum(inv.descuento||0);
                 const descBs=tasa>0?parseFloat((descUsd*tasa).toFixed(2)):0;
                 const fmtBs=v=>`Bs ${formatNum(v)}`;
@@ -22211,7 +22212,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             porCliente[rif].total+=totalSignedUSD;
             porCliente[rif].corriente+=totalSignedUSD;
           }
-          const clientesList=Object.values(porCliente).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
+          // Inyectar/ajustar clientes con ANTICIPOS disponibles (crédito a favor, resta del saldo)
+          const _anticiposPorCliente=new Map();
+          for(const a of (cobrosCxc||[]).filter(c=>c.esAnticipo)){
+            const saldoAnt=parseNum(a.monto||0)-parseNum(a.montoAplicado||0);
+            if(saldoAnt<=0.01) continue;
+            const rif=(a.clientRif||a.clientName||'').trim();
+            if(!rif) continue;
+            if(!_anticiposPorCliente.has(rif)) _anticiposPorCliente.set(rif,[]);
+            _anticiposPorCliente.get(rif).push({...a,_saldoAnt:saldoAnt});
+          }
+          for(const [rif,ants] of _anticiposPorCliente){
+            const totalAntUSD=ants.reduce((s,x)=>s+x._saldoAnt,0);
+            if(!porCliente[rif]){
+              porCliente[rif]={clientName:ants[0]?.clientName||rif,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+            }
+            porCliente[rif].total-=totalAntUSD;
+            porCliente[rif].corriente-=totalAntUSD;
+            porCliente[rif]._anticipos=ants;
+            porCliente[rif]._totalAnticipos=totalAntUSD;
+          }
+          // Cuentas por Cobrar: los clientes con deuda cerrada (saldo 0) no se muestran; los saldos a favor (negativos) sí
+          const clientesList=Object.values(porCliente).filter(cl=>Math.abs(cl.total)>=0.01).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
 
           // Métricas filtradas por cliente seleccionado (si hay filtro activo)
           const clienteActivoData=cxcSelectedClient?porCliente[cxcSelectedClient]:null;
@@ -22515,6 +22537,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 for(const linea of lineas){
                   const tasa=parseNum(linea.tasa||tasaBCV);
                   const montoUSDLin=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(tasa,1);
+                  const montoBsLin=linea.moneda==='Bs'?parseNum(linea.monto):parseFloat((montoUSDLin*tasa).toFixed(2));
                   totalAnt+=montoUSDLin;
                   const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
                   const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
@@ -22522,7 +22545,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   batch.set(getDocRef('cobros_cxc',antId),{
                     id:antId,esAnticipo:true,montoAplicado:0,neId:'',neDocumento:'',
                     clientName:m.clientName,clientRif:m.clientRif,
-                    monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoUSDLin*tasa,tasa,
+                    monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoBsLin,tasa,
                     moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
                     concepto:linea.concepto||'Anticipo de cliente',fecha:linea.fecha,
                     cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
@@ -22535,7 +22558,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       concepto:`Anticipo — ${m.clientName}${linea.concepto?` — ${linea.concepto}`:''}`,
                       referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
                       cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
-                      montoUSD:montoUSDLin,montoBs:montoUSDLin*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
+                      montoUSD:montoUSDLin,montoBs:montoBsLin,tasa,moneda:linea.moneda,metodo:linea.metodo,
                       estatus:'No Conciliado',timestamp:Date.now()
                     });
                     batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoUSDLin});
@@ -22547,7 +22570,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       moneda:cajaCob.moneda||'USD',
                       concepto:`Anticipo — ${m.clientName}${linea.concepto?` — ${linea.concepto}`:''}`,
                       referencia:linea.referencia,
-                      monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoUSDLin*tasa,tasa,
+                      monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoBsLin,tasa,
                       aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
                       metodo:linea.metodo,grupoCobroId:grupoId,timestamp:Date.now()
                     });
@@ -22585,6 +22608,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               let restante=totalUSD;
               const cobrosGenerados=[];
               const antAplicado={};
+              // Rastreo por línea: Bs y USD originales, para que lo registrado coincida EXACTO con lo tecleado
+              const trackLineas=lineas.map(l=>({
+                usdTotal:l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1),
+                bsTotal:l.moneda==='Bs'?parseNum(l.monto):null,
+                usdAsignado:0,bsAsignado:0
+              }));
               const grupoId=Date.now().toString(36).toUpperCase();
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
@@ -22594,19 +22623,28 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 restante-=montoNE;
                 const nuevoSaldo=Math.max(0,saldoNE-montoNE);
                 const nuevoStatus=nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
-                for(const linea of lineas){
-                  const lineaUSD=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(parseNum(linea.tasa),1);
+                for(let li=0;li<lineas.length;li++){
+                  const linea=lineas[li];
+                  const tk=trackLineas[li];
+                  const lineaUSD=tk.usdTotal;
                   const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
                   const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
                   if(montoLineaNE<0.001) continue;
+                  tk.usdAsignado+=montoLineaNE;
+                  const tasa=parseNum(linea.tasa||tasaBCV);
+                  // Bs exacto: si la línea es en Bs y esta es su última porción, se asigna el remanente exacto de lo tecleado
+                  const esUltimaPorcion=(tk.usdTotal-tk.usdAsignado)<0.005;
+                  const montoBsLinea=tk.bsTotal!=null
+                    ? (esUltimaPorcion?parseFloat((tk.bsTotal-tk.bsAsignado).toFixed(2)):parseFloat((montoLineaNE*tasa).toFixed(2)))
+                    : parseFloat((montoLineaNE*tasa).toFixed(2));
+                  if(tk.bsTotal!=null) tk.bsAsignado+=montoBsLinea;
                   if(linea.anticipoId){antAplicado[linea.anticipoId]=(antAplicado[linea.anticipoId]||0)+montoLineaNE;}
                   const cobId=`COB-${grupoId}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
                   const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
                   const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
-                  const tasa=parseNum(linea.tasa||tasaBCV);
                   batch.set(getDocRef('cobros_cxc',cobId),{
                     id:cobId,neId:ne.id,neDocumento:ne.id,clientName:ne.clientName||m.clientName,
-                    monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
+                    monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoBsLinea,tasa,
                     moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
                     concepto:linea.concepto||'Cobro CxC',fecha:linea.fecha,
                     cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
@@ -22619,7 +22657,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
                       referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
                       cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
-                      montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
+                      montoUSD:montoLineaNE,montoBs:montoBsLinea,tasa,moneda:linea.moneda,metodo:linea.metodo,
                       estatus:'No Conciliado',timestamp:Date.now()
                     });
                     batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoLineaNE});
@@ -22631,7 +22669,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                       moneda:cajaCob.moneda||'USD',
                       concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
                       referencia:linea.referencia,
-                      monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoLineaNE*tasa,tasa,
+                      monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoBsLinea,tasa,
                       aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
                       metodo:linea.metodo,neId:ne.id,neDocumento:ne.id,grupoCobroId:grupoId,
                       timestamp:Date.now()
@@ -23414,6 +23452,22 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                         </tr>
                                       </thead>
                                       <tbody>
+                                        {(cl._anticipos||[]).map((a,ai)=>(
+                                          <tr key={`ant-${ai}`} style={{background:'#f0fdfa'}} className="border-b border-teal-100">
+                                            <td className="py-1.5 px-2 font-black text-teal-700">💰 ANTICIPO</td>
+                                            <td className="py-1.5 px-2 text-center">{a.fecha}</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">{a.referencia||'—'}</td>
+                                            <td className="py-1.5 px-2 text-right font-mono text-teal-700">${formatNum(a.monto||0)}</td>
+                                            <td className="py-1.5 px-2 text-right font-mono text-gray-400">{parseNum(a.montoAplicado||0)>0?`Aplicado $${formatNum(a.montoAplicado)}`:'—'}</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-right font-mono font-black text-teal-700">-${formatNum(a._saldoAnt)}</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-teal-600 font-bold">Saldo a favor del cliente</td>
+                                          </tr>
+                                        ))}
                                         {cl.nes.map((ne,i)=>{
                                           const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                                           const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const retDetalle=getRetsDetalleNE(ne);const tasa=getTasa(ne);
@@ -23969,12 +24023,29 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(!_manualNCPorClienteEc.has(rif)) _manualNCPorClienteEc.set(rif,[]);
             _manualNCPorClienteEc.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_sinTasa:sinTasa});
           }
+          // ── Anticipos por cliente (crédito a favor) — respeta corte de fecha ──
+          const _anticiposPorClienteEc = new Map();
+          for(const a of (cobrosCxc||[]).filter(c=>c.esAnticipo)){
+            if(ecHasta&&(a.fecha||'')>ecHasta) continue;
+            if(ecDesde&&(a.fecha||'')<ecDesde) continue;
+            // Aplicado hasta la fecha de corte: cobros que usaron este anticipo
+            const aplicadoHasta=(cobrosCxc||[]).filter(c=>!c.esAnticipo&&(c.cuentaBancariaId||'')===`ANTICIPO::${a.id}`&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            const saldoAnt=parseNum(a.monto||0)-aplicadoHasta;
+            const rif=(a.clientRif||a.clientName||'').trim();
+            if(!rif) continue;
+            if(!_anticiposPorClienteEc.has(rif)) _anticiposPorClienteEc.set(rif,[]);
+            _anticiposPorClienteEc.get(rif).push({...a,_saldoAnt:saldoAnt,_aplicadoHasta:aplicadoHasta});
+          }
           const porCli={};
           allNEs.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
             if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
             porCli[k].nes.push(ne);
           });
+          // Inyectar clientes que solo tienen anticipos (sin NEs)
+          for(const [rif,ants] of _anticiposPorClienteEc){
+            if(!porCli[rif]) porCli[rif]={clientName:ants[0]?.clientName||rif,clientRif:rif,vendedor:'—',nes:[]};
+          }
           // Inyectar clientes que solo tienen retenciones manuales (sin NEs)
           for(const [rif,rets] of _manualRetsPorClienteEc){
             if(!porCli[rif]) porCli[rif]={clientName:rets[0]?._manualCliente||rif,clientRif:rif,vendedor:'—',nes:[]};
@@ -23986,7 +24057,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
           if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
-          const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0);
+          const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(_anticiposPorClienteEc.get(cl.clientRif)||[]).reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
           if(ecEstado==='SALDADO') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)<0.01);
           if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)>=0.01);
           const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
@@ -24010,7 +24081,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               const manualRetUSDcl=manualRetsCl.reduce((s,r)=>s+r._montoUSD,0);
               const manualNCCl=_manualNCPorClienteEc.get(cl.clientRif)||[];
               const manualNCSignedUSDcl=manualNCCl.reduce((s,n)=>s+n._signedUSD,0);
-              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl+manualNCSignedUSDcl;
+              const anticiposCl=_anticiposPorClienteEc.get(cl.clientRif)||[];
+              const anticiposUSDcl=anticiposCl.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl+manualNCSignedUSDcl-anticiposUSDcl;
               const facturadoCl=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
               const cobradoCl=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
               const isEnCredito=saldoCl<-0.01;
@@ -24118,6 +24191,19 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   +'<td style="padding:3px 6px;text-align:center">'+badge('Sin NE','#faf5ff','#7c3aed')+'</td>'
                   +'</tr>';
               });
+              anticiposCl.forEach(a=>{
+                neRowsHtml+='<tr style="background:#f0fdfa;border-bottom:1px solid #99f6e4">'
+                  +'<td style="padding:3px 6px;color:#0f766e;font-weight:900;font-size:9px">\ud83d\udcb0 ANTICIPO</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:#0f766e">'+fD(a.fecha)+'</td>'
+                  +'<td style="padding:3px 6px">'+badge('Anticipo','#f0fdfa','#0f766e')+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:#0f766e">'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+(a._aplicadoHasta>0.01?' \u00b7 Aplicado $'+fmtN(a._aplicadoHasta):'')+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:#0f766e">$'+fmtN(a.monto||0)+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">\u2014</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">\u2014</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:#0f766e">-$'+fmtN(Math.max(0,a._saldoAnt))+'</td>'
+                  +'<td style="padding:3px 6px;text-align:center">'+badge('A favor','#f0fdfa','#0f766e')+'</td>'
+                  +'</tr>';
+              });
               // Client section
               bodyHtml+='<div style="margin-bottom:16px;page-break-inside:avoid;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">'
                 +'<div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">'
@@ -24179,7 +24265,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const manualRetUSDclX=manualRetsClX.reduce((s,r)=>s+r._montoUSD,0);
                 const manualNCClX=_manualNCPorClienteEc.get(cl.clientRif)||[];
                 const manualNCSignedUSDclX=manualNCClX.reduce((s,n)=>s+n._signedUSD,0);
-                const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX+manualNCSignedUSDclX;
+                const anticiposClX=_anticiposPorClienteEc.get(cl.clientRif)||[];
+                const anticiposUSDclX=anticiposClX.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+                const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX+manualNCSignedUSDclX-anticiposUSDclX;
                 const facturadoClX=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoClX=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaClX=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
@@ -24214,6 +24302,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 manualNCClX.forEach(n=>{
                   const valTxtNx=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+fmtN2(Math.abs(n._signedUSD));
                   bodyXls+='<tr><td style="padding-left:16px;color:#7c3aed;font-weight:bold">\u21b3 '+(n.tipo||'NC')+' \u00b7 '+(n.nroDocumento||'')+'</td><td>'+(n.fecha||'')+'</td><td>'+(n.tipo==='NC'?'Nota Cr\u00e9dito':'Nota D\u00e9bito')+' (sin NE)</td><td>'+(n.descripcion||'Cliente directo')+'</td><td>'+valTxtNx+'</td><td colspan="3"></td><td>'+(n._sinTasa?'—':valTxtNx)+'</td></tr>';
+                });
+                anticiposClX.forEach(a=>{
+                  bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\ud83d\udcb0 ANTICIPO</td><td>'+(a.fecha||'')+'</td><td>Anticipo</td><td>'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>$'+fmtN2(a.monto||0)+'</td><td colspan="3">'+(a._aplicadoHasta>0.01?'Aplicado $'+fmtN2(a._aplicadoHasta):'')+'</td><td style="color:#0f766e;font-weight:bold">-$'+fmtN2(Math.max(0,a._saldoAnt))+'</td></tr>';
                 });
                 bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(manualNCSignedUSDclX!==0?' / NC-ND '+(manualNCSignedUSDclX<0?'-$'+fmtN2(Math.abs(manualNCSignedUSDclX)):'+$'+fmtN2(manualNCSignedUSDclX)):'')+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
                 bodyXls+='<tr><td colspan="9"></td></tr>';
@@ -24282,7 +24373,9 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                 const manualRetUSDcli=manualRetsCli.reduce((s,r)=>s+r._montoUSD,0);
                 const manualNCCli=_manualNCPorClienteEc.get(cl.clientRif)||[];
                 const manualNCSignedUSDcli=manualNCCli.reduce((s,n)=>s+n._signedUSD,0);
-                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli+manualNCSignedUSDcli;
+                const anticiposCli=_anticiposPorClienteEc.get(cl.clientRif)||[];
+                const anticiposUSDcli=anticiposCli.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli+manualNCSignedUSDcli-anticiposUSDcli;
                 const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoCli=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaCli=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
@@ -24446,10 +24539,23 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               <td className="py-2 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Sin NE</span></td>
                             </tr>
                           ))}
+                          {anticiposCli.map((a,ai)=>(
+                            <tr key={a.id||`ant-${ai}`} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
+                              <td className="py-2 px-3 font-black text-teal-700">💰 ANTICIPO</td>
+                              <td className="py-2 px-3 text-teal-600">{a.fecha||'—'}</td>
+                              <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Anticipo</span></td>
+                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||'Anticipo de cliente'}{a.referencia?` · Ref. ${a.referencia}`:''}{a._aplicadoHasta>0.01?` · Aplicado $${formatNum(a._aplicadoHasta)}`:''}</td>
+                              <td className="py-2 px-3 text-right font-mono text-teal-700">${formatNum(a.monto||0)}</td>
+                              <td className="py-2 px-3 text-right text-gray-300">—</td>
+                              <td className="py-2 px-3 text-right text-gray-300">—</td>
+                              <td className="py-2 px-3 text-right font-black text-teal-700">-${formatNum(Math.max(0,a._saldoAnt))}</td>
+                              <td className="py-2 px-3 text-center"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">A favor</span></td>
+                            </tr>
+                          ))}
                         </tbody>
                         <tfoot>
                           <tr style={{background:'#0f172a'}} className="text-[9px]">
-                            <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}</td>
+                            <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}</td>
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
                             <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(manualNCSignedUSDcli))>0?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(manualNCSignedUSDcli!==0?' / NC-ND $'+formatNum(manualNCSignedUSDcli):''):'—'}</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
@@ -34254,6 +34360,112 @@ ${resumenHtml}
 
 // ── Restaurador de Cobros — componente propio (evita hooks condicionales) ──
 // ── Vincular NE Origen en facturas migradas de mayo 2026 — componente propio ──
+const CorregirCobrosBsView = ({settings, appUser}) => {
+  const [cbBusy, setCbBusy] = useState(false);
+  const [cbMsg, setCbMsg] = useState(null);
+  const [cbLista, setCbLista] = useState(null);
+  const [cbEdits, setCbEdits] = useState({});
+  const [cbBusq, setCbBusq] = useState('');
+
+  const cbCargar = async () => {
+    setCbBusy(true); setCbMsg(null);
+    try {
+      const snap = await getDocs(getColRef('cobros_cxc'));
+      const lista = snap.docs.map(d=>({_id:d.id,...d.data()}))
+        .filter(c=>String(c.moneda||'').toUpperCase()==='BS'&&parseNum(c.montoBs||0)>0)
+        .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      setCbLista(lista);
+      if(lista.length===0) setCbMsg({type:'ok',text:'No hay cobros en Bolívares registrados.'});
+    } catch(err){ setCbMsg({type:'error',text:err.message}); }
+    setCbBusy(false);
+  };
+
+  const cbGuardar = async (cobro) => {
+    const nuevoBs = parseNum(cbEdits[cobro._id]);
+    if(!nuevoBs || Math.abs(nuevoBs-parseNum(cobro.montoBs||0))<0.005) return;
+    setCbBusy(true); setCbMsg(null);
+    try {
+      const batch = writeBatch(db);
+      batch.update(getDocRef('cobros_cxc', cobro._id), { montoBs: nuevoBs, updatedAt: Date.now() });
+      let movsCorregidos = 0;
+      const [bSnap, cSnap] = await Promise.all([
+        getDocs(getColRef('banco_movimientos')),
+        getDocs(getColRef('caja_movimientos')),
+      ]);
+      const match = m => (m.referencia||'')===(cobro.referencia||'') && (m.fecha||'')===(cobro.fecha||'')
+        && Math.abs(parseNum(m.montoUSD||0)-parseNum(cobro.montoUSD||cobro.monto||0))<0.01
+        && Math.abs(parseNum(m.montoBs||0)-parseNum(cobro.montoBs||0))<0.01;
+      bSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('banco_movimientos',d.id),{montoBs:nuevoBs}); movsCorregidos++; } });
+      cSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('caja_movimientos',d.id),{montoBs:nuevoBs}); movsCorregidos++; } });
+      await batch.commit();
+      setCbMsg({type:'ok',text:`\u2705 ${cobro.id||cobro._id}: Bs. actualizado a ${formatNum(nuevoBs)}. ${movsCorregidos} movimiento(s) de banco/caja sincronizado(s).`});
+      setCbLista(l=>(l||[]).map(c=>c._id===cobro._id?{...c,montoBs:nuevoBs}:c));
+      setCbEdits(e=>{const n={...e};delete n[cobro._id];return n;});
+    } catch(err){ setCbMsg({type:'error',text:err.message}); }
+    setCbBusy(false);
+  };
+
+  if(appUser?.role!=='Master') return null;
+
+  const listaFiltrada=(cbLista||[]).filter(c=>!cbBusq||(c.clientName||'').toLowerCase().includes(cbBusq.toLowerCase())||(c.neId||'').toLowerCase().includes(cbBusq.toLowerCase())||(c.referencia||'').includes(cbBusq));
+
+  return (
+    <div className="bg-white rounded-3xl border-2 border-indigo-200 p-6 mt-8">
+      <h3 className="text-lg font-black uppercase mb-1 text-indigo-700 flex items-center gap-2">\ud83c\udfe6 Corregir Montos Bs. de Cobros Registrados</h3>
+      <p className="text-xs text-gray-500 mb-4">Solo Master. Los cobros anteriores guardaron el Bs. recalculado desde el d\u00f3lar redondeado; el monto real tecleado no qued\u00f3 guardado, as\u00ed que se corrige a mano: escriba el Bs. exacto del comprobante y guarde \u2014 el movimiento de banco/caja se sincroniza solo. El USD y el saldo de la NE no cambian.</p>
+
+      <div className="flex gap-3 mb-4">
+        <button onClick={cbCargar} disabled={cbBusy} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+          {cbBusy?<Loader2 size={14} className="animate-spin"/>:<Search size={14}/>} Cargar cobros en Bs.
+        </button>
+        {cbLista&&<input value={cbBusq} onChange={e=>setCbBusq(e.target.value)} placeholder="Filtrar por cliente, NE o referencia..." className="flex-1 border-2 border-indigo-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-indigo-400"/>}
+      </div>
+
+      {cbMsg && (
+        <div className={`mb-4 p-3 rounded-xl text-xs font-bold ${cbMsg.type==='error'?'bg-red-50 text-red-700 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}`}>{cbMsg.text}</div>
+      )}
+
+      {cbLista&&listaFiltrada.length>0&&(
+        <div className="max-h-96 overflow-y-auto border border-indigo-200 rounded-xl">
+          <table className="w-full text-[10px]">
+            <thead className="bg-indigo-50 sticky top-0"><tr>
+              <th className="px-2 py-1.5 text-left font-black text-indigo-700">Fecha</th>
+              <th className="px-2 py-1.5 text-left font-black text-indigo-700">Cliente</th>
+              <th className="px-2 py-1.5 text-left font-black text-indigo-700">NE</th>
+              <th className="px-2 py-1.5 text-left font-black text-indigo-700">Ref.</th>
+              <th className="px-2 py-1.5 text-right font-black text-indigo-700">USD</th>
+              <th className="px-2 py-1.5 text-right font-black text-indigo-700">Bs. actual</th>
+              <th className="px-2 py-1.5 text-right font-black text-indigo-700">Bs. correcto</th>
+              <th className="px-2 py-1.5"></th>
+            </tr></thead>
+            <tbody>
+              {listaFiltrada.map(c=>(
+                <tr key={c._id} className="border-t border-indigo-100">
+                  <td className="px-2 py-1.5">{c.fecha}</td>
+                  <td className="px-2 py-1.5 font-bold">{c.clientName}</td>
+                  <td className="px-2 py-1.5">{c.neId}</td>
+                  <td className="px-2 py-1.5">{c.referencia}</td>
+                  <td className="px-2 py-1.5 text-right">${formatNum(c.montoUSD||c.monto||0)}</td>
+                  <td className="px-2 py-1.5 text-right font-bold text-red-600">Bs.{formatNum(c.montoBs||0)}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <input type="number" step="0.01" value={cbEdits[c._id]??''} onChange={e=>setCbEdits(x=>({...x,[c._id]:e.target.value}))}
+                      placeholder={String(parseNum(c.montoBs||0).toFixed(2))}
+                      className="w-28 border border-indigo-300 rounded-lg px-2 py-1 text-right text-[10px] font-bold outline-none focus:border-indigo-500"/>
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <button onClick={()=>cbGuardar(c)} disabled={cbBusy||!parseNum(cbEdits[c._id])}
+                      className="bg-green-600 text-white px-2 py-1 rounded-lg text-[9px] font-black uppercase disabled:opacity-30">Guardar</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ActualizarCostosView = ({settings, appUser}) => {
   const [acBusy, setAcBusy] = useState(false);
   const [acMsg, setAcMsg] = useState(null);
@@ -35753,6 +35965,9 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
       {/* ── ACTUALIZAR COSTOS DESDE INVENTARIO — solo Master ── */}
       {appUser?.role==='Master'&&<ActualizarCostosView settings={settings} appUser={appUser}/>}
+
+      {/* ── CORREGIR MONTOS BS DE COBROS — solo Master ── */}
+      {appUser?.role==='Master'&&<CorregirCobrosBsView settings={settings} appUser={appUser}/>}
 
       {/* ── RESTAURADOR DE COBROS — solo Master ── */}
       {appUser?.role==='Master'&&<RestaurarCobrosView settings={settings} appUser={appUser}/>}
