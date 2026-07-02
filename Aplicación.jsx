@@ -34057,13 +34057,30 @@ const VincularNEFacturasView = ({settings, appUser}) => {
       const invById = new Map(invs.map(i=>[i.id||i._id,i]));
 
       const nesMigradas = nes.filter(n=>n.facturaId);
+      // Detectar facturaId duplicados: si 2+ NEs apuntan a la misma factura, solo la más antigua se repara; las demás requieren revisión manual
+      const porFactura = new Map();
+      for(const ne of nesMigradas){
+        const k=ne.facturaId;
+        if(!porFactura.has(k)) porFactura.set(k,[]);
+        porFactura.get(k).push(ne);
+      }
       const filas = [];
-      for(const ne of nesMigradas) {
-        const inv = invById.get(ne.facturaId) || invs.find(i=>i.documento===ne.facturaId);
-        if(!inv) { filas.push({ne, inv:null, accion:'sin_factura'}); continue; }
-        if(inv.neOrigen === ne.id) { filas.push({ne, inv, accion:'ya_ok'}); continue; }
-        if(inv.neOrigen && inv.neOrigen !== ne.id) { filas.push({ne, inv, accion:'conflicto'}); continue; }
-        filas.push({ne, inv, accion:'reparar'});
+      for(const [factId, grupo] of porFactura.entries()) {
+        const inv = invById.get(factId) || invs.find(i=>i.documento===factId);
+        if(!inv) { grupo.forEach(ne=>filas.push({ne, inv:null, accion:'sin_factura'})); continue; }
+        const ordenadas=[...grupo].sort((a,b)=>(a.id||'').localeCompare(b.id||''));
+        const principal=ordenadas[0]; // la más antigua por número de NE
+        const duplicadas=ordenadas.slice(1);
+        // Las duplicadas siempre van a conflicto — nunca se reparan automático
+        duplicadas.forEach(ne=>filas.push({ne, inv, accion:'conflicto'}));
+        if(inv.neOrigen === principal.id) { filas.push({ne:principal, inv, accion:'ya_ok'}); continue; }
+        if(inv.neOrigen && inv.neOrigen !== principal.id) {
+          // Si la factura apunta a una de las duplicadas (error de la corrida anterior), se corrige a la principal
+          const apuntaADuplicada = duplicadas.some(d=>d.id===inv.neOrigen);
+          filas.push({ne:principal, inv, accion: apuntaADuplicada ? 'reparar' : 'conflicto'});
+          continue;
+        }
+        filas.push({ne:principal, inv, accion:'reparar'});
       }
       setVnPreview(filas);
     } catch(err) { setVnMsg({type:'error', text: err.message}); }
