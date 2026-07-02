@@ -4708,8 +4708,15 @@ ${body}
         }).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
 
         const busqProv=(pm.provSearch||'').toLowerCase();
-        const provFilt=busqProv?provConSaldo.filter(p=>(p.nombre||'').toLowerCase().includes(busqProv)||(p.rif||'').includes(busqProv)):provConSaldo;
-        const provSel=provConSaldo.find(p=>p.id===pm.provId);
+        const provSinDeuda=(proveedores||[]).filter(p=>p.activo!==false&&!provConSaldo.some(ps=>ps.id===p.id)).map(p=>({...p,saldo:0,facts:[]}));
+        const provTodos=[...provConSaldo,...provSinDeuda];
+        const provFilt=busqProv?provTodos.filter(p=>(p.nombre||'').toLowerCase().includes(busqProv)||(p.rif||'').includes(busqProv)):provConSaldo;
+        const provSel=provTodos.find(p=>p.id===pm.provId);
+        // Anticipos a proveedor con saldo disponible
+        const anticiposProv=(pagosCxP||[]).filter(p=>p.esAnticipo&&p.proveedorId===pm.provId)
+          .map(a=>({...a,_saldoAnt:pN(a.monto||0)-pN(a.montoAplicado||0)}))
+          .filter(a=>a._saldoAnt>0.01);
+        const totalAnticiposProv=anticiposProv.reduce((s,a)=>s+a._saldoAnt,0);
 
         // Facturas pendientes del proveedor seleccionado
         const factsPendProv=(provSel?.facts||[]).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
@@ -4736,6 +4743,63 @@ ${body}
         const confirmarYRegistrar = async () => {
           if(!pm.provId) return setDialog({title:'Falta proveedor',text:'Selecciona un proveedor.',type:'alert'});
           if((pm.lineasPago||[]).length===0) return setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});
+          // ── MODO ANTICIPO: pago a favor sin factura ──
+          if(pm.esAnticipo){
+            if((pm.lineasPago||[]).some(l=>l.anticipoId)) return setDialog({title:'Aviso',text:'No se puede usar un anticipo para registrar otro anticipo.',type:'alert'});
+            try{
+              const batch=writeBatch(db);
+              let totalAnt=0;
+              (pm.lineasPago||[]).forEach((l,li)=>{
+                const tasa=pN(l.tasa||tasaBCV||1);
+                const montoUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1);
+                totalAnt+=montoUSD;
+                const antId=`ANTCXP-${Date.now().toString(36)}-${li}`;
+                batch.set(getDocRef('procura_pagos_cxp',antId),{
+                  id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
+                  proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',
+                  monto:montoUSD,fecha:l.fecha||hoy,metodo:l.metodo||'Transferencia',
+                  banco:l.cuentaNombre||'',referencia:l.referencia||'',concepto:l.concepto||'Anticipo a proveedor',
+                  cuentaId:l.cuentaId||'',moneda:l.moneda||'USD',tasa,
+                  timestamp:Date.now(),user:appUser?.name||'Sistema'
+                });
+                if(!l.cuentaId) return;
+                const esCajaLinea=l.cuentaId.startsWith('CAJA::');
+                if(!esCajaLinea){
+                  const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
+                  const movId=`MOV-ANTCXP-${Date.now().toString(36)}-${li}`;
+                  batch.set(getDocRef('banco_movimientos',movId),{
+                    id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,montoUSD,tasa,fecha:l.fecha||hoy,
+                    concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
+                    referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
+                    proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
+                    timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
+                  });
+                } else {
+                  const cajaId=l.cuentaId.replace('CAJA::','');
+                  const cajaObj=(cajasCuentasCxp||[]).find(c=>c.id===cajaId);
+                  const movId=`MOVC-ANTCXP-${Date.now().toString(36)}-${li}`;
+                  batch.set(getDocRef('caja_movimientos',movId),{
+                    id:movId,cajaId,tipo:'Egreso',moneda:cajaObj?.moneda||'USD',
+                    monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,fecha:l.fecha||hoy,
+                    concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
+                    referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
+                    aplicaTercero:true,tipoTercero:'Proveedor',terceroId:provSel?.id||'',terceroNombre:provSel?.nombre||'',
+                    timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
+                  });
+                }
+              });
+              await batch.commit();
+              setCxpPagoModal(null);
+              setDialog({title:'✅ Anticipo registrado',text:`$${fN(totalAnt)} a favor con ${provSel?.nombre||'—'}. Podrá aplicarlo a facturas desde Registrar Pago.`,type:'alert'});
+            }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+            return;
+          }
+          // Validar saldos de anticipos usados
+          for(const l of (pm.lineasPago||[]).filter(x=>x.anticipoId)){
+            const ant=(pagosCxP||[]).find(a=>a.id===l.anticipoId);
+            const disp=ant?pN(ant.monto||0)-pN(ant.montoAplicado||0):0;
+            if(pN(l.monto)>disp+0.01) return setDialog({title:'Anticipo insuficiente',text:`El anticipo ${l.anticipoId} solo tiene $${fN(disp)} disponibles.`,type:'alert'});
+          }
           try{
             const batch=writeBatch(db);
             const totalUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
@@ -4768,9 +4832,21 @@ ${body}
                 saldoPendiente:nuevoSaldo,status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE',updatedAt:Date.now()
               });
             });
-            // Movimientos bancarios / de caja (EGRESO)
+            // Movimientos bancarios / de caja (EGRESO) — las líneas de anticipo no generan movimiento (el dinero ya salió al registrar el anticipo)
+            const antAplicadoCxp={};
+            (pm.lineasPago||[]).forEach(l=>{
+              if(l.anticipoId){
+                const lUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1);
+                antAplicadoCxp[l.anticipoId]=(antAplicadoCxp[l.anticipoId]||0)+lUSD;
+              }
+            });
+            Object.entries(antAplicadoCxp).forEach(([antId,aplicado])=>{
+              const ant=(pagosCxP||[]).find(a=>a.id===antId);
+              if(ant) batch.update(getDocRef('procura_pagos_cxp',antId),{montoAplicado:parseFloat((pN(ant.montoAplicado||0)+aplicado).toFixed(2)),fechaUltimaAplicacion:hoy});
+            });
             (pm.lineasPago||[]).forEach((l,li)=>{
               if(!l.cuentaId) return;
+              if(l.anticipoId||l.cuentaId.startsWith('ANTICIPO::')) return;
               const tasa=pN(l.tasa||tasaBCV||1);
               const esCajaLinea=l.cuentaId.startsWith('CAJA::');
               if(!esCajaLinea){
@@ -4873,6 +4949,36 @@ ${body}
                     <span style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:1}}>2 · Facturas</span>
                     <span style={{fontSize:9,color:'#9ca3af',fontStyle:'italic'}}>Distribución automática</span>
                   </div>
+                  {/* Anticipo sin factura */}
+                  <div style={{padding:'8px 14px',borderBottom:'1px solid #f3f4f6',background:pm.esAnticipo?'#f0fdf4':'#fff'}}>
+                    <button onClick={()=>setPM(m=>({esAnticipo:!m.esAnticipo}))}
+                      style={{width:'100%',padding:'8px 10px',borderRadius:10,border:`2px solid ${pm.esAnticipo?'#16a34a':'#d1d5db'}`,background:pm.esAnticipo?'#16a34a':'#fff',color:pm.esAnticipo?'#fff':'#374151',fontSize:10,fontWeight:900,textTransform:'uppercase',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+                      {pm.esAnticipo?'✓':'＋'} Anticipo sin factura
+                    </button>
+                    {pm.esAnticipo&&<p style={{fontSize:8,color:'#15803d',margin:'6px 2px 0',fontWeight:700}}>El dinero sale de banco/caja y queda a favor con el proveedor. Podrá aplicarlo a facturas más adelante.</p>}
+                  </div>
+                  {/* Anticipos disponibles */}
+                  {!pm.esAnticipo&&totalAnticiposProv>0.01&&(
+                    <div style={{padding:'8px 14px',borderBottom:'1px solid #dcfce7',background:'#f0fdf4'}}>
+                      <div style={{fontSize:9,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:4}}>💰 Anticipos disponibles: ${fN(totalAnticiposProv)}</div>
+                      {anticiposProv.map(a=>{
+                        const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id);
+                        return(
+                        <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                          <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${fN(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}</span>
+                          <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                            style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
+                        </div>);
+                      })}
+                    </div>
+                  )}
+                  {pm.esAnticipo?(
+                    <div style={{padding:'20px 14px',textAlign:'center'}}>
+                      <div style={{fontSize:30}}>💰</div>
+                      <p style={{fontSize:10,fontWeight:900,color:'#15803d',textTransform:'uppercase',margin:'6px 0 2px'}}>Modo Anticipo</p>
+                      <p style={{fontSize:9,color:'#6b7280'}}>No se selecciona factura. Registre las líneas de pago y confirme.</p>
+                    </div>
+                  ):(<>
                   {factsPendProv.map((f,i)=>{
                     const s=getSaldoFact(f); const ap=distMap[f.id]||0;
                     const montoLA=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1));
@@ -4889,6 +4995,7 @@ ${body}
                       {f.nroControl&&<span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Control: {f.nroControl}</span>}
                     </div>);
                   })}
+                  </>)}
                 </div>}
               </div>
 
@@ -22398,6 +22505,66 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(!m.clientRif){setDialog({title:'Sin cliente',text:'Selecciona un cliente.',type:'alert'});return;}
             const lineas=(m.lineasPago||[]);
             if(lineas.length===0){setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});return;}
+            // ── MODO ANTICIPO: dinero a favor del cliente, sin factura ──
+            if(m.esAnticipo){
+              if(lineas.some(l=>l.anticipoId)){setDialog({title:'Aviso',text:'No se puede usar un anticipo para registrar otro anticipo.',type:'alert'});return;}
+              try{
+                const batch=writeBatch(db);
+                const grupoId=Date.now().toString(36).toUpperCase();
+                let totalAnt=0;
+                for(const linea of lineas){
+                  const tasa=parseNum(linea.tasa||tasaBCV);
+                  const montoUSDLin=linea.moneda==='USD'?parseNum(linea.monto):parseNum(linea.monto)/Math.max(tasa,1);
+                  totalAnt+=montoUSDLin;
+                  const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
+                  const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
+                  const antId=`ANT-${grupoId}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+                  batch.set(getDocRef('cobros_cxc',antId),{
+                    id:antId,esAnticipo:true,montoAplicado:0,neId:'',neDocumento:'',
+                    clientName:m.clientName,clientRif:m.clientRif,
+                    monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoUSDLin*tasa,tasa,
+                    moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
+                    concepto:linea.concepto||'Anticipo de cliente',fecha:linea.fecha,
+                    cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
+                    grupoCobroId:grupoId,timestamp:Date.now()
+                  });
+                  if(cta){
+                    const mvId=`MV-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
+                    batch.set(getDocRef('banco_movimientos',mvId),{
+                      id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Anticipo Cliente',
+                      concepto:`Anticipo — ${m.clientName}${linea.concepto?` — ${linea.concepto}`:''}`,
+                      referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
+                      cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
+                      montoUSD:montoUSDLin,montoBs:montoUSDLin*tasa,tasa,moneda:linea.moneda,metodo:linea.metodo,
+                      estatus:'No Conciliado',timestamp:Date.now()
+                    });
+                    batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoUSDLin});
+                  }
+                  if(cajaCob){
+                    const mvId=`MVC-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
+                    batch.set(getDocRef('caja_movimientos',mvId),{
+                      id:mvId,cajaId:cajaCob.id,fecha:linea.fecha,tipo:'Ingreso',
+                      moneda:cajaCob.moneda||'USD',
+                      concepto:`Anticipo — ${m.clientName}${linea.concepto?` — ${linea.concepto}`:''}`,
+                      referencia:linea.referencia,
+                      monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoUSDLin*tasa,tasa,
+                      aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
+                      metodo:linea.metodo,grupoCobroId:grupoId,timestamp:Date.now()
+                    });
+                  }
+                }
+                await batch.commit();
+                setCxcPagoModal(null);
+                setDialog({title:'✅ Anticipo registrado',text:`$${formatNum(totalAnt)} a favor de ${m.clientName}. Podrá aplicarlo a facturas desde Registrar Cobro.`,type:'alert'});
+              }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+              return;
+            }
+            // Validar saldos de anticipos usados
+            for(const l of lineas.filter(x=>x.anticipoId)){
+              const ant=(cobrosCxc||[]).find(a=>a.id===l.anticipoId);
+              const disp=ant?parseNum(ant.monto||0)-parseNum(ant.montoAplicado||0):0;
+              if(parseNum(l.monto)>disp+0.01){setDialog({title:'Anticipo insuficiente',text:`El anticipo ${l.anticipoId} solo tiene $${formatNum(disp)} disponibles.`,type:'alert'});return;}
+            }
             try{
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
               const ndsDirectasCliente=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif===m.clientRif||n.clientName===m.clientName))
@@ -22417,6 +22584,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               const batch=writeBatch(db);
               let restante=totalUSD;
               const cobrosGenerados=[];
+              const antAplicado={};
               const grupoId=Date.now().toString(36).toUpperCase();
               for(const ne of nesADistribuir){
                 if(restante<=0.001) break;
@@ -22431,6 +22599,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   const proporcion=totalUSD>0?lineaUSD/totalUSD:0;
                   const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
                   if(montoLineaNE<0.001) continue;
+                  if(linea.anticipoId){antAplicado[linea.anticipoId]=(antAplicado[linea.anticipoId]||0)+montoLineaNE;}
                   const cobId=`COB-${grupoId}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
                   const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
                   const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
@@ -22483,6 +22652,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   });
                 }
                 cobrosGenerados.push({ne,montoNE,nuevoStatus});
+              }
+              for(const [antId,aplicado] of Object.entries(antAplicado)){
+                const ant=(cobrosCxc||[]).find(a=>a.id===antId);
+                if(ant) batch.update(getDocRef('cobros_cxc',antId),{montoAplicado:parseFloat((parseNum(ant.montoAplicado||0)+aplicado).toFixed(2)),fechaUltimaAplicacion:getTodayDate()});
               }
               await batch.commit();
               setCxcPagoModal(null);
@@ -22585,9 +22758,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               .filter(cl=>cl.total>0.01)
               .sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
             const busq=(pm.clientSearch||'').toLowerCase();
-            const clientesFiltrados=busq?clientesConSaldo.filter(cl=>(cl.clientName||'').toLowerCase().includes(busq)||(cl.clientRif||'').toLowerCase().includes(busq)):clientesConSaldo;
-            const clienteSel=clientesConSaldo.find(cl=>cl.clientRif===pm.clientRif);
+            const clientesSinDeuda=(clients||[]).filter(c=>(c.razonSocial||c.rif)&&!clientesConSaldo.some(cs=>cs.clientRif===(c.rif||'')))
+              .map(c=>({clientName:c.razonSocial||c.rif,clientRif:c.rif||c.razonSocial,total:0,nes:[]}));
+            const clientesTodos=[...clientesConSaldo,...clientesSinDeuda];
+            const clientesFiltrados=busq?clientesTodos.filter(cl=>(cl.clientName||'').toLowerCase().includes(busq)||(cl.clientRif||'').toLowerCase().includes(busq)):clientesConSaldo;
+            const clienteSel=clientesTodos.find(cl=>cl.clientRif===pm.clientRif);
             const nesPendientes=(clienteSel?.nes||[]).filter(ne=>getSaldoNEAtFecha(ne,null)>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+            // Anticipos del cliente con saldo disponible (cobros esAnticipo sin aplicar del todo)
+            const anticiposCliente=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif===pm.clientRif||c.clientName===pm.clientName))
+              .map(a=>({...a,_saldoAnt:parseNum(a.monto||0)-parseNum(a.montoAplicado||0)}))
+              .filter(a=>a._saldoAnt>0.01);
+            const totalAnticipos=anticiposCliente.reduce((s,a)=>s+a._saldoAnt,0);
             const nesSelecIds=Object.keys(pm.nesSelec||{}).filter(id=>pm.nesSelec[id]);
             const saldoTotalCliente=clienteSel?.total||0;
             const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/Math.max(parseNum(pm.tasa),1);
@@ -22678,6 +22859,36 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                           <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} style={{fontSize:9,color:'#9ca3af',fontWeight:900,border:'none',background:'none',cursor:'pointer'}}>✕</button>
                         </div>
                       </div>
+                      {/* Anticipo sin factura */}
+                      <div style={{padding:'8px 14px',borderBottom:'1px solid #f3f4f6',background:pm.esAnticipo?'#f0fdf4':'#fff'}}>
+                        <button onClick={()=>setCxcPagoModal(m=>({...m,esAnticipo:!m.esAnticipo,nesSelec:{}}))}
+                          style={{width:'100%',padding:'8px 10px',borderRadius:10,border:`2px solid ${pm.esAnticipo?'#16a34a':'#d1d5db'}`,background:pm.esAnticipo?'#16a34a':'#fff',color:pm.esAnticipo?'#fff':'#374151',fontSize:10,fontWeight:900,textTransform:'uppercase',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+                          {pm.esAnticipo?'✓':'＋'} Anticipo sin factura
+                        </button>
+                        {pm.esAnticipo&&<p style={{fontSize:8,color:'#15803d',margin:'6px 2px 0',fontWeight:700}}>El dinero entra a banco/caja y queda a favor del cliente. Podrá aplicarlo a facturas más adelante desde este mismo modal.</p>}
+                      </div>
+                      {/* Anticipos disponibles */}
+                      {!pm.esAnticipo&&totalAnticipos>0.01&&(
+                        <div style={{padding:'8px 14px',borderBottom:'1px solid #dcfce7',background:'#f0fdf4'}}>
+                          <div style={{fontSize:9,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:4}}>💰 Anticipos disponibles: ${formatNum(totalAnticipos)}</div>
+                          {anticiposCliente.map(a=>{
+                            const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id)||(pm.lineaActual?.anticipoId===a.id);
+                            return(
+                            <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                              <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}</span>
+                              <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                                style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
+                            </div>);
+                          })}
+                        </div>
+                      )}
+                      {pm.esAnticipo?(
+                        <div style={{padding:'20px 14px',textAlign:'center'}}>
+                          <div style={{fontSize:30}}>💰</div>
+                          <p style={{fontSize:10,fontWeight:900,color:'#15803d',textTransform:'uppercase',margin:'6px 0 2px'}}>Modo Anticipo</p>
+                          <p style={{fontSize:9,color:'#6b7280'}}>No se selecciona factura. Registre las líneas de pago y confirme.</p>
+                        </div>
+                      ):(<>
                       <div style={{padding:'6px 14px',background:'#fffbeb',borderBottom:'1px solid #fef3c7',fontSize:9,color:'#92400e',fontStyle:'italic'}}>Sin selección = distribuye automáticamente</div>
                       {nesPendientes.map((ne,i)=>{
                         const saldo=getSaldoNEAtFecha(ne,null);
@@ -22762,6 +22973,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                           </div>
                         </div>);
                       })}
+                      </>)}
                     </div>}
                   </div>
 
@@ -34042,6 +34254,123 @@ ${resumenHtml}
 
 // ── Restaurador de Cobros — componente propio (evita hooks condicionales) ──
 // ── Vincular NE Origen en facturas migradas de mayo 2026 — componente propio ──
+const ActualizarCostosView = ({settings, appUser}) => {
+  const [acBusy, setAcBusy] = useState(false);
+  const [acMsg, setAcMsg] = useState(null);
+  const [acPreview, setAcPreview] = useState(null);
+
+  const acAnalizar = async () => {
+    setAcBusy(true); setAcMsg(null); setAcPreview(null);
+    try {
+      const [neSnap, invSnap, inventorySnap] = await Promise.all([
+        getDocs(getColRef('notasEntrega')),
+        getDocs(getColRef('maquilaInvoices')),
+        getDocs(getColRef('inventory')),
+      ]);
+      const inventarioAll = inventorySnap.docs.map(d=>({_id:d.id,...d.data()}));
+      const costoPorCodigo = new Map();
+      for(const i of inventarioAll){
+        const code=(i.displayId||(i._id||'').split('___')[0]||'').toUpperCase();
+        const c=parseNum(i.cost||0);
+        if(code&&c>0&&!costoPorCodigo.has(code)) costoPorCodigo.set(code,c);
+      }
+      const cambios=[];
+      const procesar=(docs,coleccion)=>{
+        for(const d of docs){
+          const data={_id:d.id,...d.data()};
+          if(data.status==='ANULADA') continue;
+          const items=data.items||[];
+          let modificado=false;
+          const nuevos=items.map(it=>{
+            const code=(it.invCode||'').toUpperCase();
+            const nuevo=code?costoPorCodigo.get(code):null;
+            if(nuevo&&Math.abs(parseNum(it.costoUnit||0)-nuevo)>0.005){
+              modificado=true;
+              return {...it,costoUnit:nuevo,_costoAnterior:parseNum(it.costoUnit||0)};
+            }
+            return it;
+          });
+          if(modificado) cambios.push({coleccion,docId:data._id,docRef:data.id||data._id,items:nuevos,detalle:nuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode,antes:it._costoAnterior,ahora:it.costoUnit}))});
+        }
+      };
+      procesar(neSnap.docs,'notasEntrega');
+      procesar(invSnap.docs,'maquilaInvoices');
+      setAcPreview(cambios);
+      if(cambios.length===0) setAcMsg({type:'ok',text:'Todos los costos ya coinciden con el inventario. Nada que corregir.'});
+    } catch(err) { setAcMsg({type:'error', text: err.message}); }
+    setAcBusy(false);
+  };
+
+  const acEjecutar = async () => {
+    if(!acPreview||acPreview.length===0) return;
+    setAcBusy(true);
+    try {
+      const BATCH_LIMIT=450;
+      let batch=writeBatch(db); let ops=0; const batches=[batch];
+      for(const c of acPreview){
+        if(ops>=BATCH_LIMIT){ batch=writeBatch(db); batches.push(batch); ops=0; }
+        const itemsLimpios=c.items.map(({_costoAnterior,...it})=>it);
+        batch.update(getDocRef(c.coleccion, c.docId), { items: itemsLimpios, updatedAt: Date.now() });
+        ops++;
+      }
+      for(const b of batches) await b.commit();
+      setAcMsg({type:'ok', text:`✅ ${acPreview.length} documento(s) actualizados con los costos del inventario.`});
+      setAcPreview(null);
+    } catch(err) { setAcMsg({type:'error', text: err.message}); }
+    setAcBusy(false);
+  };
+
+  if(appUser?.role!=='Master') return null;
+
+  return (
+    <div className="bg-white rounded-3xl border-2 border-teal-200 p-6 mt-8">
+      <h3 className="text-lg font-black uppercase mb-1 text-teal-700 flex items-center gap-2">💲 Actualizar Costos desde Inventario PT</h3>
+      <p className="text-xs text-gray-500 mb-4">Solo Master. Corrige el costo unitario guardado en cada ítem de Notas de Entrega y Facturas, usando el costo actual del producto en Inventario. No toca precios de venta, cantidades ni montos — solo el costo (afecta utilidad en reportes).</p>
+
+      <div className="flex gap-3 mb-4">
+        <button onClick={acAnalizar} disabled={acBusy} className="bg-teal-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+          {acBusy?<Loader2 size={14} className="animate-spin"/>:<Search size={14}/>} Analizar
+        </button>
+        {acPreview && acPreview.length>0 && (
+          <button onClick={acEjecutar} disabled={acBusy} className="bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+            {acBusy?<Loader2 size={14} className="animate-spin"/>:<CheckCircle size={14}/>} Corregir {acPreview.length} documento(s)
+          </button>
+        )}
+      </div>
+
+      {acMsg && (
+        <div className={`mb-4 p-3 rounded-xl text-xs font-bold ${acMsg.type==='error'?'bg-red-50 text-red-700 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}`}>{acMsg.text}</div>
+      )}
+
+      {acPreview && acPreview.length>0 && (
+        <div>
+          <p className="text-[10px] font-black text-teal-600 uppercase mb-2">Vista previa — {acPreview.length} documento(s) con costos distintos al inventario:</p>
+          <div className="max-h-72 overflow-y-auto border border-teal-200 rounded-xl">
+            <table className="w-full text-[10px]">
+              <thead className="bg-teal-50 sticky top-0"><tr>
+                <th className="px-2 py-1.5 text-left font-black text-teal-700">Documento</th>
+                <th className="px-2 py-1.5 text-left font-black text-teal-700">Producto</th>
+                <th className="px-2 py-1.5 text-right font-black text-teal-700">Costo actual</th>
+                <th className="px-2 py-1.5 text-right font-black text-teal-700">Costo nuevo</th>
+              </tr></thead>
+              <tbody>
+                {acPreview.flatMap(c=>c.detalle.map((d,di)=>(
+                  <tr key={`${c.docId}-${di}`} className="border-t border-teal-100">
+                    <td className="px-2 py-1.5 font-bold">{c.docRef}</td>
+                    <td className="px-2 py-1.5">{d.code}</td>
+                    <td className="px-2 py-1.5 text-right text-red-600 font-bold">${formatNum(d.antes)}</td>
+                    <td className="px-2 py-1.5 text-right text-green-700 font-bold">${formatNum(d.ahora)}</td>
+                  </tr>
+                )))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const VincularNEFacturasView = ({settings, appUser}) => {
   const [vnBusy, setVnBusy] = useState(false);
   const [vnMsg, setVnMsg] = useState(null);
@@ -35421,6 +35750,9 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
       {/* ── VINCULAR NE ORIGEN EN FACTURAS MIGRADAS — solo Master ── */}
       {appUser?.role==='Master'&&<VincularNEFacturasView settings={settings} appUser={appUser}/>}
+
+      {/* ── ACTUALIZAR COSTOS DESDE INVENTARIO — solo Master ── */}
+      {appUser?.role==='Master'&&<ActualizarCostosView settings={settings} appUser={appUser}/>}
 
       {/* ── RESTAURADOR DE COBROS — solo Master ── */}
       {appUser?.role==='Master'&&<RestaurarCobrosView settings={settings} appUser={appUser}/>}
@@ -37053,7 +37385,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
              </nav>
 
         {activeTab === 'ventas' && (
-           <div className="print:hidden sticky top-[52px] sm:top-[72px] z-[100]" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+           <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
               <div className="w-full flex gap-0 px-1 overflow-x-auto" style={{scrollbarWidth:'none',msOverflowStyle:'none',WebkitOverflowScrolling:'touch'}}>
                  {[
                    {id:'dashboard',           icon:<BarChart3 size={15}/>,  label:'Dashboard',       perm:'ventas_dashboard'},
@@ -37080,7 +37412,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
         )}
 
         {activeTab === 'inventario' && (
-           <div className="print:hidden sticky top-[52px] sm:top-[72px] z-[100]" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+           <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
               <div className="w-full flex items-stretch overflow-x-auto" style={{scrollbarWidth:'none', msOverflowStyle:'none'}}>
                 {/* GROUP 1: SOLICITUDES — perms: inv_planta, inv_almacen */}
                 {([{id:'requisiciones',perm:'inv_planta'},{id:'almacen',perm:'inv_almacen'}].some(t=>hasPerm(t.perm)||appUser?.role==='Master')) && <div className="flex flex-col border-r border-gray-200">
@@ -37183,7 +37515,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── FÓRMULAS SUB-NAV ── */}
            {activeTab === 'formulas' && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[{id:'formulas',icon:'🧪',label:'Fórmulas'},{id:'ingredients',icon:'🧱',label:'Materias Primas'}].map(t=>(
                    <button key={t.id} onClick={()=>setFormulasView?.(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${(formulasView||'formulas')===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
@@ -37199,7 +37531,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── SIMULADOR SUB-NAV ── */}
            {activeTab === 'simulador' && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><Calculator size={13}/> Simulador OP</button>
                </div>
@@ -37209,7 +37541,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── COSTOS OPERATIVOS SUB-NAV ── */}
            {activeTab === 'costos_operativos' && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><DollarSign size={13}/> Costos Operativos</button>
                </div>
@@ -38707,7 +39039,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            {activeTab === 'impuestos' && (hasPerm('impuestos')||appUser?.role==='Master') && <ImpuestosApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[
                    {id:'general',icon:<BarChart3 size={13}/>,label:'General'},
@@ -38727,7 +39059,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── ESTADO DE RESULTADO SUB-NAV ── */}
            {activeTab === 'estado_resultado' && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  {[{id:'estado',icon:<BarChart3 size={13}/>,label:'Estado Resultado'},{id:'variaciones',icon:<TrendingUp size={13}/>,label:'Variaciones'}].map(t=>(
                    <button key={t.id} onClick={()=>setErView(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${erView===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
@@ -38739,7 +39071,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── LIBRO DIARIO SUB-NAV ── */}
            {activeTab === 'libro_diario' && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><BookOpen size={13}/> Libro Diario</button>
                </div>
