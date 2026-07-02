@@ -8297,10 +8297,11 @@ function App() {
   }, []);
 
   const handleAdminValidation = () => {
-    // Busca la clave real del usuario admin en la base de datos (o cualquier usuario Master)
-    const adminUser = (systemUsers || []).find(u => u.role === 'Master' || u.username === 'admin');
-    const validPassword = adminUser?.password || ADMIN_PASSWORD;
-    if (adminPassword === validPassword) {
+    // Acepta la clave de CUALQUIER usuario Master o del usuario 'admin' (no solo el primero de la lista)
+    const adminUsers = (systemUsers || []).filter(u => u.role === 'Master' || u.username === 'admin');
+    const validPasswords = adminUsers.map(u => u.password).filter(Boolean);
+    if (validPasswords.length === 0) validPasswords.push(ADMIN_PASSWORD);
+    if (validPasswords.includes(adminPassword)) {
       setShowAdminModal(false);
       if (adminAction) {
         adminAction();
@@ -30959,6 +30960,7 @@ ${resumenHtml}
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">OP / Fecha</th>
                         <th className="py-3 px-4 border-r">Cliente</th>
+                        <th className="py-3 px-4 border-r">Producto Asignado</th>
                         <th className="py-3 px-4 border-r">Producto / Specs</th>
                         <th className="py-3 px-4 border-r text-center">KG Solicitados</th>
                         <th className="py-3 px-4 border-r text-center">KG Producidos</th>
