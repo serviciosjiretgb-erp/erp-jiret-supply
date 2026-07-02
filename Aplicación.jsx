@@ -34056,7 +34056,7 @@ const VincularNEFacturasView = ({settings, appUser}) => {
       const invs = invSnap.docs.map(d=>({_id:d.id,...d.data()}));
       const invById = new Map(invs.map(i=>[i.id||i._id,i]));
 
-      const nesMigradas = nes.filter(n=>n.user==='MIGRACIÓN MAYO 2026'&&n.facturaId);
+      const nesMigradas = nes.filter(n=>n.facturaId);
       const filas = [];
       for(const ne of nesMigradas) {
         const inv = invById.get(ne.facturaId) || invs.find(i=>i.documento===ne.facturaId);
@@ -34101,8 +34101,8 @@ const VincularNEFacturasView = ({settings, appUser}) => {
 
   return (
     <div className="bg-white rounded-3xl border-2 border-amber-200 p-6 mt-8">
-      <h3 className="text-lg font-black uppercase mb-1 text-amber-700 flex items-center gap-2">🔗 Vincular NE Origen — Facturas Migradas de Mayo 2026</h3>
-      <p className="text-xs text-gray-500 mb-4">Solo Master. Completa el campo "NE Origen" en facturas cuya Nota de Entrega ya existe (creada por la migración de mayo) pero cuyo vínculo inverso quedó vacío. No modifica montos, ítems ni ningún otro dato — solo el campo neOrigen.</p>
+      <h3 className="text-lg font-black uppercase mb-1 text-amber-700 flex items-center gap-2">🔗 Vincular NE Origen con Facturación</h3>
+      <p className="text-xs text-gray-500 mb-4">Solo Master. Completa el campo "NE Origen" en cada factura usando la Nota de Entrega que ya tiene esa factura vinculada. No modifica montos, ítems ni ningún otro dato — solo el campo neOrigen.</p>
 
       <div className="flex gap-3 mb-4">
         <button onClick={vnAnalizar} disabled={vnBusy} className="bg-amber-500 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
