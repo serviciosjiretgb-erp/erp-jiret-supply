@@ -21045,9 +21045,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      const _t=parseNum(n.tasaFactura||_inv?.tasa||_ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
                                      const _baseUSD=_t>1?parseFloat((parseNum(n.monto||0)/_t).toFixed(2)):parseNum(n.monto||0);
                                      const _baseBs=parseNum(n.monto||0);
-                                     const _pctIVA=16;
-                                     const _ivaUSD=parseFloat((_baseUSD*_pctIVA/100).toFixed(2));
-                                     const _ivaBs=parseFloat((_baseBs*_pctIVA/100).toFixed(2));
+                                     const _esFiscal=(n.naturaleza||'FISCAL')==='FISCAL';
+                                     const _pctIVA=_esFiscal?16:0;
+                                     const _ivaUSD=_esFiscal?parseFloat((_baseUSD*_pctIVA/100).toFixed(2)):0;
+                                     const _ivaBs=_esFiscal?parseFloat((_baseBs*_pctIVA/100).toFixed(2)):0;
                                      const _totalUSD=parseFloat((_baseUSD+_ivaUSD).toFixed(2));
                                      const _totalBs=parseFloat((_baseBs+_ivaBs).toFixed(2));
                                      const _em=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
@@ -21070,8 +21071,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                          <tr><td>Descripción</td><td>${n.descripcion||'—'}</td></tr>
                                        </table>
                                        <table class="totales">
-                                         <tr><td class="lbl">Base Imponible USD</td><td class="val" style="color:#555">${_nc?'':'+'}$${formatNum(_baseUSD)}</td><td class="lbl">Base Imponible Bs.</td><td class="val" style="color:#555">Bs. ${formatNum(_baseBs)}</td></tr>
-                                         <tr><td class="lbl">IVA (${_pctIVA}%)</td><td class="val">${_nc?'':'+'}$${formatNum(_ivaUSD)}</td><td class="lbl">IVA Bs.</td><td class="val">Bs. ${formatNum(_ivaBs)}</td></tr>
+                                         <tr><td class="lbl">${_esFiscal?'Base Imponible USD':'Monto USD'}</td><td class="val" style="color:#555">${_nc?'':'+'}$${formatNum(_baseUSD)}</td><td class="lbl">${_esFiscal?'Base Imponible Bs.':'Monto Bs.'}</td><td class="val" style="color:#555">Bs. ${formatNum(_baseBs)}</td></tr>
+                                         ${_esFiscal?`<tr><td class="lbl">IVA (${_pctIVA}%)</td><td class="val">${_nc?'':'+'}$${formatNum(_ivaUSD)}</td><td class="lbl">IVA Bs.</td><td class="val">Bs. ${formatNum(_ivaBs)}</td></tr>`:''}
                                          <tr class="total-row"><td>TOTAL ${n.tipo}</td><td style="text-align:right">${_nc?'- ':''}$${formatNum(_totalUSD)}</td><td>TOTAL Bs.</td><td style="text-align:right">Bs. ${formatNum(_totalBs)}</td></tr>
                                        </table>
                                      </body></html>`;
@@ -22238,7 +22239,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Métricas filtradas por cliente seleccionado (si hay filtro activo)
           const clienteActivoData=cxcSelectedClient?porCliente[cxcSelectedClient]:null;
           const nesMetrica=clienteActivoData?clienteActivoData.nes:nesAbiertas;
-          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          const _antsFiltCartera=cxcSelectedClient?(_anticiposPorCliente.get(cxcSelectedClient)||[]):[..._anticiposPorCliente.values()].flat();
+          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_antsFiltCartera.reduce((s,a)=>s+a._saldoAnt,0);
           const totalBrutoFilt=clienteActivoData
             ?(nesTotal.filter(ne=>ne.clientRif===cxcSelectedClient||ne.clientName===clienteActivoData.clientName).reduce((s,ne)=>s+parseNum(ne.total||0),0))
             :totalBrutoNEs;
@@ -22972,7 +22974,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                 {ncsAplicadas.map((n,ni)=>{
                                   const t=parseNum(n.tasaFactura||0)||tasaBCV;
                                   const baseBsNc=parseNum(n.monto||0);
-                                  const usdNc=(t>1)?((n.tieneIva===false?baseBsNc:baseBsNc*1.16)/t):0;
+                                  const usdNc=(t>1)?((((n.naturaleza||'FISCAL')==='FISCAL')?baseBsNc*1.16:baseBsNc)/t):0;
                                   return(
                                     <div key={ni} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
                                       <span style={{fontSize:8,color:'#7c3aed',fontWeight:700}}>{n.tipo==='NC'?'📋 N.Crédito':'📋 N.Débito'} · Doc.{n.nroDocumento||n.id}</span>
@@ -23671,13 +23673,13 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                       </tbody>
                                       <tfoot>
                                         <tr style={{background:'#0f172a'}} className="text-[9px]">
-                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}{(_manualRetsPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualRetsPorCliente.get(cl.clientRif)||[]).length+' ret. manual':''}{(_manualNCPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualNCPorCliente.get(cl.clientRif)||[]).length+' NC/ND directa':''}</td>
+                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}{(_manualRetsPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualRetsPorCliente.get(cl.clientRif)||[]).length+' ret. manual':''}{(_manualNCPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualNCPorCliente.get(cl.clientRif)||[]).length+' NC/ND directa':''}{(cl._anticipos||[]).length>0?' + '+(cl._anticipos||[]).length+' anticipo(s)':''}</td>
                                           <td className="py-2 px-2 text-right text-gray-300 font-bold">${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td>
                                           <td className="py-2 px-2 text-right text-green-400 font-black">{cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-teal-400 font-black">{(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0))>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)):'—'}</td>
-                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
+                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
                                           <td colSpan={2}></td>
                                         </tr>
                                       </tfoot>
