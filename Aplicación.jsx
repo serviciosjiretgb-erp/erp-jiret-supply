@@ -38747,7 +38747,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── KPI SUB-NAV ── */}
            {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
-             <div className="print:hidden sticky top-[52px] sm:top-[72px] z-30" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
+             <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
                  <button className="px-3 py-3 whitespace-nowrap flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide border-b-2 border-orange-500 text-orange-400 bg-white/5"><BarChart3 size={13}/> Panel KPI Gerencial</button>
                </div>
