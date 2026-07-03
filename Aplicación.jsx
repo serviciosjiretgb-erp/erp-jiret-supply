@@ -4743,6 +4743,9 @@ ${body}
         const confirmarYRegistrar = async () => {
           if(!pm.provId) return setDialog({title:'Falta proveedor',text:'Selecciona un proveedor.',type:'alert'});
           if((pm.lineasPago||[]).length===0) return setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});
+          const _hoyValCxp=getTodayDate();
+          const _lineaFutCxp=(pm.lineasPago||[]).find(l=>(l.fecha||'')>_hoyValCxp);
+          if(_lineaFutCxp) return setDialog({title:'⚠️ Fecha futura',text:`Hay una línea de pago con fecha ${_lineaFutCxp.fecha}, posterior a hoy (${_hoyValCxp}). Corrija la fecha antes de registrar el pago.`,type:'alert'});
           // ── MODO ANTICIPO: pago a favor sin factura ──
           if(pm.esAnticipo){
             if((pm.lineasPago||[]).some(l=>l.anticipoId)) return setDialog({title:'Aviso',text:'No se puede usar un anticipo para registrar otro anticipo.',type:'alert'});
@@ -19666,6 +19669,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             fecha: getTodayDate(), clientRif:'', clientName:'', clientAddress:'', vendedor:'',
             territorio:'',
             items:[], aplicaIva:'SI', status:'TRANSITO', observaciones:'',
+            esExtraContable:false, tasa:'',
             facturaId:'', opRelacionada:'', ncConsignacion:'', diasCredito:'0',
             canal:'TRADICIONAL',
             neClientSearch:'', neShowClientDrop:false
@@ -19687,6 +19691,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const ivaAmt = form.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
               const costoTotal = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
               const data = { ...form, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
+                tasa: form.esExtraContable?parseNum(form.tasa||0):(form.tasa||''),
+                totalBs: form.esExtraContable&&parseNum(form.tasa)>0?parseFloat(((base+ivaAmt)*parseNum(form.tasa)).toFixed(2)):(form.totalBs||0),
                 diasCredito: parseInt(form.diasCredito||0),
                 fechaVencimiento: calcVenc(form.fecha, form.diasCredito||'0'),
                 timestamp: editId?(notasEntrega||[]).find(n=>n.id===editId)?.timestamp||Date.now():Date.now(),
@@ -19877,6 +19883,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </select></div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Aplica IVA</label>
                       <select value={form.aplicaIva||'SI'} onChange={e=>setForm(f=>({...f,aplicaIva:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none"><option value="SI">Sí (16%)</option><option value="NO">No</option></select></div>
+                    <div><label className="text-[10px] font-black text-purple-600 uppercase block mb-1">Extra Contable</label>
+                      <button type="button" onClick={()=>setForm(f=>({...f,esExtraContable:!f.esExtraContable,tasa:!f.esExtraContable?(f.tasa||String(tasaBCV||'')):f.tasa}))}
+                        className={`w-full border-2 rounded-xl p-2.5 text-xs font-black uppercase transition-all ${form.esExtraContable?'bg-purple-600 border-purple-600 text-white':'bg-white border-purple-200 text-purple-600 hover:bg-purple-50'}`}>
+                        {form.esExtraContable?'✓ Extra Contable':'Extra Contable'}
+                      </button></div>
+                    {form.esExtraContable&&<div><label className="text-[10px] font-black text-purple-600 uppercase block mb-1">Tasa Bs/$ (del día)</label>
+                      <input type="number" step="0.0001" min="0" value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))}
+                        placeholder={String(tasaBCV||'')} className="w-full border-2 border-purple-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-purple-400"/></div>}
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Estatus</label>
                       <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
                         <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select></div>
@@ -19997,6 +20011,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <div className="text-right space-y-1">
                       <div className="text-xs text-gray-500">Monto Base: <span className="font-black text-gray-900">${formatNum(base)}</span></div>
                       {form.aplicaIva==='SI'&&<div className="text-xs text-gray-500">IVA (16%): <span className="font-black">${formatNum(ivaAmt)}</span></div>}
+                      {form.esExtraContable&&parseNum(form.tasa)>0&&<div className="text-xs text-purple-600 font-bold">Total Bs. (tasa {formatNum(parseNum(form.tasa))}): <span className="font-black">Bs.{formatNum((base+ivaAmt)*parseNum(form.tasa))}</span></div>}
                       <div className="text-base font-black text-orange-600">TOTAL: ${formatNum(base+ivaAmt)}</div>
                     </div>
                   </div>
@@ -22244,7 +22259,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           nesAbiertas.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
             if(!porCliente[k]) porCliente[k]={clientName:ne.clientName||k,clientRif:k,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
-            const saldo=getSaldoNEAtFecha(ne,fechaRef);const d=getAgingDays(ne,fechaRef);
+            const saldoReal=getSaldoNEAtFecha(ne,fechaRef);const d=getAgingDays(ne,fechaRef);
+            // Los saldos negativos por sobrecobro NO restan del total del cliente (la fila se muestra igual para revisión) — así CxC coincide con Registrar Cobro
+            const saldo=Math.max(0,saldoReal);
             if(d<=0) porCliente[k].corriente+=saldo; else if(d<=30) porCliente[k].v1_30+=saldo;
             else if(d<=60) porCliente[k].v31_60+=saldo; else porCliente[k].vMas60+=saldo;
             porCliente[k].total+=saldo; porCliente[k].nes.push(ne);
@@ -22294,7 +22311,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const clienteActivoData=cxcSelectedClient?porCliente[cxcSelectedClient]:null;
           const nesMetrica=clienteActivoData?clienteActivoData.nes:nesAbiertas;
           const _antsFiltCartera=cxcSelectedClient?(_anticiposPorCliente.get(cxcSelectedClient)||[]):[..._anticiposPorCliente.values()].flat();
-          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_antsFiltCartera.reduce((s,a)=>s+a._saldoAnt,0);
+          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+Math.max(0,getSaldoNEAtFecha(ne,fechaRef)),0)-_antsFiltCartera.reduce((s,a)=>s+a._saldoAnt,0);
           const totalBrutoFilt=clienteActivoData
             ?(nesTotal.filter(ne=>ne.clientRif===cxcSelectedClient||ne.clientName===clienteActivoData.clientName).reduce((s,ne)=>s+parseNum(ne.total||0),0))
             :totalBrutoNEs;
@@ -22583,6 +22600,10 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             if(!m.clientRif){setDialog({title:'Sin cliente',text:'Selecciona un cliente.',type:'alert'});return;}
             const lineas=(m.lineasPago||[]);
             if(lineas.length===0){setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});return;}
+            // Bloquear fechas futuras (causa de descuadres entre CxC y Estado de Cuenta)
+            const _hoyVal=getTodayDate();
+            const _lineaFutura=lineas.find(l=>(l.fecha||'')>_hoyVal);
+            if(_lineaFutura){setDialog({title:'⚠️ Fecha futura',text:`Hay una línea de pago con fecha ${_lineaFutura.fecha}, posterior a hoy (${_hoyVal}). Corrija la fecha antes de registrar el cobro.`,type:'alert'});return;}
             // ── MODO ANTICIPO: dinero a favor del cliente, sin factura ──
             if(m.esAnticipo){
               if(lineas.some(l=>l.anticipoId)){setDialog({title:'Aviso',text:'No se puede usar un anticipo para registrar otro anticipo.',type:'alert'});return;}
@@ -23733,7 +23754,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-teal-400 font-black">{(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0))>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)):'—'}</td>
-                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
+                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+Math.max(0,getSaldoNEAtFecha(ne,fechaRef)),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
                                           <td colSpan={2}></td>
                                         </tr>
                                       </tfoot>
@@ -34416,6 +34437,105 @@ ${resumenHtml}
 
 // ── Restaurador de Cobros — componente propio (evita hooks condicionales) ──
 // ── Vincular NE Origen en facturas migradas de mayo 2026 — componente propio ──
+const CorregirFechasCobrosView = ({settings, appUser}) => {
+  const [cfBusy, setCfBusy] = useState(false);
+  const [cfMsg, setCfMsg] = useState(null);
+  const [cfLista, setCfLista] = useState(null);
+  const [cfEdits, setCfEdits] = useState({});
+
+  const cfCargar = async () => {
+    setCfBusy(true); setCfMsg(null);
+    try {
+      const hoyStr = getTodayDate();
+      const snap = await getDocs(getColRef('cobros_cxc'));
+      const lista = snap.docs.map(d=>({_id:d.id,...d.data()}))
+        .filter(c=>(c.fecha||'')>hoyStr)
+        .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      setCfLista(lista);
+      if(lista.length===0) setCfMsg({type:'ok',text:'No hay cobros con fecha futura. Todo en orden.'});
+    } catch(err){ setCfMsg({type:'error',text:err.message}); }
+    setCfBusy(false);
+  };
+
+  const cfGuardar = async (cobro) => {
+    const nuevaFecha = cfEdits[cobro._id];
+    if(!nuevaFecha || nuevaFecha===cobro.fecha) return;
+    setCfBusy(true); setCfMsg(null);
+    try {
+      const batch = writeBatch(db);
+      batch.update(getDocRef('cobros_cxc', cobro._id), { fecha: nuevaFecha, updatedAt: Date.now() });
+      let movs = 0;
+      const [bSnap, cSnap] = await Promise.all([
+        getDocs(getColRef('banco_movimientos')),
+        getDocs(getColRef('caja_movimientos')),
+      ]);
+      const match = m => (m.referencia||'')===(cobro.referencia||'') && (m.fecha||'')===(cobro.fecha||'')
+        && Math.abs(parseNum(m.montoUSD||0)-parseNum(cobro.montoUSD||cobro.monto||0))<0.01;
+      bSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('banco_movimientos',d.id),{fecha:nuevaFecha}); movs++; } });
+      cSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('caja_movimientos',d.id),{fecha:nuevaFecha}); movs++; } });
+      await batch.commit();
+      setCfMsg({type:'ok',text:`\u2705 ${cobro.id||cobro._id}: fecha corregida a ${nuevaFecha}. ${movs} movimiento(s) de banco/caja sincronizado(s).`});
+      setCfLista(l=>(l||[]).filter(c=>c._id!==cobro._id));
+      setCfEdits(e=>{const n={...e};delete n[cobro._id];return n;});
+    } catch(err){ setCfMsg({type:'error',text:err.message}); }
+    setCfBusy(false);
+  };
+
+  if(appUser?.role!=='Master') return null;
+
+  return (
+    <div className="bg-white rounded-3xl border-2 border-rose-200 p-6 mt-8">
+      <h3 className="text-lg font-black uppercase mb-1 text-rose-700 flex items-center gap-2">\ud83d\uddd3 Corregir Cobros con Fecha Futura</h3>
+      <p className="text-xs text-gray-500 mb-4">Solo Master. Cobros registrados con fecha posterior a hoy (error de tipeo, ej. julio en vez de junio). Estos cobros NO se cuentan en el Estado de Cuenta con corte a hoy \u2014 por eso las NEs aparecen pendientes ah\u00ed aunque en Registrar Cobro salgan saldadas. Corrija la fecha real y el saldo cuadra en todos los reportes. El movimiento de banco/caja se sincroniza solo.</p>
+
+      <div className="flex gap-3 mb-4">
+        <button onClick={cfCargar} disabled={cfBusy} className="bg-rose-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+          {cfBusy?<Loader2 size={14} className="animate-spin"/>:<Search size={14}/>} Buscar cobros con fecha futura
+        </button>
+      </div>
+
+      {cfMsg && (
+        <div className={`mb-4 p-3 rounded-xl text-xs font-bold ${cfMsg.type==='error'?'bg-red-50 text-red-700 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}`}>{cfMsg.text}</div>
+      )}
+
+      {cfLista&&cfLista.length>0&&(
+        <div className="max-h-96 overflow-y-auto border border-rose-200 rounded-xl">
+          <table className="w-full text-[10px]">
+            <thead className="bg-rose-50 sticky top-0"><tr>
+              <th className="px-2 py-1.5 text-left font-black text-rose-700">Fecha actual</th>
+              <th className="px-2 py-1.5 text-left font-black text-rose-700">Cliente</th>
+              <th className="px-2 py-1.5 text-left font-black text-rose-700">NE</th>
+              <th className="px-2 py-1.5 text-left font-black text-rose-700">Ref.</th>
+              <th className="px-2 py-1.5 text-right font-black text-rose-700">USD</th>
+              <th className="px-2 py-1.5 text-right font-black text-rose-700">Fecha correcta</th>
+              <th className="px-2 py-1.5"></th>
+            </tr></thead>
+            <tbody>
+              {cfLista.map(c=>(
+                <tr key={c._id} className="border-t border-rose-100">
+                  <td className="px-2 py-1.5 font-bold text-red-600">{c.fecha}</td>
+                  <td className="px-2 py-1.5 font-bold">{c.clientName}</td>
+                  <td className="px-2 py-1.5">{c.neId}</td>
+                  <td className="px-2 py-1.5">{c.referencia}</td>
+                  <td className="px-2 py-1.5 text-right">${formatNum(c.montoUSD||c.monto||0)}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <input type="date" value={cfEdits[c._id]??''} onChange={e=>setCfEdits(x=>({...x,[c._id]:e.target.value}))}
+                      className="border border-rose-300 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-rose-500"/>
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <button onClick={()=>cfGuardar(c)} disabled={cfBusy||!cfEdits[c._id]}
+                      className="bg-green-600 text-white px-2 py-1 rounded-lg text-[9px] font-black uppercase disabled:opacity-30">Guardar</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CorregirCobrosBsView = ({settings, appUser}) => {
   const [cbBusy, setCbBusy] = useState(false);
   const [cbMsg, setCbMsg] = useState(null);
@@ -36024,6 +36144,9 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
       {/* ── CORREGIR MONTOS BS DE COBROS — solo Master ── */}
       {appUser?.role==='Master'&&<CorregirCobrosBsView settings={settings} appUser={appUser}/>}
+
+      {/* ── CORREGIR FECHAS FUTURAS DE COBROS — solo Master ── */}
+      {appUser?.role==='Master'&&<CorregirFechasCobrosView settings={settings} appUser={appUser}/>}
 
       {/* ── RESTAURADOR DE COBROS — solo Master ── */}
       {appUser?.role==='Master'&&<RestaurarCobrosView settings={settings} appUser={appUser}/>}
