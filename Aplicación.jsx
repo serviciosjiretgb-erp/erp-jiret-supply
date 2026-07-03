@@ -19914,13 +19914,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Aplica IVA</label>
                       <select value={form.aplicaIva||'SI'} onChange={e=>setForm(f=>({...f,aplicaIva:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none"><option value="SI">Sí (16%)</option><option value="NO">No</option></select></div>
                     <div><label className="text-[10px] font-black text-purple-600 uppercase block mb-1">Extra Contable</label>
-                      <button type="button" onClick={()=>setForm(f=>({...f,esExtraContable:!f.esExtraContable,tasa:!f.esExtraContable?(f.tasa||String(tasaBCV||'')):f.tasa}))}
+                      <button type="button" onClick={()=>setForm(f=>({...f,esExtraContable:!f.esExtraContable,tasa:!f.esExtraContable?(f.tasa||String(parseNum(settings?.tasaBCV||0)||'')):f.tasa}))}
                         className={`w-full border-2 rounded-xl p-2.5 text-xs font-black uppercase transition-all ${form.esExtraContable?'bg-purple-600 border-purple-600 text-white':'bg-white border-purple-200 text-purple-600 hover:bg-purple-50'}`}>
                         {form.esExtraContable?'✓ Extra Contable':'Extra Contable'}
                       </button></div>
                     {form.esExtraContable&&<div><label className="text-[10px] font-black text-purple-600 uppercase block mb-1">Tasa Bs/$ (del día)</label>
                       <input type="number" step="0.0001" min="0" value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))}
-                        placeholder={String(tasaBCV||'')} className="w-full border-2 border-purple-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-purple-400"/></div>}
+                        placeholder={String(parseNum(settings?.tasaBCV||0)||'')} className="w-full border-2 border-purple-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-purple-400"/></div>}
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Estatus</label>
                       <select value={form.status||'TRANSITO'} onChange={e=>setForm(f=>({...f,status:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none">
                         <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option></select></div>
