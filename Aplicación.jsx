@@ -19007,9 +19007,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               rango, pct, montoPagar: monto*(pct/100), cobrado
             };
           });
-          const cobranzaCalc = cobranzaCalcAll.filter(r => 
-            cobFiltro==='todos' ? true : cobFiltro==='cobrado' ? r.cobrado : !r.cobrado
-          );
+          const cobranzaCalc = cobranzaCalcAll.filter(r => {
+            // Cobradas: solo las pagadas en el mes/año filtrado. Pendientes: todas las abiertas (histórico).
+            if(cobFiltro==='cobrado') return r.cobrado && (r.fechaPago||'').startsWith(ym);
+            if(cobFiltro==='pendiente') return !r.cobrado;
+            return !r.cobrado || (r.fechaPago||'').startsWith(ym);
+          });
           const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
           const updCobranza = (i,campo,val) => {
             const neId = cobranzaCalc[i]?.neId;
@@ -19303,7 +19306,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 flex-wrap">
                      <span className="text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,ei)=>`R${ei+1}: ${e.dMin}-${e.dMax}d → ${e.pct}%`).join(' | ')||'No configurada'}</span>
-                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaCalcAll.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaCalcAll.filter(r=>r.cobrado).length})`:'📋 Todos'}</button>))}</div>
+                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaCalcAll.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaCalcAll.filter(r=>r.cobrado&&(r.fechaPago||'').startsWith(ym)).length})`:'📋 Todos'}</button>))}</div>
                    </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
