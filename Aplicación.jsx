@@ -24044,9 +24044,29 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               sinTasa:items.some(r=>r._sinTasa)
             };
           };
+          // NC/ND indexadas por TODAS sus claves (NE, documento y factura) — igual que CxC/Registrar Cobro
+          const _ncsByKeyEc = new Map();
+          for(const n of (notasVentaCD||[])){
+            const kk=[n.neId,n.neOrigen,n.facturaId].filter(Boolean);
+            for(const k of kk){ if(!_ncsByKeyEc.has(k)) _ncsByKeyEc.set(k,[]); _ncsByKeyEc.get(k).push(n); }
+          }
           const getSaldoNE = (ne) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            const nc=(notasVentaCD||[]).filter(n=>{const ni=n.neId||'',no=n.neOrigen||'';return(ni===ne.id||no===ne.id||ni===ne.documento||no===ne.documento)&&(!ecHasta||(n.fecha||'')<=ecHasta);}).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||tasaBCVec;const b=parseNum(n.monto||0);const u=t>1?b/t:parseNum(n.montoUSD||0);return s+(n.tipo==='NC'?u:-u);},0);
+            // NC/ND: matchear por NE Y por su factura vinculada (nroFiscal/documento/id), como lo hace Registrar Cobro
+            const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
+            const invNc = ne.facturaId
+              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkNc(i))
+              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOkNc(i));
+            const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
+            const seenNc=new Set(); const ncsNe=[];
+            for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
+            const nc=ncsNe.filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).reduce((s,n)=>{
+              const t=parseNum(n.tasaFactura||0)||tasaBCVec;
+              if(!t||t<2) return s;
+              const b=parseNum(n.monto||0);
+              const u=(((n.naturaleza||'FISCAL')==='FISCAL')?b*1.16:b)/t;
+              return s+(n.tipo==='NC'?u:-u);
+            },0);
             const retD=getRetsDetalleNEec(ne);
             // Sin Math.max(0,...): si la retención deja la cuenta en negativo (crédito a favor), se muestra el valor real.
             return parseNum(ne.total||ne.montoBase||0)-cobrado-nc-retD.ivaUSD-retD.otrasUSD;
