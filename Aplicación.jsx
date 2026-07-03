@@ -21008,7 +21008,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(esClienteDirecto&&!parseNum(ventaNCForm.montoUSD||0))
               return setDialog({title:'Falta monto',text:'Ingresa el monto en USD.',type:'alert'});
             try {
-              const id=`VNC-${Date.now()}`;
+              const esEdicionNC=!!ventaNCForm.id;
+              const id=ventaNCForm.id||`VNC-${Date.now()}`;
               const facAfect=(invoices||[]).find(i=>i.id===ventaNCForm.facturaId);
               const neAfect=(notasEntrega||[]).find(e=>e.id===ventaNCForm.neId);
               const tasaAfect=esClienteDirecto
@@ -21037,8 +21038,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 itemsRevertidos:itemsARevertir.map(it=>({fgId:it.fgId||'',invCode:it.invCode||'',desc:it.desc||'',cantidad:parseNum(it.cantNC||it.cantidad||0),costoUnit:parseNum(it.costoUnit||0)})),
                 timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
               });
-              // 2. Reversar inventario (solo NC, nunca en cliente directo)
-              if(ventaNCForm.tipo==='NC'&&!esClienteDirecto){
+              // 2. Reversar inventario (solo NC nuevas, nunca al editar ni en cliente directo)
+              if(ventaNCForm.tipo==='NC'&&!esClienteDirecto&&!esEdicionNC){
                 for(const it of itemsARevertir){
                   const cantRev=parseNum(it.cantNC||it.cantidad||0);
                   if(cantRev<=0) continue;
@@ -22759,31 +22760,6 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                     cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
                     vendedor:ne.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
                   });
-                  if(cta){
-                    const mvId=`MV-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
-                    batch.set(getDocRef('banco_movimientos',mvId),{
-                      id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Cobro CxC',
-                      concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
-                      referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
-                      cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
-                      montoUSD:montoLineaNE,montoBs:montoBsLinea,tasa,moneda:linea.moneda,metodo:linea.metodo,
-                      estatus:'No Conciliado',timestamp:Date.now()
-                    });
-                    batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoLineaNE});
-                  }
-                  if(cajaCob){
-                    const mvId=`MVC-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
-                    batch.set(getDocRef('caja_movimientos',mvId),{
-                      id:mvId,cajaId:cajaCob.id,fecha:linea.fecha,tipo:'Ingreso',
-                      moneda:cajaCob.moneda||'USD',
-                      concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName} — ${ne.id}`,
-                      referencia:linea.referencia,
-                      monto:montoLineaNE,montoUSD:montoLineaNE,montoBs:montoBsLinea,tasa,
-                      aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
-                      metodo:linea.metodo,neId:ne.id,neDocumento:ne.id,grupoCobroId:grupoId,
-                      timestamp:Date.now()
-                    });
-                  }
                 }
                 if(ne._esNDDirecta){
                   batch.update(getDocRef('notasVentaCreditoDebito',ne._ndOrigId),{
@@ -22799,6 +22775,49 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                   });
                 }
                 cobrosGenerados.push({ne,montoNE,nuevoStatus});
+              }
+              // ── Movimientos de banco/caja: UNO por línea de pago con el MONTO COMPLETO (para conciliar con el estado de cuenta bancario) ──
+              const nesCubiertas=cobrosGenerados.map(g=>g.ne.id).join(', ');
+              const saldoAcumPorCta={};
+              for(let li=0;li<lineas.length;li++){
+                const linea=lineas[li];
+                if(linea.anticipoId||linea.cuentaId.startsWith('ANTICIPO::')) continue; // aplicar anticipo no mueve banco
+                const tk=trackLineas[li];
+                const usdAplicadoLinea=parseFloat(tk.usdAsignado.toFixed(2));
+                if(usdAplicadoLinea<0.005) continue;
+                const tasa=parseNum(linea.tasa||tasaBCV);
+                // Bs exacto: si la línea se aplicó completa, usar el Bs tecleado tal cual; si quedó parcial, la porción asignada
+                const bsAplicadoLinea=tk.bsTotal!=null?parseFloat(tk.bsAsignado.toFixed(2)):parseFloat((usdAplicadoLinea*tasa).toFixed(2));
+                const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
+                const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
+                if(cta){
+                  const mvId=`MV-${grupoId}-${li}`;
+                  batch.set(getDocRef('banco_movimientos',mvId),{
+                    id:mvId,fecha:linea.fecha,tipo:'Ingreso',origenIngreso:'Cobro CxC',
+                    concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName}${nesCubiertas?` — ${nesCubiertas}`:''}`,
+                    referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
+                    cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
+                    montoUSD:usdAplicadoLinea,montoBs:bsAplicadoLinea,tasa,moneda:linea.moneda,metodo:linea.metodo,
+                    grupoCobroId:grupoId,estatus:'No Conciliado',timestamp:Date.now()
+                  });
+                  saldoAcumPorCta[cta.id]=(saldoAcumPorCta[cta.id]||0)+usdAplicadoLinea;
+                }
+                if(cajaCob){
+                  const mvId=`MVC-${grupoId}-${li}`;
+                  batch.set(getDocRef('caja_movimientos',mvId),{
+                    id:mvId,cajaId:cajaCob.id,fecha:linea.fecha,tipo:'Ingreso',
+                    moneda:cajaCob.moneda||'USD',
+                    concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName}${nesCubiertas?` — ${nesCubiertas}`:''}`,
+                    referencia:linea.referencia,
+                    monto:usdAplicadoLinea,montoUSD:usdAplicadoLinea,montoBs:bsAplicadoLinea,tasa,
+                    aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
+                    metodo:linea.metodo,grupoCobroId:grupoId,timestamp:Date.now()
+                  });
+                }
+              }
+              for(const [ctaId,inc] of Object.entries(saldoAcumPorCta)){
+                const ctaDoc=(cuentasBanco||[]).find(c=>c.id===ctaId);
+                if(ctaDoc) batch.update(getDocRef('banco_cuentas',ctaId),{saldo:parseFloat((parseNum(ctaDoc.saldo||0)+inc).toFixed(2))});
               }
               for(const [antId,aplicado] of Object.entries(antAplicado)){
                 const ant=(cobrosCxc||[]).find(a=>a.id===antId);
