@@ -18957,7 +18957,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           );
           const factsDirCom = (invoices||[]).filter(inv => {
             if(!(inv.fecha||'').startsWith(ym)) return false;
-            if(!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase());
+            if((inv.vendedor||'').toUpperCase()==='OFICINA') return false;
+            if(comVendedor && (inv.vendedor||'').toUpperCase()!==comVendedor.toUpperCase()) return false;
             if(inv.neOrigen) return false;
             const invId = inv.id||inv.documento||'';
             if(facturasEnNECom.has(invId)||facturasEnNECom.has((inv.documento||'').replace(/^FAC-/,'INVO-'))) return false;
@@ -19884,7 +19885,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <input value={form.neClientSearch!==undefined?form.neClientSearch:form.clientName} onChange={e=>setForm(f=>({...f,neClientSearch:e.target.value}))} onFocus={()=>setForm(f=>({...f,neShowClientDrop:true}))} onBlur={()=>setTimeout(()=>setForm(f=>({...f,neShowClientDrop:false})),200)}
                         className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500" placeholder="Buscar cliente..."/>
                       {form.neShowClientDrop&&clientResults.length>0&&(<div className="absolute z-50 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-48 overflow-y-auto">
-                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',territorio:c.estado||c.territory||f.territorio||'',neClientSearch:c.name||c.nombre||'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
+                        {clientResults.map(c=>(<button key={c.id||c.rif} onMouseDown={()=>setForm(f=>({...f,clientRif:c.rif||'',clientName:c.name||c.nombre||'',clientAddress:c.direccion||c.address||'',territorio:c.estado||c.territory||f.territorio||'',vendedor:(c.vendedor||c.vendedorAsignado||f.vendedor||'').toUpperCase(),diasCredito:String(parseInt(c.diasCredito??f.diasCredito??0)||0),neClientSearch:c.name||c.nombre||'',neShowClientDrop:false}))} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-xs border-b last:border-0"><span className="font-black text-orange-600">{c.rif}</span> — {c.name||c.nombre}</button>))}
                       </div>)}
                     </div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">RIF</label>
