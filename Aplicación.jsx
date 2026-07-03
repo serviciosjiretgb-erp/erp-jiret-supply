@@ -18397,16 +18397,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const vendArrBruto = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
           const totalVentasBruto = vendArrBruto.reduce((s,v)=>s+v.monto,0);
 
-          // Ajuste NC del período
-          const ajusteNCDash = (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).reduce((s,nc)=>{
+          // Ajuste NC/ND del período — asignado al VENDEDOR dueño de la NE/factura afectada (no prorrateado)
+          const _vendPorDoc=new Map();
+          (notasEntrega||[]).forEach(ne=>{const v=(ne.vendedor||'—').toUpperCase();[ne.id,ne.documento,ne.facturaId].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
+          (invoices||[]).forEach(inv=>{const v=(inv.vendedor||'—').toUpperCase();[inv.id,inv.documento,inv.nroFiscal].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
+          let ajusteNCDash=0;
+          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).forEach(nc=>{
             const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
-            return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
-          },0);
+            const signed=nc.tipo==='NC'?-baseUsd:baseUsd;
+            ajusteNCDash+=signed;
+            const vDoc=_vendPorDoc.get(nc.neId)||_vendPorDoc.get(nc.neOrigen)||_vendPorDoc.get(nc.facturaId)||'—';
+            porVend[vDoc]=(porVend[vDoc]||0)+signed;
+          });
           const totalVentas = totalVentasBruto + ajusteNCDash;
-          // Escalar cada vendedor proporcionalmente
-          const ratioNCDash = totalVentasBruto > 0 ? totalVentas / totalVentasBruto : 1;
-          const vendArr = vendArrBruto.map(v=>({...v, monto: v.monto * ratioNCDash}));
+          const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
           const mejorVend = vendArr[0];
           const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
           const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
