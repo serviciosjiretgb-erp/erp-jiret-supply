@@ -22271,9 +22271,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const montoBs=parseNum(n.monto||0);
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
-            const signedUSD=n.tipo==='NC'?-montoUSD:montoUSD;
+            // ND directa: descontar lo ya cobrado (cobros registrados contra ND-<id>)
+            const cobradoND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0):0;
+            const saldoUSD=Math.max(0,montoUSD-cobradoND);
+            const signedUSD=n.tipo==='NC'?-montoUSD:saldoUSD;
+            if(n.tipo==='ND'&&saldoUSD<=0.005) continue; // ND ya cobrada por completo: no suma a la cartera
             if(!_manualNCPorCliente.has(rif)) _manualNCPorCliente.set(rif,[]);
-            _manualNCPorCliente.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_sinTasa:sinTasa});
+            _manualNCPorCliente.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_cobradoND:cobradoND,_sinTasa:sinTasa});
           }
 
           // Por cliente
@@ -22865,7 +22869,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
           if(cxcPagoModal){
             const pm=cxcPagoModal;
             // Construir lista de clientes con saldo independiente de filtros
-            const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01);
+            const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&Math.abs(getSaldoNEAtFecha(ne,null))>0.01);
             // ND de cliente directo (sin NE, sin factura) — cuenta por cobrar propia, tratada como pseudo-NE
             const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
               .map(n=>({
@@ -22890,7 +22894,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
               porClienteModal[k].nes.push(ne);
             });
             const clientesConSaldo=Object.values(porClienteModal)
-              .filter(cl=>cl.total>0.01)
+              .filter(cl=>Math.abs(cl.total)>0.01)
               .sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
             const busq=(pm.clientSearch||'').toLowerCase();
             const clientesSinDeuda=(clients||[]).filter(c=>(c.razonSocial||c.rif)&&!clientesConSaldo.some(cs=>cs.clientRif===(c.rif||'')))
@@ -22898,7 +22902,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const clientesTodos=[...clientesConSaldo,...clientesSinDeuda];
             const clientesFiltrados=busq?clientesTodos.filter(cl=>(cl.clientName||'').toLowerCase().includes(busq)||(cl.clientRif||'').toLowerCase().includes(busq)):clientesConSaldo;
             const clienteSel=clientesTodos.find(cl=>cl.clientRif===pm.clientRif);
-            const nesPendientes=(clienteSel?.nes||[]).filter(ne=>getSaldoNEAtFecha(ne,null)>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+            const nesPendientes=(clienteSel?.nes||[]).filter(ne=>Math.abs(getSaldoNEAtFecha(ne,null))>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
             // Anticipos del cliente con saldo disponible (cobros esAnticipo sin aplicar del todo)
             const anticiposCliente=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif===pm.clientRif||c.clientName===pm.clientName))
               .map(a=>({...a,_saldoAnt:parseNum(a.monto||0)-parseNum(a.montoAplicado||0)}))
@@ -23039,18 +23043,21 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                         const totalBs=baseBs+ivaBs;
                         // NC/ND aplicadas a esta NE/factura, para mostrarlas desglosadas igual que las retenciones
                         const ncsAplicadas=ne._esNDDirecta?[]:(_ncsByNe.get(ne.id)||_ncsByNe.get(ne.documento)||_ncsByNe.get(ne.facturaId)||[]).filter((n,idx,arr)=>arr.findIndex(x=>x.id===n.id)===idx);
+                        const esCredito=saldo<-0.005;
                         return(
-                        <div key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}))}
-                          style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',cursor:'pointer',background:sel?'#fff7ed':i%2===0?'#fff':'#fafafa',display:'flex',gap:10,alignItems:'center'}}
-                          onMouseEnter={e=>e.currentTarget.style.background='#fff7ed'} onMouseLeave={e=>e.currentTarget.style.background=sel?'#fff7ed':i%2===0?'#fff':'#fafafa'}>
-                          <div style={{width:18,height:18,borderRadius:5,border:`2px solid ${sel?'#E8541A':'#d1d5db'}`,background:sel?'#E8541A':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s'}}>
+                        <div key={ne.id} onClick={()=>{if(esCredito)return;setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}));}}
+                          style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',cursor:esCredito?'default':'pointer',background:esCredito?'#f0fdfa':sel?'#fff7ed':i%2===0?'#fff':'#fafafa',display:'flex',gap:10,alignItems:'center'}}
+                          onMouseEnter={e=>{if(!esCredito)e.currentTarget.style.background='#fff7ed';}} onMouseLeave={e=>{if(!esCredito)e.currentTarget.style.background=sel?'#fff7ed':i%2===0?'#fff':'#fafafa';}}>
+                          {!esCredito&&<div style={{width:18,height:18,borderRadius:5,border:`2px solid ${sel?'#E8541A':'#d1d5db'}`,background:sel?'#E8541A':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .15s'}}>
                             {sel&&<span style={{color:'#fff',fontSize:9,fontWeight:900,lineHeight:1}}>✓</span>}
-                          </div>
+                          </div>}
+                          {esCredito&&<div style={{width:18,height:18,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12}}>💠</div>}
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{display:'flex',justifyContent:'space-between'}}>
-                              <span style={{fontWeight:900,fontSize:11,color:ne._esNDDirecta?'#9333ea':'#E8541A'}}>{ne._esNDDirecta?`ND ${ne.nroFiscal}`:ne.id}</span>
-                              <span style={{fontWeight:900,fontSize:11,color:'#dc2626'}}>${formatNum(saldo)}</span>
+                              <span style={{fontWeight:900,fontSize:11,color:esCredito?'#0f766e':ne._esNDDirecta?'#9333ea':'#E8541A'}}>{ne._esNDDirecta?`ND ${ne.nroFiscal}`:ne.id}</span>
+                              <span style={{fontWeight:900,fontSize:11,color:esCredito?'#0f766e':'#dc2626'}}>{esCredito?'-$'+formatNum(Math.abs(saldo)):'$'+formatNum(saldo)}</span>
                             </div>
+                            {esCredito&&<div style={{marginTop:3}}><span style={{fontSize:8,fontWeight:900,color:'#0f766e',background:'#ccfbf1',padding:'1px 6px',borderRadius:4}}>Saldo a favor (sobrecobro) — cierre con ND o reasigne el pago</span></div>}
                             <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
                               <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}{ne._esNDDirecta&&ne._ndDescripcion?` · ${ne._ndDescripcion}`:''}</span>
                               {montoUSD>0&&aplicado>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
@@ -24136,9 +24143,12 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
             const montoBs=parseNum(n.monto||0);
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
-            const signedUSD=n.tipo==='NC'?-montoUSD:montoUSD;
+            // ND directa: descontar lo cobrado hasta el corte (cobros contra ND-<id>)
+            const cobradoND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0):0;
+            const saldoUSD=Math.max(0,montoUSD-cobradoND);
+            const signedUSD=n.tipo==='NC'?-montoUSD:saldoUSD;
             if(!_manualNCPorClienteEc.has(rif)) _manualNCPorClienteEc.set(rif,[]);
-            _manualNCPorClienteEc.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_sinTasa:sinTasa});
+            _manualNCPorClienteEc.get(rif).push({...n,_montoUSD:montoUSD,_signedUSD:signedUSD,_cobradoND:cobradoND,_sinTasa:sinTasa});
           }
           // ── Anticipos por cliente (crédito a favor) — respeta corte de fecha ──
           const _anticiposPorClienteEc = new Map();
