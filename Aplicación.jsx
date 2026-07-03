@@ -19476,11 +19476,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const esPct = r.tipoComision==='PORCENTUAL';
             const rows = esPct
               ? [['Concepto','Monto'],['Ventas brutas sin IVA','$'+formatNum(r.totalVentas)],['% Comisión',r.porcentaje+'%'],['COMISIÓN TOTAL','$'+formatNum(r.compensacionTotal)]]
-              : [['Concepto','Monto'],['Comisión por Meta','$'+formatNum(r.comisionMeta||0)],['Comisión por Cobranza','$'+formatNum(r.totalCobranza||0)],['Bono Mix','$'+formatNum(r.montoMix||0)],['Bono Vehículo','$'+formatNum(r.bonos?.bonoVehiculo||0)],['Salario Garantizado','$'+formatNum(r.bonos?.salarioGarantizado||0)],['Captación','$'+formatNum(r.bonos?.captacion||0)],['Recuperación','$'+formatNum(r.bonos?.recuperacion||0)],['TOTAL','$'+formatNum(r.compensacionTotal)]];
+              : [['Concepto','Fecha de Pago','Monto'],['Comisión por Meta','5 de cada mes','$'+formatNum(r.comisionMeta||0)],['Comisión por Cobranza','15 de cada mes','$'+formatNum(r.totalCobranza||0)],['Bono Mix','5 de cada mes','$'+formatNum(r.montoMix||0)],['Bono Vehículo','5 de cada mes','$'+formatNum(r.bonos?.bonoVehiculo||0)],['Salario Garantizado','5 de cada mes','$'+formatNum(r.bonos?.salarioGarantizado||0)],['Captación','5 de cada mes','$'+formatNum(r.bonos?.captacion||0)],['Recuperación','5 de cada mes','$'+formatNum(r.bonos?.recuperacion||0)],['TOTAL','','$'+formatNum(r.compensacionTotal)]];
+            const detalleCobr=(!esPct&&r.cobranzaDetalle&&r.cobranzaDetalle.length)?`
+              <tr><td colspan="8"></td></tr>
+              <tr><td colspan="8" style="font-weight:900;font-size:12px;background:#fef3c7">DETALLE DE COBRANZA DEL MES — Se paga el 15 de cada mes</td></tr>
+              <tr style="font-weight:900;background:#f1f5f9"><td>NE</td><td>Cliente</td><td>Fecha NE</td><td>Fecha Cobro</td><td>Monto NE</td><td>Días Retraso</td><td>%</td><td>Comisión</td></tr>
+              ${r.cobranzaDetalle.map(d=>`<tr><td>${d.neId}</td><td>${d.cliente||''}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td>$${formatNum(d.monto||0)}</td><td>${formatNum(d.diasRetraso||0)}</td><td>${formatNum(d.pct||0)}%</td><td>$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
+              <tr style="font-weight:900;background:#111;color:#fff"><td colspan="7">TOTAL COBRANZA</td><td>$${formatNum(r.totalCobranza||0)}</td></tr>`:'';
             const html=`<html><head><meta charset="utf-8"></head><body><table border="1">
-              <tr><td colspan="2" style="font-weight:900;font-size:14px">COMISIÓN ${r.vendedor} — ${r.mesLabel}</td></tr>
-              <tr><td>Tipo</td><td>${esPct?'Porcentual '+r.porcentaje+'%':'Esquema Completo'}</td></tr>
-              ${rows.map(([a,b])=>`<tr><td>${a}</td><td>${b}</td></tr>`).join('')}
+              <tr><td colspan="8" style="font-weight:900;font-size:14px">COMISIÓN ${r.vendedor} — ${r.mesLabel}</td></tr>
+              <tr><td>Tipo</td><td colspan="7">${esPct?'Porcentual '+r.porcentaje+'%':'Esquema Completo'}</td></tr>
+              ${rows.map(cols=>`<tr>${cols.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}
+              ${detalleCobr}
             </table></body></html>`;
             const b=new Blob([html],{type:'application/vnd.ms-excel'});
             const a=document.createElement('a');a.href=URL.createObjectURL(b);
