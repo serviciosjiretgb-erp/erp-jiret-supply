@@ -18965,7 +18965,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // 3. Cobranza automática desde Notas de Entrega
           const calcRango = (dias) => {
-            const e = (cfg.cobranzaEscala||[]).find(x=>dias>=x.dMin && dias<=x.dMax);
+            const escala=(cfg.cobranzaEscala||[]);
+            // Más allá del último rango, aplica el % del último rango (30+ días = 0,75%)
+            const e = escala.find(x=>dias>=x.dMin && dias<=x.dMax) || (escala.length&&dias>escala[escala.length-1].dMax?escala[escala.length-1]:null);
             return e || null;
           };
           const calcVencCobranza = (fecha, diasCred) => {
