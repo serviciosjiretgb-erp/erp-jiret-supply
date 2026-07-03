@@ -22281,9 +22281,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           nesAbiertas.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
             if(!porCliente[k]) porCliente[k]={clientName:ne.clientName||k,clientRif:k,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
-            const saldoReal=getSaldoNEAtFecha(ne,fechaRef);const d=getAgingDays(ne,fechaRef);
-            // Los saldos negativos por sobrecobro NO restan del total del cliente (la fila se muestra igual para revisión) — así CxC coincide con Registrar Cobro
-            const saldo=Math.max(0,saldoReal);
+            const saldo=getSaldoNEAtFecha(ne,fechaRef);const d=getAgingDays(ne,fechaRef);
             if(d<=0) porCliente[k].corriente+=saldo; else if(d<=30) porCliente[k].v1_30+=saldo;
             else if(d<=60) porCliente[k].v31_60+=saldo; else porCliente[k].vMas60+=saldo;
             porCliente[k].total+=saldo; porCliente[k].nes.push(ne);
@@ -22333,7 +22331,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const clienteActivoData=cxcSelectedClient?porCliente[cxcSelectedClient]:null;
           const nesMetrica=clienteActivoData?clienteActivoData.nes:nesAbiertas;
           const _antsFiltCartera=cxcSelectedClient?(_anticiposPorCliente.get(cxcSelectedClient)||[]):[..._anticiposPorCliente.values()].flat();
-          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+Math.max(0,getSaldoNEAtFecha(ne,fechaRef)),0)-_antsFiltCartera.reduce((s,a)=>s+a._saldoAnt,0);
+          const totalCarteraFilt=nesMetrica.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_antsFiltCartera.reduce((s,a)=>s+a._saldoAnt,0);
           const totalBrutoFilt=clienteActivoData
             ?(nesTotal.filter(ne=>ne.clientRif===cxcSelectedClient||ne.clientName===clienteActivoData.clientName).reduce((s,ne)=>s+parseNum(ne.total||0),0))
             :totalBrutoNEs;
@@ -23776,7 +23774,7 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-teal-400 font-black">{(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0))>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)):'—'}</td>
-                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+Math.max(0,getSaldoNEAtFecha(ne,fechaRef)),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
+                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
                                           <td colSpan={2}></td>
                                         </tr>
                                       </tfoot>
