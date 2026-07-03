@@ -7845,6 +7845,7 @@ function App() {
 
   // Estados para Toma Física
   const [tomaFisicaDate, setTomaFisicaDate] = useState(getTodayDate());
+  const [tomaFisicaBusq, setTomaFisicaBusq] = useState('');
   const [physicalCounts, setPhysicalCounts] = useState({});
   const [tomasFisicas, setTomasFisicas] = useState([]);
   const [showTomaHistorial, setShowTomaHistorial] = useState(false);
@@ -14652,6 +14653,16 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
       });
 
       function renderTFSection(title, color, items, isTerminados, isFG, singleWH) {
+        // Filtro por descripción o código (buscador de Toma Física)
+        const _tfQ=(tomaFisicaBusq||'').trim().toUpperCase();
+        if(_tfQ){
+          items=items.filter(i=>{
+            const code=(i.displayId||(i.id||'').split('___')[0]||i.id||'').toUpperCase();
+            const desc=(i.desc||'').toUpperCase();
+            return code.includes(_tfQ)||desc.includes(_tfQ);
+          });
+          if(items.length===0) return null;
+        }
         // Multi-warehouse for PT, single ZI for MP/WIP (singleWH param)
         const activeWH = singleWH ? ['ALMACEN ZI'] : depositos.filter(d=>!['PLANTA','ALMACEN EXTERNO','DEPOSITO 2','ALMACEN PRINCIPAL'].includes(d));
         return (
@@ -14827,9 +14838,16 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
           </div>
 
           <div className="p-6">
-            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-6 text-xs font-bold text-blue-700 flex items-start gap-3">
+            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl mb-4 text-xs font-bold text-blue-700 flex items-start gap-3">
               <AlertTriangle size={20} className="text-blue-600 flex-shrink-0 mt-0.5"/>
               Ingresa el conteo físico real. El sistema calculará la diferencia y generará ajustes automáticos en el Kardex al procesar.
+            </div>
+            <div className="mb-6 relative">
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-orange-400"/>
+              <input value={tomaFisicaBusq} onChange={e=>setTomaFisicaBusq(e.target.value)}
+                placeholder="Buscar por descripción o código..."
+                className="w-full border-2 border-orange-200 rounded-2xl pl-11 pr-10 py-3 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
+              {tomaFisicaBusq&&<button onClick={()=>setTomaFisicaBusq('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 font-black text-sm">✕</button>}
             </div>
 
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
