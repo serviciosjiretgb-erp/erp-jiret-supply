@@ -18434,8 +18434,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
           );
           const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
-          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0) * ratioNCDash;
-          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0) * ratioNCDash;
+          const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0);
+          const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0);
 
           const exportDashExcel = () => {
             const td=(c,r=false,b=false)=>`<td style="padding:5px 8px;border:1px solid #ccc;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:900;':''}">${c}</td>`;
