@@ -18952,6 +18952,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const facturasEnNECom = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
           const nesMesCom = (notasEntrega||[]).filter(ne =>
             (ne.fecha||'').startsWith(ym) &&
+            ne.status!=='ANULADA' &&
             (ne.vendedor||'').toUpperCase()!=='OFICINA' &&
             (!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
           );
@@ -18965,8 +18966,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return true;
           });
           const facturasMes = [...nesMesCom, ...factsDirCom]; // para compatibilidad
+          // NC del mes aplicadas a las NEs/facturas del vendedor — descuentan de la meta (base sin IVA)
+          const _idsNEVend=new Set(nesMesCom.flatMap(ne=>[ne.id,ne.documento,ne.facturaId].filter(Boolean)));
+          const _idsFactVend=new Set(factsDirCom.flatMap(inv=>[inv.id,inv.documento,inv.nroFiscal].filter(Boolean)));
+          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
+              _idsNEVend.has(n.neId)||_idsNEVend.has(n.neOrigen)||_idsNEVend.has(n.facturaId)||
+              _idsFactVend.has(n.facturaId)
+            )).reduce((s,n)=>{
+              const t=parseNum(n.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+              return s+(t>1?parseNum(n.monto||0)/t:0); // base sin IVA
+            },0);
           const totalVentasVend = nesMesCom.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0)
-                                + factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+                                + factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0)
+                                - ncDescuentoVend;
 
           // Total ventas de TODA la empresa en el mes
           const nesMesEmpresa = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ym));
@@ -19313,7 +19325,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
                       <div className="px-4 py-1.5 bg-orange-50/50 border-t border-orange-100 flex justify-between items-center text-[9px] font-bold text-gray-500">
                         <span>NEs del mes: {nesMesCom.length} — ${formatNum(nesMesCom.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0))}</span>
-                        <span>Facturas directas (sin NE): {factsDirCom.length} — ${formatNum(factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0))}</span>
+                        <span>Facturas directas (sin NE): {factsDirCom.length} — ${formatNum(factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0))}{ncDescuentoVend>0.005?` · NC descontadas: -$${formatNum(ncDescuentoVend)}`:''}</span>
                       </div>
                       <table className="w-full text-xs">
                         <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Rango</th><th className="px-3 py-2 text-center">%</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Aplicado</th></tr></thead>
