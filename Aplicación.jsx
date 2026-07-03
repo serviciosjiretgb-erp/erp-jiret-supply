@@ -8978,11 +8978,19 @@ function App() {
               batch.set(getDocRef('inventoryMovements', `TF-PT-${timestamp}-${ch.cleanCode}`), { id:`TF-PT-${timestamp}-${ch.cleanCode}`, date:tomaFisicaDate||getTodayDate(), itemId:ch.cleanCode, itemName:ch.ptDocs[0]?.desc||ch.cleanCode, type:ch.diff>0?'AJUSTE (POSITIVO)':'AJUSTE (NEGATIVO)', qty:Math.abs(ch.diff), cost:ch.ptDocs[0]?.cost||0, totalValue:Math.abs(ch.diff)*(ch.ptDocs[0]?.cost||0), reference:'TOMA FÍSICA', notes:'AJUSTE MASIVO PT', timestamp, user:appUser?.name||'Sistema' });
             }
           }
+          // Registro del historial DENTRO del mismo batch: si los ajustes se aplican, el historial queda guardado sí o sí
+          const tomaSnapshot = changes.map(ch=>({
+            id: String(ch.cleanCode||ch.pfId||ch.item?.id||''),
+            desc: String(ch.ptDocs?.[0]?.desc||ch.item?.desc||(ch.fgDocs?.[0]?formatFGLabel(ch.fgDocs[0]):'—')||'—'),
+            category: ch.kind==='inventory'?String(ch.item?.category||'General'):'Productos Terminados',
+            unit: String(ch.ptDocs?.[0]?.unit||ch.item?.unit||(ch.esTermo?'KG':'Millares')||'und'),
+            sysStock: parseNum(ch.sysStock??parseNum(ch.item?.stock||0))||0,
+            physCount: parseNum(ch.newStock)||0,
+            diff: parseNum(ch.diff)||0,
+            kind: String(ch.kind||'')
+          }));
+          batch.set(getDocRef('tomasFisicas', `TOMA-${timestamp}`), { id:`TOMA-${timestamp}`, fecha:tomaFisicaDate||getTodayDate(), fechaHora:new Date().toLocaleString('es-VE'), timestamp, realizadaPor:appUser?.name||'Sistema', username:appUser?.username||'', observaciones:'', totalItems:tomaSnapshot.length, totalAjustes:count, items:tomaSnapshot });
           await batch.commit();
-          try {
-            const tomaSnapshot = changes.map(ch=>({ id:ch.cleanCode||ch.pfId||ch.item?.id||'', desc:ch.ptDocs?.[0]?.desc||ch.item?.desc||(ch.fgDocs?.[0]?formatFGLabel(ch.fgDocs[0]):'—'), category:ch.kind==='inventory'?(ch.item?.category||'General'):'Productos Terminados', unit:ch.ptDocs?.[0]?.unit||ch.item?.unit||(ch.esTermo?'KG':'Millares'), sysStock:ch.sysStock??parseNum(ch.item?.stock||0), physCount:ch.newStock, diff:ch.diff, kind:ch.kind }));
-            await addDoc(getColRef('tomasFisicas'), { fecha:getTodayDate(), fechaHora:new Date().toLocaleString('es-VE'), timestamp:Date.now(), realizadaPor:appUser?.name||'Sistema', username:appUser?.username||'', observaciones:'', totalItems:tomaSnapshot.length, totalAjustes:count, items:tomaSnapshot });
-          } catch(e){ console.warn('Error guardando toma física:', e); }
           setPhysicalCounts({});
           setDialog({title:'✅ Toma Física Procesada', text:`${count} ajuste(s) aplicados.`, type:'alert'});
         } catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
@@ -23752,15 +23760,17 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                             <td className="py-2 px-2 text-[9px] text-teal-600 italic">{r.tipoLabel||'Retención manual'} · {r._manualNroFiscal&&r._manualNroFiscal!=='—'?'factura '+r._manualNroFiscal+' no registrada en el sistema':'sin factura asociada'}</td>
                                           </tr>
                                         ))}
-                                        {(_manualNCPorCliente.get(cl.clientRif)||[]).map((n,ni)=>(
-                                          <tr key={n.id||ni} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                                        {(_manualNCPorCliente.get(cl.clientRif)||[]).map((n,ni)=>{
+                                          const pagosNDcxc=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')):[];
+                                          return (<React.Fragment key={n.id||ni}>
+                                          <tr className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                                             <td className="py-2 px-2 font-black text-purple-700 text-[9px]">↳ {n.tipo||'NC'} · {n.nroDocumento||'—'}</td>
                                             <td className="py-2 px-2 text-center text-purple-600 text-[9px]">{n.fecha||'—'}</td>
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-center"><span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md text-[8px]">Sin NE</span></td>
                                             <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
-                                            <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                            <td className="py-2 px-2 text-right">{n._cobradoND>0.005?<span className="font-black text-green-600 text-[9px]">${formatNum(n._cobradoND)}</span>:<span className="text-gray-300 text-[9px]">—</span>}</td>
                                             <td className="py-2 px-2 text-right">
                                               {n._sinTasa?<span className="text-red-500 font-black text-[8px]">⚠ Sin tasa</span>:<span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md text-[9px]">{n.tipo==='NC'?'-':'+'}${formatNum(n._montoUSD)}</span>}
                                             </td>
@@ -23771,7 +23781,24 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-[9px] text-purple-600 italic">{n.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} directa · cliente sin NE asociada · {n.descripcion||'sin descripción'}</td>
                                           </tr>
-                                        ))}
+                                          {pagosNDcxc.map((c,ci)=>(
+                                            <tr key={c.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
+                                              <td className="py-1.5 px-2 pl-6 font-bold text-green-700 text-[9px]">↳ Pago{pagosNDcxc.length>1?` ${ci+1}`:''}</td>
+                                              <td className="py-1.5 px-2 text-center text-green-700 text-[9px]">{c.fecha||'—'}</td>
+                                              <td className="py-1.5 px-2 text-center text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-center text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-center text-gray-400 text-[9px]">{c.referencia||'—'}</td>
+                                              <td className="py-1.5 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-right font-black text-green-600 text-[9px]">${formatNum(c.monto||0)}</td>
+                                              <td className="py-1.5 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-center text-gray-300 text-[9px]">—</td>
+                                              <td className="py-1.5 px-2 text-[9px] text-green-700 font-bold">{c.metodo||''}{c.cuentaBancoNombre?` · ${c.cuentaBancoNombre}`:''}{parseNum(c.montoBs||0)>0?` · Bs.${formatNum(c.montoBs)}`:''}</td>
+                                            </tr>
+                                          ))}
+                                          </React.Fragment>);
+                                        })}
                                       </tbody>
                                       <tfoot>
                                         <tr style={{background:'#0f172a'}} className="text-[9px]">
@@ -24653,19 +24680,35 @@ body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiert
                               <td className="py-2 px-3 text-center"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Manual</span></td>
                             </tr>
                           ))}
-                          {manualNCCli.map((n,ni)=>(
-                            <tr key={n.id||ni} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
+                          {manualNCCli.map((n,ni)=>{
+                            const pagosND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`&&(!ecHasta||(c.fecha||'')<=ecHasta)).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')):[];
+                            return (<React.Fragment key={n.id||ni}>
+                            <tr className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                               <td className="py-2 px-3 font-black text-purple-700">↳ {n.tipo||'NC'} · {n.nroDocumento||'—'}</td>
                               <td className="py-2 px-3 text-purple-600">{n.fecha||'—'}</td>
                               <td className="py-2 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{n.tipo==='NC'?'Nota Crédito':'Nota Débito'}</span></td>
                               <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{n.descripcion||'Cliente directo · sin NE asociada'}</td>
-                              <td className="py-2 px-3 text-right text-gray-300">—</td>
-                              <td className="py-2 px-3 text-right">{n._sinTasa?<span className="text-red-500 font-black text-[9px]">⚠ Sin tasa</span>:<span className="font-black text-purple-700">{n.tipo==='NC'?'-':'+'}${formatNum(n._montoUSD)}</span>}</td>
+                              <td className="py-2 px-3 text-right">{n.tipo==='ND'&&!n._sinTasa?<span className="font-mono text-purple-700">${formatNum(n._montoUSD)}</span>:<span className="text-gray-300">—</span>}</td>
+                              <td className="py-2 px-3 text-right">{n._sinTasa?<span className="text-red-500 font-black text-[9px]">⚠ Sin tasa</span>:(n._cobradoND>0.005?<span className="font-black text-green-600">${formatNum(n._cobradoND)}</span>:<span className="font-black text-purple-700">{n.tipo==='NC'?'-':'+'}${formatNum(n._montoUSD)}</span>)}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
                               <td className="py-2 px-3 text-right font-black text-purple-700">{n._sinTasa?'—':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD))}</td>
-                              <td className="py-2 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Sin NE</span></td>
+                              <td className="py-2 px-3 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${n.tipo==='ND'&&n._signedUSD<=0.005?'bg-green-50 text-green-700':'bg-purple-50 text-purple-700'}`}>{n.tipo==='ND'?(n._signedUSD<=0.005?'Saldada':'Sin NE'):'Sin NE'}</span></td>
                             </tr>
-                          ))}
+                            {pagosND.map((c,ci)=>(
+                              <tr key={c.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
+                                <td className="py-1.5 px-3 pl-8 font-bold text-green-700 text-[10px]">↳ Pago{pagosND.length>1?` ${ci+1}`:''}</td>
+                                <td className="py-1.5 px-3 text-green-700 text-[10px]">{c.fecha||'—'}</td>
+                                <td className="py-1.5 px-3 text-gray-400 text-[10px]">{c.referencia||'—'}</td>
+                                <td className="py-1.5 px-3 text-gray-500 text-[10px] max-w-[180px] truncate">{c.metodo||''}{c.cuentaBancoNombre?` · ${c.cuentaBancoNombre}`:''}{parseNum(c.montoBs||0)>0?` · Bs.${formatNum(c.montoBs)}`:''}</td>
+                                <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                <td className="py-1.5 px-3 text-right font-black text-green-600">${formatNum(c.monto||0)}</td>
+                                <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                <td className="py-1.5 px-3 text-center"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Cobro</span></td>
+                              </tr>
+                            ))}
+                            </React.Fragment>);
+                          })}
                           {anticiposCli.map((a,ai)=>(
                             <tr key={a.id||`ant-${ai}`} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
                               <td className="py-2 px-3 font-black text-teal-700">💰 ANTICIPO</td>
