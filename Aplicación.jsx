@@ -19116,7 +19116,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               compensacionTotal,
               ...(tipoComisionVend==='PORCENTUAL'
                 ? {porcentaje:pctSimple, comisionPorcentual}
-                : {comisionMeta, montoMix, totalCobranza, bonos:{...bonos}}),
+                : {comisionMeta, montoMix, totalCobranza, bonos:{...bonos},
+                   cobranzaDetalle: cobranzaCalcAll.filter(x=>x.cobrado&&(x.fechaPago||'').startsWith(ym)).map(x=>({neId:x.neId,cliente:x.cliente,fechaNE:x.fecha,monto:x.monto,fechaPago:x.fechaPago,diasRetraso:x.diasRetraso,pct:x.pct,montoPagar:x.montoPagar}))}),
               nNEs: nesMesCom.length,
               ts: Date.now(),
               user: appUser?.name||'Sistema',
@@ -19444,16 +19445,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div class="kpi-card" style="border-left-color:#16a34a"><div class="kpi-val" style="color:#16a34a">$${formatNum(r.compensacionTotal)}</div><div class="kpi-lbl">Compensación Total</div></div>
                 </div>
                 <table>
-                  <tr><th>Concepto</th><th style="text-align:right">Monto</th></tr>
-                  <tr><td>Comisión por Meta de Venta</td><td class="r">$${formatNum(r.comisionMeta||0)}</td></tr>
-                  <tr><td>Comisión por Cobranza</td><td class="r">$${formatNum(r.totalCobranza||0)}</td></tr>
-                  <tr><td>Bono Mix de Categoría</td><td class="r">$${formatNum(r.montoMix||0)}</td></tr>
-                  <tr><td>Bono por Vehículo</td><td class="r">$${formatNum(r.bonos?.bonoVehiculo||0)}</td></tr>
-                  <tr><td>Salario Garantizado</td><td class="r">$${formatNum(r.bonos?.salarioGarantizado||0)}</td></tr>
-                  <tr><td>Captación de Cliente</td><td class="r">$${formatNum(r.bonos?.captacion||0)}</td></tr>
-                  <tr><td>Recuperación de Cliente</td><td class="r">$${formatNum(r.bonos?.recuperacion||0)}</td></tr>
-                  <tr class="total-row"><td style="color:#fff">COMPENSACIÓN TOTAL</td><td style="text-align:right;color:#4ade80;font-size:18px">$${formatNum(r.compensacionTotal)}</td></tr>
+                  <tr><th>Concepto</th><th>Fecha de Pago</th><th style="text-align:right">Monto</th></tr>
+                  <tr><td>Comisión por Meta de Venta</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.comisionMeta||0)}</td></tr>
+                  <tr><td>Comisión por Cobranza</td><td style="color:#b45309;font-size:9px;font-weight:900">15 de cada mes</td><td class="r">$${formatNum(r.totalCobranza||0)}</td></tr>
+                  <tr><td>Bono Mix de Categoría</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.montoMix||0)}</td></tr>
+                  <tr><td>Bono por Vehículo</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.bonos?.bonoVehiculo||0)}</td></tr>
+                  <tr><td>Salario Garantizado</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.bonos?.salarioGarantizado||0)}</td></tr>
+                  <tr><td>Captación de Cliente</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.bonos?.captacion||0)}</td></tr>
+                  <tr><td>Recuperación de Cliente</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.bonos?.recuperacion||0)}</td></tr>
+                  <tr class="total-row"><td colspan="2" style="color:#fff">COMPENSACIÓN TOTAL</td><td style="text-align:right;color:#4ade80;font-size:18px">$${formatNum(r.compensacionTotal)}</td></tr>
                 </table>
+                ${(r.cobranzaDetalle&&r.cobranzaDetalle.length)?`
+                <h2 style="font-size:13px;margin-top:22px">Detalle de Cobranza del Mes <span style="font-size:9px;color:#b45309;font-weight:900">· Se paga el 15 de cada mes</span></h2>
+                <table>
+                  <tr><th>NE</th><th>Cliente</th><th>Fecha NE</th><th>Fecha Cobro</th><th style="text-align:right">Monto NE</th><th style="text-align:right">Días Retr.</th><th style="text-align:right">%</th><th style="text-align:right">Comisión</th></tr>
+                  ${r.cobranzaDetalle.map(d=>`<tr><td style="font-weight:700;color:#E8541A">${d.neId}</td><td>${d.cliente||''}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td class="r">$${formatNum(d.monto||0)}</td><td class="r">${formatNum(d.diasRetraso||0)}d</td><td class="r">${formatNum(d.pct||0)}%</td><td class="r" style="color:#16a34a">$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
+                  <tr class="total-row"><td colspan="7">TOTAL COBRANZA</td><td style="text-align:right;color:#4ade80">$${formatNum(r.totalCobranza||0)}</td></tr>
+                </table>`:''}
               `}
               <div class="footer"><span>ERP SUPPLY G&B · ${new Date().toLocaleDateString('es-VE')}</span><span>Documento generado automáticamente</span></div>
             </body></html>`;
@@ -19483,25 +19491,55 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const genPdfGeneral = () => {
             const reps = filtered;
             if(!reps.length){alert('No hay reportes para exportar.');return;}
-            const rows = reps.map(r=>`
+            const rows = reps.map(r=>{
+              const esP=r.tipoComision==='PORCENTUAL';
+              const cell=v=>esP?'<td style="text-align:right;color:#cbd5e1">—</td>':`<td style="text-align:right">$${formatNum(v||0)}</td>`;
+              return `
               <tr>
-                <td>${r.vendedor}</td>
+                <td>${r.vendedor}${esP?` <span style="background:#dbeafe;padding:1px 6px;border-radius:8px;font-size:8px;font-weight:900">${r.porcentaje}%</span>`:''}</td>
                 <td>${r.mesLabel}</td>
-                <td style="text-align:center"><span style="background:${r.tipoComision==='PORCENTUAL'?'#dbeafe':'#fef3c7'};padding:2px 8px;border-radius:10px;font-size:9px;font-weight:900">${r.tipoComision==='PORCENTUAL'?r.porcentaje+'%':'Completo'}</span></td>
                 <td style="text-align:right">$${formatNum(r.totalVentas)}</td>
+                ${cell(r.totalCobranza)}
+                ${cell(r.comisionMeta)}
+                ${cell(r.montoMix)}
+                ${cell(r.bonos?.bonoVehiculo)}
+                ${cell(r.bonos?.salarioGarantizado)}
+                ${cell(r.bonos?.captacion)}
+                ${cell(r.bonos?.recuperacion)}
                 <td style="text-align:right;font-weight:900;color:#16a34a">$${formatNum(r.compensacionTotal)}</td>
-              </tr>`).join('');
+              </tr>`;}).join('');
             const total = reps.reduce((s,r)=>s+parseNum(r.compensacionTotal),0);
+            const sumCol=f=>reps.reduce((s,r)=>s+parseNum(f(r)||0),0);
             const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
               <style>body{font-family:Arial;padding:32px;font-size:12px}h1{font-size:20px;font-weight:900;color:#1e293b;border-bottom:3px solid #E8541A;padding-bottom:8px;margin-bottom:20px}
               table{width:100%;border-collapse:collapse}th{background:#0f172a;color:#fff;padding:10px 12px;font-size:10px;text-transform:uppercase;text-align:left}
               td{padding:9px 12px;border-bottom:1px solid #f1f5f9}tr:nth-child(even){background:#f8fafc}
               .total{background:#E8541A;color:#fff;font-weight:900;font-size:14px}</style></head><body>
               <h1>Reporte General de Comisiones${comHistMesFilt?' — '+reps[0]?.mesLabel:''}</h1>
-              <table><thead><tr><th>Vendedor</th><th>Período</th><th>Tipo</th><th style="text-align:right">Ventas</th><th style="text-align:right">Comisión</th></tr></thead>
+              <table><thead><tr>
+                <th>Vendedor</th><th>Período</th><th style="text-align:right">Ventas</th>
+                <th style="text-align:right">Cobranza<br/><span style="font-size:8px;color:#fbbf24">15 c/mes</span></th>
+                <th style="text-align:right">Meta<br/><span style="font-size:8px;color:#94a3b8">5 c/mes</span></th>
+                <th style="text-align:right">Mix<br/><span style="font-size:8px;color:#94a3b8">5 c/mes</span></th>
+                <th style="text-align:right">Vehículo<br/><span style="font-size:8px;color:#94a3b8">5 c/mes</span></th>
+                <th style="text-align:right">Salario<br/><span style="font-size:8px;color:#94a3b8">5 c/mes</span></th>
+                <th style="text-align:right">Captación<br/><span style="font-size:8px;color:#94a3b8">5 c/mes</span></th>
+                <th style="text-align:right">Recuperación<br/><span style="font-size:8px;color:#94a3b8">5 c/mes</span></th>
+                <th style="text-align:right">Total</th></tr></thead>
               <tbody>${rows}</tbody>
-              <tfoot><tr class="total"><td colspan="4">TOTAL COMISIONES</td><td style="text-align:right">$${formatNum(total)}</td></tr></tfoot>
-              </table></body></html>`;
+              <tfoot><tr class="total">
+                <td colspan="3">TOTAL COMISIONES</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.totalCobranza))}</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.comisionMeta))}</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.montoMix))}</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.bonos?.bonoVehiculo))}</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.bonos?.salarioGarantizado))}</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.bonos?.captacion))}</td>
+                <td style="text-align:right">$${formatNum(sumCol(r=>r.bonos?.recuperacion))}</td>
+                <td style="text-align:right">$${formatNum(total)}</td></tr></tfoot>
+              </table>
+              <p style="margin-top:14px;font-size:9px;color:#64748b">★ La <b>Comisión por Cobranza</b> se paga el <b>15 de cada mes</b>. Los demás conceptos (meta, mix, vehículo, salario, captación, recuperación) se pagan el <b>5 de cada mes</b>.</p>
+              </body></html>`;
             const w=window.open('','_blank');w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);
           };
 
