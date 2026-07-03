@@ -18990,7 +18990,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const pago = (comCobranza||[]).find(c=>c.neId===ne.id)||{};
             const condicion = parseInt(ne.diasCredito||0);
             const vencimiento = ne.fechaVencimiento || calcVencCobranza(ne.fecha, condicion);
-            const fechaPago = pago.fechaPago || '';
+            // AUTO: si la NE quedó saldada por cobros registrados en CxC, la fecha del cobro que la saldó marca la comisión (lo manual tiene prioridad)
+            const cobrosNEcom=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&!c.esAnticipo);
+            const neSaldadaCom=(ne.statusCxC==='COBRADA')||(ne.saldoPendiente!==undefined&&parseNum(ne.saldoPendiente)<=0.01);
+            const fechaPagoAuto=(cobrosNEcom.length&&neSaldadaCom)?cobrosNEcom.map(c=>c.fecha||'').sort().slice(-1)[0]:'';
+            const fechaPago = pago.fechaPago || fechaPagoAuto || '';
             const cobrado = !!(pago.cobrado || fechaPago);
             const diasRetraso = fechaPago && vencimiento ? Math.max(0, diffDias(vencimiento, fechaPago)) : 0;
             const esc = fechaPago ? calcRango(diasRetraso) : null;
