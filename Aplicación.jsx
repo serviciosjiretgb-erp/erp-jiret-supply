@@ -14940,7 +14940,11 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   </div>
                   <div className="border border-gray-200 rounded-b-xl overflow-hidden">
                     {orderedSubs.map(sub => {
-                      const subItems = (subGroups[sub]||[]).sort((a,b)=>a.id.localeCompare(b.id));
+                      const _tfQ2=(tomaFisicaBusq||'').trim().toUpperCase();
+                      const subItems = (subGroups[sub]||[])
+                        .filter(i=>!_tfQ2||(i.id||'').toUpperCase().includes(_tfQ2)||(i.desc||'').toUpperCase().includes(_tfQ2))
+                        .sort((a,b)=>a.id.localeCompare(b.id));
+                      if(subItems.length===0) return null;
                       const subHdrClass = SUB_CLR[sub] || 'bg-gray-600';
                       return (
                         <div key={sub}>
