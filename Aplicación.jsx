@@ -19311,6 +19311,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <span className="text-[10px] font-black text-gray-600 uppercase">Total Ventas del Vendedor</span>
                         <span className="text-lg font-black text-orange-700">${formatNum(totalVentasVend)}</span>
                       </div>
+                      <div className="px-4 py-1.5 bg-orange-50/50 border-t border-orange-100 flex justify-between items-center text-[9px] font-bold text-gray-500">
+                        <span>NEs del mes: {nesMesCom.length} — ${formatNum(nesMesCom.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0))}</span>
+                        <span>Facturas directas (sin NE): {factsDirCom.length} — ${formatNum(factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0))}</span>
+                      </div>
                       <table className="w-full text-xs">
                         <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Rango</th><th className="px-3 py-2 text-center">%</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Aplicado</th></tr></thead>
                         <tbody className="divide-y divide-gray-50">
