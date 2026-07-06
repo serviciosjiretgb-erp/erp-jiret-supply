@@ -2257,25 +2257,35 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
     return d.toISOString().slice(0,10);
   };
 
-  // Calcular totales con IVA
-  const calcTotales=(its,tasa)=>{
+  // Calcular totales con IVA — la moneda de la OC define en cuál moneda se calcula y redondea (evita diferencias de IVA por redondeo)
+  const calcTotales=(its,tasa,moneda)=>{
     const t=pNum(tasa||0);
-    const subtotalUSD=its.reduce((s,i)=>s+pNum(i.total||0),0);
-    const base16USD=its.filter(i=>i.iva==='GRAVADO').reduce((s,i)=>s+pNum(i.total||0),0);
-    const base8USD=its.filter(i=>i.iva==='GRAVADO8').reduce((s,i)=>s+pNum(i.total||0),0);
-    const exentoUSD=its.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
-    const iva16USD=parseFloat((base16USD*0.16).toFixed(2));
-    const iva8USD=parseFloat((base8USD*0.08).toFixed(2));
-    const ivaTotal=iva16USD+iva8USD;
-    const baseIvaUSD=base16USD+base8USD;
-    const totalUSD=subtotalUSD+ivaTotal;
-    return {subtotalUSD,baseIvaUSD,base16USD,base8USD,exentoUSD,iva16USD,iva8USD,ivaTotal,totalUSD,
-      subtotalBs:t?subtotalUSD*t:0,baseIvaBs:t?baseIvaUSD*t:0,
-      iva16Bs:t?iva16USD*t:0,iva8Bs:t?iva8USD*t:0,
-      exentoBs:t?exentoUSD*t:0,totalBs:t?totalUSD*t:0};
+    const esBs=String(moneda||'USD').toUpperCase()==='BS';
+    const r2=v=>parseFloat((v||0).toFixed(2));
+    const subtotal=its.reduce((s,i)=>s+pNum(i.total||0),0);
+    const base16=its.filter(i=>i.iva==='GRAVADO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const base8=its.filter(i=>i.iva==='GRAVADO8').reduce((s,i)=>s+pNum(i.total||0),0);
+    const exento=its.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
+    const iva16=r2(base16*0.16);
+    const iva8=r2(base8*0.08);
+    const ivaTot=iva16+iva8;
+    const baseIva=base16+base8;
+    const total=subtotal+ivaTot;
+    if(esBs){
+      // Los ítems están en Bs: se calcula y redondea DIRECTO en Bs; el USD sale de la tasa (referencial)
+      const d=v=>t>0?r2(v/t):0;
+      return {subtotalUSD:d(subtotal),baseIvaUSD:d(baseIva),base16USD:d(base16),base8USD:d(base8),exentoUSD:d(exento),
+        iva16USD:d(iva16),iva8USD:d(iva8),ivaTotal:d(ivaTot),totalUSD:d(total),
+        subtotalBs:r2(subtotal),baseIvaBs:r2(baseIva),iva16Bs:iva16,iva8Bs:iva8,
+        exentoBs:r2(exento),totalBs:r2(total),_monedaCalculo:'Bs'};
+    }
+    return {subtotalUSD:subtotal,baseIvaUSD:baseIva,base16USD:base16,base8USD:base8,exentoUSD:exento,iva16USD:iva16,iva8USD:iva8,ivaTotal:ivaTot,totalUSD:total,
+      subtotalBs:t?subtotal*t:0,baseIvaBs:t?baseIva*t:0,
+      iva16Bs:t?iva16*t:0,iva8Bs:t?iva8*t:0,
+      exentoBs:t?exento*t:0,totalBs:t?total*t:0,_monedaCalculo:'USD'};
   };
 
-  const tot=calcTotales(items,form.tasa);
+  const tot=calcTotales(items,form.tasa,form.moneda);
   const hasTasa=pNum(form.tasa||0)>0;
 
   const agregarItem=()=>{
@@ -2292,7 +2302,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
     if(!form.proveedor){setDialog({title:'Aviso',text:'Selecciona un proveedor.',type:'alert'});return;}
     if(items.length===0){setDialog({title:'Aviso',text:'Agrega al menos un ítem.',type:'alert'});return;}
     try{
-      const t=calcTotales(items,form.tasa);
+      const t=calcTotales(items,form.tasa,form.moneda);
       const id=form.id||`OC-${pId()}`;
       const batch=writeBatch(db);
       batch.set(getDocRef('procura_ordenes_compra',id),{
@@ -2327,7 +2337,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
     const empTel=s2.empresaTelefono||'';
     const empEmail=s2.empresaEmail||s2.emailProcura||'';
     const ocItems=oc.items||[];
-    const t=oc.totales||calcTotales(ocItems,oc.tasa);
+    const t=oc.totales||calcTotales(ocItems,oc.tasa,oc.moneda);
     const ta=pNum(oc.tasa||0);
     const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
     const pD2=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
@@ -2453,7 +2463,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
       onConfirm: async () => {
         try {
           // Calcular base imponible desde ítems
-          const t = oc.totales || calcTotales(oc.items||[], oc.tasa);
+          const t = oc.totales || calcTotales(oc.items||[], oc.tasa, oc.moneda);
           const preload = {
             nroFactura: '',
             proveedor: oc.proveedor||'',
