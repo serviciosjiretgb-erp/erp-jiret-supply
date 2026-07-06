@@ -22376,16 +22376,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const totalRetNEs=nesTotal.reduce((s,ne)=>s+getRetNE(ne),0);
 
           // Métricas
-          const _totalManualRetUSD=(retenciones||[]).filter(r=>(r.facturaId||'').startsWith('MANUAL-')&&(r._manualRif||r.clientRif||'').trim()).reduce((s,r)=>{const t=parseNum(r.tasa||0)||parseNum(tasaBCV||0)||0;return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0);
-          const _totalManualNCUSD=(notasVentaCD||[]).filter(n=>n._clienteDirecto&&(n.clientRif||'').trim()).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||0;const u=t>1?parseNum(n.monto||0)/t:0;return s+(n.tipo==='NC'?-u:u);},0);
-          // Anticipos disponibles (crédito a favor, resta del saldo) — misma fórmula que _anticiposPorCliente más abajo,
-          // para que el TOTAL de cartera (header/footer de PDF y Excel) cuadre con Estado de Cuenta.
-          const _totalAnticiposUSD=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif||c.clientName||'').trim()).reduce((s,a)=>{const sa=parseNum(a.monto||0)-parseNum(a.montoAplicado||0);return s+(sa>0.01?sa:0);},0);
-          const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD-_totalAnticiposUSD;
-          const corriente=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD-_totalAnticiposUSD;
-          const v1_30=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>0&&d<=30;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const v31_60=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>30&&d<=60;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-          const vMas60=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>60).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+          // totalCartera, corriente, v1_30, v31_60, vMas60 y _totalAnticiposUSD se calculan más abajo,
+          // DESPUÉS de clientesList, para que sean exactamente la suma de porCliente (única fuente de verdad,
+          // igual que la tabla en pantalla y Estado de Cuenta) y no una segunda fórmula independiente que puede descuadrar.
           const mesActual=getTodayDate().substring(0,7);
           const cobradoMes=(cobrosCxc||[]).filter(c=>(c.fecha||'').startsWith(mesActual)).reduce((s,c)=>s+parseNum(c.monto||0),0);
 
@@ -22498,6 +22491,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           }
           // Cuentas por Cobrar: los clientes con deuda cerrada (saldo 0) no se muestran; los saldos a favor (negativos) sí
           const clientesList=Object.values(porCliente).filter(cl=>Math.abs(cl.total)>=0.01).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
+
+          // ── Totales de cartera: SIEMPRE derivados de clientesList (misma fuente que la tabla en pantalla,
+          // el PDF y el Excel) — así nunca puede haber un total de encabezado/pie que no cuadre con el detalle. ──
+          const totalCartera=clientesList.reduce((s,cl)=>s+cl.total,0);
+          const corriente=clientesList.reduce((s,cl)=>s+cl.corriente,0);
+          const v1_30=clientesList.reduce((s,cl)=>s+cl.v1_30,0);
+          const v31_60=clientesList.reduce((s,cl)=>s+cl.v31_60,0);
+          const vMas60=clientesList.reduce((s,cl)=>s+cl.vMas60,0);
 
           // Métricas filtradas por cliente seleccionado (si hay filtro activo)
           const clienteActivoData=cxcSelectedClient?porCliente[cxcSelectedClient]:null;
