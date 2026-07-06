@@ -22378,8 +22378,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Métricas
           const _totalManualRetUSD=(retenciones||[]).filter(r=>(r.facturaId||'').startsWith('MANUAL-')&&(r._manualRif||r.clientRif||'').trim()).reduce((s,r)=>{const t=parseNum(r.tasa||0)||parseNum(tasaBCV||0)||0;return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0);
           const _totalManualNCUSD=(notasVentaCD||[]).filter(n=>n._clienteDirecto&&(n.clientRif||'').trim()).reduce((s,n)=>{const t=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||0;const u=t>1?parseNum(n.monto||0)/t:0;return s+(n.tipo==='NC'?-u:u);},0);
-          const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD;
-          const corriente=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD;
+          // Anticipos disponibles (crédito a favor, resta del saldo) — misma fórmula que _anticiposPorCliente más abajo,
+          // para que el TOTAL de cartera (header/footer de PDF y Excel) cuadre con Estado de Cuenta.
+          const _totalAnticiposUSD=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif||c.clientName||'').trim()).reduce((s,a)=>{const sa=parseNum(a.monto||0)-parseNum(a.montoAplicado||0);return s+(sa>0.01?sa:0);},0);
+          const totalCartera=nesAbiertas.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD-_totalAnticiposUSD;
+          const corriente=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)<=0).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-_totalManualRetUSD+_totalManualNCUSD-_totalAnticiposUSD;
           const v1_30=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>0&&d<=30;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
           const v31_60=nesAbiertas.filter(ne=>{const d=getAgingDays(ne,fechaRef);return d>30&&d<=60;}).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
           const vMas60=nesAbiertas.filter(ne=>getAgingDays(ne,fechaRef)>60).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
@@ -22451,18 +22454,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           });
           // Inyectar/ajustar clientes con retenciones manuales (incluye clientes que solo tienen manuales, sin NEs)
           for(const [rif,rets] of _manualRetsPorCliente){
+            const _nm=rets[0]?._manualCliente||rif;
+            if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
             const totalManualUSD=rets.reduce((s,x)=>s+x._montoUSD,0);
             if(!porCliente[rif]){
-              porCliente[rif]={clientName:rets[0]?._manualCliente||rif,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+              porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
             }
             porCliente[rif].total-=totalManualUSD;
             porCliente[rif].corriente-=totalManualUSD;
           }
           // Inyectar/ajustar clientes con NC/ND de cliente directo (mismo principio, signo ya incorporado)
           for(const [rif,ncs] of _manualNCPorCliente){
+            const _nm=ncs[0]?.clientName||rif;
+            if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
             const totalSignedUSD=ncs.reduce((s,x)=>s+x._signedUSD,0);
             if(!porCliente[rif]){
-              porCliente[rif]={clientName:ncs[0]?.clientName||rif,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+              porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
             }
             porCliente[rif].total+=totalSignedUSD;
             porCliente[rif].corriente+=totalSignedUSD;
@@ -22478,9 +22485,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             _anticiposPorCliente.get(rif).push({...a,_saldoAnt:saldoAnt});
           }
           for(const [rif,ants] of _anticiposPorCliente){
+            const _nm=ants[0]?.clientName||rif;
+            if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
             const totalAntUSD=ants.reduce((s,x)=>s+x._saldoAnt,0);
             if(!porCliente[rif]){
-              porCliente[rif]={clientName:ants[0]?.clientName||rif,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+              porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
             }
             porCliente[rif].total-=totalAntUSD;
             porCliente[rif].corriente-=totalAntUSD;
@@ -22569,7 +22578,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <tfoot><tr><td colspan="2">TOTALES</td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table>`;
             } else {
               // Detallado por cliente
-              let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0,gTotRetIva=0,gTotRetOtras=0,gTotNCDirecta=0;
+              let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0,gTotRetIva=0,gTotRetOtras=0,gTotNCDirecta=0,gTotAnticipos=0;
               body=clientesList.map(cl=>{
                 const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
@@ -22620,8 +22629,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualNCCl2=(_manualNCPorCliente.get(cl.clientRif)||[]);
                 const manualNCSignedUSDPDF=manualNCCl2.reduce((s,n)=>s+n._signedUSD,0);
                 clTotal-=manualRetUSDclPDF; clTotal+=manualNCSignedUSDPDF; gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotRetOtras+=manualRetUSDclPDF; gTotNCDirecta+=manualNCSignedUSDPDF;
+                const anticiposCl2=(_anticiposPorCliente.get(cl.clientRif)||[]);
+                const anticiposUSDclPDF=anticiposCl2.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+                clTotal-=anticiposUSDclPDF; gTotUSD-=anticiposUSDclPDF; gTotAnticipos+=anticiposUSDclPDF;
                 const manualRowsPDF=manualRetsCl2.map(r=>`<div style="display:grid;${cols9};background:#f0fdfa;border-left:3px solid #0d9488;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#0f766e;font-weight:bold;font-size:9px">↳ Ret. Manual · ${r.nroRetencion||'—'}</span><span style="font-size:9px;color:#0d9488">${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">Factura N° ${r._manualNroFiscal||'—'} · no registrada en el sistema</span><span></span><span style="text-align:right;color:#dc2626;font-weight:bold">${r._sinTasa?'⚠ Sin tasa':'-$'+formatNum(r._montoUSD)}</span></div>`).join('');
                 const manualNCRowsPDF=manualNCCl2.map(n=>`<div style="display:grid;${cols9};background:#faf5ff;border-left:3px solid #9333ea;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#7c3aed;font-weight:bold;font-size:9px">↳ ${n.tipo||'NC'} · ${n.nroDocumento||'—'} · sin NE</span><span style="font-size:9px;color:#7c3aed">${n.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">${n.descripcion||'Cliente directo'}</span><span></span><span style="text-align:right;color:#7c3aed;font-weight:bold">${n._sinTasa?'⚠ Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD))}</span></div>`).join('');
+                const anticipoRowsPDF=anticiposCl2.map(a=>`<div style="display:grid;${cols9};background:#f0fdfa;border-left:3px solid #14b8a6;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#0f766e;font-weight:bold;font-size:9px">💰 ANTICIPO</span><span style="font-size:9px;color:#0f766e">${a.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">${a.concepto||'Anticipo de cliente'}${a.referencia?' · Ref. '+a.referencia:''}</span><span></span><span style="text-align:right;color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</span></div>`).join('');
                 return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
                     <span>${cl.clientName}</span>
@@ -22638,9 +22651,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="text-align:right;border-right:1px solid #cbd5e1;padding-right:8px">Saldo USD</span>
                     <span style="padding-left:8px">Observación</span>
                   </div>
-                  ${neRows}${manualRowsPDF}${manualNCRowsPDF}
+                  ${neRows}${manualRowsPDF}${manualNCRowsPDF}${anticipoRowsPDF}
                   <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr">
-                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}${manualRetsCl2.length>0?' + '+manualRetsCl2.length+' ret. manual':''}${manualNCCl2.length>0?' + '+manualNCCl2.length+' NC/ND directa':''}</span><span></span><span></span><span></span><span></span>
+                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}${manualRetsCl2.length>0?' + '+manualRetsCl2.length+' ret. manual':''}${manualNCCl2.length>0?' + '+manualNCCl2.length+' NC/ND directa':''}${anticiposCl2.length>0?' + '+anticiposCl2.length+' anticipo(s)':''}</span><span></span><span></span><span></span><span></span>
                     <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
                     <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
                     <span style="text-align:right;color:#3b82f6">${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)+manualNCSignedUSDPDF)}</span>
@@ -22655,7 +22668,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <span style="text-align:right">$${formatNum(gTotTotal)}</span>
                 <span style="text-align:right;color:#16a34a">$${formatNum(gTotCob)}</span>
                 <span style="text-align:right;color:#3b82f6;line-height:1.3">-$${formatNum(gTotNC)}${gTotNCDirecta!==0?'<br><span style="color:#7c3aed;font-size:8px">Directa '+(gTotNCDirecta<0?'-$'+formatNum(Math.abs(gTotNCDirecta)):'+$'+formatNum(gTotNCDirecta))+'</span>':''}</span>
-                <span style="text-align:right;color:#b45309;line-height:1.3">$${formatNum(gTotRetIva)}<br><span style="color:#0f766e;font-size:8px">Otra $${formatNum(gTotRetOtras)}</span></span>
+                <span style="text-align:right;color:#b45309;line-height:1.3">$${formatNum(gTotRetIva)}<br><span style="color:#0f766e;font-size:8px">Otra $${formatNum(gTotRetOtras)}</span>${gTotAnticipos>0?'<br><span style="color:#14b8a6;font-size:8px">Anticipos -$'+formatNum(gTotAnticipos)+'</span>':''}</span>
                 <span style="text-align:right;font-weight:bold;color:#f97316">$${formatNum(gTotUSD)}</span>
                 <span></span>
               </div>`;
@@ -22715,7 +22728,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualNCClAg=(_manualNCPorCliente.get(cl.clientRif)||[]);
                 const manualNCSignedUSDAg=manualNCClAg.reduce((s,n)=>s+n._signedUSD,0);
                 manualNCClAg.forEach(n=>{const valNm2=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD));detRows+=`<tr class="nc"><td class="left" style="padding-left:16px">${n.tipo||'NC'} · sin NE · ${n.fecha||'—'}</td><td class="left">${n.nroDocumento||'—'}</td><td class="left">${n.descripcion||'Cliente directo'}</td><td colspan="6"></td><td class="b">${valNm2}</td><td></td></tr>`;});
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg;
+                const anticiposClAg=(_anticiposPorCliente.get(cl.clientRif)||[]);
+                const anticiposUSDclAg=anticiposClAg.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+                anticiposClAg.forEach(a=>{detRows+=`<tr style="background:#f0fdfa"><td class="left" style="padding-left:16px;color:#0f766e;font-weight:bold">💰 Anticipo · ${a.fecha||'—'}</td><td class="left">${a.referencia||'—'}</td><td class="left">${a.concepto||'Anticipo de cliente'}</td><td colspan="6"></td><td style="color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</td><td></td></tr>`;});
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg-anticiposUSDclAg;
                 detRows+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
               });
               const html=XH+EMPRESA
@@ -22754,13 +22770,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualNCClXls=(_manualNCPorCliente.get(cl.clientRif)||[]);
                 const manualNCSignedUSDXls=manualNCClXls.reduce((s,n)=>s+n._signedUSD,0);
                 manualNCClXls.forEach(n=>{const valNm=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD));body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${n.tipo||'NC'} · sin NE</td><td class="left">${n.fecha||'—'}</td><td class="left">${n.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed">${n.descripcion||'Cliente directo'}</td><td colspan="3"></td><td class="b" style="color:#7c3aed">${valNm}</td><td colspan="3"></td></tr>`;});
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclXls+manualNCSignedUSDXls;
+                const anticiposClXls=(_anticiposPorCliente.get(cl.clientRif)||[]);
+                const anticiposUSDclXls=anticiposClXls.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+                anticiposClXls.forEach(a=>{body+=`<tr style="background:#f0fdfa"><td class="left" style="padding-left:20px;color:#0f766e;font-weight:bold">💰 Anticipo</td><td class="left">${a.fecha||'—'}</td><td class="left">${a.referencia||'—'}</td><td></td><td class="left" style="color:#0f766e">${a.concepto||'Anticipo de cliente'}</td><td colspan="3"></td><td style="color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</td><td colspan="3"></td></tr>`;});
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclXls+manualNCSignedUSDXls-anticiposUSDclXls;
                 const clTotUSD=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
                 const clTotCob=cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0);
                 const clTotNC=cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0);
                 const clTotRetIva=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0);
                 const clTotRetOtras=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+manualRetUSDclXls;
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="5">SUBTOTAL ${cl.clientName}</td><td>$${formatNum(clTotUSD)}</td><td class="g">$${formatNum(clTotCob)}</td><td class="b">${clTotNC>0?'-$'+formatNum(clTotNC):'—'}${manualNCSignedUSDXls!==0?' / Directa '+(manualNCSignedUSDXls<0?'-$'+formatNum(Math.abs(manualNCSignedUSDXls)):'+$'+formatNum(manualNCSignedUSDXls)):''}</td><td class="a">$${formatNum(clTotRetIva)}${clTotRetOtras>0?' / Otra $'+formatNum(clTotRetOtras):''}</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="5">SUBTOTAL ${cl.clientName}</td><td>$${formatNum(clTotUSD)}</td><td class="g">$${formatNum(clTotCob)}</td><td class="b">${clTotNC>0?'-$'+formatNum(clTotNC):'—'}${manualNCSignedUSDXls!==0?' / Directa '+(manualNCSignedUSDXls<0?'-$'+formatNum(Math.abs(manualNCSignedUSDXls)):'+$'+formatNum(manualNCSignedUSDXls)):''}${anticiposUSDclXls>0?' / Antic. -$'+formatNum(anticiposUSDclXls):''}</td><td class="a">$${formatNum(clTotRetIva)}${clTotRetOtras>0?' / Otra $'+formatNum(clTotRetOtras):''}</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
               });
               const gTotXLS=clientesList.reduce((s,cl)=>({
   total:s.total+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.totalUSD||0),0),
@@ -22769,8 +22788,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
   retIva:s.retIva+cl.nes.reduce((ss,ne)=>ss+getRetsDetalleNE(ne).ivaUSD,0),
   retOtras:s.retOtras+cl.nes.reduce((ss,ne)=>ss+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((ss,r)=>ss+r._montoUSD,0),
   ncDirecta:s.ncDirecta+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((ss,n)=>ss+n._signedUSD,0),
-}),{total:0,cob:0,nc:0,retIva:0,retOtras:0,ncDirecta:0});
-body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</td><td>$${formatNum(gTotXLS.total)}</td><td class="g">$${formatNum(gTotXLS.cob)}</td><td class="b">${gTotXLS.nc>0?'-$'+formatNum(gTotXLS.nc):'—'}${gTotXLS.ncDirecta!==0?' / Directa '+(gTotXLS.ncDirecta<0?'-$'+formatNum(Math.abs(gTotXLS.ncDirecta)):'+$'+formatNum(gTotXLS.ncDirecta)):''}</td><td class="a">$${formatNum(gTotXLS.retIva)}${gTotXLS.retOtras>0?' / Otra $'+formatNum(gTotXLS.retOtras):''}</td><td style="color:#f97316;font-weight:bold">$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
+  antic:s.antic+(_anticiposPorCliente.get(cl.clientRif)||[]).reduce((ss,a)=>ss+Math.max(0,a._saldoAnt),0),
+}),{total:0,cob:0,nc:0,retIva:0,retOtras:0,ncDirecta:0,antic:0});
+body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</td><td>$${formatNum(gTotXLS.total)}</td><td class="g">$${formatNum(gTotXLS.cob)}</td><td class="b">${gTotXLS.nc>0?'-$'+formatNum(gTotXLS.nc):'—'}${gTotXLS.ncDirecta!==0?' / Directa '+(gTotXLS.ncDirecta<0?'-$'+formatNum(Math.abs(gTotXLS.ncDirecta)):'+$'+formatNum(gTotXLS.ncDirecta)):''}${gTotXLS.antic>0?' / Antic. -$'+formatNum(gTotXLS.antic):''}</td><td class="a">$${formatNum(gTotXLS.retIva)}${gTotXLS.retOtras>0?' / Otra $'+formatNum(gTotXLS.retOtras):''}</td><td style="color:#f97316;font-weight:bold">$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
