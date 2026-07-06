@@ -85,7 +85,7 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 };
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
-function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
+function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [sec,setSec]=useState('tabla');
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
   const [retIVA,setRetIVA]=useState([]);
@@ -111,7 +111,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
     if(!editRet) return;
     try{
       const col=editRet.tipo==='IVA'?'procura_ret_iva':'procura_ret_islr';
-      await setDoc(getDocRef(col,editRet.doc.id),{...editRetForm,updatedAt:Date.now()},{merge:true});
+      await setDoc(getDocRef(col,editRet.doc.id),{...editRetForm,nroComprobante:editRetForm.nroComprobante||editRet.doc.nroComprobante,updatedAt:Date.now()},{merge:true});
       setEditRet(null);
       setImpDialog({title:'✅ Actualizado',text:'Comprobante actualizado correctamente.',type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
@@ -134,12 +134,22 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate}) {
   const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
   const pD=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
 
-  const tabs=[
+  const tabsAllImp=[
     {id:'tabla',    label:'Tabla ISLR',          icon:<BookOpen size={13}/>},
-    {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null},
-    {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null},
+    {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
+    {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'config',   label:'Configuración',        icon:<Settings size={13}/>},
   ];
+  // Permisología por submódulo (igual criterio que Procura): si el usuario tiene algún impuestos_* marcado, solo ve esos
+  const _permsImp=appUser?.permissions||{};
+  const _tieneSubsImp=Object.keys(_permsImp).some(k=>k.startsWith('impuestos_')&&_permsImp[k]);
+  const permImp=(k)=>{
+    if(!appUser) return true;
+    if(appUser.role==='Master') return true;
+    if(!_tieneSubsImp) return true;
+    return !!_permsImp[k];
+  };
+  const tabs=tabsAllImp.filter(t=>!t.perm||permImp(t.perm));
 
   // ── Firma y sello upload ────────────────────────────────────────
   const uploadFirmaSello = async (file, campo) => {
@@ -429,8 +439,13 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
   };
 
-  const retFiltIVA=retIVA.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase()));
-  const retFiltISLR=retISLR.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase()));
+  const _ordCompIVA=(a,b)=>{
+    const fc=(a.fecha||'').localeCompare(b.fecha||'');
+    if(fc!==0) return fc;
+    return (parseInt(String(a.nroComprobante||'0').replace(/\D/g,''))||0)-(parseInt(String(b.nroComprobante||'0').replace(/\D/g,''))||0);
+  };
+  const retFiltIVA=retIVA.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase())).sort(_ordCompIVA);
+  const retFiltISLR=retISLR.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase())).sort(_ordCompIVA);
 
   return(
     <div className="flex flex-col h-screen overflow-hidden">
@@ -571,7 +586,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                           <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -628,7 +643,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                           <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -776,6 +791,10 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
               <button onClick={()=>setEditRet(null)} className="text-slate-400 hover:text-white"><X size={16}/></button>
             </div>
             <div className="p-5 grid grid-cols-2 gap-3">
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Comprobante</label>
+                <input className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editRetForm.nroComprobante||''} onChange={e=>setEditRetForm(f=>({...f,nroComprobante:e.target.value}))}/>
+              </div>
               <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Status</label>
                 <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
                   value={editRetForm.status||'PENDIENTE'} onChange={e=>setEditRetForm(f=>({...f,status:e.target.value}))}>
@@ -3184,6 +3203,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         fechaVencimiento:form.fechaVencimiento||'',
         moneda:form.moneda||'USD',
         tasa:form.tasa||'',
+        periodoLibroMes:form._periodoLibroMes||(form.fecha||'').substring(0,7)||'',
+        periodoLibroQ:form._periodoLibroQ||'1',
         afectaLibroCompras:form.afectaLibroCompras!==false,
         aplicaRetIVA:!!form.aplicaRetIVA,
         pctRetIVA:pNum(form.pctRetIVA||75),
@@ -3733,6 +3754,23 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                     </div>
                   </div>
 
+                  {/* Mes/Quincena de aprovechamiento — Libro de Compras (independiente de la fecha real de la factura) */}
+                  <div className="grid grid-cols-3 gap-3 mb-4 bg-amber-50 border-2 border-amber-200 rounded-xl p-3">
+                    <div className="col-span-3 text-[9px] font-black text-amber-700 uppercase -mb-1">📖 Período de Aprovechamiento en Libro de Compras (si difiere de la fecha de la factura)</div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Aprovechar</label>
+                      <input type="month" className={`${inp} text-xs py-1.5`} value={form._periodoLibroMes||(form.fecha||'').substring(0,7)||''} onChange={e=>setForm(f=>({...f,_periodoLibroMes:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                      <select className={`${sel} text-xs py-1.5`} value={form._periodoLibroQ||'1'} onChange={e=>setForm(f=>({...f,_periodoLibroQ:e.target.value}))}>
+                        <option value="1">I Quincena (1-15)</option>
+                        <option value="2">II Quincena (16-fin)</option>
+                      </select>
+                    </div>
+                    <div className="text-[8px] text-amber-600 font-bold self-end pb-1.5">Por defecto usa el mes/quincena de la fecha de factura. Cámbielo si la factura se aprovechará en otro período.</div>
+                  </div>
+
                   {/* ÍTEMS OC o entrada manual */}
                   {form.itemsOC&&form.itemsOC.length>0?(
                     <div className="mb-4">
@@ -3750,21 +3788,32 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                             <th className="px-2 py-2 text-center text-[8px] text-orange-400 font-black uppercase">IVA</th>
                             <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Cant.</th>
                             <th className="px-2 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Und.</th>
-                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">P.Unit</th>
-                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total USD</th>
-                            {hasTasa&&<th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total Bs.</th>}
+                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">P.Unit ({form.moneda==='Bs'?'Bs':'USD'})</th>
+                            <th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total {form.moneda==='Bs'?'Bs.':'USD'}</th>
+                            {hasTasa&&<th className="px-2 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Total {form.moneda==='Bs'?'USD':'Bs.'}</th>}
                           </tr></thead>
                           <tbody>
                             {(form.itemsOC||[]).map((it,i)=>{
+                              const esBsIt=form.moneda==='Bs';
                               const updateItem=(patch)=>{
                                 const updated=[...(form.itemsOC||[])];
                                 const newIt={...updated[i],...patch};
-                                newIt.total=parseFloat((pNum(newIt.cantidad)*pNum(newIt.precioUnit)).toFixed(2));
+                                const totalCampo=parseFloat((pNum(newIt.cantidad)*pNum(newIt.precioUnit)).toFixed(2));
+                                if(esBsIt){
+                                  // El valor tecleado ES Bs — se guarda tal cual y también su equivalente USD
+                                  newIt.total=totalCampo;
+                                  newIt._totalBsOriginal=totalCampo;
+                                  newIt._precioBsOriginal=pNum(newIt.precioUnit);
+                                } else {
+                                  newIt.total=totalCampo;
+                                  delete newIt._totalBsOriginal; delete newIt._precioBsOriginal;
+                                }
                                 updated[i]=newIt;
                                 setForm(f=>({...f,itemsOC:updated}));
                               };
                               const codigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
-                              const totBs=hasTasa?pNum(it.total||0)*pNum(form.tasa||0):0;
+                              // Columna secundaria: si la factura es en Bs, mostrar el equivalente en USD (dividir); si es en USD, mostrar el equivalente en Bs (multiplicar)
+                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0)/Math.max(pNum(form.tasa||0),1):pNum(it.total||0)*pNum(form.tasa||0)):0;
                               return(
                               <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                                 <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
@@ -3789,7 +3838,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                     value={it.precioUnit||''} onChange={e=>updateItem({precioUnit:pNum(e.target.value)})}/>
                                 </td>
                                 <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(it.total||0)}</td>
-                                {hasTasa&&<td className="px-2 py-1 text-right font-mono text-blue-700 text-[10px]">{pFmt(totBs)}</td>}
+                                {hasTasa&&<td className="px-2 py-1 text-right font-mono text-blue-700 text-[10px]">{pFmt(totSecundario)}</td>}
                               </tr>);
                             })}
                           </tbody>
@@ -6349,6 +6398,12 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
   // Filtrar facturas del período
   const factsPeriodo = (facturasCompra||[]).filter(f => {
     if(f.afectaLibroCompras === false) return false;
+    // Si la factura tiene período de aprovechamiento asignado, se usa ese mes/quincena en vez de la fecha real
+    if(f.periodoLibroMes){
+      return f.periodoLibroMes===`${filtAnio}-${mes2}` && (filtQ==='AMBAS'||String(f.periodoLibroQ||'1')===String(filtQ))
+        && (!filtFact || (f.nroFactura||'').toLowerCase().includes(filtFact.toLowerCase()) || (f.nroControl||'').toLowerCase().includes(filtFact.toLowerCase()))
+        && (!filtProv || (f.proveedor||'').toLowerCase().includes(filtProv.toLowerCase()));
+    }
     const fecha = f.fecha||'';
     if(fecha < desde || fecha > hasta) return false;
     if(filtFact && !(f.nroFactura||'').toLowerCase().includes(filtFact.toLowerCase()) &&
@@ -39628,7 +39683,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            {activeTab === 'procura' && (hasPerm('procura')||appUser?.role==='Master') && <ProcuraApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings} appUser={appUser}/>}
 
           {/* ── IMPUESTOS ── */}
-           {activeTab === 'impuestos' && (hasPerm('impuestos')||appUser?.role==='Master') && <ImpuestosApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings}/>}
+           {activeTab === 'impuestos' && (hasPerm('impuestos')||appUser?.role==='Master') && <ImpuestosApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings} appUser={appUser}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
              <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
