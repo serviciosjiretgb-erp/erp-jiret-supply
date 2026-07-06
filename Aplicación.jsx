@@ -2943,27 +2943,48 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const calcTotalesFC=(f)=>{
     const items=f.itemsOC||[];
     const tasa=pNum(f.tasa||0);
+    const esBsFC=String(f.moneda||'USD').toUpperCase()==='BS'&&tasa>0;
+    const r2=v=>parseFloat((v||0).toFixed(2));
     if(items.length>0){
-      const sub=items.reduce((s,i)=>s+pNum(i.total||0),0);
-      const base16=items.filter(i=>i.iva==='GRAVADO').reduce((s,i)=>s+pNum(i.total||0),0);
-      const base8=items.filter(i=>i.iva==='GRAVADO8').reduce((s,i)=>s+pNum(i.total||0),0);
-      const exento=items.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+pNum(i.total||0),0);
-      const iva16=parseFloat((base16*0.16).toFixed(2));
-      const iva8=parseFloat((base8*0.08).toFixed(2));
-      const totalUSD=parseFloat((sub+iva16+iva8).toFixed(2));
-      return{sub,base16,base8,exento,iva16,iva8,ivaTotal:iva16+iva8,totalUSD,
+      // En moneda Bs, los ítems traen sus Bs originales (o el precio tecleado ES Bs): calcular y redondear EN Bs
+      const val=i=>esBsFC?(i._totalBsOriginal!=null?pNum(i._totalBsOriginal):pNum(i.total||0)*tasa):pNum(i.total||0);
+      const sub=items.reduce((s,i)=>s+val(i),0);
+      const base16=items.filter(i=>i.iva==='GRAVADO').reduce((s,i)=>s+val(i),0);
+      const base8=items.filter(i=>i.iva==='GRAVADO8').reduce((s,i)=>s+val(i),0);
+      const exento=items.filter(i=>i.iva==='EXENTO').reduce((s,i)=>s+val(i),0);
+      const iva16=r2(base16*0.16);
+      const iva8=r2(base8*0.08);
+      const total=r2(sub+iva16+iva8);
+      if(esBsFC){
+        const d=v=>r2(v/tasa);
+        return{sub:d(sub),base16:d(base16),base8:d(base8),exento:d(exento),iva16:d(iva16),iva8:d(iva8),ivaTotal:d(iva16+iva8),totalUSD:d(total),
+          subBs:r2(sub),base16Bs:r2(base16),iva16Bs:iva16,iva8Bs:iva8,exentoBs:r2(exento),totalBs:total,_bsNativo:true};
+      }
+      return{sub,base16,base8,exento,iva16,iva8,ivaTotal:iva16+iva8,totalUSD:total,
         subBs:tasa?sub*tasa:0,base16Bs:tasa?base16*tasa:0,iva16Bs:tasa?iva16*tasa:0,
-        iva8Bs:tasa?iva8*tasa:0,exentoBs:tasa?exento*tasa:0,totalBs:tasa?totalUSD*tasa:0};
+        iva8Bs:tasa?iva8*tasa:0,exentoBs:tasa?exento*tasa:0,totalBs:tasa?total*tasa:0};
     }
-    const base=pNum(f.montoBase||0);
-    const iva16=f.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):f.aplicaIva==='8'?0:0;
-    const iva8=f.aplicaIva==='8'?parseFloat((base*0.08).toFixed(2)):0;
-    const totalUSD=parseFloat((base+iva16+iva8).toFixed(2));
-    return{sub:base,base16:f.aplicaIva==='SI'?base:0,base8:f.aplicaIva==='8'?base:0,
-      exento:f.aplicaIva==='NO'?base:0,iva16,iva8,ivaTotal:iva16+iva8,totalUSD,
-      subBs:tasa?base*tasa:0,base16Bs:tasa?(f.aplicaIva==='SI'?base:0)*tasa:0,
+    const baseIn=pNum(f.montoBase||0);
+    if(esBsFC){
+      // Sin ítems: montoBase en USD (referencia) — llevar a Bs, redondear en Bs
+      const baseBsN=r2(baseIn*tasa);
+      const iva16BsN=f.aplicaIva==='SI'?r2(baseBsN*0.16):0;
+      const iva8BsN=f.aplicaIva==='8'?r2(baseBsN*0.08):0;
+      const totalBsN=r2(baseBsN+iva16BsN+iva8BsN);
+      const d=v=>r2(v/tasa);
+      return{sub:d(baseBsN),base16:f.aplicaIva==='SI'?d(baseBsN):0,base8:f.aplicaIva==='8'?d(baseBsN):0,
+        exento:f.aplicaIva==='NO'?d(baseBsN):0,iva16:d(iva16BsN),iva8:d(iva8BsN),ivaTotal:d(iva16BsN+iva8BsN),totalUSD:d(totalBsN),
+        subBs:baseBsN,base16Bs:f.aplicaIva==='SI'?baseBsN:0,iva16Bs:iva16BsN,iva8Bs:iva8BsN,
+        exentoBs:f.aplicaIva==='NO'?baseBsN:0,totalBs:totalBsN,_bsNativo:true};
+    }
+    const iva16=f.aplicaIva==='SI'?r2(baseIn*0.16):0;
+    const iva8=f.aplicaIva==='8'?r2(baseIn*0.08):0;
+    const totalUSD=r2(baseIn+iva16+iva8);
+    return{sub:baseIn,base16:f.aplicaIva==='SI'?baseIn:0,base8:f.aplicaIva==='8'?baseIn:0,
+      exento:f.aplicaIva==='NO'?baseIn:0,iva16,iva8,ivaTotal:iva16+iva8,totalUSD,
+      subBs:tasa?baseIn*tasa:0,base16Bs:tasa?(f.aplicaIva==='SI'?baseIn:0)*tasa:0,
       iva16Bs:tasa?iva16*tasa:0,iva8Bs:tasa?iva8*tasa:0,
-      exentoBs:tasa?(f.aplicaIva==='NO'?base:0)*tasa:0,totalBs:tasa?totalUSD*tasa:0};
+      exentoBs:tasa?(f.aplicaIva==='NO'?baseIn:0)*tasa:0,totalBs:tasa?totalUSD*tasa:0};
   };
 
   // ── Retención IVA: se calcula EN Bs., USD es solo referencia ──────
@@ -2972,7 +2993,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     const tasa=pNum(f.tasa||0);
     const pct=pNum(f.pctRetIVA||75)/100;
     const ivaBaseUSD=tot.iva16+tot.iva8;
-    const ivaBaseBs=tasa>0?ivaBaseUSD*tasa:0;
+    const ivaBaseBs=tot._bsNativo?(tot.iva16Bs+tot.iva8Bs):(tasa>0?ivaBaseUSD*tasa:0);
     // Cálculo SIEMPRE en Bs
     const montoBs=parseFloat((ivaBaseBs*pct).toFixed(2));
     const monto=tasa>0?parseFloat((montoBs/tasa).toFixed(2)):0;
