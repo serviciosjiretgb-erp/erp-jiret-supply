@@ -138,7 +138,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'tabla',    label:'Tabla ISLR',          icon:<BookOpen size={13}/>},
     {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
-    {id:'config',   label:'Configuración',        icon:<Settings size={13}/>},
+    {id:'config',   label:'Configuración',        icon:<Settings size={13}/>, perm:'impuestos_config'},
   ];
   // Permisología por submódulo (igual criterio que Procura): si el usuario tiene algún impuestos_* marcado, solo ve esos
   const _permsImp=appUser?.permissions||{};
@@ -6410,7 +6410,16 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
        !(f.nroControl||'').toLowerCase().includes(filtFact.toLowerCase())) return false;
     if(filtProv && !(f.proveedor||'').toLowerCase().includes(filtProv.toLowerCase())) return false;
     return true;
-  }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  }).sort((a,b)=>{
+    const fc=(a.fecha||'').localeCompare(b.fecha||'');
+    if(fc!==0) return fc;
+    // Desempate: orden numérico de menor a mayor por N° de Comprobante de la retención IVA asociada
+    const ra=(retIVACompra||[]).find(r=>r.facturaId===a.id);
+    const rb=(retIVACompra||[]).find(r=>r.facturaId===b.id);
+    const na=parseInt(String(ra?.nroComprobante||'0').replace(/\D/g,''))||0;
+    const nb=parseInt(String(rb?.nroComprobante||'0').replace(/\D/g,''))||0;
+    return na-nb;
+  });
 
   // Construir filas del libro
   const rows = []; let seq = 1;
@@ -7561,6 +7570,7 @@ const SYSTEM_MODULES = [
       { id: 'impuestos_retenciones', label: 'Retenciones IVA / ISLR' },
       { id: 'impuestos_forma99030', label: 'Forma 99030' },
       { id: 'impuestos_dua',       label: 'DUA / Importaciones' },
+      { id: 'impuestos_config',   label: 'Configuración (UT, firma, sello)' },
     ]
   },
   {
@@ -18491,20 +18501,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const vend = (ne.vendedor||'—').toUpperCase();
             const items = ne.items||[];
             if(items.length===0){
-              detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:ne.id, cant:1, monto:parseNum(ne.montoBase||0), comision:0, pctCom:0});
+              detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:ne.id, cant:1, precio:parseNum(ne.montoBase||0), monto:parseNum(ne.montoBase||0), comision:0, pctCom:0});
             } else {
               items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:it.desc||'—', cant, monto:precio*cant, comision:0, pctCom:0}); });
+                detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
           factsDirect.forEach(inv => {
             const vend = (inv.vendedor||'—').toUpperCase();
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, monto:parseNum(inv.montoBase||inv.total||0), comision:0, pctCom:0});
+              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||inv.total||0), monto:parseNum(inv.montoBase||inv.total||0), comision:0, pctCom:0});
             } else {
               items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||'—', cant, monto:precio*cant, comision:0, pctCom:0}); });
+                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
 
