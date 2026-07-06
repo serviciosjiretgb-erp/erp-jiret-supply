@@ -7009,18 +7009,29 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
-  const tabs=[
+  const tabsAll=[
     {id:'dashboard',   label:'Dashboard',         icon:<LayoutDashboard size={13}/>},
-    {id:'proveedores', label:'Proveedores',        icon:<Building2 size={13}/>, badge:proveedores.filter(p=>p.activo!==false).length||null},
-    {id:'catalogo',    label:'Catálogo Prod/Serv', icon:<Layers size={13}/>},
-    {id:'ordenes',     label:'Órdenes de Compra',  icon:<ClipboardList size={13}/>, badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||null},
-    {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>},
-    {id:'libro_compras',label:'Libro Compras',   icon:<BookOpen size={13}/>, badge:null},
-    {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null},
-    {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>, badge:(pagosCxP||[]).length||null},
-    {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>},
-    {id:'nc_nd_compra',label:'NC / ND',              icon:<FileText size={13}/>},
+    {id:'proveedores', label:'Proveedores',        icon:<Building2 size={13}/>, badge:proveedores.filter(p=>p.activo!==false).length||null, perm:'procura_proveedores'},
+    {id:'catalogo',    label:'Catálogo Prod/Serv', icon:<Layers size={13}/>, perm:'procura_catalogo'},
+    {id:'ordenes',     label:'Órdenes de Compra',  icon:<ClipboardList size={13}/>, badge:ordenesCompra.filter(o=>o.status==='BORRADOR').length||null, perm:'procura_ordenes'},
+    {id:'facturas',    label:'Facturas de Compra', icon:<FileText size={13}/>, perm:'procura_facturas'},
+    {id:'libro_compras',label:'Libro Compras',   icon:<BookOpen size={13}/>, badge:null, perm:'procura_libro'},
+    {id:'cxp',         label:'Ctas. x Pagar',      icon:<CreditCard size={13}/>, badge:facturasCompra.filter(f=>f.status!=='PAGADA'&&f.status!=='ANULADA').length||null, perm:'procura_cxp'},
+    {id:'historial',   label:'Historial Pagos',    icon:<Receipt size={13}/>, badge:(pagosCxP||[]).length||null, perm:'procura_pagos'},
+    {id:'estado',      label:'Estado de Cuenta',   icon:<BarChart3 size={13}/>, perm:'procura_estado'},
+    {id:'nc_nd_compra',label:'NC / ND',              icon:<FileText size={13}/>, perm:'procura_nc_nd'},
   ];
+  // Permisología por submódulo: si el usuario tiene algún procura_* marcado, solo ve esos; si no tiene ninguno, ve todo (compatibilidad con el permiso padre)
+  const _permsProc=appUser?.permissions||{};
+  const _tieneSubsProc=Object.keys(_permsProc).some(k=>k.startsWith('procura_')&&_permsProc[k]);
+  const permProcura=(k)=>{
+    if(!appUser) return false;
+    if(appUser.role==='Master') return true;
+    if(!_tieneSubsProc) return true;
+    return !!_permsProc[k];
+  };
+  const tabs=tabsAll.filter(t=>!t.perm||permProcura(t.perm));
+  useEffect(()=>{ if(!tabs.some(t=>t.id===sec)) setSec(tabs[0]?.id||'dashboard'); },[appUser]);
 
   const renderView=()=>{
     switch(sec){
@@ -7426,6 +7437,9 @@ const SYSTEM_MODULES = [
     label: '14. MÓDULO Procura & Compras',
     icon: '🛒',
     submodules: [
+      { id: 'procura_proveedores', label: 'Directorio de Proveedores' },
+      { id: 'procura_catalogo',    label: 'Catálogo Prod/Serv' },
+      { id: 'procura_ordenes',     label: 'Órdenes de Compra' },
       { id: 'procura_facturas',    label: 'Facturas de Compra' },
       { id: 'procura_cxp',         label: 'Cuentas por Pagar (CxP)' },
       { id: 'procura_pagos',       label: 'Historial de Pagos' },
