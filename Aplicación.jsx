@@ -2876,9 +2876,11 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                   <div className="flex items-end">
                     {itemForm.cantidad&&itemForm.precioUnit&&(
                       <div className="w-full bg-slate-900 rounded-lg px-2 py-1.5 text-center">
-                        <p className="text-[8px] text-slate-400">Subtotal</p>
+                        <p className="text-[8px] text-slate-400">Subtotal ({form.moneda||'USD'})</p>
                         <p className="font-black text-white text-sm">{pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit))}</p>
-                        {hasTasa&&<p className="text-[8px] text-slate-400">Bs. {pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit)*pNum(form.tasa))}</p>}
+                        {hasTasa&&(String(form.moneda||'USD').toUpperCase()==='BS'
+                          ?<p className="text-[8px] text-slate-400">$ {pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit)/Math.max(pNum(form.tasa),1))}</p>
+                          :<p className="text-[8px] text-slate-400">Bs. {pFmt(pNum(itemForm.cantidad)*pNum(itemForm.precioUnit)*pNum(form.tasa))}</p>)}
                       </div>
                     )}
                   </div>
