@@ -2177,7 +2177,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 3: ÓRDENES DE COMPRA
 // ══════════════════════════════════════════════════════════════════════
-const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,navegarAFactura}) => {
+const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setDialog,settings,navegarAFactura}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [modal,setModal]=useState(null);
@@ -2482,13 +2482,14 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
             aplicaIva: t.baseIvaUSD>0?'SI':'NO',
             status: 'PENDIENTE',
             observaciones: oc.observaciones||'',
-            itemsOC: oc.items||[],
+            itemsOC: (String(oc.moneda||'USD').toUpperCase()==='BS'&&pNum(oc.tasa)>0)
+              ? (oc.items||[]).map(it=>({...it,
+                  precioUnit:pNum(it.precioUnit||0)/pNum(oc.tasa),
+                  total:pNum(it.total||0)/pNum(oc.tasa),
+                  _precioBsOriginal:pNum(it.precioUnit||0),_totalBsOriginal:pNum(it.total||0)}))
+              : (oc.items||[]),
           };
-          // Marcar OC como PROCESADA
-          await updateDoc(getDocRef('procura_ordenes_compra', oc.id), {
-            status: 'PROCESADA', updatedAt: Date.now()
-          });
-          // Navegar a facturas con preload
+          // Navegar a facturas con preload (la OC pasa a PROCESADA solo cuando la factura se GUARDA)
           navegarAFactura(preload);
         } catch(e) {
           setDialog({title:'Error', text:e.message, type:'alert'});
@@ -2544,7 +2545,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,dialog,setDialog,settings,
                         <PBp sm onClick={()=>{setForm({...oc});setItems(oc.items||[]);setProvSearch('');setModal('form');}}><Edit size={11}/></PBp>
                         {oc.status==='BORRADOR'&&<PBg sm onClick={()=>cambiarStatus(oc,'APROBADA')} title="Aprobar"><Check size={11}/></PBg>}
                         {oc.status==='APROBADA'&&<PBo sm onClick={()=>cambiarStatus(oc,'EN TRÁNSITO')} title="Enviar / En tránsito"><Send size={11}/></PBo>}
-                        {['APROBADA','EN TRÁNSITO'].includes(oc.status)&&(
+                        {(['APROBADA','EN TRÁNSITO'].includes(oc.status)||(oc.status==='PROCESADA'&&!(facturasCompra||[]).some(f=>f.ocId===oc.nroOC||f.ocId===oc.id)))&&(
                           <button onClick={()=>convertirAFactura(oc)}
                             className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-black uppercase text-white transition-all hover:opacity-90"
                             style={{background:'#f97316'}} title="Convertir a Factura de Compra">
@@ -3205,6 +3206,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         })),
         updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
       }));
+      // OC vinculada pasa a PROCESADA solo ahora que la factura queda guardada
+      if(form.ocId){
+        const ocVinc=(ordenesCompra||[]).find(o=>o.nroOC===form.ocId||o.id===form.ocId);
+        if(ocVinc&&ocVinc.status!=='PROCESADA') batch.update(getDocRef('procura_ordenes_compra',ocVinc.id),{status:'PROCESADA',updatedAt:Date.now()});
+      }
       const prov=proveedores.find(p=>p.id===form.proveedorId);
       const _isEditMode=!!form.id;
 
