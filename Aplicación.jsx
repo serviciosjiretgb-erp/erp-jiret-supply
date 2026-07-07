@@ -99,6 +99,8 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [showTxtModal,setShowTxtModal]=useState(false);
   const [txtMes,setTxtMes]=useState(getTodayDate().substring(0,7));
   const [txtQuincena,setTxtQuincena]=useState('1');
+  const [showXmlModal,setShowXmlModal]=useState(false);
+  const [xmlMes,setXmlMes]=useState(getTodayDate().substring(0,7));
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -453,6 +455,12 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     return (a.fecha||'').localeCompare(b.fecha||'');
   };
   const RET_PAGE_SIZE=25;
+  const _MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const _mesLabel=(r)=>{
+    const [y,m]=(r.fecha||'').split('-');
+    const mi=parseInt(m,10)-1;
+    return (y&&mi>=0&&mi<12)?`${_MESES[mi]} ${y}`:'—';
+  };
   const _normRet=s=>(s||'').toString().toLowerCase();
   const _retPasaFiltros=(r,tipoR)=>{
     const f=retFiltros;
@@ -625,6 +633,42 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     setImpDialog({title:'✅ TXT Generado',text:`${lista.length} comprobante(s) exportado(s) para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`,type:'alert'});
   };
 
+  // ── XML Retenciones ISLR para el portal SENIAT (RelacionRetencionesISLR, declaración mensual) ──
+  const _escXml=s=>(s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+  const generarXmlRetISLR=()=>{
+    if(!xmlMes){setImpDialog({title:'Falta el mes',text:'Selecciona el mes a declarar.',type:'alert'});return;}
+    const lista=retISLR.filter(r=>(r.fecha||'').substring(0,7)===xmlMes).sort(_ordCompIVA);
+    if(lista.length===0){setImpDialog({title:'Sin registros',text:`No hay retenciones ISLR para ${xmlMes}.`,type:'alert'});return;}
+    const [yyyy,mm]=xmlMes.split('-');
+    const rifAgente=_soloRif(settings?.empresaRif||'J-41230937-4');
+    const periodoAAAAMM=`${yyyy}${mm}`;
+    const N2=n=>(parseFloat(n)||0).toFixed(2);
+    const fOp=f=>{const[y,m,d]=(f||'').split('-');return(y&&m&&d)?`${d}/${m}/${y}`:'';};
+    const detalles=lista.map(r=>{
+      const base=pNum(r.baseImponibleBs||0);
+      const pct=pNum(r.pct||0);
+      return `\t<DetalleRetencion>\r\n`+
+        `\t\t<RifRetenido>${_soloRif(r.rifProveedor)}</RifRetenido>\r\n`+
+        `\t\t<NumeroFactura>${_escXml(r.nroFactura)}</NumeroFactura>\r\n`+
+        `\t\t<NumeroControl>${_escXml(r.nroControl)}</NumeroControl>\r\n`+
+        `\t\t<FechaOperacion>${fOp(r.fecha)}</FechaOperacion>\r\n`+
+        `\t\t<CodigoConcepto>${_escXml(r.codConcepto)}</CodigoConcepto>\r\n`+
+        `\t\t<MontoOperacion>${N2(base)}</MontoOperacion>\r\n`+
+        `\t\t<PorcentajeRetencion>${N2(pct)}</PorcentajeRetencion>\r\n`+
+        `\t</DetalleRetencion>\r\n`;
+    }).join('');
+    const xml=`<?xml version="1.0" encoding="utf-8" ?>\r\n<RelacionRetencionesISLR RifAgente="${rifAgente}" Periodo="${periodoAAAAMM}">\r\n${detalles}</RelacionRetencionesISLR>\r\n`;
+    const blob=new Blob([xml],{type:'application/xml;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`ISLR_RETENCIONES${mm}${yyyy}.XML`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowXmlModal(false);
+    setImpDialog({title:'✅ XML Generado',text:`${lista.length} retención(es) exportada(s) para ${xmlMes}.`,type:'alert'});
+  };
+
   // ── Toolbar de filtros + export, reutilizable para IVA e ISLR ──
   const renderRetToolbar=(tipoR)=>(
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-3 mb-4">
@@ -652,6 +696,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         </span>
         <div className="flex gap-2">
           {tipoR==='IVA'&&<button onClick={()=>{setTxtMes(getTodayDate().substring(0,7));setShowTxtModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-indigo-700 transition-all shadow-sm"><FileSpreadsheet size={11}/>TXT</button>}
+          {tipoR==='ISLR'&&<button onClick={()=>{setXmlMes(getTodayDate().substring(0,7));setShowXmlModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-indigo-700 transition-all shadow-sm"><FileSpreadsheet size={11}/>XML</button>}
           <button onClick={()=>exportarRetPDF(tipoR)} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all shadow-sm"><FileText size={11}/>PDF</button>
           <button onClick={()=>exportarRetExcel(tipoR)} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all shadow-sm"><Download size={11}/>Excel</button>
         </div>
@@ -843,6 +888,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">N° Comp.</th>
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Proveedor</th>
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Factura</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Mes</th>
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Concepto SENIAT</th>
                   <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">%</th>
                   <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto USD</th>
@@ -851,12 +897,13 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
                 </tr></thead>
                 <tbody>
-                  {retISLRPag.length===0?<tr><td colSpan={9} className="py-10 text-center text-slate-400 text-xs">{retFiltISLR.length===0&&!hayFiltrosRetActivos?'Sin retenciones ISLR registradas':'Sin resultados para los filtros aplicados'}</td></tr>:
+                  {retISLRPag.length===0?<tr><td colSpan={10} className="py-10 text-center text-slate-400 text-xs">{retFiltISLR.length===0&&!hayFiltrosRetActivos?'Sin retenciones ISLR registradas':'Sin resultados para los filtros aplicados'}</td></tr>:
                   retISLRPag.map((r,i)=>(
                     <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
                       <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
                       <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
                       <td className="px-3 py-2">{r.nroFactura||'—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{_mesLabel(r)}</td>
                       <td className="px-3 py-2"><span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-[9px] mr-1">{r.codConcepto}</span>{r.concepto||'—'}</td>
                       <td className="px-3 py-2 text-center font-black text-purple-600">{r.pct||0}%</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(r.monto)}</td>
@@ -881,7 +928,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   ))}
                 </tbody>
                 {retFiltISLR.length>0&&<tfoot><tr style={{background:'#1e293b'}}>
-                  <td colSpan={5} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({retFiltISLR.length})</td>
+                  <td colSpan={6} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({retFiltISLR.length})</td>
                   <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(retFiltISLR.reduce((s,r)=>s+pNum(r.monto),0))}</td>
                   <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(retFiltISLR.reduce((s,r)=>s+pNum(r.montoBs),0))}</td>
                   <td colSpan={2}></td>
@@ -1040,6 +1087,31 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
             <div className="px-5 pb-5 flex justify-end gap-3">
               <button onClick={()=>setShowTxtModal(false)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
               <button onClick={generarTxtRetIVA} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><FileSpreadsheet size={13}/> Generar TXT</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showXmlModal&&(
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:'3px solid #f97316'}}>
+              <div>
+                <h3 className="font-black text-white text-sm uppercase tracking-wide">Generar XML SENIAT</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">Retenciones ISLR · portal SENIAT</p>
+              </div>
+              <button onClick={()=>setShowXmlModal(false)} className="text-slate-400 hover:text-white"><X size={16}/></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes / Año</label>
+                <input type="month" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500" value={xmlMes} onChange={e=>setXmlMes(e.target.value)}/>
+              </div>
+              <p className="text-[10px] text-slate-400">Se incluyen todas las retenciones ISLR cuya fecha caiga dentro del mes seleccionado (declaración mensual, sin quincena).</p>
+            </div>
+            <div className="px-5 pb-5 flex justify-end gap-3">
+              <button onClick={()=>setShowXmlModal(false)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+              <button onClick={generarXmlRetISLR} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><FileSpreadsheet size={13}/> Generar XML</button>
             </div>
           </div>
         </div>
