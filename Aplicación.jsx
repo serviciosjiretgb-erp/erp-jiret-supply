@@ -129,7 +129,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [aeMes,setAeMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
   const [aeInvoices,setAeInvoices]=useState([]);
   const [aeNotasVentaCD,setAeNotasVentaCD]=useState([]);
-  const [aeManual,setAeManual]=useState({licenciaSolvencias:0});
+  const [aeManual,setAeManual]=useState({licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0});
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -181,7 +181,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     const u1=onSnapshot(getColRef('maquilaInvoices'),s=>setAeInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('notasVentaCreditoDebito'),s=>setAeNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
     const mesKey=`${aeAnio}-${aeMes}`;
-    const u3=onSnapshot(doc(db,'settings',`act-economica-${mesKey}`),d=>setAeManual(d.exists()?{licenciaSolvencias:pNum(d.data().licenciaSolvencias||0)}:{licenciaSolvencias:0}));
+    const u3=onSnapshot(doc(db,'settings',`act-economica-${mesKey}`),d=>setAeManual(d.exists()?{licenciaSolvencias:pNum(d.data().licenciaSolvencias||0),tasaBcvEuro:pNum(d.data().tasaBcvEuro||0),tasaBcvUsd:pNum(d.data().tasaBcvUsd||0)}:{licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0}));
     return()=>{u1();u2();u3();};
   },[fbUser,sec,aeAnio,aeMes]);
 
@@ -196,7 +196,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const guardarAeManual=async()=>{
     try{
       const mesKey=`${aeAnio}-${aeMes}`;
-      await setDoc(doc(db,'settings',`act-economica-${mesKey}`),{licenciaSolvencias:pNum(aeManual.licenciaSolvencias||0),updatedAt:Date.now()},{merge:true});
+      await setDoc(doc(db,'settings',`act-economica-${mesKey}`),{licenciaSolvencias:pNum(aeManual.licenciaSolvencias||0),tasaBcvEuro:pNum(aeManual.tasaBcvEuro||0),tasaBcvUsd:pNum(aeManual.tasaBcvUsd||0),updatedAt:Date.now()},{merge:true});
       setImpDialog({title:'✅ Guardado',text:`Datos de ${mesKey} guardados.`,type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -1499,7 +1499,7 @@ table{border-collapse:collapse;width:100%}
           };
           const vb1=ventasBrutasQ(1), vb2=ventasBrutasQ(2);
           const totalIngresos=vb1+vb2;
-          const tasaUCD=Math.max(pNum(aeCfg.tasaBcvEuro||0),pNum(aeCfg.tasaBcvUsd||0))||1;
+          const tasaUCD=Math.max(pNum(aeManual.tasaBcvEuro||0),pNum(aeManual.tasaBcvUsd||0))||1;
           const mtBs=pNum(aeCfg.mtUCD||0)*tasaUCD;
           const impuestoCalc=Math.max(totalIngresos*(pNum(aeCfg.alicuotaAE||0)/100),mtBs);
           const licencia=pNum(aeManual.licenciaSolvencias||0);
@@ -1547,7 +1547,7 @@ td,th{border:1px solid #999;padding:4px 6px}
   <tr style="background:#1e3a8a;color:#fff;font-weight:900"><td colspan="6" style="text-align:right">Total a pagar (Bs)</td><td style="text-align:right">${N2(totalBs)}</td></tr>
   <tr><td colspan="6" style="text-align:right">Total a pagar (UCD)</td><td style="text-align:right">${N2(totalUCD)}</td></tr>
 </table>
-<p style="margin-top:10px;font-size:7px;text-align:justify">JURO QUE SON VERDADEROS TODOS LOS DATOS SUMINISTRADOS POR ESTE FORMULARIO. Tasa BCV Euro: Bs.${N2(aeCfg.tasaBcvEuro)} · Tasa BCV USD: Bs.${N2(aeCfg.tasaBcvUsd)} (se usa la de mayor valor para el cálculo en UCD).</p>
+<p style="margin-top:10px;font-size:7px;text-align:justify">JURO QUE SON VERDADEROS TODOS LOS DATOS SUMINISTRADOS POR ESTE FORMULARIO. Tasa BCV Euro: Bs.${N2(aeManual.tasaBcvEuro)} · Tasa BCV USD: Bs.${N2(aeManual.tasaBcvUsd)} (se usa la de mayor valor para el cálculo en UCD).</p>
 <script>window.onload=()=>window.print();<\/script>
 </body></html>`;
             const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
@@ -1571,13 +1571,21 @@ td,th{border:1px solid #999;padding:4px 6px}
                     <button onClick={exportarAePDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-4 mt-3 text-[10px] text-slate-500">
-                  <span>Alícuota: <b className="text-slate-700">{pNum(aeCfg.alicuotaAE).toFixed(2)}%</b></span>
-                  <span>Tasa BCV Euro: <b className="text-slate-700">Bs. {fmtN(aeCfg.tasaBcvEuro)}</b></span>
-                  <span>Tasa BCV USD: <b className="text-slate-700">Bs. {fmtN(aeCfg.tasaBcvUsd)}</b></span>
-                  <span className="text-orange-500">(editables en Configuración)</span>
+                <div className="flex flex-wrap items-center gap-4 mt-3 text-[10px] text-slate-500">
+                  <span>Alícuota: <b className="text-slate-700">{pNum(aeCfg.alicuotaAE).toFixed(2)}%</b> <span className="text-slate-300">(Configuración)</span></span>
+                  <div className="flex items-center gap-1.5">
+                    <span>Tasa BCV Euro Bs.</span>
+                    <input type="number" step="0.01" value={aeManual.tasaBcvEuro||0} onChange={e=>setAeManual(x=>({...x,tasaBcvEuro:pNum(e.target.value)}))} className="w-24 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:border-orange-500"/>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span>Tasa BCV USD Bs.</span>
+                    <input type="number" step="0.01" value={aeManual.tasaBcvUsd||0} onChange={e=>setAeManual(x=>({...x,tasaBcvUsd:pNum(e.target.value)}))} className="w-24 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:border-orange-500"/>
+                  </div>
+                  <button onClick={guardarAeManual} className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600"><Save size={11}/>Guardar</button>
+                  <span className="text-slate-400">quedan guardadas para {MESES_AE[parseInt(aeMes,10)-1]} {aeAnio} — vuelve a este mes cuando quieras para editarlas</span>
                 </div>
               </div>
+
 
               <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
                 <table className="w-full text-xs">
@@ -1676,16 +1684,13 @@ td,th{border:1px solid #999;padding:4px 6px}
                 <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Código de Actividad</label>
                   <input value={aeCfg.codigoActividad||''} onChange={e=>setAeCfg(x=>({...x,codigoActividad:e.target.value}))} placeholder="Ej. 3.2.14.02.1" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
               </div>
-              <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 grid grid-cols-3 gap-3">
+              <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 grid grid-cols-2 gap-3">
                 <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Alícuota (%)</label>
                   <input type="number" step="0.01" value={aeCfg.alicuotaAE||0} onChange={e=>setAeCfg(x=>({...x,alicuotaAE:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
-                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Tasa BCV Euro (Bs.)</label>
-                  <input type="number" step="0.01" value={aeCfg.tasaBcvEuro||0} onChange={e=>setAeCfg(x=>({...x,tasaBcvEuro:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
-                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Tasa BCV USD (Bs.)</label>
-                  <input type="number" step="0.01" value={aeCfg.tasaBcvUsd||0} onChange={e=>setAeCfg(x=>({...x,tasaBcvUsd:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
-                <div className="col-span-3"><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Mínimo Tributable — M.T. (UCD)</label>
-                  <input type="number" step="0.000001" value={aeCfg.mtUCD||0} onChange={e=>setAeCfg(x=>({...x,mtUCD:pNum(e.target.value)}))} className="w-40 border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Mínimo Tributable — M.T. (UCD)</label>
+                  <input type="number" step="0.000001" value={aeCfg.mtUCD||0} onChange={e=>setAeCfg(x=>({...x,mtUCD:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
               </div>
+              <p className="text-[9px] text-slate-400">Las Tasas BCV (Euro/USD) ya no van aquí — se editan directamente en la pestaña "Actividad Económica", mes a mes.</p>
               <button disabled={aeCfgSaving} onClick={guardarAeCfg} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{aeCfgSaving?'Guardando...':'Guardar Datos del Contribuyente'}</button>
             </div>
 
