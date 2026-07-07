@@ -137,6 +137,18 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [ppData,setPpData]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0});
   const [ppSaving,setPpSaving]=useState(false);
 
+  // ── Resumen Tributario (Tesoro Nacional + Alcaldía, por quincena) ──
+  const [rtAnio,setRtAnio]=useState(String(new Date().getFullYear()));
+  const [rtMes,setRtMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
+  const [rtQ,setRtQ]=useState('1');
+  const [rtInvoices,setRtInvoices]=useState([]);
+  const [rtNotasVentaCD,setRtNotasVentaCD]=useState([]);
+  const [rtManual,setRtManual]=useState({igtf:0,islrAnual:0,venceIva:'',venceAnticipoIslr:'',venceIgtf:'',venceRetIslr:'',venceSedemat:'',vencePensiones:'',venceIslrAnual:'',tasaRt:0});
+  const [rtSaving,setRtSaving]=useState(false);
+  const [rtPP,setRtPP]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0});
+  const [rtAE,setRtAE]=useState({licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0});
+  const [rtLibroVentasCfg,setRtLibroVentasCfg]=useState({saldoCierre:0,saldoCierreCF:0});
+
   useEffect(()=>{
     if(!fbUser)return;
     const u1=onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVA(s.docs.map(d=>d.data())));
@@ -224,6 +236,31 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       setImpDialog({title:'✅ Guardado',text:`Protección de Pensiones de ${mesKey} guardada.`,type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
     finally{setPpSaving(false);}
+  };
+
+  // ── Resumen Tributario: ventas del mes (para Anticipo ISLR y Actividad Económica) + manuales por quincena ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='resumen_tributario') return;
+    const u1=onSnapshot(getColRef('maquilaInvoices'),s=>setRtInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(getColRef('notasVentaCreditoDebito'),s=>setRtNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const periodoKey=`${rtAnio}-${rtMes}-Q${rtQ}`;
+    const DEF={igtf:0,islrAnual:0,venceIva:'',venceAnticipoIslr:'',venceIgtf:'',venceRetIslr:'',venceSedemat:'',vencePensiones:'',venceIslrAnual:'',tasaRt:0};
+    const u3=onSnapshot(doc(db,'settings',`resumen-tributario-${periodoKey}`),d=>setRtManual(d.exists()?{...DEF,...d.data()}:DEF));
+    const mesKey=`${rtAnio}-${rtMes}`;
+    const u4=onSnapshot(doc(db,'settings',`prot-pensiones-${mesKey}`),d=>setRtPP(d.exists()?{minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0,...d.data()}:{minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0}));
+    const u5=onSnapshot(doc(db,'settings',`act-economica-${mesKey}`),d=>setRtAE(d.exists()?{licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0,...d.data()}:{licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0}));
+    const u6=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>setRtLibroVentasCfg(d.exists()?{saldoCierre:pNum(d.data().saldoCierre||0),saldoCierreCF:pNum(d.data().saldoCierreCF||0)}:{saldoCierre:0,saldoCierreCF:0}));
+    return()=>{u1();u2();u3();u4();u5();u6();};
+  },[fbUser,sec,rtAnio,rtMes,rtQ]);
+
+  const guardarRt=async()=>{
+    setRtSaving(true);
+    try{
+      const periodoKey=`${rtAnio}-${rtMes}-Q${rtQ}`;
+      await setDoc(doc(db,'settings',`resumen-tributario-${periodoKey}`),{...rtManual,updatedAt:Date.now()},{merge:true});
+      setImpDialog({title:'✅ Guardado',text:`Resumen Tributario de ${periodoKey} guardado.`,type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setRtSaving(false);}
   };
 
   const guardarSaldoInicial=async()=>{
@@ -344,6 +381,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'det_iva',  label:'Determinación IVA',    icon:<Calculator size={13}/>, perm:'impuestos_determinacion'},
     {id:'act_economica', label:'Actividad Económica', icon:<Building2 size={13}/>, perm:'impuestos_act_economica'},
     {id:'prot_pensiones', label:'Protección Pensiones', icon:<ShieldCheck size={13}/>, perm:'impuestos_prot_pensiones'},
+    {id:'resumen_tributario', label:'Resumen Tributario', icon:<LayoutDashboard size={13}/>, perm:'impuestos_resumen'},
     {id:'config',   label:'Configuración',        icon:<Settings size={13}/>, perm:'impuestos_config'},
   ];
   // Permisología por submódulo (igual criterio que Procura): si el usuario tiene algún impuestos_* marcado, solo ve esos
@@ -1803,6 +1841,250 @@ td,th{border:1px solid #333;padding:5px 7px}
                 </table>
               </div>
               <p className="text-[9px] text-slate-400">Monto Pensiones = Mínimo Tributable (USD) × Tasa BCV × Cantidad de Empleados. Salario Mínimo = Cantidad de Empleados × Salario Mínimo Oficial. El botón "Guardar {MESES_PP[parseInt(ppMes,10)-1]}" graba estas bases para {ppMes}/{ppAnio} — vuelve a este mes cuando quieras para verlo o editarlo.</p>
+            </div>
+          );
+        })()}
+
+        {/* RESUMEN TRIBUTARIO */}
+        {sec==='resumen_tributario'&&(()=>{
+          const MESES_RT=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+          const lastDay=new Date(parseInt(rtAnio),parseInt(rtMes),0).getDate();
+          const qDesde=rtQ==='2'?`${rtAnio}-${rtMes}-16`:`${rtAnio}-${rtMes}-01`;
+          const qHasta=rtQ==='1'?`${rtAnio}-${rtMes}-15`:`${rtAnio}-${rtMes}-${String(lastDay).padStart(2,'0')}`;
+          const mDesde=`${rtAnio}-${rtMes}-01`, mHasta=`${rtAnio}-${rtMes}-${String(lastDay).padStart(2,'0')}`;
+
+          const _baseVentas=(desde,hasta)=>{
+            const facts=(rtInvoices||[]).filter(inv=>{
+              if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
+              const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+            });
+            const ncnd=(rtNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+            let totGravada=0, totBruta=0;
+            facts.forEach(inv=>{
+              const tasa=pNum(inv.tasa||0)||pNum(settings?.tasaBCV||0)||1;
+              const base=pNum(inv.montoBase||0);
+              const baseBs=pNum(inv.baseGravableBs||0)||base*tasa;
+              totBruta+=baseBs;
+              if(inv.aplicaIva==='SI') totGravada+=baseBs;
+            });
+            ncnd.forEach(n=>{const b=pNum(n.monto||0)*(n.tipo==='NC'?-1:1); totGravada+=b; totBruta+=b;});
+            return {totGravada,totBruta};
+          };
+          const ventasQ=_baseVentas(qDesde,qHasta);
+          const ventasM1=_baseVentas(`${rtAnio}-${rtMes}-01`,`${rtAnio}-${rtMes}-15`);
+          const ventasM2=_baseVentas(`${rtAnio}-${rtMes}-16`,mHasta);
+          const ventasBrutasMes=ventasM1.totBruta+ventasM2.totBruta;
+
+          const _enQuincena=(r)=>{
+            const mesOK=(r.fecha||'').substring(0,7)===`${rtAnio}-${rtMes}`;
+            const qOK=((r.periodo||'').toUpperCase().includes('II')?2:1)===parseInt(rtQ,10);
+            return mesOK&&qOK;
+          };
+          const retIvaBs=(retIVA||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
+          const retIslrBs=(retISLR||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
+          const anticipoIslrBs=parseFloat((ventasQ.totGravada*0.01).toFixed(2));
+          const igtfBs=pNum(rtManual.igtf||0);
+
+          const salMinTotalPP=pNum(rtPP.cantidadEmpleados)*pNum(rtPP.salarioMinimoOficial);
+          const montoPensionesPP=pNum(rtPP.minimoTributableUSD)*pNum(rtPP.tasaBcvCierre)*pNum(rtPP.cantidadEmpleados);
+          const pensionesBs=(montoPensionesPP+salMinTotalPP)*(pNum(rtPP.alicuotaTributable)/100);
+
+          const islrAnualBs=pNum(rtManual.islrAnual||0);
+
+          const tasaUCD=Math.max(pNum(rtAE.tasaBcvEuro||0),pNum(rtAE.tasaBcvUsd||0))||1;
+          const mtBsAE=pNum(aeCfg.mtUCD||0)*tasaUCD;
+          const sedematImp=Math.max(ventasBrutasMes*(pNum(aeCfg.alicuotaAE||0)/100),mtBsAE);
+          const sedematBs=sedematImp+pNum(rtAE.licenciaSolvencias||0);
+
+          const tasaRT=pNum(rtManual.tasaRt||0)||pNum(rtPP.tasaBcvCierre||0)||pNum(rtAE.tasaBcvUsd||0)||1;
+          const usd=n=>n/tasaRT;
+
+          const filasNacional=[
+            {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIvaBs,campo:'venceIva'},
+            {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
+            {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:igtfBs,campo:'venceIgtf',editable:true},
+            {label:'RETENCIONES DE ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIslrBs,campo:'venceRetIslr'},
+            {label:'PENSIONES',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:pensionesBs,campo:'vencePensiones'},
+            {label:'IMPUESTO SOBRE LA RENTA',periodo:`ANUAL-${rtAnio}`,monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
+          ];
+          const filasAlcaldia=[
+            {label:'SEDEMAT (ALCALDÍA)',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:sedematBs,campo:'venceSedemat'},
+          ];
+          const totalGeneral=[...filasNacional,...filasAlcaldia].reduce((s,f)=>s+f.monto,0);
+          const _emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+          const _rif=settings?.empresaRif||'J-41230937-4';
+          const _dir=settings?.empresaDireccion||'';
+          const _periodoLbl=`${rtQ==='1'?'I':'II'}ERA QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}-${rtAnio}`;
+          const _fV=n=>fmtN(n);
+
+          const _filaHtmlPDF=(f)=>`<tr>
+              <td style="padding:5px 8px;font-weight:900">${f.label}</td>
+              <td style="padding:5px 8px;text-align:center">${f.periodo}</td>
+              <td style="padding:5px 8px;text-align:center;color:#dc2626;font-weight:bold">${rtManual[f.campo]?pD(rtManual[f.campo]):'—'}</td>
+              <td style="padding:5px 8px;text-align:right;font-family:monospace">Bs. ${_fV(f.monto)}</td>
+              <td style="padding:5px 8px;text-align:right;font-family:monospace;color:#555">USD ${_fV(usd(f.monto))}</td>
+            </tr>`;
+
+          const exportarRtPDF=()=>{
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Resumen Tributario</title><style>
+@page{size:letter landscape;margin:10mm 8mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:7px;font-family:Arial}}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+body{font-size:9px;color:#111}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #cbd5e1}
+th{background:#0f172a;color:#f97316;padding:5px 8px;font-size:8px;text-transform:uppercase;text-align:left}
+.sec{background:#3f3f46;color:#fff;font-weight:900;padding:5px 8px;font-size:9px;text-transform:uppercase}
+.tot{background:#0f172a;color:#f97316;font-weight:900}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<table style="border:none;margin-bottom:8px"><tr>
+  <td style="border:none;width:60%;vertical-align:top">
+    <div style="font-size:14px;font-weight:900">${_emp}</div>
+    <div style="font-size:8px;color:#444">RIF: ${_rif}</div>
+    <div style="font-size:7px;color:#666">${_dir}</div>
+  </td>
+  <td style="border:none;text-align:right;vertical-align:top">
+    <div style="font-size:13px;font-weight:900;color:#f97316">RESUMEN TRIBUTARIO</div>
+    <div style="font-size:9px;color:#555">${_periodoLbl}</div>
+    <div style="font-size:8px;color:#555">Corte: ${pD(getTodayDate())}</div>
+  </td>
+</tr></table>
+<div class="sec">Tesoro Nacional</div>
+<table style="margin-bottom:8px">
+  <thead><tr><th>Impuesto</th><th style="text-align:center">Período</th><th style="text-align:center">Vence</th><th style="text-align:right">Monto Bs</th><th style="text-align:right">Eq. Divisas</th></tr></thead>
+  <tbody>${filasNacional.map(_filaHtmlPDF).join('')}</tbody>
+</table>
+<div class="sec">Alcaldía</div>
+<table style="margin-bottom:8px">
+  <tbody>${filasAlcaldia.map(_filaHtmlPDF).join('')}</tbody>
+</table>
+<table style="margin-bottom:8px"><tr class="tot"><td style="padding:6px 8px">TOTAL Bs / $</td><td style="padding:6px 8px;text-align:right;font-family:monospace">Bs. ${_fV(totalGeneral)}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">USD ${_fV(usd(totalGeneral))}</td></tr></table>
+<div class="sec">Saldos por Aprovechar Siguiente Período</div>
+<table>
+  <tr><td style="padding:5px 8px;font-weight:900">Excedente de Crédito Fiscal para el mes siguiente</td><td style="padding:5px 8px;text-align:right;font-family:monospace">Bs. ${_fV(rtLibroVentasCfg.saldoCierreCF||0)}</td><td style="padding:5px 8px;text-align:right;font-family:monospace;color:#555">USD ${_fV(usd(rtLibroVentasCfg.saldoCierreCF||0))}</td></tr>
+  <tr><td style="padding:5px 8px;font-weight:900">Saldo de Retenciones de IVA no aplicado</td><td style="padding:5px 8px;text-align:right;font-family:monospace">Bs. ${_fV(rtLibroVentasCfg.saldoCierre||0)}</td><td style="padding:5px 8px;text-align:right;font-family:monospace;color:#555">USD ${_fV(usd(rtLibroVentasCfg.saldoCierre||0))}</td></tr>
+</table>
+<p style="margin-top:8px;font-size:7px;color:#666">Tasa BCV usada para equivalencias: Bs. ${_fV(tasaRT)}. IGTF e Impuesto Sobre la Renta (anual) son montos manuales.</p>
+<script>window.onload=()=>{window.print();}<\/script>
+</body></html>`;
+            const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+          };
+
+          const exportarRtExcel=()=>{
+            const _filaXls=(f)=>`<tr><td>${f.label}</td><td style="text-align:center">${f.periodo}</td><td style="text-align:center">${rtManual[f.campo]?pD(rtManual[f.campo]):'—'}</td><td style="text-align:right">${_fV(f.monto)}</td><td style="text-align:right">${_fV(usd(f.monto))}</td></tr>`;
+            const html=`<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:9pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt}.sec{background:#3f3f46;color:#fff;font-weight:bold;padding:5px 7px}.tot{background:#0f172a;color:#f97316;font-weight:bold}</style></head><body>
+<p style="font-size:14pt;font-weight:bold;margin:0">${_emp}</p>
+<h3 style="margin:2px 0 4px;font-size:12pt;color:#f97316">RESUMEN TRIBUTARIO · ${_periodoLbl}</h3>
+<p style="color:#64748b;margin:0 0 10px;font-size:9pt">RIF: ${_rif} · Corte: ${pD(getTodayDate())}</p>
+<table><tr class="sec"><td colspan="5">TESORO NACIONAL</td></tr>
+<tr><th>Impuesto</th><th>Período</th><th>Vence</th><th>Monto Bs</th><th>Eq. Divisas</th></tr>
+${filasNacional.map(_filaXls).join('')}
+<tr class="sec"><td colspan="5">ALCALDÍA</td></tr>
+${filasAlcaldia.map(_filaXls).join('')}
+<tr class="tot"><td colspan="3">TOTAL Bs / $</td><td style="text-align:right">${_fV(totalGeneral)}</td><td style="text-align:right">${_fV(usd(totalGeneral))}</td></tr>
+<tr class="sec"><td colspan="5">SALDOS POR APROVECHAR SIGUIENTE PERÍODO</td></tr>
+<tr><td colspan="3">Excedente de Crédito Fiscal para el mes siguiente</td><td style="text-align:right">${_fV(rtLibroVentasCfg.saldoCierreCF||0)}</td><td style="text-align:right">${_fV(usd(rtLibroVentasCfg.saldoCierreCF||0))}</td></tr>
+<tr><td colspan="3">Saldo de Retenciones de IVA no aplicado</td><td style="text-align:right">${_fV(rtLibroVentasCfg.saldoCierre||0)}</td><td style="text-align:right">${_fV(usd(rtLibroVentasCfg.saldoCierre||0))}</td></tr>
+</table></body></html>`;
+            const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
+            const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`ResumenTributario_${rtAnio}${rtMes}_Q${rtQ}.xls`;a.click();URL.revokeObjectURL(url);
+          };
+
+
+          const Fila=({f})=>(
+            <tr className="border-b border-slate-100">
+              <td className="px-3 py-2 font-black">{f.label}</td>
+              <td className="px-3 py-2 text-center font-bold text-slate-600">{f.periodo}</td>
+              <td className="px-3 py-2 text-center">
+                <input type="date" value={rtManual[f.campo]||''} onChange={e=>setRtManual(x=>({...x,[f.campo]:e.target.value}))} className="border border-slate-200 rounded-lg px-1.5 py-1 text-[11px] font-bold text-red-600 outline-none focus:border-orange-500"/>
+              </td>
+              <td className="px-3 py-2 text-right">
+                {f.editable?
+                  <input type="number" step="0.01" value={f.monto} onChange={e=>setRtManual(x=>({...x,[f.label==='IGTF'?'igtf':'islrAnual']:pNum(e.target.value)}))} className="w-32 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:border-orange-500"/>
+                  :<span className="font-mono font-black">Bs. {fmtN(f.monto)}</span>}
+              </td>
+              <td className="px-3 py-2 text-right font-mono text-slate-500">USD {fmtN(usd(f.monto))}</td>
+            </tr>
+          );
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-black text-sm uppercase">Resumen Tributario</h3>
+                    <p className="text-[10px] text-slate-400">{rtQ==='1'?'I':'II'}era Quincena {MESES_RT[parseInt(rtMes,10)-1]}-{rtAnio}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select value={rtMes} onChange={e=>setRtMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {MESES_RT.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                    </select>
+                    <select value={rtAnio} onChange={e=>setRtAnio(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {[parseInt(rtAnio)-1,parseInt(rtAnio),parseInt(rtAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <select value={rtQ} onChange={e=>setRtQ(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      <option value="1">I Quincena</option>
+                      <option value="2">II Quincena</option>
+                    </select>
+                    <button onClick={exportarRtPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700"><FileText size={12}/>PDF</button>
+                    <button onClick={exportarRtExcel} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-green-700"><Download size={12}/>Excel</button>
+                    <button disabled={rtSaving} onClick={guardarRt} className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-500 text-white rounded-lg text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={12}/>{rtSaving?'Guardando...':'Guardar'}</button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <span className="text-[10px] text-slate-400">Tasa BCV para equivalencia en USD de este resumen:</span>
+                  <input type="number" step="0.01" value={rtManual.tasaRt||0} onChange={e=>setRtManual(x=>({...x,tasaRt:pNum(e.target.value)}))} placeholder={fmtN(tasaRT)} className="w-24 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:border-orange-500"/>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="px-4 py-2.5" style={{background:'#3f3f46'}}><span className="text-[11px] text-white font-black uppercase">Tesoro Nacional</span></div>
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th className="px-3 py-2 text-left text-[8px] text-orange-400 font-black uppercase">Impuesto</th>
+                    <th className="px-3 py-2 text-center text-[8px] text-orange-400 font-black uppercase">Período</th>
+                    <th className="px-3 py-2 text-center text-[8px] text-orange-400 font-black uppercase">Vence</th>
+                    <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Monto Bs</th>
+                    <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Eq. Divisas</th>
+                  </tr></thead>
+                  <tbody>{filasNacional.map(f=><Fila key={f.label} f={f}/>)}</tbody>
+                </table>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="px-4 py-2.5" style={{background:'#3f3f46'}}><span className="text-[11px] text-white font-black uppercase">Alcaldía</span></div>
+                <table className="w-full text-xs">
+                  <tbody>{filasAlcaldia.map(f=><Fila key={f.label} f={f}/>)}</tbody>
+                </table>
+              </div>
+
+              <div className="bg-slate-900 rounded-xl p-4 flex items-center justify-between">
+                <span className="text-white font-black uppercase text-sm">Total Bs / $</span>
+                <div className="text-right">
+                  <div className="text-white font-mono font-black text-lg">Bs. {fmtN(totalGeneral)}</div>
+                  <div className="text-slate-400 font-mono text-xs">USD {fmtN(usd(totalGeneral))}</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="px-4 py-2.5" style={{background:'#3f3f46'}}><span className="text-[11px] text-white font-black uppercase">Saldos por Aprovechar Siguiente Período</span></div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    <tr className="border-b border-slate-100">
+                      <td className="px-4 py-2 font-black">Excedente de Crédito Fiscal para el mes siguiente</td>
+                      <td className="px-4 py-2 text-right font-mono">Bs. {fmtN(rtLibroVentasCfg.saldoCierreCF||0)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-slate-500">USD {fmtN(usd(rtLibroVentasCfg.saldoCierreCF||0))}</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-2 font-black">Saldo de Retenciones de IVA no aplicado</td>
+                      <td className="px-4 py-2 text-right font-mono">Bs. {fmtN(rtLibroVentasCfg.saldoCierre||0)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-slate-500">USD {fmtN(usd(rtLibroVentasCfg.saldoCierre||0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="text-[9px] text-slate-400 px-4 py-2">Estos dos saldos vienen directo de Determinación de IVA para el período seleccionado arriba.</p>
+              </div>
+              <p className="text-[9px] text-slate-400">IGTF e Impuesto Sobre la Renta (anual) son manuales por ahora — se calcularán automáticamente en una próxima sesión. Anticipo ISLR = 1% de ventas gravadas de la quincena. Pensiones y SEDEMAT recalculan solos con lo que ya guardaste en sus propias pantallas.</p>
             </div>
           );
         })()}
@@ -8855,6 +9137,7 @@ const SYSTEM_MODULES = [
       { id: 'impuestos_determinacion', label: 'Determinación de IVA' },
       { id: 'impuestos_act_economica', label: 'Actividad Económica' },
       { id: 'impuestos_prot_pensiones', label: 'Protección de Pensiones' },
+      { id: 'impuestos_resumen', label: 'Resumen Tributario' },
       { id: 'impuestos_forma99030', label: 'Forma 99030' },
       { id: 'impuestos_dua',       label: 'DUA / Importaciones' },
       { id: 'impuestos_config',   label: 'Configuración (UT, firma, sello)' },
