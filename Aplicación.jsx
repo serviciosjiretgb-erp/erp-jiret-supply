@@ -115,6 +115,12 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [detLcRes,setDetLcRes]=useState({c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0});
   const [detManual,setDetManual]=useState({m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0});
   const [detSaving,setDetSaving]=useState(false);
+  const [cfgSaldoAnio,setCfgSaldoAnio]=useState(String(new Date().getFullYear()));
+  const [cfgSaldoMes,setCfgSaldoMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
+  const [cfgSaldoQ,setCfgSaldoQ]=useState('1');
+  const [cfgRetAcum,setCfgRetAcum]=useState('');
+  const [cfgCfExcedente,setCfgCfExcedente]=useState('');
+  const [cfgSaldoSaving,setCfgSaldoSaving]=useState(false);
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -144,22 +150,90 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     if(!fbUser||sec!=='det_iva') return;
     const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
     const prevKey=`${detPrevPeriodo.anio}-${detPrevPeriodo.mes}-Q${detPrevPeriodo.q}`;
-    const u1=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>{const x=d.data()||{};setDetLibroVentasCfg(d.exists()?{retAcum:pNum(x.retAcum||0),retDesc:pNum(x.retDesc||0),saldoCierre:x.saldoCierre!=null?pNum(x.saldoCierre):null,cfExcedente:pNum(x.cfExcedente||0),saldoCierreCF:x.saldoCierreCF!=null?pNum(x.saldoCierreCF):null,_retAcumManual:!!x._retAcumManual,_cfExcedenteManual:!!x._cfExcedenteManual}:{retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null,_retAcumManual:false,_cfExcedenteManual:false});});
+    const u1=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>{const x=d.data()||{};setDetLibroVentasCfg(d.exists()?{retAcum:pNum(x.retAcum||0),retDesc:pNum(x.retDesc||0),saldoCierre:x.saldoCierre!=null?pNum(x.saldoCierre):null,cfExcedente:pNum(x.cfExcedente||0),saldoCierreCF:x.saldoCierreCF!=null?pNum(x.saldoCierreCF):null,_retAcumManual:!!x._retAcumManual,_cfExcedenteManual:!!x._cfExcedenteManual,_saldoCierreManual:!!x._saldoCierreManual,_saldoCierreCFManual:!!x._saldoCierreCFManual}:{retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null,_retAcumManual:false,_cfExcedenteManual:false,_saldoCierreManual:false,_saldoCierreCFManual:false});});
     const uPrev=onSnapshot(getDocRef('libroVentasConfig',prevKey),d=>{const x=d.data()||{};setDetPrevCfg(d.exists()?{retAcum:pNum(x.retAcum||0),retDesc:pNum(x.retDesc||0),saldoCierre:x.saldoCierre!=null?pNum(x.saldoCierre):null,cfExcedente:pNum(x.cfExcedente||0),saldoCierreCF:x.saldoCierreCF!=null?pNum(x.saldoCierreCF):null}:{retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null});});
     const u2=onSnapshot(doc(db,'settings',`lc-resumen-${periodoKey}`),d=>setDetLcRes(d.exists()?{...{c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0},...d.data()}:{c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0}));
     const u3=onSnapshot(doc(db,'settings',`det-iva-${periodoKey}`),d=>setDetManual(d.exists()?{...{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0},...d.data()}:{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0}));
     return()=>{u1();uPrev();u2();u3();};
   },[fbUser,sec,detAnio,detMes,detQ]);
 
+  const guardarSaldoInicial=async()=>{
+    setCfgSaldoSaving(true);
+    try{
+      const periodoKey=`${cfgSaldoAnio}-${cfgSaldoMes}-Q${cfgSaldoQ}`;
+      await setDoc(getDocRef('libroVentasConfig',periodoKey),{retAcum:pNum(cfgRetAcum||0),_retAcumManual:true,cfExcedente:pNum(cfgCfExcedente||0),_cfExcedenteManual:true},{merge:true});
+      setImpDialog({title:'✅ Guardado',text:`Saldo inicial guardado para ${periodoKey}. De aquí en adelante, Determinación de IVA lo hereda solo, quincena tras quincena.`,type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setCfgSaldoSaving(false);}
+  };
+
   const guardarDetManual=async()=>{
-    setDetSaving(true);
     try{
       const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
       await setDoc(doc(db,'settings',`det-iva-${periodoKey}`),{...detManual,periodoKey,updatedAt:Date.now()},{merge:true});
-      setImpDialog({title:'✅ Guardado',text:`Campos manuales de Determinación de IVA guardados para ${periodoKey}.`,type:'alert'});
-    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
-    finally{setDetSaving(false);}
+      return true;
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});return false;}
   };
+
+  // ── Auto-cierre quincenal: guarda solo (debounced) el saldo de retenciones y de excedente de crédito
+  // fiscal de la quincena que se está viendo, para que la siguiente la herede sin ningún clic manual ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='det_iva') return;
+    const t=setTimeout(async()=>{
+      const lastDay=new Date(parseInt(detAnio),parseInt(detMes),0).getDate();
+      const desde=detQ==='2'?`${detAnio}-${detMes}-16`:`${detAnio}-${detMes}-01`;
+      const hasta=detQ==='1'?`${detAnio}-${detMes}-15`:`${detAnio}-${detMes}-${String(lastDay).padStart(2,'0')}`;
+      const ventasFact=(detInvoices||[]).filter(inv=>{
+        if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
+        const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+      });
+      const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+      const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f>=desde&&f<=hasta;});
+      let ivaDebitosBs=0;
+      ventasFact.forEach(inv=>{
+        if(inv.aplicaIva!=='SI') return;
+        const tasa=pNum(inv.tasa||0)||pNum(settings?.tasaBCV||0)||1;
+        const base=pNum(inv.montoBase||0);
+        const ivaAmt=pNum(inv.iva||0)||parseFloat((base*0.16).toFixed(2));
+        ivaDebitosBs+=pNum(inv.ivaBs||0)||ivaAmt*tasa;
+      });
+      ncndFiscalesDet.forEach(n=>{const baseConSigno=pNum(n.monto||0)*(n.tipo==='NC'?-1:1);ivaDebitosBs+=parseFloat((baseConSigno*0.16).toFixed(2));});
+      const retPeriodoVentas=retVentasPeriodo.reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
+      const comprasFact=(detFacturasCompra||[]).filter(f=>{
+        if(f.afectaLibroCompras===false) return false;
+        if(f.periodoLibroMes) return f.periodoLibroMes===`${detAnio}-${detMes}`&&String(f.periodoLibroQ||'1')===String(detQ);
+        const fecha=f.fecha||''; return fecha>=desde&&fecha<=hasta;
+      });
+      let c32=0,c34=0;
+      comprasFact.forEach(f=>{
+        const tot=f.totales||{}; c34+=pNum(tot.iva16Bs||0);
+        if(f.esImportacion&&f.importacion){c32+=pNum(f.importacion.iva||0);}
+      });
+      const L=detLcRes;
+      const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+pNum(L.c343);
+      const item9=ivaDebitosBs+pNum(detManual.m48)-pNum(detManual.m80);
+      const item19=pNum(L.c37), item18=c36-item19, item20=item18+item19;
+      const heredaCF2=!detLibroVentasCfg._cfExcedenteManual&&detPrevCfg.saldoCierreCF!=null;
+      const item21=heredaCF2?pNum(detPrevCfg.saldoCierreCF):pNum(detLibroVentasCfg.cfExcedente);
+      const item26=item20+item21-pNum(L.c21)-pNum(L.c81)+pNum(L.c38)-pNum(L.c82);
+      const _diff=item9-item26;
+      const item27=Math.max(0,_diff), item28=Math.max(0,-_diff);
+      const item32=Math.max(0,item27-pNum(detManual.m22)-pNum(detManual.m51)-pNum(detManual.m24));
+      const heredaRA2=!detLibroVentasCfg._retAcumManual&&detPrevCfg.saldoCierre!=null;
+      const item33=heredaRA2?pNum(detPrevCfg.saldoCierre):pNum(detLibroVentasCfg.retAcum);
+      const item37=item33+retPeriodoVentas+pNum(detManual.m72)+pNum(detManual.m73);
+      const item38=Math.min(item32,item37);
+      const item39=item37-item38;
+      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+      const cambios={};
+      if(!detLibroVentasCfg._saldoCierreManual&&(detLibroVentasCfg.saldoCierre==null||Math.abs(detLibroVentasCfg.saldoCierre-item39)>0.01)) cambios.saldoCierre=item39;
+      if(!detLibroVentasCfg._saldoCierreCFManual&&(detLibroVentasCfg.saldoCierreCF==null||Math.abs(detLibroVentasCfg.saldoCierreCF-item28)>0.01)) cambios.saldoCierreCF=item28;
+      if(Object.keys(cambios).length>0){
+        try{ await setDoc(getDocRef('libroVentasConfig',periodoKey),cambios,{merge:true}); }catch(e){/* silencioso: no interrumpe al usuario */}
+      }
+    },1200);
+    return()=>clearTimeout(t);
+  },[fbUser,sec,detAnio,detMes,detQ,detInvoices,detFacturasCompra,detRetVentas,detNotasVentaCD,detLcRes,detManual,detLibroVentasCfg,detPrevCfg,settings]);
   const setDM=(campo,val)=>setDetManual(m=>({...m,[campo]:pNum(val)||0}));
 
   const guardarUT=async(val)=>{
@@ -1065,7 +1139,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const item34=retPeriodoVentas;
           const item35=pNum(detManual.m72), item36=pNum(detManual.m73);
           const item37=item33+item34+item35+item36;
-          const item38=pNum(detLibroVentasCfg.retDesc);
+          const item38=Math.min(item32,item37); // aplica justo lo necesario para saldar la cuota (nunca más de lo disponible)
           const item39=item37-item38;
           const item40=Math.max(0,item32-item38);
           // ── Percepciones en Aduanas (41-48) — casi siempre 0 salvo importadores frecuentes ──
@@ -1074,6 +1148,15 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const item46=pNum(detManual.m58);
           const item47=item45-item46;
           const item48=Math.max(0,item40-item46);
+
+          const guardarAzules=async()=>{
+            try{
+              const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+              await setDoc(getDocRef('libroVentasConfig',periodoKey),{retAcum:pNum(item33||0),retDesc:pNum(detLibroVentasCfg.retDesc||0),_retAcumManual:true,cfExcedente:pNum(item21||0),_cfExcedenteManual:true},{merge:true});
+              await setDoc(doc(db,'settings',`lc-resumen-${periodoKey}`),{...detLcRes,periodoKey,updatedAt:Date.now()},{merge:true});
+              return true;
+            }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});return false;}
+          };
 
           // ── Array plano de las 48 filas (para PDF/Excel) — mismo orden/códigos que la Forma IVA 99030 ──
           const detRows=[
@@ -1192,8 +1275,8 @@ table{border-collapse:collapse;width:100%}
             <input type="number" step="0.01" value={detManual[campo]||0} onChange={e=>setDM(campo,e.target.value)}
               className={`w-full border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-orange-500 ${className}`}/>
           );
-          const LInput=({val,onSet})=>(
-            <input type="number" step="0.01" value={val||0} onChange={e=>onSet(pNum(e.target.value))}
+          const LInput=({val,onSet,onBlur})=>(
+            <input type="number" step="0.01" value={val||0} onChange={e=>onSet(pNum(e.target.value))} onBlur={onBlur}
               className="w-full border-2 border-blue-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-blue-500 bg-blue-50"/>
           );
           const Row=({n,label,codeA,valA,codeB,valB,bold,dark})=>(
@@ -1286,7 +1369,7 @@ table{border-collapse:collapse;width:100%}
                     <Row n={18} label="Créditos Fiscales Totalmente Deducibles" codeB="70" valB={V(item18)}/>
                     <Row n={19} label="Créditos Fiscales producto de la Aplicación del porcentaje de la prorrata" codeB="37" valB={<LInput val={L.c37} onSet={v=>setDetLcRes(x=>({...x,c37:v}))}/>}/>
                     <Row n={20} label="Total créditos fiscales deducibles... Realice la operación (70 + 37)" codeB="71" valB={V(item20)} bold/>
-                    <Row n={21} label={<>Excedente Créditos Fiscales del mes Anterior (ítem 60 de la declaración anterior){heredaCF&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeB="20" valB={<LInput val={item21} onSet={v=>setDetLibroVentasCfg(x=>({...x,cfExcedente:v,_cfExcedenteManual:true}))}/>}/>
+                    <Row n={21} label={<>Excedente Créditos Fiscales del mes Anterior (ítem 60 de la declaración anterior){heredaCF&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeB="20" valB={<LInput val={item21} onSet={v=>setDetLibroVentasCfg(x=>({...x,cfExcedente:v,_cfExcedenteManual:true}))} onBlur={guardarAzules}/>}/>
                     <Row n={22} label="Reintegro Solicitado (sólo Exportadores)" codeB="21" valB={<LInput val={L.c21} onSet={v=>setDetLcRes(x=>({...x,c21:v}))}/>}/>
                     <Row n={23} label="Reintegro Solicitado (sólo quien suministre bienes o presten servicios a entes exonerados)" codeB="81" valB={<LInput val={L.c81} onSet={v=>setDetLcRes(x=>({...x,c81:v}))}/>}/>
                     <Row n={24} label="Ajustes a los Créditos Fiscales de períodos anteriores" codeB="38" valB={<LInput val={L.c38} onSet={v=>setDetLcRes(x=>({...x,c38:v}))}/>}/>
@@ -1310,15 +1393,15 @@ table{border-collapse:collapse;width:100%}
                     <Row n={32} label="Sub-total Impuesto a Pagar" codeB="78" valB={V(item32)} bold/>
                     <Row n={33} label={<>Retenciones Acumuladas por Descontar{heredaRetAcum&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeA="54" valA={
                       <div>
-                        <LInput val={item33} onSet={v=>setDetLibroVentasCfg(x=>({...x,retAcum:v,_retAcumManual:true}))}/>
-                        {heredaRetAcum&&<button onClick={()=>setDetLibroVentasCfg(x=>({...x,retAcum:item33,_retAcumManual:true}))} className="text-[8px] text-blue-600 font-black underline mt-0.5">fijar manualmente este valor</button>}
+                        <LInput val={item33} onSet={v=>setDetLibroVentasCfg(x=>({...x,retAcum:v,_retAcumManual:true}))} onBlur={guardarAzules}/>
+                        {heredaRetAcum&&<button onClick={()=>{setDetLibroVentasCfg(x=>({...x,retAcum:item33,_retAcumManual:true}));setTimeout(guardarAzules,0);}} className="text-[8px] text-blue-600 font-black underline mt-0.5">fijar manualmente este valor</button>}
                       </div>
                     }/>
                     <Row n={34} label="Retenciones del Período" codeA="66" valA={V(item34)}/>
                     <Row n={35} label="Créditos Adquiridos por Cesión de Retenciones" codeA="72" valA={<MInput campo="m72"/>}/>
                     <Row n={36} label="Recuperación de Retenciones Solicitado (saldo con antigüedad mayor a dos períodos impositivos)" codeA="73" valA={<MInput campo="m73"/>}/>
                     <Row n={37} label="Total Retenciones" codeA="74" valA={V(item37)} bold/>
-                    <Row n={38} label="Retenciones Soportadas y Descontadas en esta Declaración" codeB="55" valB={<LInput val={detLibroVentasCfg.retDesc} onSet={v=>setDetLibroVentasCfg(x=>({...x,retDesc:v}))}/>}/>
+                    <Row n={38} label="Retenciones Soportadas y Descontadas en esta Declaración" codeB="55" valB={V(item38)}/>
                     <Row n={39} label="Saldo de Retenciones de IVA no aplicado" codeA="67" valA={V(item39)}/>
                     <Row n={40} label="Sub-total Impuesto a Pagar" codeB="56" valB={V(item40)} dark/>
                     <Row n={41} label="Percepciones Acumuladas en Importaciones por Descontar" codeA="57" valA={<MInput campo="m57"/>}/>
@@ -1333,71 +1416,16 @@ table{border-collapse:collapse;width:100%}
                 </table>
               </div>
 
-              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 space-y-2">
-                <p className="text-[10px] font-black text-emerald-700 uppercase">🔒 Cierre de Retenciones — se hereda como "Retenciones Acumuladas" (ítem 33) del período siguiente</p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] text-emerald-700">Saldo actual calculado (ítem 39): <b>Bs. {fmtN(item39)}</b></span>
-                  <button onClick={async()=>{
-                    try{
-                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
-                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierre:item39},{merge:true});
-                      setImpDialog({title:'✅ Quincena cerrada',text:`Saldo de cierre Bs. ${fmtN(item39)} guardado para ${periodoKey}. La siguiente quincena lo heredará automáticamente como Retenciones Acumuladas.`,type:'alert'});
-                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
-                  }} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-emerald-700">Cerrar con este saldo</button>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-emerald-200">
-                  <span className="text-[10px] text-emerald-700">¿Necesitas fijar el cierre real de este período manualmente (ej. saldo con el que cerraste antes de usar este módulo)?</span>
-                  <input type="number" step="0.01" placeholder="Monto Bs." value={detLibroVentasCfg.saldoCierre??''} onChange={e=>setDetLibroVentasCfg(x=>({...x,saldoCierre:e.target.value===''?null:pNum(e.target.value)}))} className="w-40 border-2 border-emerald-300 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-emerald-500"/>
-                  <button onClick={async()=>{
-                    try{
-                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
-                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierre:detLibroVentasCfg.saldoCierre==null?null:pNum(detLibroVentasCfg.saldoCierre)},{merge:true});
-                      setImpDialog({title:'✅ Guardado',text:`Saldo de cierre manual guardado para ${periodoKey}.`,type:'alert'});
-                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
-                  }} className="px-3 py-1.5 bg-emerald-700 text-white rounded-lg text-[9px] font-black uppercase hover:bg-emerald-800">Guardar cierre manual</button>
-                </div>
-                {detPrevCfg.saldoCierre!=null&&<p className="text-[9px] text-emerald-600">Cierre guardado del período anterior ({MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q): Bs. {fmtN(detPrevCfg.saldoCierre)}</p>}
-              </div>
-
-              <div className="bg-sky-50 border-2 border-sky-200 rounded-xl p-4 space-y-2">
-                <p className="text-[10px] font-black text-sky-700 uppercase">🔒 Cierre de Crédito Fiscal — se hereda como "Excedente Créditos Fiscales" (ítem 21) del período siguiente</p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] text-sky-700">Saldo actual calculado (ítem 28): <b>Bs. {fmtN(item28)}</b></span>
-                  <button onClick={async()=>{
-                    try{
-                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
-                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierreCF:item28},{merge:true});
-                      setImpDialog({title:'✅ Quincena cerrada',text:`Excedente de crédito fiscal Bs. ${fmtN(item28)} guardado para ${periodoKey}. La siguiente quincena lo heredará automáticamente como Excedente Créditos Fiscales.`,type:'alert'});
-                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
-                  }} className="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-sky-700">Cerrar con este saldo</button>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-sky-200">
-                  <span className="text-[10px] text-sky-700">¿Fijar manualmente el excedente de crédito fiscal con el que cerraste (ej. antes de usar este módulo)?</span>
-                  <input type="number" step="0.01" placeholder="Monto Bs." value={detLibroVentasCfg.saldoCierreCF??''} onChange={e=>setDetLibroVentasCfg(x=>({...x,saldoCierreCF:e.target.value===''?null:pNum(e.target.value)}))} className="w-40 border-2 border-sky-300 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-sky-500"/>
-                  <button onClick={async()=>{
-                    try{
-                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
-                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierreCF:detLibroVentasCfg.saldoCierreCF==null?null:pNum(detLibroVentasCfg.saldoCierreCF)},{merge:true});
-                      setImpDialog({title:'✅ Guardado',text:`Excedente de crédito fiscal manual guardado para ${periodoKey}.`,type:'alert'});
-                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
-                  }} className="px-3 py-1.5 bg-sky-700 text-white rounded-lg text-[9px] font-black uppercase hover:bg-sky-800">Guardar cierre manual</button>
-                </div>
-                {detPrevCfg.saldoCierreCF!=null&&<p className="text-[9px] text-sky-600">Cierre guardado del período anterior ({MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q): Bs. {fmtN(detPrevCfg.saldoCierreCF)}</p>}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-1.5">
+                <p className="text-[10px] font-black text-slate-500 uppercase">🔒 Herencia entre quincenas</p>
+                <p className="text-[10px] text-slate-500">Retenciones Acumuladas (ítem 33) y Excedente de Crédito Fiscal (ítem 21) se heredan solos de la quincena anterior — no hay que hacer nada. El saldo inicial se configura una sola vez en <b>Configuración → Determinación de IVA</b>.</p>
+                {detPrevCfg.saldoCierre!=null&&<p className="text-[9px] text-emerald-600">Retenciones heredadas de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q: Bs. {fmtN(detPrevCfg.saldoCierre)}</p>}
+                {detPrevCfg.saldoCierreCF!=null&&<p className="text-[9px] text-sky-600">Excedente de crédito fiscal heredado de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q: Bs. {fmtN(detPrevCfg.saldoCierreCF)}</p>}
               </div>
 
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[9px] text-slate-400 max-w-md">Los campos 🔵 azules de Retenciones Acum./Descontadas se guardan en Libro de Ventas; el resto del Libro de Compras se guarda en su propio resumen. Solo "Guardar" aquí graba los campos 🟠 propios de esta pantalla.</p>
-                <div className="flex gap-2">
-                  <button disabled={detSaving} onClick={guardarDetManual} className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={12}/>{detSaving?'Guardando...':'Guardar'}</button>
-                  <button onClick={async()=>{
-                    try{
-                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
-                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{retAcum:pNum(item33||0),retDesc:pNum(detLibroVentasCfg.retDesc||0),_retAcumManual:true},{merge:true});
-                      await setDoc(doc(db,'settings',`lc-resumen-${periodoKey}`),{...detLcRes,periodoKey,updatedAt:Date.now()},{merge:true});
-                      setImpDialog({title:'✅ Guardado',text:'Retenciones (Libro de Ventas) y resumen (Libro de Compras) guardados.',type:'alert'});
-                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
-                  }} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-700"><Save size={12}/>Guardar Azules</button>
-                </div>
+                <p className="text-[9px] text-slate-400 max-w-md">Guarda los campos manuales de esta quincena (Débitos/Créditos y resumen de Libro de Compras). El saldo de retenciones y crédito fiscal se auto-guarda solo; puedes volver a cualquier quincena pasada y editarla cuando quieras.</p>
+                <button disabled={detSaving} onClick={async()=>{setDetSaving(true);const a=await guardarDetManual();const b=await guardarAzules();setDetSaving(false);if(a&&b)setImpDialog({title:'✅ Quincena guardada',text:`Todo lo de ${detAnio}-${detMes} · ${detQ==='1'?'I':'II'} Quincena quedó guardado.`,type:'alert'});}} className="flex items-center gap-1.5 px-5 py-2.5 bg-orange-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={13}/>{detSaving?'Guardando...':'Guardar Quincena'}</button>
               </div>
             </div>
           );
@@ -1424,6 +1452,39 @@ table{border-collapse:collapse;width:100%}
                   <p className="text-[11px] text-slate-500 mt-1">PJD (Jurídica domiciliada): <strong>Sin sustraendo</strong></p>
                 </div>
               </div>
+            </div>
+            {/* ── Determinación de IVA: Saldo Inicial ── */}
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-3">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Determinación de IVA — Saldo Inicial</h3>
+              <p className="text-[10px] text-slate-400">Configura aquí, una sola vez, con qué monto arrancas de Retenciones Acumuladas por Descontar y Excedente de Crédito Fiscal. De ahí en adelante, cada quincena hereda sola el saldo de la anterior — no hace falta volver a tocar esto.</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Aplicar desde</label>
+                  <div className="flex gap-1.5">
+                    <select value={cfgSaldoMes} onChange={e=>setCfgSaldoMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {_MESES.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                    </select>
+                    <select value={cfgSaldoAnio} onChange={e=>setCfgSaldoAnio(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {[parseInt(cfgSaldoAnio)-1,parseInt(cfgSaldoAnio),parseInt(cfgSaldoAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <select value={cfgSaldoQ} onChange={e=>setCfgSaldoQ(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      <option value="1">I Quincena</option>
+                      <option value="2">II Quincena</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase block mb-1.5">Retenciones Acumuladas por Descontar</label>
+                  <input type="number" step="0.01" placeholder="Bs." value={cfgRetAcum} onChange={e=>setCfgRetAcum(e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black outline-none focus:border-orange-500"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase block mb-1.5">Excedente de Crédito Fiscal</label>
+                  <input type="number" step="0.01" placeholder="Bs." value={cfgCfExcedente} onChange={e=>setCfgCfExcedente(e.target.value)} className="w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black outline-none focus:border-orange-500"/>
+                </div>
+              </div>
+              <button disabled={cfgSaldoSaving} onClick={guardarSaldoInicial} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{cfgSaldoSaving?'Guardando...':'Guardar Saldo Inicial'}</button>
             </div>
             {/* ── Correlativos ── */}
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
