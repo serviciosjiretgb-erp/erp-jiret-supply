@@ -134,7 +134,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   // ── Impuesto de Protección de Pensiones (Forma 99019 SENIAT) ──
   const [ppAnio,setPpAnio]=useState(String(new Date().getFullYear()));
   const [ppMes,setPpMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
-  const [ppData,setPpData]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0,montoPensiones:0});
+  const [ppData,setPpData]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0});
   const [ppSaving,setPpSaving]=useState(false);
 
   useEffect(()=>{
@@ -211,7 +211,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   useEffect(()=>{
     if(!fbUser||sec!=='prot_pensiones') return;
     const mesKey=`${ppAnio}-${ppMes}`;
-    const DEF={minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0,montoPensiones:0};
+    const DEF={minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0};
     const u=onSnapshot(doc(db,'settings',`prot-pensiones-${mesKey}`),d=>setPpData(d.exists()?{...DEF,...d.data()}:DEF));
     return()=>u();
   },[fbUser,sec,ppAnio,ppMes]);
@@ -1660,7 +1660,8 @@ td,th{border:1px solid #999;padding:4px 6px}
           const lastDay=new Date(parseInt(ppAnio),parseInt(ppMes),0).getDate();
           const setPP=(campo,val)=>setPpData(x=>({...x,[campo]:pNum(val)||0}));
           const salarioMinTotal=pNum(ppData.cantidadEmpleados)*pNum(ppData.salarioMinimoOficial);
-          const totalBase=pNum(ppData.montoPensiones)+salarioMinTotal;
+          const montoPensiones=pNum(ppData.minimoTributableUSD)*pNum(ppData.tasaBcvCierre)*pNum(ppData.cantidadEmpleados);
+          const totalBase=montoPensiones+salarioMinTotal;
           const impuestoBs=totalBase*(pNum(ppData.alicuotaTributable)/100);
           const impuestoUsd=impuestoBs/(pNum(ppData.tasaBcvCierre)||1);
 
@@ -1704,7 +1705,7 @@ td,th{border:1px solid #333;padding:5px 7px}
   <tr><td style="width:50%;font-size:7px">Juro que los datos contenidos en esta declaración han sido determinados con base a las disposiciones legales y examinados por mi persona: ${emp}<br/><br/>Fecha: ${fDecl}</td>
   <td style="font-size:7px">Yo, ${emp}, con el RIF N° ${rif}. Declaro que los datos y cifras que aparecen en la declaración son una copia fiel y exacta de los datos contenidos en los registros de contabilidad y control tributario que han sido llenados conforme a la ley.</td></tr>
 </table>
-<p style="margin-top:8px;font-size:7px;color:#666">Bases de cálculo — Mínimo Tributable: USD ${N2(ppData.minimoTributableUSD)} · Salario Mínimo Oficial: Bs. ${N2(ppData.salarioMinimoOficial)} · Tasa BCV cierre de mes: Bs. ${N2(ppData.tasaBcvCierre)} · Salario Mínimo Total (${pNum(ppData.cantidadEmpleados)} emp.): Bs. ${N2(salarioMinTotal)} · Monto Pensiones: Bs. ${N2(ppData.montoPensiones)}</p>
+<p style="margin-top:8px;font-size:7px;color:#666">Bases de cálculo — Mínimo Tributable: USD ${N2(ppData.minimoTributableUSD)} · Salario Mínimo Oficial: Bs. ${N2(ppData.salarioMinimoOficial)} · Tasa BCV cierre de mes: Bs. ${N2(ppData.tasaBcvCierre)} · Salario Mínimo Total (${pNum(ppData.cantidadEmpleados)} emp.): Bs. ${N2(salarioMinTotal)} · Monto Pensiones: Bs. ${N2(montoPensiones)}</p>
 <script>window.onload=()=>window.print();<\/script>
 </body></html>`;
             const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
@@ -1726,52 +1727,82 @@ td,th{border:1px solid #333;padding:5px 7px}
                       {[parseInt(ppAnio)-1,parseInt(ppAnio),parseInt(ppAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
                     </select>
                     <button onClick={exportarPPPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
-                    <button disabled={ppSaving} onClick={guardarPP} className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={11}/>{ppSaving?'Guardando...':'Guardar'}</button>
+                    <button disabled={ppSaving} onClick={guardarPP} className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-500 text-white rounded-lg text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={12}/>{ppSaving?'Guardando...':`Guardar ${MESES_PP[parseInt(ppMes,10)-1]}`}</button>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                <div className="px-4 py-2.5" style={{background:'#0f172a'}}><span className="text-[9px] text-orange-400 font-black uppercase">Bases de Cálculo</span></div>
-                <div className="grid grid-cols-5 gap-4 p-4">
-                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mínimo Tributable (USD)</label>
-                    <input type="number" step="0.01" value={ppData.minimoTributableUSD} onChange={e=>setPP('minimoTributableUSD',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Alícuota Tributable (%)</label>
-                    <input type="number" step="0.01" value={ppData.alicuotaTributable} onChange={e=>setPP('alicuotaTributable',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Salario Mínimo Oficial (Bs.)</label>
-                    <input type="number" step="0.01" value={ppData.salarioMinimoOficial} onChange={e=>setPP('salarioMinimoOficial',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV Cierre de Mes (Bs.)</label>
-                    <input type="number" step="0.01" value={ppData.tasaBcvCierre} onChange={e=>setPP('tasaBcvCierre',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cantidad de Empleados</label>
-                    <input type="number" step="1" value={ppData.cantidadEmpleados} onChange={e=>setPP('cantidadEmpleados',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
-                </div>
-                <div className="px-4 pb-4">
-                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Pensiones — total salarios y bonificaciones de carácter no salarial (Bs.)</label>
-                  <input type="number" step="0.01" value={ppData.montoPensiones} onChange={e=>setPP('montoPensiones',e.target.value)} className="w-64 border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 <table className="w-full text-xs">
-                  <thead><tr style={{background:'#0f172a'}}>
-                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto Pensiones</th>
-                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Salario Mínimo</th>
-                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Total</th>
-                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Impuesto</th>
+                  <thead><tr>
+                    <th colSpan={2} className="px-4 py-3 text-center text-sm font-black text-white uppercase" style={{background:'#3f3f46'}}>{MESES_PP[parseInt(ppMes,10)-1]} {ppAnio}</th>
+                    <th colSpan={2} className="px-4 py-3 text-center text-sm font-black text-white uppercase" style={{background:'#1e3a8a'}}>Bases de Cálculos</th>
                   </tr></thead>
                   <tbody>
-                    <tr>
-                      <td className="px-3 py-3 text-right font-mono">Bs. {fmtN(ppData.montoPensiones)}</td>
-                      <td className="px-3 py-3 text-right font-mono">Bs. {fmtN(salarioMinTotal)}</td>
-                      <td className="px-3 py-3 text-right font-mono font-black">Bs. {fmtN(totalBase)}</td>
-                      <td className="px-3 py-3 text-right">
-                        <div className="font-mono font-black text-orange-600">Bs. {fmtN(impuestoBs)}</div>
-                        <div className="font-mono text-[10px] text-slate-400">USD {fmtN(impuestoUsd)}</div>
+                    <tr className="bg-slate-200">
+                      <td colSpan={2} className="px-4 py-2 font-black text-red-700 uppercase text-[11px]">Mínimo Tributable</td>
+                      <td className="px-4 py-2 font-black text-red-700">USD</td>
+                      <td className="px-4 py-2 text-right">
+                        <input type="number" step="0.01" value={ppData.minimoTributableUSD} onChange={e=>setPP('minimoTributableUSD',e.target.value)} className="w-32 bg-transparent text-right font-black text-red-700 text-[13px] outline-none border-b-2 border-transparent focus:border-red-400"/>
+                      </td>
+                    </tr>
+                    <tr className="bg-slate-200">
+                      <td colSpan={2} className="px-4 py-2 font-black text-red-700 uppercase text-[11px]">Alícuota Tributable</td>
+                      <td className="px-4 py-2"></td>
+                      <td className="px-4 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <input type="number" step="0.01" value={ppData.alicuotaTributable} onChange={e=>setPP('alicuotaTributable',e.target.value)} className="w-20 bg-transparent text-right font-black text-red-700 text-[13px] outline-none border-b-2 border-transparent focus:border-red-400"/>
+                          <span className="font-black text-red-700">%</span>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr className="bg-slate-200">
+                      <td colSpan={2} className="px-4 py-2 font-black text-red-700 uppercase text-[11px]">Salario Mínimo Oficial</td>
+                      <td className="px-4 py-2 font-black text-slate-700">Bs.</td>
+                      <td className="px-4 py-2 text-right">
+                        <input type="number" step="0.01" value={ppData.salarioMinimoOficial} onChange={e=>setPP('salarioMinimoOficial',e.target.value)} className="w-32 bg-transparent text-right font-black text-slate-800 text-[13px] outline-none border-b-2 border-transparent focus:border-orange-400"/>
+                      </td>
+                    </tr>
+                    <tr className="bg-slate-200">
+                      <td colSpan={2} className="px-4 py-2 font-black text-red-700 uppercase text-[11px]">Tasa BCV Cierre de Mes</td>
+                      <td className="px-4 py-2 font-black text-slate-700">Bs.</td>
+                      <td className="px-4 py-2 text-right">
+                        <input type="number" step="0.01" value={ppData.tasaBcvCierre} onChange={e=>setPP('tasaBcvCierre',e.target.value)} className="w-32 bg-transparent text-right font-black text-slate-800 text-[13px] outline-none border-b-2 border-transparent focus:border-orange-400"/>
+                      </td>
+                    </tr>
+                    <tr className="bg-slate-200">
+                      <td colSpan={2} className="px-4 py-2 font-black text-slate-800 uppercase text-[11px]">Cantidad de Empleados</td>
+                      <td className="px-4 py-2"></td>
+                      <td className="px-4 py-2 text-right">
+                        <input type="number" step="1" value={ppData.cantidadEmpleados} onChange={e=>setPP('cantidadEmpleados',e.target.value)} className="w-32 bg-transparent text-right font-black text-slate-800 text-[13px] outline-none border-b-2 border-transparent focus:border-orange-400"/>
                       </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#1e3a8a'}}>
+                    <th className="px-4 py-2.5 text-left text-[11px] text-white font-black uppercase">Monto Pensiones</th>
+                    <th className="px-4 py-2.5 text-left text-[11px] text-white font-black uppercase">Salario Mínimo</th>
+                    <th className="px-4 py-2.5 text-left text-[11px] text-slate-800 font-black uppercase" style={{background:'#cbd5e1'}}>Total</th>
+                    <th className="px-4 py-2.5 text-left text-[11px] text-red-800 font-black uppercase" style={{background:'#e2e8f0'}}>Impuesto</th>
+                  </tr></thead>
+                  <tbody>
+                    <tr className="bg-white">
+                      <td className="px-4 py-3"><span className="text-slate-400 mr-2">Bs.</span><span className="font-mono font-bold text-[13px]">{fmtN(montoPensiones)}</span></td>
+                      <td className="px-4 py-3"><span className="text-slate-400 mr-2">Bs.</span><span className="font-mono font-bold text-[13px]">{fmtN(salarioMinTotal)}</span></td>
+                      <td className="px-4 py-3"><span className="text-slate-400 mr-2">Bs.</span><span className="font-mono font-black text-[13px]">{fmtN(totalBase)}</span></td>
+                      <td className="px-4 py-3">
+                        <div><span className="text-slate-400 mr-2">Bs.</span><span className="font-mono font-black text-[13px] text-red-700">{fmtN(impuestoBs)}</span></div>
+                        <div className="mt-0.5"><span className="text-slate-400 mr-2">USD</span><span className="font-mono text-[11px] text-slate-500">{fmtN(impuestoUsd)}</span></div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[9px] text-slate-400">Monto Pensiones = Mínimo Tributable (USD) × Tasa BCV × Cantidad de Empleados. Salario Mínimo = Cantidad de Empleados × Salario Mínimo Oficial. El botón "Guardar {MESES_PP[parseInt(ppMes,10)-1]}" graba estas bases para {ppMes}/{ppAnio} — vuelve a este mes cuando quieras para verlo o editarlo.</p>
             </div>
           );
         })()}
@@ -8821,6 +8852,9 @@ const SYSTEM_MODULES = [
     submodules: [
       { id: 'impuestos_libros',    label: 'Libros de Ventas y Compras' },
       { id: 'impuestos_retenciones', label: 'Retenciones IVA / ISLR' },
+      { id: 'impuestos_determinacion', label: 'Determinación de IVA' },
+      { id: 'impuestos_act_economica', label: 'Actividad Económica' },
+      { id: 'impuestos_prot_pensiones', label: 'Protección de Pensiones' },
       { id: 'impuestos_forma99030', label: 'Forma 99030' },
       { id: 'impuestos_dua',       label: 'DUA / Importaciones' },
       { id: 'impuestos_config',   label: 'Configuración (UT, firma, sello)' },
