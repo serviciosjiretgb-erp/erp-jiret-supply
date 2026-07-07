@@ -131,6 +131,12 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [aeNotasVentaCD,setAeNotasVentaCD]=useState([]);
   const [aeManual,setAeManual]=useState({licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0});
 
+  // ── Impuesto de Protección de Pensiones (Forma 99019 SENIAT) ──
+  const [ppAnio,setPpAnio]=useState(String(new Date().getFullYear()));
+  const [ppMes,setPpMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
+  const [ppData,setPpData]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0,montoPensiones:0});
+  const [ppSaving,setPpSaving]=useState(false);
+
   useEffect(()=>{
     if(!fbUser)return;
     const u1=onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVA(s.docs.map(d=>d.data())));
@@ -199,6 +205,25 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       await setDoc(doc(db,'settings',`act-economica-${mesKey}`),{licenciaSolvencias:pNum(aeManual.licenciaSolvencias||0),tasaBcvEuro:pNum(aeManual.tasaBcvEuro||0),tasaBcvUsd:pNum(aeManual.tasaBcvUsd||0),updatedAt:Date.now()},{merge:true});
       setImpDialog({title:'✅ Guardado',text:`Datos de ${mesKey} guardados.`,type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  // ── Protección de Pensiones: datos por mes ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='prot_pensiones') return;
+    const mesKey=`${ppAnio}-${ppMes}`;
+    const DEF={minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0,montoPensiones:0};
+    const u=onSnapshot(doc(db,'settings',`prot-pensiones-${mesKey}`),d=>setPpData(d.exists()?{...DEF,...d.data()}:DEF));
+    return()=>u();
+  },[fbUser,sec,ppAnio,ppMes]);
+
+  const guardarPP=async()=>{
+    setPpSaving(true);
+    try{
+      const mesKey=`${ppAnio}-${ppMes}`;
+      await setDoc(doc(db,'settings',`prot-pensiones-${mesKey}`),{...ppData,updatedAt:Date.now()},{merge:true});
+      setImpDialog({title:'✅ Guardado',text:`Protección de Pensiones de ${mesKey} guardada.`,type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setPpSaving(false);}
   };
 
   const guardarSaldoInicial=async()=>{
@@ -318,6 +343,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'det_iva',  label:'Determinación IVA',    icon:<Calculator size={13}/>, perm:'impuestos_determinacion'},
     {id:'act_economica', label:'Actividad Económica', icon:<Building2 size={13}/>, perm:'impuestos_act_economica'},
+    {id:'prot_pensiones', label:'Protección Pensiones', icon:<ShieldCheck size={13}/>, perm:'impuestos_prot_pensiones'},
     {id:'config',   label:'Configuración',        icon:<Settings size={13}/>, perm:'impuestos_config'},
   ];
   // Permisología por submódulo (igual criterio que Procura): si el usuario tiene algún impuestos_* marcado, solo ve esos
@@ -1624,6 +1650,128 @@ td,th{border:1px solid #999;padding:4px 6px}
                 </table>
               </div>
               <p className="text-[9px] text-slate-400">Total a pagar (UCD): <b>{fmtN(totalUCD)}</b> · calculado con la tasa BCV de mayor valor entre Euro y USD. Licencia/Solvencias se guarda solo al salir del campo.</p>
+            </div>
+          );
+        })()}
+
+        {/* PROTECCIÓN DE PENSIONES */}
+        {sec==='prot_pensiones'&&(()=>{
+          const MESES_PP=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+          const lastDay=new Date(parseInt(ppAnio),parseInt(ppMes),0).getDate();
+          const setPP=(campo,val)=>setPpData(x=>({...x,[campo]:pNum(val)||0}));
+          const salarioMinTotal=pNum(ppData.cantidadEmpleados)*pNum(ppData.salarioMinimoOficial);
+          const totalBase=pNum(ppData.montoPensiones)+salarioMinTotal;
+          const impuestoBs=totalBase*(pNum(ppData.alicuotaTributable)/100);
+          const impuestoUsd=impuestoBs/(pNum(ppData.tasaBcvCierre)||1);
+
+          const exportarPPPDF=()=>{
+            const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+            const rif=settings?.empresaRif||'J-41230937-4';
+            const N2=n=>fmtN(n);
+            const desde=`01/${ppMes}/${ppAnio}`, hasta=`${lastDay}/${ppMes}/${ppAnio}`;
+            const fDecl=pD(getTodayDate());
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Protección Pensiones</title><style>
+@page{size:letter portrait;margin:12mm 10mm}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+body{font-size:9px;color:#111}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #333;padding:5px 7px}
+.hdr{background:#f1f5f9;font-weight:900;text-align:center;padding:5px}
+</style></head><body>
+<table style="margin-bottom:0">
+  <tr>
+    <td style="width:28%;text-align:center;vertical-align:middle"><div style="font-weight:900;font-size:11px">SENIAT</div><div style="font-size:6px">SERVICIO NACIONAL INTEGRADO DE ADMINISTRACIÓN ADUANERA Y TRIBUTARIA</div></td>
+    <td style="width:44%;text-align:center"><b style="font-size:10px">DECLARACIÓN PROTECCIÓN A LAS PENSIONES</b><br/><span style="font-size:9px">FORMA 99019</span></td>
+    <td style="width:28%;text-align:center"><b>N° DECLARACIÓN</b><br/>—</td>
+  </tr>
+</table>
+<table>
+  <tr><td style="width:25%;text-align:center;font-weight:900">N° R.I.F.</td><td style="text-align:center;font-weight:900" colspan="3">NOMBRE DEL CONTRIBUYENTE O RAZÓN SOCIAL</td></tr>
+  <tr><td style="text-align:center">${rif}</td><td style="text-align:center" colspan="3">${emp}</td></tr>
+  <tr><td style="text-align:center;font-weight:900">TIPO DE DECLARACIÓN</td><td style="text-align:center;font-weight:900">PERÍODO DECLARACIÓN</td><td style="text-align:center;font-weight:900">FECHA DE DECLARACIÓN</td><td style="text-align:center;font-weight:900">FECHA DE VENCIMIENTO</td></tr>
+  <tr><td style="text-align:center">ORIGINARIA</td><td style="text-align:center">${desde} — ${hasta}</td><td style="text-align:center">${fDecl}</td><td style="text-align:center">—</td></tr>
+</table>
+<div class="hdr">II.- DETALLE DE LA DECLARACIÓN (${pNum(ppData.alicuotaTributable).toFixed(0)}%)</div>
+<table>
+  <tr><td style="font-weight:900">Concepto</td><td style="text-align:center;font-weight:900;width:15%">Item</td><td style="text-align:right;font-weight:900;width:25%">Base Imponible (Bs.)</td></tr>
+  <tr><td>CANTIDAD EMPLEADOS</td><td style="text-align:center">1</td><td style="text-align:right">${pNum(ppData.cantidadEmpleados)}</td></tr>
+  <tr><td>TOTAL DE SALARIOS Y BONIFICACIONES DE CARÁCTER NO SALARIAL</td><td style="text-align:center">2</td><td style="text-align:right">${N2(totalBase)}</td></tr>
+</table>
+<div class="hdr">III.- IMPUESTO A PAGAR</div>
+<table><tr><td style="font-weight:900">Total Impuesto a Pagar (Bs.)</td><td style="text-align:right;font-weight:900">${N2(impuestoBs)}</td></tr>
+<tr><td>Equivalente (USD)</td><td style="text-align:right">${N2(impuestoUsd)}</td></tr></table>
+<table style="margin-top:0">
+  <tr><td style="width:50%;font-size:7px">Juro que los datos contenidos en esta declaración han sido determinados con base a las disposiciones legales y examinados por mi persona: ${emp}<br/><br/>Fecha: ${fDecl}</td>
+  <td style="font-size:7px">Yo, ${emp}, con el RIF N° ${rif}. Declaro que los datos y cifras que aparecen en la declaración son una copia fiel y exacta de los datos contenidos en los registros de contabilidad y control tributario que han sido llenados conforme a la ley.</td></tr>
+</table>
+<p style="margin-top:8px;font-size:7px;color:#666">Bases de cálculo — Mínimo Tributable: USD ${N2(ppData.minimoTributableUSD)} · Salario Mínimo Oficial: Bs. ${N2(ppData.salarioMinimoOficial)} · Tasa BCV cierre de mes: Bs. ${N2(ppData.tasaBcvCierre)} · Salario Mínimo Total (${pNum(ppData.cantidadEmpleados)} emp.): Bs. ${N2(salarioMinTotal)} · Monto Pensiones: Bs. ${N2(ppData.montoPensiones)}</p>
+<script>window.onload=()=>window.print();<\/script>
+</body></html>`;
+            const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+          };
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-black text-sm uppercase">Impuesto de Protección de Pensiones</h3>
+                    <p className="text-[10px] text-slate-400">Forma 99019 · SENIAT</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select value={ppMes} onChange={e=>setPpMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {MESES_PP.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                    </select>
+                    <select value={ppAnio} onChange={e=>setPpAnio(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {[parseInt(ppAnio)-1,parseInt(ppAnio),parseInt(ppAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <button onClick={exportarPPPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
+                    <button disabled={ppSaving} onClick={guardarPP} className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg text-[9px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={11}/>{ppSaving?'Guardando...':'Guardar'}</button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="px-4 py-2.5" style={{background:'#0f172a'}}><span className="text-[9px] text-orange-400 font-black uppercase">Bases de Cálculo</span></div>
+                <div className="grid grid-cols-5 gap-4 p-4">
+                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mínimo Tributable (USD)</label>
+                    <input type="number" step="0.01" value={ppData.minimoTributableUSD} onChange={e=>setPP('minimoTributableUSD',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
+                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Alícuota Tributable (%)</label>
+                    <input type="number" step="0.01" value={ppData.alicuotaTributable} onChange={e=>setPP('alicuotaTributable',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
+                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Salario Mínimo Oficial (Bs.)</label>
+                    <input type="number" step="0.01" value={ppData.salarioMinimoOficial} onChange={e=>setPP('salarioMinimoOficial',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
+                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV Cierre de Mes (Bs.)</label>
+                    <input type="number" step="0.01" value={ppData.tasaBcvCierre} onChange={e=>setPP('tasaBcvCierre',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
+                  <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cantidad de Empleados</label>
+                    <input type="number" step="1" value={ppData.cantidadEmpleados} onChange={e=>setPP('cantidadEmpleados',e.target.value)} className="w-full border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/></div>
+                </div>
+                <div className="px-4 pb-4">
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Pensiones — total salarios y bonificaciones de carácter no salarial (Bs.)</label>
+                  <input type="number" step="0.01" value={ppData.montoPensiones} onChange={e=>setPP('montoPensiones',e.target.value)} className="w-64 border-2 border-orange-200 rounded-lg px-2 py-1.5 text-xs font-black outline-none focus:border-orange-500"/>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto Pensiones</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Salario Mínimo</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Total</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Impuesto</th>
+                  </tr></thead>
+                  <tbody>
+                    <tr>
+                      <td className="px-3 py-3 text-right font-mono">Bs. {fmtN(ppData.montoPensiones)}</td>
+                      <td className="px-3 py-3 text-right font-mono">Bs. {fmtN(salarioMinTotal)}</td>
+                      <td className="px-3 py-3 text-right font-mono font-black">Bs. {fmtN(totalBase)}</td>
+                      <td className="px-3 py-3 text-right">
+                        <div className="font-mono font-black text-orange-600">Bs. {fmtN(impuestoBs)}</div>
+                        <div className="font-mono text-[10px] text-slate-400">USD {fmtN(impuestoUsd)}</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           );
         })()}
