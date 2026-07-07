@@ -102,12 +102,65 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [showXmlModal,setShowXmlModal]=useState(false);
   const [xmlMes,setXmlMes]=useState(getTodayDate().substring(0,7));
 
+  // ── Determinación de IVA (Débitos/Créditos Fiscales — Art. 72 Reglamento LIVA) ──
+  const [detAnio,setDetAnio]=useState(String(new Date().getFullYear()));
+  const [detMes,setDetMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
+  const [detQ,setDetQ]=useState('1');
+  const [detInvoices,setDetInvoices]=useState([]);
+  const [detFacturasCompra,setDetFacturasCompra]=useState([]);
+  const [detRetVentas,setDetRetVentas]=useState([]);
+  const [detNotasVentaCD,setDetNotasVentaCD]=useState([]);
+  const [detLibroVentasCfg,setDetLibroVentasCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null});
+  const [detPrevCfg,setDetPrevCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null});
+  const [detLcRes,setDetLcRes]=useState({c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0});
+  const [detManual,setDetManual]=useState({m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0});
+  const [detSaving,setDetSaving]=useState(false);
+
   useEffect(()=>{
     if(!fbUser)return;
     const u1=onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVA(s.docs.map(d=>d.data())));
     const u2=onSnapshot(query(getColRef('procura_ret_islr'),orderBy('fecha','desc')),s=>setRetISLR(s.docs.map(d=>d.data())));
     return()=>{u1();u2();};
   },[fbUser]);
+
+  // ── Datos de Ventas/Compras/Retenciones para Determinación de IVA (solo si la pestaña está activa) ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='det_iva') return;
+    const u1=onSnapshot(getColRef('invoices'),s=>setDetInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(getColRef('procura_facturas_compra'),s=>setDetFacturasCompra(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=onSnapshot(getColRef('retenciones'),s=>setDetRetVentas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4=onSnapshot(getColRef('notasVentaCD'),s=>setDetNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();u3();u4();};
+  },[fbUser,sec]);
+
+  // ── Config guardada por período (retAcum/retDesc de Libro de Ventas, resumen manual de Libro de Compras, y manuales propios) ──
+  const detPrevPeriodo=(()=>{
+    if(detQ==='2') return {anio:detAnio,mes:detMes,q:'1'};
+    let m=parseInt(detMes,10)-1, a=parseInt(detAnio,10);
+    if(m<1){m=12;a-=1;}
+    return {anio:String(a),mes:String(m).padStart(2,'0'),q:'2'};
+  })();
+  useEffect(()=>{
+    if(!fbUser||sec!=='det_iva') return;
+    const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+    const prevKey=`${detPrevPeriodo.anio}-${detPrevPeriodo.mes}-Q${detPrevPeriodo.q}`;
+    const u1=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>setDetLibroVentasCfg(d.exists()?{retAcum:pNum(d.data().retAcum||0),retDesc:pNum(d.data().retDesc||0),saldoCierre:d.data().saldoCierre!=null?pNum(d.data().saldoCierre):null,_retAcumManual:!!d.data()._retAcumManual}:{retAcum:0,retDesc:0,saldoCierre:null,_retAcumManual:false}));
+    const uPrev=onSnapshot(getDocRef('libroVentasConfig',prevKey),d=>setDetPrevCfg(d.exists()?{retAcum:pNum(d.data().retAcum||0),retDesc:pNum(d.data().retDesc||0),saldoCierre:d.data().saldoCierre!=null?pNum(d.data().saldoCierre):null}:{retAcum:0,retDesc:0,saldoCierre:null}));
+    const u2=onSnapshot(doc(db,'settings',`lc-resumen-${periodoKey}`),d=>setDetLcRes(d.exists()?{...{c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0},...d.data()}:{c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0}));
+    const u3=onSnapshot(doc(db,'settings',`det-iva-${periodoKey}`),d=>setDetManual(d.exists()?{...{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0},...d.data()}:{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0}));
+    return()=>{u1();uPrev();u2();u3();};
+  },[fbUser,sec,detAnio,detMes,detQ]);
+
+  const guardarDetManual=async()=>{
+    setDetSaving(true);
+    try{
+      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+      await setDoc(doc(db,'settings',`det-iva-${periodoKey}`),{...detManual,periodoKey,updatedAt:Date.now()},{merge:true});
+      setImpDialog({title:'✅ Guardado',text:`Campos manuales de Determinación de IVA guardados para ${periodoKey}.`,type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setDetSaving(false);}
+  };
+  const setDM=(campo,val)=>setDetManual(m=>({...m,[campo]:pNum(val)||0}));
 
   const guardarUT=async(val)=>{
     setValorUT(val);
@@ -145,6 +198,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'tabla',    label:'Tabla ISLR',          icon:<BookOpen size={13}/>},
     {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
+    {id:'det_iva',  label:'Determinación IVA',    icon:<Calculator size={13}/>, perm:'impuestos_determinacion'},
     {id:'config',   label:'Configuración',        icon:<Settings size={13}/>, perm:'impuestos_config'},
   ];
   // Permisología por submódulo (igual criterio que Procura): si el usuario tiene algún impuestos_* marcado, solo ve esos
@@ -939,6 +993,253 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
             </div>
           </div>
         )}
+
+        {/* DETERMINACIÓN DE IVA */}
+        {sec==='det_iva'&&(()=>{
+          const MESES_D=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+          const lastDay=new Date(parseInt(detAnio),parseInt(detMes),0).getDate();
+          const desde=detQ==='2'?`${detAnio}-${detMes}-16`:`${detAnio}-${detMes}-01`;
+          const hasta=detQ==='1'?`${detAnio}-${detMes}-15`:`${detAnio}-${detMes}-${String(lastDay).padStart(2,'0')}`;
+          const fmtD=d=>d.split('-').reverse().join('/');
+
+          // ── Ventas (Débitos Fiscales) — misma lógica que Libro de Ventas ──
+          const ventasFact=(detInvoices||[]).filter(inv=>{
+            if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
+            const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+          });
+          const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+          const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f>=desde&&f<=hasta;});
+          let ventasGravadasBs=0, ivaDebitosBs=0;
+          ventasFact.forEach(inv=>{
+            if(inv.aplicaIva!=='SI') return;
+            const tasa=pNum(inv.tasa||0)||pNum(settings?.tasaBCV||0)||1;
+            const base=pNum(inv.montoBase||0);
+            const ivaAmt=pNum(inv.iva||0)||parseFloat((base*0.16).toFixed(2));
+            ventasGravadasBs+=pNum(inv.baseGravableBs||0)||base*tasa;
+            ivaDebitosBs+=pNum(inv.ivaBs||0)||ivaAmt*tasa;
+          });
+          ncndFiscalesDet.forEach(n=>{
+            const baseConSigno=pNum(n.monto||0)*(n.tipo==='NC'?-1:1);
+            ventasGravadasBs+=baseConSigno;
+            ivaDebitosBs+=parseFloat((baseConSigno*0.16).toFixed(2));
+          });
+          const retPeriodoVentas=retVentasPeriodo.reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
+
+          // ── Compras (Créditos Fiscales) — misma lógica y campos que Libro de Compras ──
+          const comprasFact=(detFacturasCompra||[]).filter(f=>{
+            if(f.afectaLibroCompras===false) return false;
+            if(f.periodoLibroMes) return f.periodoLibroMes===`${detAnio}-${detMes}`&&String(f.periodoLibroQ||'1')===String(detQ);
+            const fecha=f.fecha||''; return fecha>=desde&&fecha<=hasta;
+          });
+          let c30=0,c31=0,c32=0,c33=0,c34=0;
+          comprasFact.forEach(f=>{
+            const tot=f.totales||{};
+            c30+=pNum(tot.exentoBs||0); c33+=pNum(tot.base16Bs||0); c34+=pNum(tot.iva16Bs||0);
+            if(f.esImportacion&&f.importacion){c31+=pNum(f.importacion.baseImponible||0);c32+=pNum(f.importacion.iva||0);}
+          });
+          const L=detLcRes;
+          const c35=c30+c31+pNum(L.c312)+pNum(L.c313)+c33+pNum(L.c332)+pNum(L.c333);
+          const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+pNum(L.c343);
+          const c71=pNum(L.c70)+pNum(L.c37);
+          const c39=c71+pNum(L.c20)-pNum(L.c21)-pNum(L.c81)+pNum(L.c38)-pNum(L.c82);
+
+          // ── Débitos Fiscales (1-9) ──
+          const item1=pNum(detManual.m40), item2=pNum(detManual.m41);
+          const item6Deb=ivaDebitosBs;
+          const item7=pNum(detManual.m48), item8=pNum(detManual.m80);
+          const item9=item6Deb+item7-item8;
+          // ── Créditos Fiscales (10-26) — ya resueltos arriba (c30..c39) ──
+          // ── Autoliquidación (27-40) ──
+          const item27=item9-c39;
+          const item29=pNum(detManual.m22), item30=pNum(detManual.m51), item31=pNum(detManual.m24);
+          const item32=item27-item29-item30-item31;
+          const heredaRetAcum=!detLibroVentasCfg._retAcumManual&&detPrevCfg.saldoCierre!=null;
+          const item33=heredaRetAcum?pNum(detPrevCfg.saldoCierre):pNum(detLibroVentasCfg.retAcum);
+          const item34=retPeriodoVentas;
+          const item35=pNum(detManual.m72), item36=pNum(detManual.m73);
+          const item37=item33+item34+item35+item36;
+          const item38=pNum(detLibroVentasCfg.retDesc);
+          const item39=item37-item38;
+          const item40=item32-item38;
+          const item28=item40<0?-item40:0;
+
+          const MInput=({campo,className=''})=>(
+            <input type="number" step="0.01" value={detManual[campo]||0} onChange={e=>setDM(campo,e.target.value)}
+              className={`w-full border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-orange-500 ${className}`}/>
+          );
+          const LInput=({val,onSet})=>(
+            <input type="number" step="0.01" value={val||0} onChange={e=>onSet(pNum(e.target.value))}
+              className="w-full border-2 border-blue-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-blue-500 bg-blue-50"/>
+          );
+          const Row=({n,label,codeA,valA,codeB,valB,bold,dark})=>(
+            <tr className={dark?'bg-slate-800 text-white':bold?'bg-slate-50 font-black':''}>
+              <td className="px-2 py-1.5 text-center text-[10px] font-black text-slate-400 w-8">{n}</td>
+              <td className="px-3 py-1.5 text-[10px]">{label}</td>
+              <td className="px-2 py-1.5 text-center text-[9px] font-mono text-slate-400 w-12">{codeA||''}</td>
+              <td className="px-2 py-1.5 text-right w-40">{valA}</td>
+              <td className="px-2 py-1.5 text-center text-[9px] font-mono text-slate-400 w-12">{codeB||''}</td>
+              <td className="px-2 py-1.5 text-right w-40">{valB}</td>
+            </tr>
+          );
+          const V=n=>fmtN(n);
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-black text-sm uppercase">Determinación de IVA</h3>
+                    <p className="text-[10px] text-slate-400">Resumen de Débitos y Créditos Fiscales · Art. 72 Reglamento LIVA</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select value={detAnio} onChange={e=>setDetAnio(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {[detAnio-1,detAnio,parseInt(detAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <select value={detMes} onChange={e=>setDetMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {MESES_D.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                    </select>
+                    <select value={detQ} onChange={e=>setDetQ(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      <option value="1">I Quincena</option>
+                      <option value="2">II Quincena</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-2 font-bold">PERIODO: {detQ==='1'?'I':'II'} QUINCENA · DEL {fmtD(desde)} AL {fmtD(hasta)}</p>
+                <p className="text-[9px] text-blue-500 mt-1">🔵 Campos en azul: manuales (compartidos con Libro de Ventas / Libro de Compras). 🟠 Campos en naranja: manuales propios de esta pantalla.</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-emerald-700 uppercase">📗 Libro de Ventas — {detQ==='1'?'I':'II'} Quincena {MESES_D[parseInt(detMes,10)-1]} {detAnio}</p>
+                  <p className="text-lg font-black text-emerald-800">{ventasFact.length} <span className="text-[10px] font-bold text-emerald-600">factura(s)</span>{ncndFiscalesDet.length>0&&<span className="text-[10px] font-bold text-emerald-600"> + {ncndFiscalesDet.length} NC/ND</span>}{retVentasPeriodo.length>0&&<span className="text-[10px] font-bold text-emerald-600"> + {retVentasPeriodo.length} retención(es)</span>}</p>
+                  <p className="text-[9px] text-emerald-600">Base gravada Bs. {fmtN(ventasGravadasBs)} · IVA Bs. {fmtN(ivaDebitosBs)}</p>
+                </div>
+                <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-blue-700 uppercase">📘 Libro de Compras — {detQ==='1'?'I':'II'} Quincena {MESES_D[parseInt(detMes,10)-1]} {detAnio}</p>
+                  <p className="text-lg font-black text-blue-800">{comprasFact.length} <span className="text-[10px] font-bold text-blue-600">factura(s)</span></p>
+                  <p className="text-[9px] text-blue-600">Base gravada Bs. {fmtN(c33)} · IVA Bs. {fmtN(c34)} · Sin derecho Bs. {fmtN(c30)}</p>
+                </div>
+              </div>
+              {ventasFact.length===0&&comprasFact.length===0&&<p className="text-[9px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">⚠ No se encontraron facturas para esta quincena todavía — si acabas de entrar, espera un segundo a que cargue, o verifica que existan facturas con fecha entre {fmtD(desde)} y {fmtD(hasta)} en Libro de Ventas/Compras.</p>}
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th colSpan={6} className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Débitos Fiscales</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    <Row n={1} label="Ventas internas no gravadas" codeA="40" valA={<MInput campo="m40"/>}/>
+                    <Row n={2} label="Ventas de exportación" codeA="41" valA={<MInput campo="m41"/>}/>
+                    <Row n={3} label="Ventas internas gravadas alícuota general" codeA="42" valA={V(ventasGravadasBs)} codeB="43" valB={V(ivaDebitosBs)}/>
+                    <Row n={4} label="Ventas internas gravadas alícuota general más adicional" codeA="442" valA={V(0)} codeB="452" valB={V(0)}/>
+                    <Row n={5} label="Ventas internas gravadas alícuota reducida" codeA="443" valA={V(0)} codeB="453" valB={V(0)}/>
+                    <Row n={6} label="Total ventas y débitos fiscales para determinación" codeA="46" valA={V(ventasGravadasBs)} codeB="47" valB={V(item6Deb)} bold/>
+                    <Row n={7} label="Ajuste a los débitos fiscales de períodos anteriores" codeB="48" valB={<MInput campo="m48"/>}/>
+                    <Row n={8} label="Certificado de Débitos Fiscales Exonerados Registrados en el período" codeB="80" valB={<MInput campo="m80"/>}/>
+                    <Row n={9} label="Total débitos fiscales" codeB="49" valB={V(item9)} dark/>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th colSpan={6} className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Créditos Fiscales</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    <Row n={10} label="Compras no gravadas y/o sin derecho a crédito fiscal" codeA="30" valA={V(c30)}/>
+                    <Row n={11} label="Importaciones gravadas por alícuota general" codeA="31" valA={V(c31)} codeB="32" valB={V(c32)}/>
+                    <Row n={12} label="Importaciones gravadas por alícuota general más adicional" codeA="312" valA={<LInput val={L.c312} onSet={v=>setDetLcRes(x=>({...x,c312:v}))}/>} codeB="322" valB={<LInput val={L.c322} onSet={v=>setDetLcRes(x=>({...x,c322:v}))}/>}/>
+                    <Row n={13} label="Importaciones gravadas por alícuota reducida" codeA="313" valA={<LInput val={L.c313} onSet={v=>setDetLcRes(x=>({...x,c313:v}))}/>} codeB="323" valB={<LInput val={L.c323} onSet={v=>setDetLcRes(x=>({...x,c323:v}))}/>}/>
+                    <Row n={14} label="Compras internas gravadas solo por alícuota general" codeA="33" valA={V(c33)} codeB="34" valB={V(c34)}/>
+                    <Row n={15} label="Compras internas gravadas por alícuota general más adicional" codeA="332" valA={<LInput val={L.c332} onSet={v=>setDetLcRes(x=>({...x,c332:v}))}/>} codeB="342" valB={<LInput val={L.c342} onSet={v=>setDetLcRes(x=>({...x,c342:v}))}/>}/>
+                    <Row n={16} label="Compras internas gravadas por alícuota reducida" codeA="333" valA={<LInput val={L.c333} onSet={v=>setDetLcRes(x=>({...x,c333:v}))}/>} codeB="343" valB={<LInput val={L.c343} onSet={v=>setDetLcRes(x=>({...x,c343:v}))}/>}/>
+                    <Row n={17} label="Total compras y créditos fiscales del período" codeA="35" valA={V(c35)} codeB="36" valB={V(c36)} bold/>
+                    <Row n={18} label="Créditos fiscales totalmente deducibles" codeB="70" valB={<LInput val={L.c70} onSet={v=>setDetLcRes(x=>({...x,c70:v}))}/>}/>
+                    <Row n={19} label="Créditos fiscales producto de la aplicación de la prorrata" codeB="37" valB={<LInput val={L.c37} onSet={v=>setDetLcRes(x=>({...x,c37:v}))}/>}/>
+                    <Row n={20} label="Total créditos fiscales deducibles" codeB="71" valB={V(c71)} bold/>
+                    <Row n={21} label="Excedente créditos fiscales del mes anterior" codeB="20" valB={<LInput val={L.c20} onSet={v=>setDetLcRes(x=>({...x,c20:v}))}/>}/>
+                    <Row n={22} label="Reintegro Solicitado (Solo Exportadores)" codeB="21" valB={<LInput val={L.c21} onSet={v=>setDetLcRes(x=>({...x,c21:v}))}/>}/>
+                    <Row n={23} label="Reintegro Solicitado (entes exonerados)" codeB="81" valB={<LInput val={L.c81} onSet={v=>setDetLcRes(x=>({...x,c81:v}))}/>}/>
+                    <Row n={24} label="Ajuste a los créditos fiscales de períodos anteriores" codeB="38" valB={<LInput val={L.c38} onSet={v=>setDetLcRes(x=>({...x,c38:v}))}/>}/>
+                    <Row n={25} label="Registrados en el período" codeB="82" valB={<LInput val={L.c82} onSet={v=>setDetLcRes(x=>({...x,c82:v}))}/>}/>
+                    <Row n={26} label="Total créditos fiscales" codeB="39" valB={V(c39)} dark/>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th colSpan={6} className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Autoliquidación</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    <Row n={27} label="Total Cuota tributaria (Débitos − Créditos)" codeB="53" valB={V(item27)} bold/>
+                    <Row n={28} label="Excedente de crédito fiscal para el mes siguiente" codeB="60" valB={V(item28)}/>
+                    <Row n={29} label="Impuesto pagado en declaración(es) Sustituida(s)" codeA="22" valA={<MInput campo="m22"/>}/>
+                    <Row n={30} label="Retenciones Descontadas en Declaración(es) Sustituida(s)" codeA="51" valA={<MInput campo="m51"/>}/>
+                    <Row n={31} label="Percepciones Acumuladas en Importaciones Por Descontar" codeA="24" valA={<MInput campo="m24"/>}/>
+                    <Row n={32} label="Sub-Total Impuesto a Pagar" codeB="78" valB={V(item32)} bold/>
+                    <Row n={33} label={<>Retenciones Acumuladas Por Descontar{heredaRetAcum&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeA="54" valA={
+                      <div>
+                        <LInput val={item33} onSet={v=>setDetLibroVentasCfg(x=>({...x,retAcum:v,_retAcumManual:true}))}/>
+                        {heredaRetAcum&&<button onClick={()=>setDetLibroVentasCfg(x=>({...x,retAcum:item33,_retAcumManual:true}))} className="text-[8px] text-blue-600 font-black underline mt-0.5">fijar manualmente este valor</button>}
+                      </div>
+                    }/>
+                    <Row n={34} label="Retenciones del Período" codeA="66" valA={V(item34)}/>
+                    <Row n={35} label="Créditos Adquiridos por Cesión de Retenciones" codeA="72" valA={<MInput campo="m72"/>}/>
+                    <Row n={36} label="Recuperación de Retenciones Solicitado" codeA="73" valA={<MInput campo="m73"/>}/>
+                    <Row n={37} label="Total Retenciones" codeA="74" valA={V(item37)} bold/>
+                    <Row n={38} label="Retenciones Soportadas Y Descontadas en esta Declaración" codeB="55" valB={<LInput val={detLibroVentasCfg.retDesc} onSet={v=>setDetLibroVentasCfg(x=>({...x,retDesc:v}))}/>}/>
+                    <Row n={39} label="Saldo de retenciones de IVA no aplicado" codeA="67" valA={V(item39)}/>
+                    <Row n={40} label="Sub total Impuesto a Pagar" codeB="56" valB={V(item40)} dark/>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 space-y-2">
+                <p className="text-[10px] font-black text-emerald-700 uppercase">🔒 Cierre de esta quincena — se hereda como "Retenciones Acumuladas" del período siguiente</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-emerald-700">Saldo actual calculado (ítem 39): <b>Bs. {fmtN(item39)}</b></span>
+                  <button onClick={async()=>{
+                    try{
+                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierre:item39},{merge:true});
+                      setImpDialog({title:'✅ Quincena cerrada',text:`Saldo de cierre Bs. ${fmtN(item39)} guardado para ${periodoKey}. La siguiente quincena lo heredará automáticamente como Retenciones Acumuladas.`,type:'alert'});
+                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+                  }} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-emerald-700">Cerrar con este saldo</button>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-emerald-200">
+                  <span className="text-[10px] text-emerald-700">¿Necesitas fijar el cierre real de este período manualmente (ej. saldo con el que cerraste antes de usar este módulo)?</span>
+                  <input type="number" step="0.01" placeholder="Monto Bs." value={detLibroVentasCfg.saldoCierre??''} onChange={e=>setDetLibroVentasCfg(x=>({...x,saldoCierre:e.target.value===''?null:pNum(e.target.value)}))} className="w-40 border-2 border-emerald-300 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-emerald-500"/>
+                  <button onClick={async()=>{
+                    try{
+                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierre:detLibroVentasCfg.saldoCierre==null?null:pNum(detLibroVentasCfg.saldoCierre)},{merge:true});
+                      setImpDialog({title:'✅ Guardado',text:`Saldo de cierre manual guardado para ${periodoKey}.`,type:'alert'});
+                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+                  }} className="px-3 py-1.5 bg-emerald-700 text-white rounded-lg text-[9px] font-black uppercase hover:bg-emerald-800">Guardar cierre manual</button>
+                </div>
+                {detPrevCfg.saldoCierre!=null&&<p className="text-[9px] text-emerald-600">Cierre guardado del período anterior ({MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q): Bs. {fmtN(detPrevCfg.saldoCierre)}</p>}
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[9px] text-slate-400 max-w-md">Los campos 🔵 azules de Retenciones Acum./Descontadas se guardan en Libro de Ventas; el resto del Libro de Compras se guarda en su propio resumen. Solo "Guardar" aquí graba los campos 🟠 propios de esta pantalla.</p>
+                <div className="flex gap-2">
+                  <button disabled={detSaving} onClick={guardarDetManual} className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={12}/>{detSaving?'Guardando...':'Guardar'}</button>
+                  <button onClick={async()=>{
+                    try{
+                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{retAcum:pNum(item33||0),retDesc:pNum(detLibroVentasCfg.retDesc||0),_retAcumManual:true},{merge:true});
+                      await setDoc(doc(db,'settings',`lc-resumen-${periodoKey}`),{...detLcRes,periodoKey,updatedAt:Date.now()},{merge:true});
+                      setImpDialog({title:'✅ Guardado',text:'Retenciones (Libro de Ventas) y resumen (Libro de Compras) guardados.',type:'alert'});
+                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+                  }} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-blue-700"><Save size={12}/>Guardar Azules</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* CONFIG */}
         {sec==='config'&&(
