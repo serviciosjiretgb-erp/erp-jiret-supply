@@ -110,10 +110,10 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [detFacturasCompra,setDetFacturasCompra]=useState([]);
   const [detRetVentas,setDetRetVentas]=useState([]);
   const [detNotasVentaCD,setDetNotasVentaCD]=useState([]);
-  const [detLibroVentasCfg,setDetLibroVentasCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null});
-  const [detPrevCfg,setDetPrevCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null});
+  const [detLibroVentasCfg,setDetLibroVentasCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null,_retAcumManual:false,_cfExcedenteManual:false});
+  const [detPrevCfg,setDetPrevCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null});
   const [detLcRes,setDetLcRes]=useState({c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0});
-  const [detManual,setDetManual]=useState({m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0});
+  const [detManual,setDetManual]=useState({m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0});
   const [detSaving,setDetSaving]=useState(false);
 
   useEffect(()=>{
@@ -126,10 +126,10 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   // ── Datos de Ventas/Compras/Retenciones para Determinación de IVA (solo si la pestaña está activa) ──
   useEffect(()=>{
     if(!fbUser||sec!=='det_iva') return;
-    const u1=onSnapshot(getColRef('invoices'),s=>setDetInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u1=onSnapshot(getColRef('maquilaInvoices'),s=>setDetInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('procura_facturas_compra'),s=>setDetFacturasCompra(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u3=onSnapshot(getColRef('retenciones'),s=>setDetRetVentas(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u4=onSnapshot(getColRef('notasVentaCD'),s=>setDetNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=onSnapshot(getColRef('retencionesClientes'),s=>setDetRetVentas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4=onSnapshot(getColRef('notasVentaCreditoDebito'),s=>setDetNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
     return()=>{u1();u2();u3();u4();};
   },[fbUser,sec]);
 
@@ -144,10 +144,10 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     if(!fbUser||sec!=='det_iva') return;
     const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
     const prevKey=`${detPrevPeriodo.anio}-${detPrevPeriodo.mes}-Q${detPrevPeriodo.q}`;
-    const u1=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>setDetLibroVentasCfg(d.exists()?{retAcum:pNum(d.data().retAcum||0),retDesc:pNum(d.data().retDesc||0),saldoCierre:d.data().saldoCierre!=null?pNum(d.data().saldoCierre):null,_retAcumManual:!!d.data()._retAcumManual}:{retAcum:0,retDesc:0,saldoCierre:null,_retAcumManual:false}));
-    const uPrev=onSnapshot(getDocRef('libroVentasConfig',prevKey),d=>setDetPrevCfg(d.exists()?{retAcum:pNum(d.data().retAcum||0),retDesc:pNum(d.data().retDesc||0),saldoCierre:d.data().saldoCierre!=null?pNum(d.data().saldoCierre):null}:{retAcum:0,retDesc:0,saldoCierre:null}));
+    const u1=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>{const x=d.data()||{};setDetLibroVentasCfg(d.exists()?{retAcum:pNum(x.retAcum||0),retDesc:pNum(x.retDesc||0),saldoCierre:x.saldoCierre!=null?pNum(x.saldoCierre):null,cfExcedente:pNum(x.cfExcedente||0),saldoCierreCF:x.saldoCierreCF!=null?pNum(x.saldoCierreCF):null,_retAcumManual:!!x._retAcumManual,_cfExcedenteManual:!!x._cfExcedenteManual}:{retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null,_retAcumManual:false,_cfExcedenteManual:false});});
+    const uPrev=onSnapshot(getDocRef('libroVentasConfig',prevKey),d=>{const x=d.data()||{};setDetPrevCfg(d.exists()?{retAcum:pNum(x.retAcum||0),retDesc:pNum(x.retDesc||0),saldoCierre:x.saldoCierre!=null?pNum(x.saldoCierre):null,cfExcedente:pNum(x.cfExcedente||0),saldoCierreCF:x.saldoCierreCF!=null?pNum(x.saldoCierreCF):null}:{retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null});});
     const u2=onSnapshot(doc(db,'settings',`lc-resumen-${periodoKey}`),d=>setDetLcRes(d.exists()?{...{c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0},...d.data()}:{c312:0,c322:0,c313:0,c323:0,c332:0,c342:0,c333:0,c343:0,c70:0,c37:0,c20:0,c21:0,c81:0,c38:0,c82:0}));
-    const u3=onSnapshot(doc(db,'settings',`det-iva-${periodoKey}`),d=>setDetManual(d.exists()?{...{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0},...d.data()}:{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0}));
+    const u3=onSnapshot(doc(db,'settings',`det-iva-${periodoKey}`),d=>setDetManual(d.exists()?{...{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0},...d.data()}:{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0}));
     return()=>{u1();uPrev();u2();u3();};
   },[fbUser,sec,detAnio,detMes,detQ]);
 
@@ -1040,19 +1040,26 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const L=detLcRes;
           const c35=c30+c31+pNum(L.c312)+pNum(L.c313)+c33+pNum(L.c332)+pNum(L.c333);
           const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+pNum(L.c343);
-          const c71=pNum(L.c70)+pNum(L.c37);
-          const c39=c71+pNum(L.c20)-pNum(L.c21)-pNum(L.c81)+pNum(L.c38)-pNum(L.c82);
 
           // ── Débitos Fiscales (1-9) ──
           const item1=pNum(detManual.m40), item2=pNum(detManual.m41);
           const item6Deb=ivaDebitosBs;
           const item7=pNum(detManual.m48), item8=pNum(detManual.m80);
           const item9=item6Deb+item7-item8;
-          // ── Créditos Fiscales (10-26) — ya resueltos arriba (c30..c39) ──
-          // ── Autoliquidación (27-40) ──
-          const item27=item9-c39;
+          // ── Créditos Fiscales (10-26) ──
+          const item19=pNum(L.c37); // prorrata (manual, 0 si el negocio es 100% gravado)
+          const item18=c36-item19; // totalmente deducibles = auto (total créditos − prorrata)
+          const item20=item18+item19; // = c36 siempre
+          const heredaCF=!detLibroVentasCfg._cfExcedenteManual&&detPrevCfg.saldoCierreCF!=null;
+          const item21=heredaCF?pNum(detPrevCfg.saldoCierreCF):pNum(detLibroVentasCfg.cfExcedente);
+          const item22b=pNum(L.c21), item23=pNum(L.c81), item24b=pNum(L.c38), item25=pNum(L.c82);
+          const item26=item20+item21-item22b-item23+item24b-item25;
+          // ── Autoliquidación (27-40) — nunca negativos, igual que la declaración real del SENIAT ──
+          const _diff=item9-item26;
+          const item27=Math.max(0,_diff);
+          const item28=Math.max(0,-_diff);
           const item29=pNum(detManual.m22), item30=pNum(detManual.m51), item31=pNum(detManual.m24);
-          const item32=item27-item29-item30-item31;
+          const item32=Math.max(0,item27-item29-item30-item31);
           const heredaRetAcum=!detLibroVentasCfg._retAcumManual&&detPrevCfg.saldoCierre!=null;
           const item33=heredaRetAcum?pNum(detPrevCfg.saldoCierre):pNum(detLibroVentasCfg.retAcum);
           const item34=retPeriodoVentas;
@@ -1060,8 +1067,126 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const item37=item33+item34+item35+item36;
           const item38=pNum(detLibroVentasCfg.retDesc);
           const item39=item37-item38;
-          const item40=item32-item38;
-          const item28=item40<0?-item40:0;
+          const item40=Math.max(0,item32-item38);
+          // ── Percepciones en Aduanas (41-48) — casi siempre 0 salvo importadores frecuentes ──
+          const item41=pNum(detManual.m57), item42=pNum(detManual.m68), item43=pNum(detManual.m75), item44=pNum(detManual.m76);
+          const item45=item41+item42+item43+item44;
+          const item46=pNum(detManual.m58);
+          const item47=item45-item46;
+          const item48=Math.max(0,item40-item46);
+
+          // ── Array plano de las 48 filas (para PDF/Excel) — mismo orden/códigos que la Forma IVA 99030 ──
+          const detRows=[
+            [1,'Ventas Internas no Gravadas','40',item1,null,null],
+            [2,'Ventas de Exportación','41',item2,null,null],
+            [3,'Ventas Internas Gravadas por Alícuota General','42',ventasGravadasBs,'43',ivaDebitosBs],
+            [4,'Ventas Internas Gravadas por Alícuota General más Alícuota Adicional','442',0,'452',0],
+            [5,'Ventas Internas Gravadas por Alícuota Reducida','443',0,'453',0],
+            [6,'Total Ventas y Débitos Fiscal para efectos de Determinación','46',ventasGravadasBs,'47',item6Deb,true],
+            [7,'Ajustes a los Débitos Fiscales de períodos anteriores',null,null,'48',item7],
+            [8,'Certificados de Débitos Fiscales Exonerados (recibos de entes exonerados). Registro del Período',null,null,'80',item8],
+            [9,'Total Débitos Fiscales',null,null,'49',item9,false,true],
+            [10,'Compras no Gravadas y/o sin Derecho a Crédito Fiscal','30',c30,null,null],
+            [11,'Importación Gravadas por Alícuota General','31',c31,'32',c32],
+            [12,'Importaciones Gravadas por Alícuota General más Alícuota Adicional','312',pNum(L.c312),'322',pNum(L.c322)],
+            [13,'Importaciones Gravadas por Alícuota Reducida','313',pNum(L.c313),'323',pNum(L.c323)],
+            [14,'Compras Internas Gravadas por Alícuota General','33',c33,'34',c34],
+            [15,'Compras Internas Gravadas por Alícuota General más Alícuota Adicional','332',pNum(L.c332),'342',pNum(L.c342)],
+            [16,'Compras Internas Gravadas por Alícuota Reducida','333',pNum(L.c333),'343',pNum(L.c343)],
+            [17,'Total Compras y Créditos Fiscales del Período','35',c35,'36',c36,true],
+            [18,'Créditos Fiscales Totalmente Deducibles',null,null,'70',item18],
+            [19,'Créditos Fiscales producto de la Aplicación del porcentaje de la prorrata',null,null,'37',item19],
+            [20,'Total créditos fiscales deducibles... Realice la operación (70 + 37)',null,null,'71',item20,true],
+            [21,'Excedente Créditos Fiscales del mes Anterior (ítem 60 de la declaración anterior)',null,null,'20',item21],
+            [22,'Reintegro Solicitado (sólo Exportadores)',null,null,'21',item22b],
+            [23,'Reintegro Solicitado (sólo quien suministre bienes o presten servicios a entes exonerados)',null,null,'81',item23],
+            [24,'Ajustes a los Créditos Fiscales de períodos anteriores',null,null,'38',item24b],
+            [25,'Certificados de Débitos Fiscales Exonerados (emitidos por entes exonerados). Registrado en el período',null,null,'82',item25],
+            [26,'Total Créditos Fiscales',null,null,'39',item26,false,true],
+            [27,'Total Cuota Tributaria del Período',null,null,'53',item27,true],
+            [28,'Excedente de Crédito Fiscal para el mes siguiente',null,null,'60',item28],
+            [29,'Impuesto pagado en Declaración(es) Sustituida(s)','22',item29,null,null],
+            [30,'Retenciones Descontadas en Declaración(es) Sustituida(s)','51',item30,null,null],
+            [31,'Percepciones Descontadas en Declaración(es) Sustituida(s)','24',item31,null,null],
+            [32,'Sub-total Impuesto a Pagar',null,null,'78',item32,true],
+            [33,'Retenciones Acumuladas por Descontar','54',item33,null,null],
+            [34,'Retenciones del Período','66',item34,null,null],
+            [35,'Créditos Adquiridos por Cesión de Retenciones','72',item35,null,null],
+            [36,'Recuperación de Retenciones Solicitado (saldo con antigüedad mayor a dos períodos impositivos)','73',item36,null,null],
+            [37,'Total Retenciones','74',item37,null,null,true],
+            [38,'Retenciones Soportadas y Descontadas en esta Declaración',null,null,'55',item38],
+            [39,'Saldo de Retenciones de IVA no aplicado','67',item39,null,null],
+            [40,'Sub-total Impuesto a Pagar',null,null,'56',item40,false,true],
+            [41,'Percepciones Acumuladas en Importaciones por Descontar','57',item41,null,null],
+            [42,'Percepciones del Período','68',item42,null,null],
+            [43,'Créditos Adquiridos por Cesión de Percepciones','75',item43,null,null],
+            [44,'Recuperación de Percepciones Solicitado (saldo con antigüedad mayor a dos períodos impositivos)','76',item44,null,null],
+            [45,'Total Percepciones',null,null,'77',item45,true],
+            [46,'Percepciones en Aduanas Descontadas en esta Declaración',null,null,'58',item46],
+            [47,'Saldo de Percepciones en Aduanas no Aplicado','69',item47,null,null],
+            [48,'Total a Pagar',null,null,'90',item48,false,true],
+          ];
+          const _rifEmp=(settings?.empresaRif||'J-41230937-4');
+          const _empNombre=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+
+          const exportarDetIvaPDF=()=>{
+            const filas=detRows.map(([n,label,ca,va,cb,vb,bold,dark])=>`<tr style="${dark?'background:#0f172a;color:#fff':bold?'background:#f1f5f9':''};font-weight:${bold||dark?900:400}">
+              <td style="padding:3px 6px;text-align:center;width:22px;border:1px solid #cbd5e1">${n}</td>
+              <td style="padding:3px 6px;border:1px solid #cbd5e1">${label}</td>
+              <td style="padding:3px 6px;text-align:center;width:32px;color:#64748b;border:1px solid #cbd5e1">${ca||''}</td>
+              <td style="padding:3px 6px;text-align:right;width:110px;font-family:monospace;border:1px solid #cbd5e1">${va!=null?fmtN(va):''}</td>
+              <td style="padding:3px 6px;text-align:center;width:32px;color:#64748b;border:1px solid #cbd5e1">${cb||''}</td>
+              <td style="padding:3px 6px;text-align:right;width:110px;font-family:monospace;border:1px solid #cbd5e1">${vb!=null?fmtN(vb):''}</td>
+            </tr>`).join('');
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Determinación IVA</title><style>
+@page{size:letter portrait;margin:10mm 8mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:7px;font-family:Arial}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:8px;color:#111}
+table{border-collapse:collapse;width:100%}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<table style="border:none;margin-bottom:8px"><tr>
+  <td style="border:1px solid #cbd5e1;padding:8px;width:60%;vertical-align:top">
+    <div style="font-size:13px;font-weight:900">${_empNombre}</div>
+    <div style="font-size:8px;color:#444">RIF: ${_rifEmp}</div>
+  </td>
+  <td style="border:1px solid #cbd5e1;padding:8px;text-align:center;vertical-align:top">
+    <div style="font-size:11px;font-weight:900;color:#f97316">FORMA IVA 99030</div>
+    <div style="font-size:8px;font-weight:bold">DETERMINACIÓN Y DECLARACIÓN DEL IMPUESTO AL VALOR AGREGADO</div>
+    <div style="font-size:8px;margin-top:4px">PERIODO DE IMPOSICIÓN: ${detMes}/${detAnio} · ${detQ==='1'?'I':'II'} QUINCENA</div>
+    <div style="font-size:7px;color:#555">DEL ${fmtD(desde)} AL ${fmtD(hasta)}</div>
+  </td>
+</tr></table>
+<table>
+  <thead><tr style="background:#0f172a;color:#f97316">
+    <th colspan="2" style="padding:4px 6px;border:1px solid #334155;text-align:left">DÉBITOS/CRÉDITOS FISCALES</th>
+    <th style="padding:4px 6px;border:1px solid #334155">Cód.</th>
+    <th style="padding:4px 6px;border:1px solid #334155">Base Imponible</th>
+    <th style="padding:4px 6px;border:1px solid #334155">Cód.</th>
+    <th style="padding:4px 6px;border:1px solid #334155">Débito/Crédito Fiscal</th>
+  </tr></thead>
+  <tbody>${filas}</tbody>
+</table>
+<script>window.onload=()=>{window.print();}<\/script>
+</body></html>`;
+            const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+          };
+
+          const exportarDetIvaExcel=()=>{
+            const filas=detRows.map(([n,label,ca,va,cb,vb,bold,dark])=>`<tr style="${dark?'background:#0f172a;color:#f97316;font-weight:bold':bold?'background:#f1f5f9;font-weight:bold':''}">
+              <td style="text-align:center">${n}</td><td>${label}</td>
+              <td style="text-align:center;color:#64748b">${ca||''}</td><td style="text-align:right">${va!=null?fmtN(va):''}</td>
+              <td style="text-align:center;color:#64748b">${cb||''}</td><td style="text-align:right">${vb!=null?fmtN(vb):''}</td>
+            </tr>`).join('');
+            const html=`<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:9pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt}</style></head><body>
+<p style="font-size:14pt;font-weight:bold;margin:0">${_empNombre}</p>
+<h3 style="margin:2px 0 4px;font-size:12pt;color:#f97316">FORMA IVA 99030 — DETERMINACIÓN DE IVA</h3>
+<p style="color:#64748b;margin:0 0 10px;font-size:9pt">RIF: ${_rifEmp} · Período: ${detMes}/${detAnio} · ${detQ==='1'?'I':'II'} Quincena · DEL ${fmtD(desde)} AL ${fmtD(hasta)}</p>
+<table><thead><tr><th colspan="2">Concepto</th><th>Cód.</th><th>Base Imponible</th><th>Cód.</th><th>Débito/Crédito Fiscal</th></tr></thead><tbody>${filas}</tbody></table>
+</body></html>`;
+            const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
+            const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`DeterminacionIVA_${detAnio}${detMes}_Q${detQ}.xls`;a.click();URL.revokeObjectURL(url);
+          };
 
           const MInput=({campo,className=''})=>(
             <input type="number" step="0.01" value={detManual[campo]||0} onChange={e=>setDM(campo,e.target.value)}
@@ -1081,6 +1206,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
               <td className="px-2 py-1.5 text-right w-40">{valB}</td>
             </tr>
           );
+
           const V=n=>fmtN(n);
 
           return (
@@ -1102,6 +1228,8 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                       <option value="1">I Quincena</option>
                       <option value="2">II Quincena</option>
                     </select>
+                    <button onClick={exportarDetIvaPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
+                    <button onClick={exportarDetIvaExcel} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700"><Download size={11}/>Excel</button>
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-500 mt-2 font-bold">PERIODO: {detQ==='1'?'I':'II'} QUINCENA · DEL {fmtD(desde)} AL {fmtD(hasta)}</p>
@@ -1155,15 +1283,15 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                     <Row n={15} label="Compras internas gravadas por alícuota general más adicional" codeA="332" valA={<LInput val={L.c332} onSet={v=>setDetLcRes(x=>({...x,c332:v}))}/>} codeB="342" valB={<LInput val={L.c342} onSet={v=>setDetLcRes(x=>({...x,c342:v}))}/>}/>
                     <Row n={16} label="Compras internas gravadas por alícuota reducida" codeA="333" valA={<LInput val={L.c333} onSet={v=>setDetLcRes(x=>({...x,c333:v}))}/>} codeB="343" valB={<LInput val={L.c343} onSet={v=>setDetLcRes(x=>({...x,c343:v}))}/>}/>
                     <Row n={17} label="Total compras y créditos fiscales del período" codeA="35" valA={V(c35)} codeB="36" valB={V(c36)} bold/>
-                    <Row n={18} label="Créditos fiscales totalmente deducibles" codeB="70" valB={<LInput val={L.c70} onSet={v=>setDetLcRes(x=>({...x,c70:v}))}/>}/>
-                    <Row n={19} label="Créditos fiscales producto de la aplicación de la prorrata" codeB="37" valB={<LInput val={L.c37} onSet={v=>setDetLcRes(x=>({...x,c37:v}))}/>}/>
-                    <Row n={20} label="Total créditos fiscales deducibles" codeB="71" valB={V(c71)} bold/>
-                    <Row n={21} label="Excedente créditos fiscales del mes anterior" codeB="20" valB={<LInput val={L.c20} onSet={v=>setDetLcRes(x=>({...x,c20:v}))}/>}/>
-                    <Row n={22} label="Reintegro Solicitado (Solo Exportadores)" codeB="21" valB={<LInput val={L.c21} onSet={v=>setDetLcRes(x=>({...x,c21:v}))}/>}/>
-                    <Row n={23} label="Reintegro Solicitado (entes exonerados)" codeB="81" valB={<LInput val={L.c81} onSet={v=>setDetLcRes(x=>({...x,c81:v}))}/>}/>
-                    <Row n={24} label="Ajuste a los créditos fiscales de períodos anteriores" codeB="38" valB={<LInput val={L.c38} onSet={v=>setDetLcRes(x=>({...x,c38:v}))}/>}/>
-                    <Row n={25} label="Registrados en el período" codeB="82" valB={<LInput val={L.c82} onSet={v=>setDetLcRes(x=>({...x,c82:v}))}/>}/>
-                    <Row n={26} label="Total créditos fiscales" codeB="39" valB={V(c39)} dark/>
+                    <Row n={18} label="Créditos Fiscales Totalmente Deducibles" codeB="70" valB={V(item18)}/>
+                    <Row n={19} label="Créditos Fiscales producto de la Aplicación del porcentaje de la prorrata" codeB="37" valB={<LInput val={L.c37} onSet={v=>setDetLcRes(x=>({...x,c37:v}))}/>}/>
+                    <Row n={20} label="Total créditos fiscales deducibles... Realice la operación (70 + 37)" codeB="71" valB={V(item20)} bold/>
+                    <Row n={21} label={<>Excedente Créditos Fiscales del mes Anterior (ítem 60 de la declaración anterior){heredaCF&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeB="20" valB={<LInput val={item21} onSet={v=>setDetLibroVentasCfg(x=>({...x,cfExcedente:v,_cfExcedenteManual:true}))}/>}/>
+                    <Row n={22} label="Reintegro Solicitado (sólo Exportadores)" codeB="21" valB={<LInput val={L.c21} onSet={v=>setDetLcRes(x=>({...x,c21:v}))}/>}/>
+                    <Row n={23} label="Reintegro Solicitado (sólo quien suministre bienes o presten servicios a entes exonerados)" codeB="81" valB={<LInput val={L.c81} onSet={v=>setDetLcRes(x=>({...x,c81:v}))}/>}/>
+                    <Row n={24} label="Ajustes a los Créditos Fiscales de períodos anteriores" codeB="38" valB={<LInput val={L.c38} onSet={v=>setDetLcRes(x=>({...x,c38:v}))}/>}/>
+                    <Row n={25} label="Certificados de Débitos Fiscales Exonerados (emitidos por entes exonerados). Registrado en el período" codeB="82" valB={<LInput val={L.c82} onSet={v=>setDetLcRes(x=>({...x,c82:v}))}/>}/>
+                    <Row n={26} label="Total Créditos Fiscales" codeB="39" valB={V(item26)} dark/>
                   </tbody>
                 </table>
               </div>
@@ -1174,13 +1302,13 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                     <th colSpan={6} className="px-3 py-2 text-left text-[9px] text-orange-400 font-black uppercase">Autoliquidación</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
-                    <Row n={27} label="Total Cuota tributaria (Débitos − Créditos)" codeB="53" valB={V(item27)} bold/>
-                    <Row n={28} label="Excedente de crédito fiscal para el mes siguiente" codeB="60" valB={V(item28)}/>
-                    <Row n={29} label="Impuesto pagado en declaración(es) Sustituida(s)" codeA="22" valA={<MInput campo="m22"/>}/>
+                    <Row n={27} label="Total Cuota Tributaria del Período" codeB="53" valB={V(item27)} bold/>
+                    <Row n={28} label="Excedente de Crédito Fiscal para el mes siguiente" codeB="60" valB={V(item28)}/>
+                    <Row n={29} label="Impuesto pagado en Declaración(es) Sustituida(s)" codeA="22" valA={<MInput campo="m22"/>}/>
                     <Row n={30} label="Retenciones Descontadas en Declaración(es) Sustituida(s)" codeA="51" valA={<MInput campo="m51"/>}/>
-                    <Row n={31} label="Percepciones Acumuladas en Importaciones Por Descontar" codeA="24" valA={<MInput campo="m24"/>}/>
-                    <Row n={32} label="Sub-Total Impuesto a Pagar" codeB="78" valB={V(item32)} bold/>
-                    <Row n={33} label={<>Retenciones Acumuladas Por Descontar{heredaRetAcum&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeA="54" valA={
+                    <Row n={31} label="Percepciones Descontadas en Declaración(es) Sustituida(s)" codeA="24" valA={<MInput campo="m24"/>}/>
+                    <Row n={32} label="Sub-total Impuesto a Pagar" codeB="78" valB={V(item32)} bold/>
+                    <Row n={33} label={<>Retenciones Acumuladas por Descontar{heredaRetAcum&&<span className="block text-[8px] text-emerald-600 font-black normal-case">↳ heredado del cierre de {MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Quincena</span>}</>} codeA="54" valA={
                       <div>
                         <LInput val={item33} onSet={v=>setDetLibroVentasCfg(x=>({...x,retAcum:v,_retAcumManual:true}))}/>
                         {heredaRetAcum&&<button onClick={()=>setDetLibroVentasCfg(x=>({...x,retAcum:item33,_retAcumManual:true}))} className="text-[8px] text-blue-600 font-black underline mt-0.5">fijar manualmente este valor</button>}
@@ -1188,17 +1316,25 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                     }/>
                     <Row n={34} label="Retenciones del Período" codeA="66" valA={V(item34)}/>
                     <Row n={35} label="Créditos Adquiridos por Cesión de Retenciones" codeA="72" valA={<MInput campo="m72"/>}/>
-                    <Row n={36} label="Recuperación de Retenciones Solicitado" codeA="73" valA={<MInput campo="m73"/>}/>
+                    <Row n={36} label="Recuperación de Retenciones Solicitado (saldo con antigüedad mayor a dos períodos impositivos)" codeA="73" valA={<MInput campo="m73"/>}/>
                     <Row n={37} label="Total Retenciones" codeA="74" valA={V(item37)} bold/>
-                    <Row n={38} label="Retenciones Soportadas Y Descontadas en esta Declaración" codeB="55" valB={<LInput val={detLibroVentasCfg.retDesc} onSet={v=>setDetLibroVentasCfg(x=>({...x,retDesc:v}))}/>}/>
-                    <Row n={39} label="Saldo de retenciones de IVA no aplicado" codeA="67" valA={V(item39)}/>
-                    <Row n={40} label="Sub total Impuesto a Pagar" codeB="56" valB={V(item40)} dark/>
+                    <Row n={38} label="Retenciones Soportadas y Descontadas en esta Declaración" codeB="55" valB={<LInput val={detLibroVentasCfg.retDesc} onSet={v=>setDetLibroVentasCfg(x=>({...x,retDesc:v}))}/>}/>
+                    <Row n={39} label="Saldo de Retenciones de IVA no aplicado" codeA="67" valA={V(item39)}/>
+                    <Row n={40} label="Sub-total Impuesto a Pagar" codeB="56" valB={V(item40)} dark/>
+                    <Row n={41} label="Percepciones Acumuladas en Importaciones por Descontar" codeA="57" valA={<MInput campo="m57"/>}/>
+                    <Row n={42} label="Percepciones del Período" codeA="68" valA={<MInput campo="m68"/>}/>
+                    <Row n={43} label="Créditos Adquiridos por Cesión de Percepciones" codeA="75" valA={<MInput campo="m75"/>}/>
+                    <Row n={44} label="Recuperación de Percepciones Solicitado (saldo con antigüedad mayor a dos períodos impositivos)" codeA="76" valA={<MInput campo="m76"/>}/>
+                    <Row n={45} label="Total Percepciones" codeB="77" valB={V(item45)} bold/>
+                    <Row n={46} label="Percepciones en Aduanas Descontadas en esta Declaración" codeB="58" valB={<MInput campo="m58"/>}/>
+                    <Row n={47} label="Saldo de Percepciones en Aduanas no Aplicado" codeA="69" valA={V(item47)}/>
+                    <Row n={48} label="Total a Pagar" codeB="90" valB={V(item48)} dark/>
                   </tbody>
                 </table>
               </div>
 
               <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 space-y-2">
-                <p className="text-[10px] font-black text-emerald-700 uppercase">🔒 Cierre de esta quincena — se hereda como "Retenciones Acumuladas" del período siguiente</p>
+                <p className="text-[10px] font-black text-emerald-700 uppercase">🔒 Cierre de Retenciones — se hereda como "Retenciones Acumuladas" (ítem 33) del período siguiente</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[10px] text-emerald-700">Saldo actual calculado (ítem 39): <b>Bs. {fmtN(item39)}</b></span>
                   <button onClick={async()=>{
@@ -1221,6 +1357,32 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   }} className="px-3 py-1.5 bg-emerald-700 text-white rounded-lg text-[9px] font-black uppercase hover:bg-emerald-800">Guardar cierre manual</button>
                 </div>
                 {detPrevCfg.saldoCierre!=null&&<p className="text-[9px] text-emerald-600">Cierre guardado del período anterior ({MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q): Bs. {fmtN(detPrevCfg.saldoCierre)}</p>}
+              </div>
+
+              <div className="bg-sky-50 border-2 border-sky-200 rounded-xl p-4 space-y-2">
+                <p className="text-[10px] font-black text-sky-700 uppercase">🔒 Cierre de Crédito Fiscal — se hereda como "Excedente Créditos Fiscales" (ítem 21) del período siguiente</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-sky-700">Saldo actual calculado (ítem 28): <b>Bs. {fmtN(item28)}</b></span>
+                  <button onClick={async()=>{
+                    try{
+                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierreCF:item28},{merge:true});
+                      setImpDialog({title:'✅ Quincena cerrada',text:`Excedente de crédito fiscal Bs. ${fmtN(item28)} guardado para ${periodoKey}. La siguiente quincena lo heredará automáticamente como Excedente Créditos Fiscales.`,type:'alert'});
+                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+                  }} className="px-3 py-1.5 bg-sky-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-sky-700">Cerrar con este saldo</button>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-sky-200">
+                  <span className="text-[10px] text-sky-700">¿Fijar manualmente el excedente de crédito fiscal con el que cerraste (ej. antes de usar este módulo)?</span>
+                  <input type="number" step="0.01" placeholder="Monto Bs." value={detLibroVentasCfg.saldoCierreCF??''} onChange={e=>setDetLibroVentasCfg(x=>({...x,saldoCierreCF:e.target.value===''?null:pNum(e.target.value)}))} className="w-40 border-2 border-sky-300 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-sky-500"/>
+                  <button onClick={async()=>{
+                    try{
+                      const periodoKey=`${detAnio}-${detMes}-Q${detQ}`;
+                      await setDoc(getDocRef('libroVentasConfig',periodoKey),{saldoCierreCF:detLibroVentasCfg.saldoCierreCF==null?null:pNum(detLibroVentasCfg.saldoCierreCF)},{merge:true});
+                      setImpDialog({title:'✅ Guardado',text:`Excedente de crédito fiscal manual guardado para ${periodoKey}.`,type:'alert'});
+                    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+                  }} className="px-3 py-1.5 bg-sky-700 text-white rounded-lg text-[9px] font-black uppercase hover:bg-sky-800">Guardar cierre manual</button>
+                </div>
+                {detPrevCfg.saldoCierreCF!=null&&<p className="text-[9px] text-sky-600">Cierre guardado del período anterior ({MESES_D[parseInt(detPrevPeriodo.mes,10)-1]} {detPrevPeriodo.anio} · {detPrevPeriodo.q==='1'?'I':'II'} Q): Bs. {fmtN(detPrevCfg.saldoCierreCF)}</p>}
               </div>
 
               <div className="flex items-center justify-between gap-3">
