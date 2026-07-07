@@ -122,6 +122,15 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [cfgCfExcedente,setCfgCfExcedente]=useState('');
   const [cfgSaldoSaving,setCfgSaldoSaving]=useState(false);
 
+  // ── Impuesto por Actividad Económica (Municipal / SEDEMAT) ──
+  const [aeCfg,setAeCfg]=useState({repLegalNombre:'',repLegalCI:'',nroLicencia:'',direccionAE:'',estadoAE:'',municipioAE:'',parroquiaAE:'',sectorDireccion:'',telefonoAE:'',correoAE:'',alicuotaAE:1,tasaBcvEuro:0,tasaBcvUsd:0,mtUCD:0,sectorEconomico:'',ramoEconomico:'',codigoActividad:''});
+  const [aeCfgSaving,setAeCfgSaving]=useState(false);
+  const [aeAnio,setAeAnio]=useState(String(new Date().getFullYear()));
+  const [aeMes,setAeMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
+  const [aeInvoices,setAeInvoices]=useState([]);
+  const [aeNotasVentaCD,setAeNotasVentaCD]=useState([]);
+  const [aeManual,setAeManual]=useState({licenciaSolvencias:0});
+
   useEffect(()=>{
     if(!fbUser)return;
     const u1=onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVA(s.docs.map(d=>d.data())));
@@ -156,6 +165,41 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     const u3=onSnapshot(doc(db,'settings',`det-iva-${periodoKey}`),d=>setDetManual(d.exists()?{...{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0},...d.data()}:{m40:0,m41:0,m48:0,m80:0,m22:0,m51:0,m24:0,m72:0,m73:0,m57:0,m68:0,m75:0,m76:0,m58:0}));
     return()=>{u1();uPrev();u2();u3();};
   },[fbUser,sec,detAnio,detMes,detQ]);
+
+  // ── Impuesto por Actividad Económica: config general (siempre activa) ──
+  useEffect(()=>{
+    if(!fbUser) return;
+    const u=onSnapshot(getDocRef('settings','actividadEconomica'),d=>{
+      if(d.exists()) setAeCfg(x=>({...x,...d.data()}));
+    });
+    return()=>u();
+  },[fbUser]);
+
+  // ── Datos de ventas + manuales del mes, solo si la pestaña está activa ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='act_economica') return;
+    const u1=onSnapshot(getColRef('maquilaInvoices'),s=>setAeInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(getColRef('notasVentaCreditoDebito'),s=>setAeNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const mesKey=`${aeAnio}-${aeMes}`;
+    const u3=onSnapshot(doc(db,'settings',`act-economica-${mesKey}`),d=>setAeManual(d.exists()?{licenciaSolvencias:pNum(d.data().licenciaSolvencias||0)}:{licenciaSolvencias:0}));
+    return()=>{u1();u2();u3();};
+  },[fbUser,sec,aeAnio,aeMes]);
+
+  const guardarAeCfg=async()=>{
+    setAeCfgSaving(true);
+    try{
+      await setDoc(getDocRef('settings','actividadEconomica'),aeCfg,{merge:true});
+      setImpDialog({title:'✅ Guardado',text:'Datos del contribuyente y parámetros de Actividad Económica guardados.',type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setAeCfgSaving(false);}
+  };
+  const guardarAeManual=async()=>{
+    try{
+      const mesKey=`${aeAnio}-${aeMes}`;
+      await setDoc(doc(db,'settings',`act-economica-${mesKey}`),{licenciaSolvencias:pNum(aeManual.licenciaSolvencias||0),updatedAt:Date.now()},{merge:true});
+      setImpDialog({title:'✅ Guardado',text:`Datos de ${mesKey} guardados.`,type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+  };
 
   const guardarSaldoInicial=async()=>{
     setCfgSaldoSaving(true);
@@ -273,6 +317,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'det_iva',  label:'Determinación IVA',    icon:<Calculator size={13}/>, perm:'impuestos_determinacion'},
+    {id:'act_economica', label:'Actividad Económica', icon:<Building2 size={13}/>, perm:'impuestos_act_economica'},
     {id:'config',   label:'Configuración',        icon:<Settings size={13}/>, perm:'impuestos_config'},
   ];
   // Permisología por submódulo (igual criterio que Procura): si el usuario tiene algún impuestos_* marcado, solo ve esos
@@ -1431,6 +1476,150 @@ table{border-collapse:collapse;width:100%}
           );
         })()}
 
+        {/* ACTIVIDAD ECONÓMICA (MUNICIPAL / SEDEMAT) */}
+        {sec==='act_economica'&&(()=>{
+          const MESES_AE=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+          const lastDay=new Date(parseInt(aeAnio),parseInt(aeMes),0).getDate();
+          const rango=(q)=>({desde:q===2?`${aeAnio}-${aeMes}-16`:`${aeAnio}-${aeMes}-01`,hasta:q===1?`${aeAnio}-${aeMes}-15`:`${aeAnio}-${aeMes}-${String(lastDay).padStart(2,'0')}`});
+          const ventasBrutasQ=(q)=>{
+            const {desde,hasta}=rango(q);
+            const facts=(aeInvoices||[]).filter(inv=>{
+              if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
+              const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+            });
+            const ncnd=(aeNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+            let tot=0;
+            facts.forEach(inv=>{
+              const tasa=pNum(inv.tasa||0)||pNum(settings?.tasaBCV||0)||1;
+              const base=pNum(inv.montoBase||0);
+              tot+=pNum(inv.baseGravableBs||0)||base*tasa;
+            });
+            ncnd.forEach(n=>{tot+=pNum(n.monto||0)*(n.tipo==='NC'?-1:1);});
+            return tot;
+          };
+          const vb1=ventasBrutasQ(1), vb2=ventasBrutasQ(2);
+          const totalIngresos=vb1+vb2;
+          const tasaUCD=Math.max(pNum(aeCfg.tasaBcvEuro||0),pNum(aeCfg.tasaBcvUsd||0))||1;
+          const mtBs=pNum(aeCfg.mtUCD||0)*tasaUCD;
+          const impuestoCalc=Math.max(totalIngresos*(pNum(aeCfg.alicuotaAE||0)/100),mtBs);
+          const licencia=pNum(aeManual.licenciaSolvencias||0);
+          const totalBs=impuestoCalc+licencia;
+          const totalUCD=totalBs/tasaUCD;
+
+          const exportarAePDF=()=>{
+            const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+            const rif=settings?.empresaRif||'J-41230937-4';
+            const N2=n=>fmtN(n);
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Actividad Económica</title><style>
+@page{size:letter portrait;margin:12mm 10mm}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+body{font-size:9px;color:#111}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #999;padding:4px 6px}
+.hdr{background:#1e3a8a;color:#fff;font-weight:900;padding:5px 8px;font-size:9px}
+</style></head><body>
+<div style="text-align:center;margin-bottom:10px">
+  <div style="font-size:9px">REPÚBLICA BOLIVARIANA DE VENEZUELA · ESTADO ${aeCfg.estadoAE||'ZULIA'}</div>
+  <div style="font-size:9px">ALCALDÍA DEL MUNICIPIO ${aeCfg.municipioAE||'MARACAIBO'} · SERVICIO DESCONCENTRADO MUNICIPAL DE ADMINISTRACIÓN TRIBUTARIA</div>
+  <div style="font-size:13px;font-weight:900;margin-top:8px">DECLARACIÓN JURADA DE INGRESOS BRUTOS</div>
+  <div style="font-size:11px;font-weight:900">CORRESPONDIENTE AL IMPUESTO SOBRE ACTIVIDADES ECONÓMICAS</div>
+</div>
+<table style="margin-bottom:8px"><tr>
+  <td><b>Período:</b> 01/${aeMes}/${aeAnio} AL ${lastDay}/${aeMes}/${aeAnio}</td>
+  <td><b>Fecha:</b> ${pD(getTodayDate())}</td>
+</tr></table>
+<div class="hdr">DATOS DEL CONTRIBUYENTE</div>
+<table style="margin-bottom:8px">
+  <tr><td style="width:15%"><b>RIF:</b></td><td style="width:35%">${rif}</td><td style="width:15%"><b>Razón Social:</b></td><td style="width:35%">${emp}</td></tr>
+  <tr><td><b>Representante:</b></td><td>${aeCfg.repLegalNombre||''}</td><td><b>C.I.:</b></td><td>${aeCfg.repLegalCI||''}</td></tr>
+  <tr><td><b>N° Licencia:</b></td><td>${aeCfg.nroLicencia||''}</td><td><b>Teléfono:</b></td><td>${aeCfg.telefonoAE||''}</td></tr>
+  <tr><td><b>Dirección:</b></td><td colspan="3">${aeCfg.direccionAE||''}</td></tr>
+  <tr><td><b>Estado:</b></td><td>${aeCfg.estadoAE||''}</td><td><b>Municipio:</b></td><td>${aeCfg.municipioAE||''}</td></tr>
+  <tr><td><b>Parroquia:</b></td><td>${aeCfg.parroquiaAE||''}</td><td><b>Sector:</b></td><td>${aeCfg.sectorDireccion||''}</td></tr>
+  <tr><td><b>Correo:</b></td><td colspan="3">${aeCfg.correoAE||''}</td></tr>
+</table>
+<div class="hdr">DECLARACIÓN DE IMPUESTOS SOBRE ACTIVIDADES ECONÓMICAS</div>
+<table>
+  <tr style="background:#f1f5f9;font-weight:900;text-align:center"><td>Sector económico</td><td>Ramo económico</td><td>Código</td><td>Ingresos brutos</td><td>Alícuota</td><td>M.T. (UCD)</td><td>Impuesto calculado (Bs)</td></tr>
+  <tr style="text-align:center"><td>${aeCfg.sectorEconomico||'—'}</td><td>${aeCfg.ramoEconomico||'—'}</td><td>${aeCfg.codigoActividad||'—'}</td><td style="text-align:right">${N2(totalIngresos)}</td><td>${pNum(aeCfg.alicuotaAE).toFixed(2)}%</td><td>${pNum(aeCfg.mtUCD).toFixed(6)}</td><td style="text-align:right">${N2(impuestoCalc)}</td></tr>
+  <tr><td colspan="6" style="text-align:right;font-weight:900">Monto impuesto (Bs)</td><td style="text-align:right;font-weight:900">${N2(impuestoCalc)}</td></tr>
+  <tr><td colspan="6" style="text-align:right">Licencia/Solvencias (Bs)</td><td style="text-align:right">${N2(licencia)}</td></tr>
+  <tr style="background:#1e3a8a;color:#fff;font-weight:900"><td colspan="6" style="text-align:right">Total a pagar (Bs)</td><td style="text-align:right">${N2(totalBs)}</td></tr>
+  <tr><td colspan="6" style="text-align:right">Total a pagar (UCD)</td><td style="text-align:right">${N2(totalUCD)}</td></tr>
+</table>
+<p style="margin-top:10px;font-size:7px;text-align:justify">JURO QUE SON VERDADEROS TODOS LOS DATOS SUMINISTRADOS POR ESTE FORMULARIO. Tasa BCV Euro: Bs.${N2(aeCfg.tasaBcvEuro)} · Tasa BCV USD: Bs.${N2(aeCfg.tasaBcvUsd)} (se usa la de mayor valor para el cálculo en UCD).</p>
+<script>window.onload=()=>window.print();<\/script>
+</body></html>`;
+            const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+          };
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-black text-sm uppercase">Impuesto por Actividad Económica</h3>
+                    <p className="text-[10px] text-slate-400">Declaración Jurada de Ingresos Brutos · Municipal (SEDEMAT)</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select value={aeMes} onChange={e=>setAeMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {MESES_AE.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                    </select>
+                    <select value={aeAnio} onChange={e=>setAeAnio(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                      {[parseInt(aeAnio)-1,parseInt(aeAnio),parseInt(aeAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <button onClick={exportarAePDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-4 mt-3 text-[10px] text-slate-500">
+                  <span>Alícuota: <b className="text-slate-700">{pNum(aeCfg.alicuotaAE).toFixed(2)}%</b></span>
+                  <span>Tasa BCV Euro: <b className="text-slate-700">Bs. {fmtN(aeCfg.tasaBcvEuro)}</b></span>
+                  <span>Tasa BCV USD: <b className="text-slate-700">Bs. {fmtN(aeCfg.tasaBcvUsd)}</b></span>
+                  <span className="text-orange-500">(editables en Configuración)</span>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Ingresos del Período</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">1era Quincena</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">2da Quincena</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Total Ingresos</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Impuesto por A.E.</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Licencia/Solvencias</th>
+                    <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Total Bs.</th>
+                  </tr></thead>
+                  <tbody>
+                    <tr className="bg-white">
+                      <td className="px-3 py-2 font-black">Ventas Brutas</td>
+                      <td className="px-3 py-2 text-right font-mono">{fmtN(vb1)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{fmtN(vb2)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black">{fmtN(totalIngresos)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(impuestoCalc)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <input type="number" step="0.01" value={aeManual.licenciaSolvencias||0} onChange={e=>setAeManual({licenciaSolvencias:pNum(e.target.value)})} onBlur={guardarAeManual}
+                          className="w-28 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-bold text-right outline-none focus:border-orange-500"/>
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono font-black">{fmtN(totalBs)}</td>
+                    </tr>
+                  </tbody>
+                  <tfoot><tr style={{background:'#1e293b'}}>
+                    <td className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Total</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(vb1)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(vb2)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totalIngresos)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(impuestoCalc)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(licencia)}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totalBs)}</td>
+                  </tr></tfoot>
+                </table>
+              </div>
+              <p className="text-[9px] text-slate-400">Total a pagar (UCD): <b>{fmtN(totalUCD)}</b> · calculado con la tasa BCV de mayor valor entre Euro y USD. Licencia/Solvencias se guarda solo al salir del campo.</p>
+            </div>
+          );
+        })()}
+
         {/* CONFIG */}
         {sec==='config'&&(
           <div className="max-w-2xl space-y-4">
@@ -1453,6 +1642,53 @@ table{border-collapse:collapse;width:100%}
                 </div>
               </div>
             </div>
+            {/* ── Actividad Económica: Datos del Contribuyente + Parámetros ── */}
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-4">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Actividad Económica — Datos del Contribuyente</h3>
+              <p className="text-[10px] text-slate-400">RIF y Razón Social usan los datos generales de la empresa. Completa el resto una sola vez.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Representante Legal</label>
+                  <input value={aeCfg.repLegalNombre||''} onChange={e=>setAeCfg(x=>({...x,repLegalNombre:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">C.I. Representante</label>
+                  <input value={aeCfg.repLegalCI||''} onChange={e=>setAeCfg(x=>({...x,repLegalCI:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° de Licencia</label>
+                  <input value={aeCfg.nroLicencia||''} onChange={e=>setAeCfg(x=>({...x,nroLicencia:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Teléfono</label>
+                  <input value={aeCfg.telefonoAE||''} onChange={e=>setAeCfg(x=>({...x,telefonoAE:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div className="col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Dirección</label>
+                  <input value={aeCfg.direccionAE||''} onChange={e=>setAeCfg(x=>({...x,direccionAE:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Estado</label>
+                  <input value={aeCfg.estadoAE||''} onChange={e=>setAeCfg(x=>({...x,estadoAE:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Municipio</label>
+                  <input value={aeCfg.municipioAE||''} onChange={e=>setAeCfg(x=>({...x,municipioAE:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Parroquia</label>
+                  <input value={aeCfg.parroquiaAE||''} onChange={e=>setAeCfg(x=>({...x,parroquiaAE:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Sector / Barrio</label>
+                  <input value={aeCfg.sectorDireccion||''} onChange={e=>setAeCfg(x=>({...x,sectorDireccion:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div className="col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Correo Electrónico</label>
+                  <input value={aeCfg.correoAE||''} onChange={e=>setAeCfg(x=>({...x,correoAE:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+              </div>
+              <div className="border-t border-slate-100 pt-4 grid grid-cols-3 gap-3">
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Sector Económico</label>
+                  <input value={aeCfg.sectorEconomico||''} onChange={e=>setAeCfg(x=>({...x,sectorEconomico:e.target.value}))} placeholder="Ej. Primario" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Ramo Económico</label>
+                  <input value={aeCfg.ramoEconomico||''} onChange={e=>setAeCfg(x=>({...x,ramoEconomico:e.target.value}))} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Código de Actividad</label>
+                  <input value={aeCfg.codigoActividad||''} onChange={e=>setAeCfg(x=>({...x,codigoActividad:e.target.value}))} placeholder="Ej. 3.2.14.02.1" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+              </div>
+              <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 grid grid-cols-3 gap-3">
+                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Alícuota (%)</label>
+                  <input type="number" step="0.01" value={aeCfg.alicuotaAE||0} onChange={e=>setAeCfg(x=>({...x,alicuotaAE:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Tasa BCV Euro (Bs.)</label>
+                  <input type="number" step="0.01" value={aeCfg.tasaBcvEuro||0} onChange={e=>setAeCfg(x=>({...x,tasaBcvEuro:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
+                <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Tasa BCV USD (Bs.)</label>
+                  <input type="number" step="0.01" value={aeCfg.tasaBcvUsd||0} onChange={e=>setAeCfg(x=>({...x,tasaBcvUsd:pNum(e.target.value)}))} className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
+                <div className="col-span-3"><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Mínimo Tributable — M.T. (UCD)</label>
+                  <input type="number" step="0.000001" value={aeCfg.mtUCD||0} onChange={e=>setAeCfg(x=>({...x,mtUCD:pNum(e.target.value)}))} className="w-40 border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/></div>
+              </div>
+              <button disabled={aeCfgSaving} onClick={guardarAeCfg} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{aeCfgSaving?'Guardando...':'Guardar Datos del Contribuyente'}</button>
+            </div>
+
             {/* ── Determinación de IVA: Saldo Inicial ── */}
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-3">
               <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Determinación de IVA — Saldo Inicial</h3>
