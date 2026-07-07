@@ -90,10 +90,15 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
   const [retIVA,setRetIVA]=useState([]);
   const [retISLR,setRetISLR]=useState([]);
-  const [search,setSearch]=useState('');
+  const [retFiltros,setRetFiltros]=useState({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});
+  const [retPageIVA,setRetPageIVA]=useState(1);
+  const [retPageISLR,setRetPageISLR]=useState(1);
   const [editRet,setEditRet]=useState(null);  // {doc, tipo:'IVA'|'ISLR'}
   const [editRetForm,setEditRetForm]=useState({});
   const [impDialog,setImpDialog]=useState(null);
+  const [showTxtModal,setShowTxtModal]=useState(false);
+  const [txtMes,setTxtMes]=useState(getTodayDate().substring(0,7));
+  const [txtQuincena,setTxtQuincena]=useState('1');
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -440,12 +445,236 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
   };
 
   const _ordCompIVA=(a,b)=>{
-    const fc=(a.fecha||'').localeCompare(b.fecha||'');
-    if(fc!==0) return fc;
-    return (parseInt(String(a.nroComprobante||'0').replace(/\D/g,''))||0)-(parseInt(String(b.nroComprobante||'0').replace(/\D/g,''))||0);
+    const pa=(a.nroComprobante||'').toString().trim();
+    const pb=(b.nroComprobante||'').toString().trim();
+    const na=pa?(parseInt(pa.replace(/\D/g,''))||0):null;
+    const nb=pb?(parseInt(pb.replace(/\D/g,''))||0):null;
+    if(na!==null&&nb!==null&&na!==nb) return na-nb;
+    return (a.fecha||'').localeCompare(b.fecha||'');
   };
-  const retFiltIVA=retIVA.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase())).sort(_ordCompIVA);
-  const retFiltISLR=retISLR.filter(r=>!search||(r.proveedor||'').toLowerCase().includes(search.toLowerCase())||(r.nroFactura||'').toLowerCase().includes(search.toLowerCase())).sort(_ordCompIVA);
+  const RET_PAGE_SIZE=25;
+  const _normRet=s=>(s||'').toString().toLowerCase();
+  const _retPasaFiltros=(r,tipoR)=>{
+    const f=retFiltros;
+    if(f.proveedor&&!(_normRet(r.proveedor).includes(_normRet(f.proveedor))||_normRet(r.rifProveedor).includes(_normRet(f.proveedor)))) return false;
+    if(f.factura&&!_normRet(r.nroFactura).includes(_normRet(f.factura))) return false;
+    if(f.comprobante&&!_normRet(r.nroComprobante).includes(_normRet(f.comprobante))) return false;
+    if(tipoR==='ISLR'&&f.concepto&&!(_normRet(r.concepto).includes(_normRet(f.concepto))||_normRet(r.codConcepto).includes(_normRet(f.concepto)))) return false;
+    if(f.desde&&(r.fecha||'')<f.desde) return false;
+    if(f.hasta&&(r.fecha||'')>f.hasta) return false;
+    return true;
+  };
+  const hayFiltrosRetActivos=Object.values(retFiltros).some(Boolean);
+  const limpiarFiltrosRet=()=>{setRetFiltros({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});setRetPageIVA(1);setRetPageISLR(1);};
+  const retFiltIVA=retIVA.filter(r=>_retPasaFiltros(r,'IVA')).sort(_ordCompIVA);
+  const retFiltISLR=retISLR.filter(r=>_retPasaFiltros(r,'ISLR')).sort(_ordCompIVA);
+  const totalPagIVA=Math.max(1,Math.ceil(retFiltIVA.length/RET_PAGE_SIZE));
+  const totalPagISLR=Math.max(1,Math.ceil(retFiltISLR.length/RET_PAGE_SIZE));
+  const pageIVA=Math.min(Math.max(1,retPageIVA),totalPagIVA);
+  const pageISLR=Math.min(Math.max(1,retPageISLR),totalPagISLR);
+  const retIVAPag=retFiltIVA.slice((pageIVA-1)*RET_PAGE_SIZE,pageIVA*RET_PAGE_SIZE);
+  const retISLRPag=retFiltISLR.slice((pageISLR-1)*RET_PAGE_SIZE,pageISLR*RET_PAGE_SIZE);
+
+  // ── Exportar Relación de Retenciones (PDF con paginación real y Excel) ──
+  const _filtrosRetTxt=(tipoR)=>{
+    const f=retFiltros;
+    return[f.proveedor?'Proveedor: '+f.proveedor:'',f.factura?'Factura: '+f.factura:'',f.comprobante?'Comprobante: '+f.comprobante:'',tipoR==='ISLR'&&f.concepto?'Concepto: '+f.concepto:'',(f.desde||f.hasta)?'Fecha: '+(f.desde?pD(f.desde):'…')+' al '+(f.hasta?pD(f.hasta):'…'):''].filter(Boolean).join(' · ');
+  };
+  const exportarRetPDF=(tipoR)=>{
+    const lista=tipoR==='IVA'?retFiltIVA:retFiltISLR;
+    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp=settings?.empresaRif||'J-41230937-4';
+    const dirEmp=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
+    const totalUSD=lista.reduce((s,r)=>s+pNum(r.monto),0);
+    const totalBs=lista.reduce((s,r)=>s+pNum(r.montoBs),0);
+    const filtrosTxt=_filtrosRetTxt(tipoR);
+    const headCols=tipoR==='IVA'
+      ?['N° Comp.','Proveedor','Factura','Fecha','Período','%','Monto USD','Monto Bs.','Status']
+      :['N° Comp.','Proveedor','Factura','Fecha','Concepto SENIAT','%','Monto USD','Monto Bs.','Status'];
+    const filasHtml=lista.map((r,i)=>tipoR==='IVA'?`<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
+        <td style="padding:3px 6px;font-weight:700;color:#ea580c">${r.nroComprobante||'—'}</td>
+        <td style="padding:3px 6px">${r.proveedor||'—'}<div style="font-size:6px;color:#777">${r.rifProveedor||''}</div></td>
+        <td style="padding:3px 6px">${r.nroFactura||'—'}</td>
+        <td style="padding:3px 6px;text-align:center">${pD(r.fecha)}</td>
+        <td style="padding:3px 6px;text-align:center">${r.periodo||'—'}</td>
+        <td style="padding:3px 6px;text-align:center">${r.pctRetencion||75}%</td>
+        <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.monto)}</td>
+        <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.montoBs)}</td>
+        <td style="padding:3px 6px;text-align:center">${r.status||'PENDIENTE'}</td>
+      </tr>`:`<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
+        <td style="padding:3px 6px;font-weight:700;color:#ea580c">${r.nroComprobante||'—'}</td>
+        <td style="padding:3px 6px">${r.proveedor||'—'}<div style="font-size:6px;color:#777">${r.rifProveedor||''}</div></td>
+        <td style="padding:3px 6px">${r.nroFactura||'—'}</td>
+        <td style="padding:3px 6px;text-align:center">${pD(r.fecha)}</td>
+        <td style="padding:3px 6px"><span style="font-family:monospace;background:#f1f5f9;padding:0 3px;border-radius:3px;margin-right:3px">${r.codConcepto||''}</span>${r.concepto||'—'}</td>
+        <td style="padding:3px 6px;text-align:center">${r.pct||0}%</td>
+        <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.monto)}</td>
+        <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.montoBs)}</td>
+        <td style="padding:3px 6px;text-align:center">${r.status||'PENDIENTE'}</td>
+      </tr>`).join('');
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Retenciones ${tipoR}</title><style>
+@page{size:legal landscape;margin:10mm 8mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:7px;font-family:Arial}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;font-size:8px;color:#111}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #d1d5db;vertical-align:middle}
+th{background:#0f172a;color:#f97316;padding:4px 6px;font-size:7px;text-transform:uppercase;text-align:left}
+tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<table style="border:none;margin-bottom:8px"><tr>
+  <td style="border:none;width:60%;vertical-align:top">
+    <div style="font-size:14px;font-weight:900">${emp}</div>
+    <div style="font-size:8px;color:#444">RIF: ${rifEmp}</div>
+    <div style="font-size:7px;color:#666">${dirEmp}</div>
+  </td>
+  <td style="border:none;text-align:right;vertical-align:top">
+    <div style="font-size:13px;font-weight:900;color:#f97316">RELACIÓN DE RETENCIONES ${tipoR==='IVA'?'DE IVA':'DE ISLR'}</div>
+    <div style="font-size:8px;color:#555">Corte: ${pD(getTodayDate())} · ${lista.length} comprobante${lista.length===1?'':'s'}</div>
+    ${filtrosTxt?`<div style="font-size:7px;color:#0f766e;margin-top:2px">Filtros aplicados: ${filtrosTxt}</div>`:''}
+  </td>
+</tr></table>
+<table>
+  <thead><tr>${headCols.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+  <tbody>${filasHtml||`<tr><td colspan="${headCols.length}" style="text-align:center;padding:16px;color:#999">Sin registros para los filtros aplicados</td></tr>`}</tbody>
+  <tfoot><tr><td colspan="${headCols.length-3}" style="text-align:right">TOTALES →</td><td style="text-align:right;font-family:monospace">${fmtN(totalUSD)}</td><td style="text-align:right;font-family:monospace">${fmtN(totalBs)}</td><td></td></tr></tfoot>
+</table>
+<script>window.onload=()=>{window.print();}<\/script>
+</body></html>`;
+    const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+  };
+  const exportarRetExcel=(tipoR)=>{
+    const lista=tipoR==='IVA'?retFiltIVA:retFiltISLR;
+    const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+    const rifEmp=settings?.empresaRif||'J-41230937-4';
+    const totalUSD=lista.reduce((s,r)=>s+pNum(r.monto),0);
+    const totalBs=lista.reduce((s,r)=>s+pNum(r.montoBs),0);
+    const filtrosTxt=_filtrosRetTxt(tipoR);
+    const headCols=tipoR==='IVA'
+      ?['N° Comp.','Proveedor','RIF','Factura','Fecha','Período','%','Monto USD','Monto Bs.','Status']
+      :['N° Comp.','Proveedor','RIF','Factura','Fecha','Cód.','Concepto SENIAT','%','Monto USD','Monto Bs.','Status'];
+    const filas=lista.map(r=>tipoR==='IVA'
+      ?[r.nroComprobante||'—',r.proveedor||'—',r.rifProveedor||'',r.nroFactura||'—',pD(r.fecha),r.periodo||'—',(r.pctRetencion||75)+'%',fmtN(r.monto),fmtN(r.montoBs),r.status||'PENDIENTE']
+      :[r.nroComprobante||'—',r.proveedor||'—',r.rifProveedor||'',r.nroFactura||'—',pD(r.fecha),r.codConcepto||'',r.concepto||'—',(r.pct||0)+'%',fmtN(r.monto),fmtN(r.montoBs),r.status||'PENDIENTE']);
+    const numCols=tipoR==='IVA'?[7,8]:[8,9];
+    const rowsHtml=filas.map(f=>`<tr>${f.map((c,ci)=>`<td style="${numCols.includes(ci)?'text-align:right;font-family:monospace':'text-align:left'}">${c}</td>`).join('')}</tr>`).join('');
+    const html=`<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:9pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt;text-align:left}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt}.tot{background:#0f172a;color:#f97316;font-weight:bold}</style></head><body>
+<p style="font-size:14pt;font-weight:bold;margin:0">${emp}</p>
+<h3 style="margin:2px 0 4px;font-size:12pt">RELACIÓN DE RETENCIONES ${tipoR==='IVA'?'IVA':'ISLR'} · RIF ${rifEmp}</h3>
+<p style="color:#64748b;margin:0 0 10px;font-size:9pt">Corte: ${pD(getTodayDate())} · ${lista.length} comprobante${lista.length===1?'':'s'}${filtrosTxt?' · Filtros: '+filtrosTxt:''}</p>
+<table><thead><tr>${headCols.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}
+<tr class="tot"><td colspan="${headCols.length-3}">TOTALES</td><td style="text-align:right">${fmtN(totalUSD)}</td><td style="text-align:right">${fmtN(totalBs)}</td><td></td></tr>
+</tbody></table></body></html>`;
+    const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Retenciones_${tipoR}_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+  };
+
+  // ── TXT Retenciones IVA para el portal SENIAT (16 campos, tabulado) ──
+  // Agrupa por mes+quincena igual que el modal de Editar Retención (fecha→mes, periodo→I/II).
+  const _soloRif=s=>(s||'').toString().replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  const generarTxtRetIVA=()=>{
+    if(!txtMes){setImpDialog({title:'Falta el mes',text:'Selecciona el mes a declarar.',type:'alert'});return;}
+    const q=parseInt(txtQuincena,10);
+    const lista=retIVA.filter(r=>{
+      const mesOK=(r.fecha||'').substring(0,7)===txtMes;
+      const qOK=((r.periodo||'').toUpperCase().includes('II')?2:1)===q;
+      return mesOK&&qOK;
+    }).sort(_ordCompIVA);
+    if(lista.length===0){setImpDialog({title:'Sin registros',text:`No hay retenciones IVA para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`,type:'alert'});return;}
+    const rifAgente=_soloRif(settings?.empresaRif||'J-41230937-4');
+    const periodoAAAAMM=txtMes.replace('-','');
+    const N2=n=>(parseFloat(n)||0).toFixed(2);
+    const PCT_IVA=16;
+    const lineas=lista.map(r=>{
+      const montoRet=pNum(r.montoBs||0);
+      const pctRetUsado=(pNum(r.pctRetencion||75)/100)||0.75;
+      const baseIVA=pNum(r.baseIVABs||0); // monto de IVA de la factura (no la base)
+      const base16=pNum(r.base16Bs||0)
+        ||(baseIVA?parseFloat((baseIVA/(PCT_IVA/100)).toFixed(2)):0)
+        ||(montoRet?parseFloat((montoRet/(pctRetUsado*(PCT_IVA/100))).toFixed(2)):0);
+      const exento=pNum(r.exentoBs||0);
+      const total=pNum(r.totalFacturaBs||0)||parseFloat((base16*(1+PCT_IVA/100)+exento).toFixed(2));
+      return[
+        rifAgente,
+        periodoAAAAMM,
+        r.fecha||'',
+        'C',
+        '01',
+        _soloRif(r.rifProveedor),
+        (r.nroFactura||'').toString().trim(),
+        (r.nroControl||'').toString().trim(),
+        N2(total),
+        N2(base16),
+        N2(montoRet),
+        '0',
+        (r.nroComprobante||'').toString().trim(),
+        N2(exento),
+        N2(PCT_IVA),
+        '0'
+      ].join('\t');
+    });
+    const contenido=lineas.join('\r\n')+'\r\n';
+    const blob=new Blob([contenido],{type:'text/plain;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`Retenciones_IVA_${periodoAAAAMM}_${txtQuincena==='2'?'2daQ':'1raQ'}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowTxtModal(false);
+    setImpDialog({title:'✅ TXT Generado',text:`${lista.length} comprobante(s) exportado(s) para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`,type:'alert'});
+  };
+
+  // ── Toolbar de filtros + export, reutilizable para IVA e ISLR ──
+  const renderRetToolbar=(tipoR)=>(
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-3 mb-4">
+      <div className="flex flex-wrap items-center gap-2 mb-2.5">
+        <div className="relative flex-1 min-w-[160px]">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+          <input value={retFiltros.proveedor} onChange={e=>{setRetFiltros(f=>({...f,proveedor:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} placeholder="Proveedor o RIF" className="w-full border border-slate-200 rounded-lg pl-7 pr-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
+        </div>
+        <input value={retFiltros.factura} onChange={e=>{setRetFiltros(f=>({...f,factura:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} placeholder="N° Factura" className="w-28 border border-slate-200 rounded-lg px-2.5 py-2 text-[10px] outline-none focus:border-orange-500"/>
+        <input value={retFiltros.comprobante} onChange={e=>{setRetFiltros(f=>({...f,comprobante:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} placeholder="N° Comprobante" className="w-32 border border-slate-200 rounded-lg px-2.5 py-2 text-[10px] outline-none focus:border-orange-500"/>
+        {tipoR==='ISLR'&&<input value={retFiltros.concepto} onChange={e=>{setRetFiltros(f=>({...f,concepto:e.target.value}));setRetPageISLR(1);}} placeholder="Concepto SENIAT" className="w-40 border border-slate-200 rounded-lg px-2.5 py-2 text-[10px] outline-none focus:border-orange-500"/>}
+        <div className="flex items-center gap-1">
+          <span className="text-[8px] text-slate-400 font-black uppercase">Desde</span>
+          <input type="date" value={retFiltros.desde} onChange={e=>{setRetFiltros(f=>({...f,desde:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[8px] text-slate-400 font-black uppercase">Hasta</span>
+          <input type="date" value={retFiltros.hasta} onChange={e=>{setRetFiltros(f=>({...f,hasta:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
+        </div>
+        {hayFiltrosRetActivos&&<button onClick={limpiarFiltrosRet} className="flex items-center gap-1 px-2.5 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-500"><X size={11}/>Limpiar</button>}
+      </div>
+      <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-slate-100">
+        <span className="text-[9px] text-slate-400 font-black uppercase">
+          {(tipoR==='IVA'?retFiltIVA:retFiltISLR).length} comprobantes · USD {fmtN((tipoR==='IVA'?retFiltIVA:retFiltISLR).reduce((s,r)=>s+pNum(r.monto),0))}
+        </span>
+        <div className="flex gap-2">
+          {tipoR==='IVA'&&<button onClick={()=>{setTxtMes(getTodayDate().substring(0,7));setShowTxtModal(true);}} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-indigo-700 transition-all shadow-sm"><FileSpreadsheet size={11}/>TXT</button>}
+          <button onClick={()=>exportarRetPDF(tipoR)} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all shadow-sm"><FileText size={11}/>PDF</button>
+          <button onClick={()=>exportarRetExcel(tipoR)} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all shadow-sm"><Download size={11}/>Excel</button>
+        </div>
+      </div>
+    </div>
+  );
+  // ── Paginación reutilizable ──
+  const renderRetPaginacion=(page,setPage,totalPag,totalRegistros)=>totalRegistros===0?null:(
+    <div className="flex items-center justify-between px-4 py-2.5 bg-white border-t border-slate-100 rounded-b-xl">
+      <span className="text-[9px] text-slate-400 font-bold">Página {page} de {totalPag} · {totalRegistros} registro{totalRegistros===1?'':'s'}</span>
+      <div className="flex items-center gap-1">
+        <button disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))} className="p-1.5 rounded-lg bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-200"><ChevronLeft size={14}/></button>
+        {Array.from({length:totalPag},(_,i)=>i+1).filter(n=>n===1||n===totalPag||Math.abs(n-page)<=2).map((n,idx,arr)=>(
+          <React.Fragment key={n}>
+            {idx>0&&arr[idx-1]!==n-1&&<span className="text-slate-300 px-0.5 text-[10px]">···</span>}
+            <button onClick={()=>setPage(n)} className={`min-w-[26px] h-7 px-1.5 rounded-lg text-[10px] font-black transition-all ${n===page?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{n}</button>
+          </React.Fragment>
+        ))}
+        <button disabled={page>=totalPag} onClick={()=>setPage(p=>Math.min(totalPag,p+1))} className="p-1.5 rounded-lg bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-200"><ChevronRight size={14}/></button>
+      </div>
+    </div>
+  );
+
 
   return(
     <div className="flex flex-col h-screen overflow-hidden">
@@ -546,12 +775,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
         {/* RETENCIONES IVA */}
         {sec==='ret_iva'&&(
           <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-1 relative">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o factura..." className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:border-orange-500"/>
-              </div>
-            </div>
+            {renderRetToolbar('IVA')}
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               <table className="w-full text-xs">
                 <thead><tr style={{background:'#0f172a'}}>
@@ -567,8 +791,8 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                   <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
                 </tr></thead>
                 <tbody>
-                  {retFiltIVA.length===0?<tr><td colSpan={10} className="py-10 text-center text-slate-400 text-xs">Sin retenciones IVA registradas</td></tr>:
-                  retFiltIVA.map((r,i)=>(
+                  {retIVAPag.length===0?<tr><td colSpan={10} className="py-10 text-center text-slate-400 text-xs">{retFiltIVA.length===0&&!hayFiltrosRetActivos?'Sin retenciones IVA registradas':'Sin resultados para los filtros aplicados'}</td></tr>:
+                  retIVAPag.map((r,i)=>(
                     <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
                       <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
                       <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
@@ -597,7 +821,14 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                     </tr>
                   ))}
                 </tbody>
+                {retFiltIVA.length>0&&<tfoot><tr style={{background:'#1e293b'}}>
+                  <td colSpan={6} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({retFiltIVA.length})</td>
+                  <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(retFiltIVA.reduce((s,r)=>s+pNum(r.monto),0))}</td>
+                  <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(retFiltIVA.reduce((s,r)=>s+pNum(r.montoBs),0))}</td>
+                  <td colSpan={2}></td>
+                </tr></tfoot>}
               </table>
+              {renderRetPaginacion(pageIVA,setRetPageIVA,totalPagIVA,retFiltIVA.length)}
             </div>
           </div>
         )}
@@ -605,12 +836,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
         {/* RETENCIONES ISLR */}
         {sec==='ret_islr'&&(
           <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-1 relative">
-                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar proveedor o factura..." className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs outline-none focus:border-orange-500"/>
-              </div>
-            </div>
+            {renderRetToolbar('ISLR')}
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               <table className="w-full text-xs">
                 <thead><tr style={{background:'#0f172a'}}>
@@ -625,8 +851,8 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                   <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
                 </tr></thead>
                 <tbody>
-                  {retFiltISLR.length===0?<tr><td colSpan={9} className="py-10 text-center text-slate-400 text-xs">Sin retenciones ISLR registradas</td></tr>:
-                  retFiltISLR.map((r,i)=>(
+                  {retISLRPag.length===0?<tr><td colSpan={9} className="py-10 text-center text-slate-400 text-xs">{retFiltISLR.length===0&&!hayFiltrosRetActivos?'Sin retenciones ISLR registradas':'Sin resultados para los filtros aplicados'}</td></tr>:
+                  retISLRPag.map((r,i)=>(
                     <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
                       <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
                       <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
@@ -654,7 +880,14 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
                     </tr>
                   ))}
                 </tbody>
+                {retFiltISLR.length>0&&<tfoot><tr style={{background:'#1e293b'}}>
+                  <td colSpan={5} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({retFiltISLR.length})</td>
+                  <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(retFiltISLR.reduce((s,r)=>s+pNum(r.monto),0))}</td>
+                  <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(retFiltISLR.reduce((s,r)=>s+pNum(r.montoBs),0))}</td>
+                  <td colSpan={2}></td>
+                </tr></tfoot>}
               </table>
+              {renderRetPaginacion(pageISLR,setRetPageISLR,totalPagISLR,retFiltISLR.length)}
             </div>
           </div>
         )}
@@ -780,6 +1013,38 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
       </div>
 
       {/* ── Modal Editar Retención ─────────────────────────────────── */}
+      {showTxtModal&&(
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:'3px solid #f97316'}}>
+              <div>
+                <h3 className="font-black text-white text-sm uppercase tracking-wide">Generar TXT SENIAT</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">Retenciones IVA · portal SENIAT</p>
+              </div>
+              <button onClick={()=>setShowTxtModal(false)} className="text-slate-400 hover:text-white"><X size={16}/></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes / Año</label>
+                <input type="month" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500" value={txtMes} onChange={e=>setTxtMes(e.target.value)}/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500" value={txtQuincena} onChange={e=>setTxtQuincena(e.target.value)}>
+                  <option value="1">I Quincena (1-15)</option>
+                  <option value="2">II Quincena (16-fin)</option>
+                </select>
+              </div>
+              <p className="text-[10px] text-slate-400">Se incluyen las retenciones IVA cuyo período coincida con el mes y quincena seleccionados.</p>
+            </div>
+            <div className="px-5 pb-5 flex justify-end gap-3">
+              <button onClick={()=>setShowTxtModal(false)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+              <button onClick={generarTxtRetIVA} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase hover:bg-indigo-700 flex items-center gap-2"><FileSpreadsheet size={13}/> Generar TXT</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editRet&&(
         <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
@@ -6411,14 +6676,16 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     if(filtProv && !(f.proveedor||'').toLowerCase().includes(filtProv.toLowerCase())) return false;
     return true;
   }).sort((a,b)=>{
-    const fc=(a.fecha||'').localeCompare(b.fecha||'');
-    if(fc!==0) return fc;
-    // Desempate: orden numérico de menor a mayor por N° de Comprobante de la retención IVA asociada
+    // N° de Comprobante de la retención IVA asociada manda primero (orden real de emisión);
+    // si alguna de las dos no tiene retención asociada, se cae a Fecha.
     const ra=(retIVACompra||[]).find(r=>r.facturaId===a.id);
     const rb=(retIVACompra||[]).find(r=>r.facturaId===b.id);
-    const na=parseInt(String(ra?.nroComprobante||'0').replace(/\D/g,''))||0;
-    const nb=parseInt(String(rb?.nroComprobante||'0').replace(/\D/g,''))||0;
-    return na-nb;
+    const pa=(ra?.nroComprobante||'').toString().trim();
+    const pb=(rb?.nroComprobante||'').toString().trim();
+    const na=pa?(parseInt(pa.replace(/\D/g,''))||0):null;
+    const nb=pb?(parseInt(pb.replace(/\D/g,''))||0):null;
+    if(na!==null&&nb!==null&&na!==nb) return na-nb;
+    return (a.fecha||'').localeCompare(b.fecha||'');
   });
 
   // Construir filas del libro
