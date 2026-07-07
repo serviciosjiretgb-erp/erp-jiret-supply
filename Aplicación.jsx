@@ -580,6 +580,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
   // ── TXT Retenciones IVA para el portal SENIAT (16 campos, tabulado) ──
   // Agrupa por mes+quincena igual que el modal de Editar Retención (fecha→mes, periodo→I/II).
   const _soloRif=s=>(s||'').toString().replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+  const _soloControl=s=>(s||'').toString().replace(/[^A-Za-z0-9]/g,'');
   const generarTxtRetIVA=()=>{
     if(!txtMes){setImpDialog({title:'Falta el mes',text:'Selecciona el mes a declarar.',type:'alert'});return;}
     const q=parseInt(txtQuincena,10);
@@ -650,7 +651,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
       return `\t<DetalleRetencion>\r\n`+
         `\t\t<RifRetenido>${_soloRif(r.rifProveedor)}</RifRetenido>\r\n`+
         `\t\t<NumeroFactura>${_escXml(r.nroFactura)}</NumeroFactura>\r\n`+
-        `\t\t<NumeroControl>${_escXml(r.nroControl)}</NumeroControl>\r\n`+
+        `\t\t<NumeroControl>${_soloControl(r.nroControl)}</NumeroControl>\r\n`+
         `\t\t<FechaOperacion>${fOp(r.fecha)}</FechaOperacion>\r\n`+
         `\t\t<CodigoConcepto>${_escXml(r.codConcepto)}</CodigoConcepto>\r\n`+
         `\t\t<MontoOperacion>${N2(base)}</MontoOperacion>\r\n`+
