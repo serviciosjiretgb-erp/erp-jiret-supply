@@ -23903,7 +23903,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const t=parseNum(n.tasaFactura||0)||tasaBCV;
               if(!t||t<2) return s;
               const baseBs=parseNum(n.monto||0);
-              return s+((n.tieneIva===false?baseBs:baseBs*1.16)/t);
+              return s+((((n.naturaleza||'FISCAL')==='FISCAL')?baseBs*1.16:baseBs)/t);
             },0);
             _ncCache.set(cacheKey,result); return result;
           };
@@ -23997,7 +23997,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
             // ND directa: descontar lo ya cobrado (cobros registrados contra ND-<id>)
-            const cobradoND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0):0;
+            const cobradoND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`&&(!fechaRef||(c.fecha||'')<=fechaRef)).reduce((s,c)=>s+parseNum(c.monto||0),0):0;
             const saldoUSD=Math.max(0,montoUSD-cobradoND);
             const signedUSD=n.tipo==='NC'?-montoUSD:saldoUSD;
             if(n.tipo==='ND'&&saldoUSD<=0.005) continue; // ND ya cobrada por completo: no suma a la cartera
@@ -24181,7 +24181,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const notaAjustes=[
                   manualRetsCl2.length>0?'Ret. manual -$'+formatNum(manualRetUSDclPDF):'',
                   manualNCCl2.length>0?'NC/ND directa '+(manualNCSignedUSDPDF<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDPDF)):'',
-                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF):'',
+                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF)+' ('+(anticiposCl2.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
                 ].filter(Boolean).join(' · ');
                 return `<div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
@@ -24202,7 +24202,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
                       <td colspan="3" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
-                      <td style="text-align:right;padding:5px;font-weight:bold;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
+                      <td style="text-align:right;padding:5px;font-weight:bold;font-size:13px;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
                       <td style="padding:5px 16px"></td>
                     </tr></tfoot>
                   </table>
@@ -24309,7 +24309,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const notaAjustesXls=[
                   manualRetUSDclXls>0?'Ret. manual -$'+formatNum(manualRetUSDclXls):'',
                   manualNCSignedUSDXls!==0?'NC/ND directa '+(manualNCSignedUSDXls<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDXls)):'',
-                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls):'',
+                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls)+' ('+(anticiposClXls.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
                 ].filter(Boolean).join(' · ');
                 body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="6"></td></tr>`;
               });
@@ -25276,7 +25276,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {(cl._anticipos||[]).map((a,ai)=>(
+                                        {(cl._anticipos||[]).map((a,ai)=>{
+                                          const saveConceptoAnt=async(txt)=>{
+                                            if(txt===(a.concepto||'')) return;
+                                            try{await updateDoc(getDocRef('cobros_cxc',a.id),{concepto:txt,timestamp:Date.now()});}
+                                            catch(e){console.warn('concepto anticipo save',e);}
+                                          };
+                                          return (
                                           <tr key={`ant-${ai}`} style={{background:'#f0fdfa'}} className="border-b border-teal-100">
                                             <td className="py-1.5 px-2 font-black text-teal-700">💰 ANTICIPO</td>
                                             <td className="py-1.5 px-2 text-center">{a.fecha}</td>
@@ -25289,9 +25295,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             <td className="py-1.5 px-2 text-right text-gray-400">—</td>
                                             <td className="py-1.5 px-2 text-right font-mono font-black text-teal-700">-${formatNum(a._saldoAnt)}</td>
                                             <td className="py-1.5 px-2 text-center text-gray-400">—</td>
-                                            <td className="py-1.5 px-2 text-teal-600 font-bold">Saldo a favor del cliente</td>
+                                            <td className="py-1 px-2" style={{minWidth:'120px'}}>
+                                              <input
+                                                type="text"
+                                                defaultValue={a.concepto||'Saldo a favor del cliente'}
+                                                onBlur={e=>saveConceptoAnt(e.target.value.trim())}
+                                                onKeyDown={e=>{if(e.key==='Enter'){e.target.blur();}}}
+                                                placeholder="Observación del anticipo..."
+                                                className="w-full text-[9px] border border-teal-200 rounded-lg px-2 py-1 outline-none focus:border-teal-400 bg-white text-teal-700 font-bold"
+                                              />
+                                            </td>
                                           </tr>
-                                        ))}
+                                          );
+                                        })}
                                         {cl.nes.map((ne,i)=>{
                                           const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                                           const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const retDetalle=getRetsDetalleNE(ne);const tasa=getTasa(ne);
@@ -25369,7 +25385,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                               {ncsNE.map(nc=>{
                                                 const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
                                                 const baseBs=parseNum(nc.monto||0);
-                                                const totalBs=nc.tieneIva===false?baseBs:baseBs*1.16;
+                                                const totalBs=((nc.naturaleza||'FISCAL')==='FISCAL')?baseBs*1.16:baseBs;
                                                 const ncUSD=tNC>1?totalBs/tNC:parseNum(nc.montoUSD||0);
                                                 return(
                                                 <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
