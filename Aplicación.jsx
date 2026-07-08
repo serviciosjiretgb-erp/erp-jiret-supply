@@ -24173,6 +24173,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="color:#4338ca">${docFiscalPDF}</td>
                     <td style="text-align:right">$${formatNum(totalUSD)}</td>
                     <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
+                    <td style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</td>
                   </tr>`;
                 }).join('');
                 clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF;
@@ -24194,21 +24195,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <th style="text-align:left;padding:5px;font-weight:bold">Fecha</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Factura</th>
                       <th style="text-align:right;padding:5px;font-weight:bold">Total USD</th>
-                      <th style="text-align:right;padding:5px 16px;font-weight:bold">Saldo USD</th>
+                      <th style="text-align:right;padding:5px;font-weight:bold">Saldo USD</th>
+                      <th style="text-align:left;padding:5px 16px;font-weight:bold">Observación</th>
                     </tr></thead>
                     <tbody>${neRows}</tbody>
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
                       <td colspan="3" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
-                      <td style="text-align:right;padding:5px 16px;font-weight:bold;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
+                      <td style="text-align:right;padding:5px;font-weight:bold;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
+                      <td style="padding:5px 16px"></td>
                     </tr></tfoot>
                   </table>
                 </div>`;
               }).join('');
-              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto;border-radius:6px;margin-top:4px">
+              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto auto;border-radius:6px;margin-top:4px">
                 <span>TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</span>
                 <span style="text-align:right;padding-right:16px">$${formatNum(gTotTotalUSD)}</span>
                 <span style="text-align:right">$${formatNum(gTotUSD)}</span>
+                <span></span>
               </div>`;
             }
             const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
@@ -24283,8 +24287,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let body='';
               let gTotUSD=0,gTotTotalUSD=0;
               clientesList.forEach(cl=>{
-                body+=`<tr class="hdr"><td colspan="5" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
-                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td></tr>`;
+                body+=`<tr class="hdr"><td colspan="6" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td><td class="left" style="color:#92400e">Observación</td></tr>`;
                 let clTotUSD=0,clSaldo=0;
                 cl.nes.forEach((ne,i)=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
@@ -24292,7 +24296,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   clTotUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
                   const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
-                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td></tr>`;
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                 });
                 const manualRetsClXls=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclXls=manualRetsClXls.reduce((s,r)=>s+r._montoUSD,0);
@@ -24307,9 +24311,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   manualNCSignedUSDXls!==0?'NC/ND directa '+(manualNCSignedUSDXls<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDXls)):'',
                   anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls):'',
                 ].filter(Boolean).join(' · ');
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td></tr><tr><td colspan="5"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="6"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="3">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="3">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
