@@ -9695,7 +9695,8 @@ function App() {
   const [osaItemList, setOsaItemList] = useState([]);
   const [osaItemForm, setOsaItemForm] = useState({ itemId:'', qty:'', lote:'' });
   const [osaSearch, setOsaSearch] = useState('');
-  const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN ZI', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'' });
+  const [osaClienteSearch, setOsaClienteSearch] = useState('');
+  const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN ZI', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'', clienteNombre:'', clienteRif:'', clienteDireccion:'' });
   const [osaCounter, setOsaCounter] = useState(null); // sequential OSA number from Firebase
   // Fix 3: Partial delivery new product name
   const [partialNewName, setPartialNewName] = useState('');
@@ -14520,6 +14521,9 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 <div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#ea580c">${nroOSA}</div><div style="font-size:9px;margin-top:4px">Emisión: ${header.fecha}</div></div></div>
 <div class="title">ORDEN DE SALIDA DE ALMACÉN</div>
 <div class="grid">
+<div class="cell"><b>Cliente</b>${header.clienteNombre||'—'}</div>
+<div class="cell"><b>RIF Cliente</b>${header.clienteRif||'—'}</div>
+<div class="cell" style="grid-column:span 2"><b>Dirección Cliente</b>${header.clienteDireccion||'—'}</div>
 <div class="cell"><b>Almacén Origen</b>${header.almacenOrigen}</div>
 <div class="cell"><b>Fecha de Emisión</b>${header.fecha}</div>
 <div class="cell"><b>Destino / Uso</b>${header.destino}</div>
@@ -14568,7 +14572,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 });
                 setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada en historial. Para crear una nueva OSA usa el botón "Limpiar".`, type:'alert'});
               }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir & Confirmar OSA</button>
-              {osaItemList.length > 0 && <button onClick={()=>setDialog({title:'Limpiar OSA',text:'¿Vaciar la lista de artículos para comenzar una nueva OSA?',type:'confirm',onConfirm:()=>{setOsaItemList([]);setOsaHdr(h=>({...h,docRef:'',destino:'',fecha:getTodayDate()}));}})} className="bg-red-100 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-200 flex items-center gap-1"><X size={13}/> Limpiar</button>}
+              {osaItemList.length > 0 && <button onClick={()=>setDialog({title:'Limpiar OSA',text:'¿Vaciar la lista de artículos para comenzar una nueva OSA?',type:'confirm',onConfirm:()=>{setOsaItemList([]);setOsaHdr(h=>({...h,docRef:'',destino:'',fecha:getTodayDate(),clienteNombre:'',clienteRif:'',clienteDireccion:''}));setOsaClienteSearch('');}})} className="bg-red-100 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-200 flex items-center gap-1"><X size={13}/> Limpiar</button>}
               <button onClick={()=>requireAdminPassword(async()=>{await setDoc(getDocRef('settings','osaCounter'),{current:0},{merge:true});setOsaCounter(1);setDialog({title:'✅ Numeración Reiniciada',text:'La próxima OSA será OSA-2026-00001.',type:'alert'});},'Reiniciar numeración de OSA')} className="bg-gray-100 text-gray-600 px-3 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-200 flex items-center gap-1" title="Reiniciar numeración a 00001"><RefreshCw size={12}/> Reset #</button>
             </div>
             <div className="p-6 space-y-5">
@@ -14576,6 +14580,43 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               <div>
                 <h3 className="text-[10px] font-black text-gray-600 uppercase mb-3">Datos del Documento</h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente</label>
+                    {osaHdr.clienteRif ? (
+                      <div className="w-full bg-orange-50 border-2 border-orange-200 rounded-xl px-3 py-2 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-black text-orange-900 text-xs truncate">{osaHdr.clienteNombre}</p>
+                          <p className="text-[9px] text-orange-500 font-bold">RIF: {osaHdr.clienteRif}</p>
+                          <p className="text-[9px] text-orange-500 font-bold truncate">{osaHdr.clienteDireccion||'Sin dirección registrada'}</p>
+                        </div>
+                        <button onClick={()=>{setOsaHdr(h=>({...h,clienteNombre:'',clienteRif:'',clienteDireccion:''}));setOsaClienteSearch('');}} className="text-orange-400 hover:text-orange-700 font-black text-lg leading-none flex-shrink-0">×</button>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <div className="relative">
+                          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"/>
+                          <input type="text" value={osaClienteSearch} onChange={e=>setOsaClienteSearch(e.target.value)}
+                            placeholder="🔍 Buscar cliente por nombre o RIF..." className="w-full border-2 border-gray-200 rounded-xl pl-8 pr-3 py-2.5 text-xs font-bold outline-none focus:border-orange-400"/>
+                        </div>
+                        {osaClienteSearch.trim() && (
+                          <div className="absolute z-20 mt-1 w-full bg-white border-2 border-gray-200 rounded-xl shadow-lg max-h-44 overflow-y-auto">
+                            {(clients||[]).filter(c=>{const q=osaClienteSearch.toLowerCase();return (c.razonSocial||'').toLowerCase().includes(q)||(c.rif||'').toLowerCase().includes(q);}).slice(0,15).map(c=>(
+                              <button key={c.rif||c.razonSocial} onClick={()=>{setOsaHdr(h=>({...h,clienteNombre:c.razonSocial||c.rif,clienteRif:c.rif||'',clienteDireccion:c.direccion||''}));setOsaClienteSearch('');}}
+                                className="w-full text-left px-3 py-2 hover:bg-orange-50 border-b border-gray-50">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-xs font-bold text-gray-800 truncate">{c.razonSocial}</span>
+                                  <span className="text-[10px] text-orange-500 font-bold ml-2 flex-shrink-0">{c.rif}</span>
+                                </div>
+                                {c.direccion && <div className="text-[9px] text-gray-400 truncate">{c.direccion}</div>}
+                              </button>
+                            ))}
+                            {(clients||[]).filter(c=>{const q=osaClienteSearch.toLowerCase();return (c.razonSocial||'').toLowerCase().includes(q)||(c.rif||'').toLowerCase().includes(q);}).length===0&&
+                              <div className="px-3 py-2.5 text-[10px] text-gray-400">Sin resultados</div>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Almacén Origen</label>
                     <select value={osaHdr.almacenOrigen} onChange={e=>setOsaHdr(h=>({...h,almacenOrigen:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400 bg-white">
                       {depositos.map(d=><option key={d} value={d}>{d}</option>)}
@@ -23903,7 +23944,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const t=parseNum(n.tasaFactura||0)||tasaBCV;
               if(!t||t<2) return s;
               const baseBs=parseNum(n.monto||0);
-              return s+((((n.naturaleza||'FISCAL')==='FISCAL')?baseBs*1.16:baseBs)/t);
+              return s+((n.tieneIva===false?baseBs:baseBs*1.16)/t);
             },0);
             _ncCache.set(cacheKey,result); return result;
           };
@@ -23997,7 +24038,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
             // ND directa: descontar lo ya cobrado (cobros registrados contra ND-<id>)
-            const cobradoND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`&&(!fechaRef||(c.fecha||'')<=fechaRef)).reduce((s,c)=>s+parseNum(c.monto||0),0):0;
+            const cobradoND=n.tipo==='ND'?(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0):0;
             const saldoUSD=Math.max(0,montoUSD-cobradoND);
             const signedUSD=n.tipo==='NC'?-montoUSD:saldoUSD;
             if(n.tipo==='ND'&&saldoUSD<=0.005) continue; // ND ya cobrada por completo: no suma a la cartera
@@ -24173,7 +24214,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="color:#4338ca">${docFiscalPDF}</td>
                     <td style="text-align:right">$${formatNum(totalUSD)}</td>
                     <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
-                    <td style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</td>
                   </tr>`;
                 }).join('');
                 clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF;
@@ -24181,7 +24221,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const notaAjustes=[
                   manualRetsCl2.length>0?'Ret. manual -$'+formatNum(manualRetUSDclPDF):'',
                   manualNCCl2.length>0?'NC/ND directa '+(manualNCSignedUSDPDF<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDPDF)):'',
-                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF)+' ('+(anticiposCl2.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
+                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF):'',
                 ].filter(Boolean).join(' · ');
                 return `<div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
@@ -24195,24 +24235,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <th style="text-align:left;padding:5px;font-weight:bold">Fecha</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Factura</th>
                       <th style="text-align:right;padding:5px;font-weight:bold">Total USD</th>
-                      <th style="text-align:right;padding:5px;font-weight:bold">Saldo USD</th>
-                      <th style="text-align:left;padding:5px 16px;font-weight:bold">Observación</th>
+                      <th style="text-align:right;padding:5px 16px;font-weight:bold">Saldo USD</th>
                     </tr></thead>
                     <tbody>${neRows}</tbody>
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
                       <td colspan="3" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
-                      <td style="text-align:right;padding:5px;font-weight:bold;font-size:13px;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
-                      <td style="padding:5px 16px"></td>
+                      <td style="text-align:right;padding:5px 16px;font-weight:bold;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
                     </tr></tfoot>
                   </table>
                 </div>`;
               }).join('');
-              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto auto;border-radius:6px;margin-top:4px">
+              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto;border-radius:6px;margin-top:4px">
                 <span>TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</span>
                 <span style="text-align:right;padding-right:16px">$${formatNum(gTotTotalUSD)}</span>
                 <span style="text-align:right">$${formatNum(gTotUSD)}</span>
-                <span></span>
               </div>`;
             }
             const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
@@ -24287,8 +24324,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let body='';
               let gTotUSD=0,gTotTotalUSD=0;
               clientesList.forEach(cl=>{
-                body+=`<tr class="hdr"><td colspan="6" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
-                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td><td class="left" style="color:#92400e">Observación</td></tr>`;
+                body+=`<tr class="hdr"><td colspan="5" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td></tr>`;
                 let clTotUSD=0,clSaldo=0;
                 cl.nes.forEach((ne,i)=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
@@ -24296,7 +24333,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   clTotUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
                   const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
-                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td></tr>`;
                 });
                 const manualRetsClXls=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclXls=manualRetsClXls.reduce((s,r)=>s+r._montoUSD,0);
@@ -24309,11 +24346,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const notaAjustesXls=[
                   manualRetUSDclXls>0?'Ret. manual -$'+formatNum(manualRetUSDclXls):'',
                   manualNCSignedUSDXls!==0?'NC/ND directa '+(manualNCSignedUSDXls<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDXls)):'',
-                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls)+' ('+(anticiposClXls.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
+                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls):'',
                 ].filter(Boolean).join(' · ');
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="6"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td></tr><tr><td colspan="5"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="3">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td><td></td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="3">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
@@ -25276,13 +25313,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {(cl._anticipos||[]).map((a,ai)=>{
-                                          const saveConceptoAnt=async(txt)=>{
-                                            if(txt===(a.concepto||'')) return;
-                                            try{await updateDoc(getDocRef('cobros_cxc',a.id),{concepto:txt,timestamp:Date.now()});}
-                                            catch(e){console.warn('concepto anticipo save',e);}
-                                          };
-                                          return (
+                                        {(cl._anticipos||[]).map((a,ai)=>(
                                           <tr key={`ant-${ai}`} style={{background:'#f0fdfa'}} className="border-b border-teal-100">
                                             <td className="py-1.5 px-2 font-black text-teal-700">💰 ANTICIPO</td>
                                             <td className="py-1.5 px-2 text-center">{a.fecha}</td>
@@ -25295,19 +25326,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             <td className="py-1.5 px-2 text-right text-gray-400">—</td>
                                             <td className="py-1.5 px-2 text-right font-mono font-black text-teal-700">-${formatNum(a._saldoAnt)}</td>
                                             <td className="py-1.5 px-2 text-center text-gray-400">—</td>
-                                            <td className="py-1 px-2" style={{minWidth:'120px'}}>
-                                              <input
-                                                type="text"
-                                                defaultValue={a.concepto||'Saldo a favor del cliente'}
-                                                onBlur={e=>saveConceptoAnt(e.target.value.trim())}
-                                                onKeyDown={e=>{if(e.key==='Enter'){e.target.blur();}}}
-                                                placeholder="Observación del anticipo..."
-                                                className="w-full text-[9px] border border-teal-200 rounded-lg px-2 py-1 outline-none focus:border-teal-400 bg-white text-teal-700 font-bold"
-                                              />
-                                            </td>
+                                            <td className="py-1.5 px-2 text-teal-600 font-bold">Saldo a favor del cliente</td>
                                           </tr>
-                                          );
-                                        })}
+                                        ))}
                                         {cl.nes.map((ne,i)=>{
                                           const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                                           const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const retDetalle=getRetsDetalleNE(ne);const tasa=getTasa(ne);
@@ -25385,7 +25406,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                               {ncsNE.map(nc=>{
                                                 const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
                                                 const baseBs=parseNum(nc.monto||0);
-                                                const totalBs=((nc.naturaleza||'FISCAL')==='FISCAL')?baseBs*1.16:baseBs;
+                                                const totalBs=nc.tieneIva===false?baseBs:baseBs*1.16;
                                                 const ncUSD=tNC>1?totalBs/tNC:parseNum(nc.montoUSD||0);
                                                 return(
                                                 <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
