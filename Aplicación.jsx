@@ -24040,7 +24040,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Inyectar/ajustar clientes con ANTICIPOS disponibles (crédito a favor, resta del saldo)
           const _anticiposPorCliente=new Map();
           for(const a of (cobrosCxc||[]).filter(c=>c.esAnticipo)){
-            const saldoAnt=parseNum(a.monto||0)-parseNum(a.montoAplicado||0);
+            if(fechaRef&&(a.fecha||'')>fechaRef) continue;
+            const aplicadoHasta=(cobrosCxc||[]).filter(c=>!c.esAnticipo&&(c.cuentaBancariaId||'')===`ANTICIPO::${a.id}`&&(!fechaRef||(c.fecha||'')<=fechaRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            const saldoAnt=parseNum(a.monto||0)-aplicadoHasta;
             if(saldoAnt<=0.01) continue;
             const rif=(a.clientRif||a.clientName||'').trim();
             if(!rif) continue;
@@ -24148,100 +24150,65 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <tbody>${rows}</tbody>
                 <tfoot><tr><td colspan="2">TOTALES</td><td>$${formatNum(corriente)}</td><td>$${formatNum(v1_30)}</td><td>$${formatNum(v31_60)}</td><td>$${formatNum(vMas60)}</td><td>$${formatNum(totalCartera)}</td><td>${formatNum(totalCartera*tasaBCV)}</td></tr></tfoot></table>`;
             } else {
-              // Detallado por cliente
-              let gTotUSD=0,gTotTotal=0,gTotCob=0,gTotNC=0,gTotRet=0,gTotRetIva=0,gTotRetOtras=0,gTotNCDirecta=0,gTotAnticipos=0;
+              // Detallado por cliente — 1 fila por NE abierta, sin sub-filas (pagos/retenciones/NC ya están netos en el saldo)
+              let gTotUSD=0,gTotTotalUSD=0;
               body=clientesList.map(cl=>{
-                const d=getAgingDays(cl.nes[0]||{},fechaRef);
                 const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
-                const cols9='grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr';
-                let clTotal=0;
-                const neRows=cl.nes.map(ne=>{
-                  const saldo=getSaldoNEAtFecha(ne,fechaRef);
-                  const cobradoNE=getCobradoNEAtFecha(ne,fechaRef);
-                  const ncNE=getNCNEAtFecha(ne,fechaRef);
-                  const retNE=getRetNE(ne);
-                  const retDetallePDF=getRetsDetalleNE(ne);
-                  const tasa=getTasa(ne);
-                  const totalUSD=parseNum(ne.total||ne.totalUSD||0);
-                  const d2=getAgingDays(ne,fechaRef);
-                  const bc2=d2<=0?'#16a34a':d2<=30?'#b45309':d2<=60?'#c2410c':'#dc2626';
-                  clTotal+=saldo; gTotUSD+=saldo; gTotTotal+=totalUSD; gTotCob+=cobradoNE; gTotNC+=ncNE; gTotRet+=retNE; gTotRetIva+=retDetallePDF.ivaUSD; gTotRetOtras+=retDetallePDF.otrasUSD;
-                  // Cobros parciales
-                  const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                  const ncsNE=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return(ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
-                  const retsNE=[...retDetallePDF.iva,...retDetallePDF.otras];
-                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
-                  const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
-                  const diasCredPDF=parseNum(ne.diasCredito||0);
-                  const retCompPDF=retsNE.map(r=>r.nroRetencion||r.nroComprobante||'').filter(Boolean).join(' · ');
-                  // Sub-filas: factura fiscal, NCs, retenciones, cobros
-                  const detalles=[
-                    ...(invVincPDF?[`<div style="display:grid;${cols9};background:#eef2ff;border-left:3px solid #6366f1;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#4338ca;font-weight:bold;font-size:9px">↳ Fac. ${invVincPDF.nroFiscal||invVincPDF.documento||'—'}${invVincPDF.nroControl?' · Ctrl.'+invVincPDF.nroControl:''}</span><span style="font-size:9px;color:#6366f1">${invVincPDF.fecha||'—'}</span><span style="font-size:8px;color:#4338ca;grid-column:span 9">${parseNum(invVincPDF.baseImponible||invVincPDF.montoBase||0)>0?'Base Bs.'+formatNum(parseNum(invVincPDF.baseImponible||invVincPDF.montoBase||0))+' · ':''}${parseNum(invVincPDF.montoIVA||invVincPDF.iva||0)>0?'IVA Bs.'+formatNum(parseNum(invVincPDF.montoIVA||invVincPDF.iva||0))+' · ':''}${parseNum(invVincPDF.tasa||0)>0?'Tasa: '+formatNum(parseNum(invVincPDF.tasa))+' Bs/$':''}</span></div>`]:[]),
-                    ...ncsNE.map(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);return`<div style="display:grid;${cols9};background:#faf5ff;border-left:3px solid #9333ea;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#7c3aed;font-weight:bold;font-size:9px">↳ ${nc.tipo||'NC'} · ${nc.nroDocumento||'—'}</span><span style="font-size:9px;color:#7c3aed">${nc.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 7">${nc.descripcion||'—'}${b>0?' · Bs.'+formatNum(b)+' / Tasa '+formatNum(t):''}</span><span style="text-align:right;color:#7c3aed;font-weight:bold">-$${formatNum(u)}</span><span></span></div>`;}),
-                    ...retsNE.map(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const isX=!!r.tipoExtra;const lbl=isX?(r.tipoLabel||r.tipo||'Otra Ret.'):'Ret. IVA';const bg=isX?'#E1F5EE':'#fffbeb';const bd=isX?'#0d9488':'#d97706';const tc=isX?'#085041':'#92400e';const tc2=isX?'#0f766e':'#b45309';const valTxt=r._sinTasa?'⚠ Sin tasa':'$'+formatNum(r._montoUSD);return`<div style="display:grid;${cols9};background:${bg};border-left:3px solid ${bd};padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:${tc};font-weight:bold;font-size:9px">↳ ${lbl}</span><span style="font-size:9px;color:${tc2}">${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:8px;color:${tc2};grid-column:span 6">Comp. ${r.nroRetencion||r.nroComprobante||'—'}${r.porcentaje||r.pct?' · '+(r.porcentaje||r.pct)+'%':''} · Fac. ${r._invNroFiscal||'—'}</span><span></span><span style="text-align:right;color:${r._sinTasa?'#dc2626':tc2};font-weight:bold">${valTxt}</span><span></span></div>`;}),
-                    ...cobrosNE.map(cb=>`<div style="display:grid;${cols9};background:#f0fdf4;border-left:3px solid #16a34a;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#15803d;font-weight:bold;font-size:9px">↳ Pago · ${cb.fecha}</span><span style="font-size:9px;color:#64748b">${cb.referencia||'—'}</span><span style="font-size:9px;color:#15803d;grid-column:span 4">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}</span><span style="text-align:right;color:#16a34a;font-weight:bold">$${formatNum(parseNum(cb.monto))}</span><span style="font-size:8px;color:#64748b">${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</span><span></span><span></span></div>`),
-                  ].join('');
-                  return `<div class="ne-row" style="${cols9}">
-                    <span style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</span>
-                    <span style="font-size:9px;color:#64748b">${ne.fecha||'—'}</span>
-                    <span style="font-size:9px;color:#64748b">${getVence(ne)}</span>
-                    <span style="text-align:center;color:#7c3aed">${diasCredPDF>0?diasCredPDF+'d':'—'}</span>
-                    <span style="text-align:center;color:#4338ca;font-size:8px">${docFiscalPDF}</span>
-                    <span style="text-align:right">$${formatNum(totalUSD)}</span>
-                    <span style="text-align:right;color:#16a34a">$${formatNum(cobradoNE)}</span>
-                    <span style="text-align:right;color:#3b82f6">${ncNE>0?'-$'+formatNum(ncNE):'—'}</span>
-                    <span style="text-align:right;color:#b45309">${retNE>0?'$'+formatNum(retNE)+(retCompPDF?' ('+retCompPDF+')':''):'—'}</span>
-                    <span style="text-align:right;font-weight:bold;color:${bc2};border-right:1px solid #e2e8f0;padding-right:8px">$${formatNum(saldo)}</span>
-                    <span style="font-size:8px;color:#64748b;font-style:italic;padding-left:8px">${ne.observacionCxC||''}</span>
-                  </div>${detalles}`;
-                }).join('');
+                const anticiposCl2=(_anticiposPorCliente.get(cl.clientRif)||[]);
+                const anticiposUSDclPDF=anticiposCl2.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
                 const manualRetsCl2=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclPDF=manualRetsCl2.reduce((s,r)=>s+r._montoUSD,0);
                 const manualNCCl2=(_manualNCPorCliente.get(cl.clientRif)||[]);
                 const manualNCSignedUSDPDF=manualNCCl2.reduce((s,n)=>s+n._signedUSD,0);
-                clTotal-=manualRetUSDclPDF; clTotal+=manualNCSignedUSDPDF; gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotRetOtras+=manualRetUSDclPDF; gTotNCDirecta+=manualNCSignedUSDPDF;
-                const anticiposCl2=(_anticiposPorCliente.get(cl.clientRif)||[]);
-                const anticiposUSDclPDF=anticiposCl2.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
-                clTotal-=anticiposUSDclPDF; gTotUSD-=anticiposUSDclPDF; gTotAnticipos+=anticiposUSDclPDF;
-                const manualRowsPDF=manualRetsCl2.map(r=>`<div style="display:grid;${cols9};background:#f0fdfa;border-left:3px solid #0d9488;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#0f766e;font-weight:bold;font-size:9px">↳ Ret. Manual · ${r.nroRetencion||'—'}</span><span style="font-size:9px;color:#0d9488">${r.fechaComprobante||r.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">Factura N° ${r._manualNroFiscal||'—'} · no registrada en el sistema</span><span></span><span style="text-align:right;color:#dc2626;font-weight:bold">${r._sinTasa?'⚠ Sin tasa':'-$'+formatNum(r._montoUSD)}</span></div>`).join('');
-                const manualNCRowsPDF=manualNCCl2.map(n=>`<div style="display:grid;${cols9};background:#faf5ff;border-left:3px solid #9333ea;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#7c3aed;font-weight:bold;font-size:9px">↳ ${n.tipo||'NC'} · ${n.nroDocumento||'—'} · sin NE</span><span style="font-size:9px;color:#7c3aed">${n.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">${n.descripcion||'Cliente directo'}</span><span></span><span style="text-align:right;color:#7c3aed;font-weight:bold">${n._sinTasa?'⚠ Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD))}</span></div>`).join('');
-                const anticipoRowsPDF=anticiposCl2.map(a=>`<div style="display:grid;${cols9};background:#f0fdfa;border-left:3px solid #14b8a6;padding:4px 16px;gap:0 8px"><span style="padding-left:8px;color:#0f766e;font-weight:bold;font-size:9px">💰 ANTICIPO</span><span style="font-size:9px;color:#0f766e">${a.fecha||'—'}</span><span style="font-size:8px;color:#9ca3af;font-style:italic;grid-column:span 6">${a.concepto||'Anticipo de cliente'}${a.referencia?' · Ref. '+a.referencia:''}</span><span></span><span style="text-align:right;color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</span></div>`).join('');
-                return `<div style="margin-bottom:16px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
+                let clTotalUSD=0,clSaldo=0;
+                const neRows=cl.nes.map((ne,i)=>{
+                  const saldo=getSaldoNEAtFecha(ne,fechaRef);
+                  const totalUSD=parseNum(ne.total||ne.totalUSD||0);
+                  clTotalUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
+                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
+                  const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
+                  return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
+                    <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
+                    <td>${ne.fecha||'—'}</td>
+                    <td style="color:#4338ca">${docFiscalPDF}</td>
+                    <td style="text-align:right">$${formatNum(totalUSD)}</td>
+                    <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
+                  </tr>`;
+                }).join('');
+                clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF;
+                gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotUSD-=anticiposUSDclPDF;
+                const notaAjustes=[
+                  manualRetsCl2.length>0?'Ret. manual -$'+formatNum(manualRetUSDclPDF):'',
+                  manualNCCl2.length>0?'NC/ND directa '+(manualNCSignedUSDPDF<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDPDF)):'',
+                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF):'',
+                ].filter(Boolean).join(' · ');
+                return `<div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
                     <span>${cl.clientName}</span>
                     <span style="font-size:9px;color:#94a3b8;padding-right:16px">${cl.clientRif}</span>
                     <span style="color:#fbbf24">${estado}</span>
                   </div>
-                  <div style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr;gap:0 8px;background:#f1f5f9;padding:4px 16px;font-size:9px;font-weight:bold;text-transform:uppercase;color:#64748b">
-                    <span>Documento</span><span>Emisión</span><span>Vence</span>
-                    <span style="text-align:center;color:#7c3aed">Días Cred.</span>
-                    <span style="text-align:center;color:#4338ca">Doc. Fiscal</span>
-                    <span style="text-align:right">Total USD</span><span style="text-align:right">Cobrado</span>
-                    <span style="text-align:right;color:#3b82f6">NC/ND</span>
-                    <span style="text-align:right;color:#b45309">Retenc.</span>
-                    <span style="text-align:right;border-right:1px solid #cbd5e1;padding-right:8px">Saldo USD</span>
-                    <span style="padding-left:8px">Observación</span>
-                  </div>
-                  ${neRows}${manualRowsPDF}${manualNCRowsPDF}${anticipoRowsPDF}
-                  <div class="cl-tot" style="grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr">
-                    <span>Subtotal ${cl.nes.length} doc${cl.nes.length>1?'s':''}${manualRetsCl2.length>0?' + '+manualRetsCl2.length+' ret. manual':''}${manualNCCl2.length>0?' + '+manualNCCl2.length+' NC/ND directa':''}${anticiposCl2.length>0?' + '+anticiposCl2.length+' anticipo(s)':''}</span><span></span><span></span><span></span><span></span>
-                    <span style="text-align:right">$${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</span>
-                    <span style="text-align:right;color:#16a34a">$${formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0))}</span>
-                    <span style="text-align:right;color:#3b82f6">${formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)+manualNCSignedUSDPDF)}</span>
-                    <span style="text-align:right;color:#b45309;line-height:1.3">$${formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0))}<br><span style="color:#0f766e;font-size:8px">Otra $${formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+manualRetUSDclPDF)}</span></span>
-                    <span style="text-align:right;font-weight:bold;color:${clTotal<-0.01?'#0f766e':'#dc2626'}">${clTotal<-0.01?'-$'+formatNum(Math.abs(clTotal)):'$'+formatNum(clTotal)}</span>
-                    <span></span>
-                  </div>
-                </div>`; 
+                  <table style="width:100%;border-collapse:collapse">
+                    <thead><tr style="background:#f1f5f9;color:#64748b;font-size:9px;text-transform:uppercase">
+                      <th style="text-align:left;padding:5px 16px;font-weight:bold">N.E.</th>
+                      <th style="text-align:left;padding:5px;font-weight:bold">Fecha</th>
+                      <th style="text-align:left;padding:5px;font-weight:bold">Factura</th>
+                      <th style="text-align:right;padding:5px;font-weight:bold">Total USD</th>
+                      <th style="text-align:right;padding:5px 16px;font-weight:bold">Saldo USD</th>
+                    </tr></thead>
+                    <tbody>${neRows}</tbody>
+                    <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
+                      <td colspan="3" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
+                      <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
+                      <td style="text-align:right;padding:5px 16px;font-weight:bold;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>`;
               }).join('');
-              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1.3fr .8fr .8fr .5fr .8fr .8fr .7fr .7fr .7fr .8fr 1.3fr;margin-top:8px;border-radius:6px;gap:0">
-                <span style="grid-column:span 5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</span>
-                <span style="text-align:right">$${formatNum(gTotTotal)}</span>
-                <span style="text-align:right;color:#16a34a">$${formatNum(gTotCob)}</span>
-                <span style="text-align:right;color:#3b82f6;line-height:1.3">-$${formatNum(gTotNC)}${gTotNCDirecta!==0?'<br><span style="color:#7c3aed;font-size:8px">Directa '+(gTotNCDirecta<0?'-$'+formatNum(Math.abs(gTotNCDirecta)):'+$'+formatNum(gTotNCDirecta))+'</span>':''}</span>
-                <span style="text-align:right;color:#b45309;line-height:1.3">$${formatNum(gTotRetIva)}<br><span style="color:#0f766e;font-size:8px">Otra $${formatNum(gTotRetOtras)}</span>${gTotAnticipos>0?'<br><span style="color:#14b8a6;font-size:8px">Anticipos -$'+formatNum(gTotAnticipos)+'</span>':''}</span>
-                <span style="text-align:right;font-weight:bold;color:#f97316">$${formatNum(gTotUSD)}</span>
-                <span></span>
+              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto;border-radius:6px;margin-top:4px">
+                <span>TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</span>
+                <span style="text-align:right;padding-right:16px">$${formatNum(gTotTotalUSD)}</span>
+                <span style="text-align:right">$${formatNum(gTotUSD)}</span>
               </div>`;
             }
             const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
@@ -24314,54 +24281,35 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Aging_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             } else {
               let body='';
+              let gTotUSD=0,gTotTotalUSD=0;
               clientesList.forEach(cl=>{
-                body+=`<tr class="hdr"><td colspan="10" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
-                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">Documento</td><td class="left">Emisión</td><td class="left">Vence</td><td class="center" style="color:#7c3aed">Días Cred.</td><td class="center" style="color:#4338ca">Doc. Fiscal</td><td>Total USD</td><td>Cobrado</td><td>NC/ND</td><td>Ret. IVA</td><td>Saldo USD</td><td class="left">Bucket</td><td class="left" style="color:#92400e">Observación</td></tr>`;
+                body+=`<tr class="hdr"><td colspan="5" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td></tr>`;
+                let clTotUSD=0,clSaldo=0;
                 cl.nes.forEach((ne,i)=>{
-                  const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
-                  const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const tasa=getTasa(ne);const d=getAgingDays(ne,fechaRef);
-                  const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
+                  const saldo=getSaldoNEAtFecha(ne,fechaRef);
+                  const totalUSD=parseNum(ne.total||ne.totalUSD||0);
+                  clTotUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
                   const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
-                  const diasCredXLS=parseNum(ne.diasCredito||0);
-                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCredXLS>0?diasCredXLS+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFiscalXLS}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
-                  const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
-                  // Factura fiscal
-                  if(invVincXLS){const bBs=parseNum(invVincXLS.baseImponible||invVincXLS.montoBase||0);const ivaD=parseNum(invVincXLS.montoIVA||invVincXLS.iva||0);const tBs=parseNum(invVincXLS.totalBs||0);const tD=parseNum(invVincXLS.tasa||0);body+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:20px;color:#4338ca;font-weight:bold">📋 Fac. ${invVincXLS.nroFiscal||invVincXLS.documento||'—'}</td><td class="left">${invVincXLS.fecha||'—'}</td><td class="left" colspan="3">${bBs>0?'Base Bs.'+formatNum(bBs)+' · ':''}${ivaD>0?'IVA Bs.'+formatNum(ivaD)+' · ':''}${tBs>0?'Total Bs.'+formatNum(tBs)+' · ':''}${tD>0?'Tasa: '+formatNum(tD):''}  </td><td colspan="7"></td></tr>`;}
-                  cobrosNE.forEach(cb=>{body+=`<tr class="sub"><td class="left" style="padding-left:20px">💰 Pago</td><td class="left">${cb.fecha||'—'}</td><td class="left">${cb.referencia||'—'}</td><td></td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}${cb.concepto?' · <i>'+cb.concepto+'</i>':''}</td><td></td><td></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}</td><td>${parseNum(cb.montoBs||0)>0?'Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td></td></tr>`;});
-                  const ncsNEd=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return (ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento)&&(!fechaRef||(n.fecha||'')<=fechaRef);});
-                  ncsNEd.forEach(nc=>{const t=parseNum(nc.tasaFactura||0)||1;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${nc.tipo||'NC'}</td><td class="left">${nc.fecha||'—'}</td><td class="left">${nc.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed;font-style:italic">${nc.descripcion||'—'}</td><td class="b">-$${formatNum(u)}</td><td class="left">${b>0?'Bs.'+formatNum(b):''}</td><td colspan="5"></td></tr>`;});
-                  const retDetalleXLS=getRetsDetalleNE(ne);
-                  const retsNEd=[...retDetalleXLS.iva,...retDetalleXLS.otras];
-                  retsNEd.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const lblXd=r.tipoExtra?(r.tipoLabel||r.tipo||'Otra Ret.'):'Ret. IVA';const colXd=r.tipoExtra?'#085041':'#92400e';const valXd=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);body+=`<tr class="ret"><td class="left" style="padding-left:20px;color:${colXd};font-weight:bold">🧾 ${lblXd}</td><td class="left">${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td></td><td class="left">${r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''} · Fac. ${r._invNroFiscal||'—'}</td><td colspan="3"></td><td class="a">${valXd}</td><td colspan="3"></td></tr>`;});
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td></tr>`;
                 });
                 const manualRetsClXls=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclXls=manualRetsClXls.reduce((s,r)=>s+r._montoUSD,0);
-                manualRetsClXls.forEach(r=>{const valXm=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);body+=`<tr class="ret"><td class="left" style="padding-left:20px;color:#0f766e;font-weight:bold">🧾 Ret. Manual</td><td class="left">${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||'—'}</td><td></td><td class="left">Factura N° ${r._manualNroFiscal||'—'} · no registrada</td><td colspan="3"></td><td class="a">${valXm}</td><td colspan="3"></td></tr>`;});
                 const manualNCClXls=(_manualNCPorCliente.get(cl.clientRif)||[]);
                 const manualNCSignedUSDXls=manualNCClXls.reduce((s,n)=>s+n._signedUSD,0);
-                manualNCClXls.forEach(n=>{const valNm=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD));body+=`<tr class="nc"><td class="left" style="padding-left:20px;color:#7c3aed;font-weight:bold">${n.tipo||'NC'} · sin NE</td><td class="left">${n.fecha||'—'}</td><td class="left">${n.nroDocumento||'—'}</td><td></td><td class="left" style="color:#7c3aed">${n.descripcion||'Cliente directo'}</td><td colspan="3"></td><td class="b" style="color:#7c3aed">${valNm}</td><td colspan="3"></td></tr>`;});
                 const anticiposClXls=(_anticiposPorCliente.get(cl.clientRif)||[]);
                 const anticiposUSDclXls=anticiposClXls.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
-                anticiposClXls.forEach(a=>{body+=`<tr style="background:#f0fdfa"><td class="left" style="padding-left:20px;color:#0f766e;font-weight:bold">💰 Anticipo</td><td class="left">${a.fecha||'—'}</td><td class="left">${a.referencia||'—'}</td><td></td><td class="left" style="color:#0f766e">${a.concepto||'Anticipo de cliente'}</td><td colspan="3"></td><td style="color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</td><td colspan="3"></td></tr>`;});
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclXls+manualNCSignedUSDXls-anticiposUSDclXls;
-                const clTotUSD=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0);
-                const clTotCob=cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0);
-                const clTotNC=cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0);
-                const clTotRetIva=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0);
-                const clTotRetOtras=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+manualRetUSDclXls;
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="5">SUBTOTAL ${cl.clientName}</td><td>$${formatNum(clTotUSD)}</td><td class="g">$${formatNum(clTotCob)}</td><td class="b">${clTotNC>0?'-$'+formatNum(clTotNC):'—'}${manualNCSignedUSDXls!==0?' / Directa '+(manualNCSignedUSDXls<0?'-$'+formatNum(Math.abs(manualNCSignedUSDXls)):'+$'+formatNum(manualNCSignedUSDXls)):''}${anticiposUSDclXls>0?' / Antic. -$'+formatNum(anticiposUSDclXls):''}</td><td class="a">$${formatNum(clTotRetIva)}${clTotRetOtras>0?' / Otra $'+formatNum(clTotRetOtras):''}</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td><td></td></tr><tr><td colspan="12"></td></tr>`;
+                clSaldo-=manualRetUSDclXls; clSaldo+=manualNCSignedUSDXls; clSaldo-=anticiposUSDclXls;
+                gTotUSD-=manualRetUSDclXls; gTotUSD+=manualNCSignedUSDXls; gTotUSD-=anticiposUSDclXls;
+                const notaAjustesXls=[
+                  manualRetUSDclXls>0?'Ret. manual -$'+formatNum(manualRetUSDclXls):'',
+                  manualNCSignedUSDXls!==0?'NC/ND directa '+(manualNCSignedUSDXls<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDXls)):'',
+                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls):'',
+                ].filter(Boolean).join(' · ');
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td></tr><tr><td colspan="5"></td></tr>`;
               });
-              const gTotXLS=clientesList.reduce((s,cl)=>({
-  total:s.total+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.totalUSD||0),0),
-  cob:s.cob+cl.nes.reduce((ss,ne)=>ss+getCobradoNEAtFecha(ne,fechaRef),0),
-  nc:s.nc+cl.nes.reduce((ss,ne)=>ss+getNCNEAtFecha(ne,fechaRef),0),
-  retIva:s.retIva+cl.nes.reduce((ss,ne)=>ss+getRetsDetalleNE(ne).ivaUSD,0),
-  retOtras:s.retOtras+cl.nes.reduce((ss,ne)=>ss+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((ss,r)=>ss+r._montoUSD,0),
-  ncDirecta:s.ncDirecta+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((ss,n)=>ss+n._signedUSD,0),
-  antic:s.antic+(_anticiposPorCliente.get(cl.clientRif)||[]).reduce((ss,a)=>ss+Math.max(0,a._saldoAnt),0),
-}),{total:0,cob:0,nc:0,retIva:0,retOtras:0,ncDirecta:0,antic:0});
-body+=`<tr class="tot"><td class="left" colspan="5">TOTAL CARTERA · ${nesAbiertas.length} docs · Corte: ${corte}</td><td>$${formatNum(gTotXLS.total)}</td><td class="g">$${formatNum(gTotXLS.cob)}</td><td class="b">${gTotXLS.nc>0?'-$'+formatNum(gTotXLS.nc):'—'}${gTotXLS.ncDirecta!==0?' / Directa '+(gTotXLS.ncDirecta<0?'-$'+formatNum(Math.abs(gTotXLS.ncDirecta)):'+$'+formatNum(gTotXLS.ncDirecta)):''}${gTotXLS.antic>0?' / Antic. -$'+formatNum(gTotXLS.antic):''}</td><td class="a">$${formatNum(gTotXLS.retIva)}${gTotXLS.retOtras>0?' / Otra $'+formatNum(gTotXLS.retOtras):''}</td><td style="color:#f97316;font-weight:bold">$${formatNum(totalCartera)}</td><td></td><td></td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="3">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
