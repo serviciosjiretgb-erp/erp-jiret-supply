@@ -24484,10 +24484,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 usdAsignado:0,bsAsignado:0
               }));
               const grupoId=Date.now().toString(36).toUpperCase();
-              for(const ne of nesADistribuir){
+              const distManualSubmit=m.distribucionManual||{};
+              // Primero se procesan las NE con monto manual (se respeta su monto exacto tal cual se tecleó);
+              // el resto del monto se distribuye en cascada (más antigua primero) entre las NE sin override.
+              const nesConManual=nesADistribuir.filter(ne=>distManualSubmit[ne.id]!=null);
+              const nesSinManual=nesADistribuir.filter(ne=>distManualSubmit[ne.id]==null);
+              for(const ne of [...nesConManual,...nesSinManual]){
                 if(restante<=0.001) break;
                 const saldoNE=getSaldoNEAtFecha(ne,null);
-                const montoNE=Math.min(restante,saldoNE);
+                const manualNE=distManualSubmit[ne.id];
+                const montoNE=manualNE!=null?Math.min(parseNum(manualNE),saldoNE,restante):Math.min(restante,saldoNE);
                 if(montoNE<=0.001) continue;
                 restante-=montoNE;
                 const nuevoSaldo=Math.max(0,saldoNE-montoNE);
@@ -24702,19 +24708,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
             const saldoTrasPago=Math.max(0,saldoTotalCliente-totalLineasUSD);
 
-            // Distribución automática del monto entre NEs (más antigua primero)
+            // Distribución: respeta montos manuales por NE (pm.distribucionManual); el resto se distribuye
+            // automáticamente en cascada (más antigua primero) con lo que quede del monto total.
             const nesParaDistribuir = nesSelecIds.length>0
               ? nesPendientes.filter(ne=>nesSelecIds.includes(ne.id))
               : nesPendientes;
-            let distRestante=montoUSD;
+            const distManual = pm.distribucionManual||{};
+            const totalManualAsignado = nesParaDistribuir.reduce((s,ne)=>s+(distManual[ne.id]!=null?parseNum(distManual[ne.id]):0),0);
+            let distRestante=montoUSD-totalManualAsignado;
             const distMap={};
             nesParaDistribuir.forEach(ne=>{
+              if(distManual[ne.id]!=null){ distMap[ne.id]=parseNum(distManual[ne.id]); return; }
               if(distRestante<=0.001){distMap[ne.id]=0;return;}
               const s=getSaldoNEAtFecha(ne,null);
               const aplicar=Math.min(distRestante,s);
               distMap[ne.id]=aplicar;
               distRestante-=aplicar;
             });
+            const totalDistribuido = Object.values(distMap).reduce((s,v)=>s+v,0);
             const saldoRestanteCliente=saldoTotalCliente-montoUSD;
 
             // Bancos por moneda
@@ -24749,14 +24760,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2,marginBottom:10}}>1 · Cliente</div>
                       <div style={{position:'relative',marginBottom:8}}>
                         <Search size={12} style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#9ca3af'}}/>
-                        <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{}}))}
+                        <input type="text" value={pm.clientSearch||''} onChange={e=>setCxcPagoModal(m=>({...m,clientSearch:e.target.value,clientRif:'',clientName:'',nesSelec:{},distribucion:{},distribucionManual:{}}))}
                           placeholder="Buscar cliente..." style={{width:'100%',paddingLeft:30,paddingRight:10,paddingTop:9,paddingBottom:9,border:'2px solid #e5e7eb',borderRadius:10,fontSize:11,outline:'none',background:'#fff',boxSizing:'border-box'}}
                           onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
                       </div>
                       {!pm.clientRif && clientesFiltrados.length>0 && (
                         <div style={{background:'#fff',border:'2px solid #e5e7eb',borderRadius:10,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
                           {clientesFiltrados.map(cl=>(
-                            <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{}}))}
+                            <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{},distribucionManual:{}}))}
                               style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',border:'none',borderBottom:'1px solid #f9fafb',background:'transparent',cursor:'pointer',textAlign:'left'}}
                               onMouseEnter={e=>e.currentTarget.style.background='#fff7ed'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                               <span style={{fontSize:11,fontWeight:700,color:'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{cl.clientName}</span>
@@ -24771,7 +24782,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <div style={{fontWeight:900,fontSize:11,color:'#111'}}>{clienteSel.clientName}</div>
                             <div style={{fontSize:10,color:'#E8541A',fontWeight:700}}>Cartera: ${formatNum(saldoTotalCliente)}</div>
                           </div>
-                          <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{}}))} style={{border:'none',background:'none',color:'#9ca3af',cursor:'pointer',fontSize:16,fontWeight:900,lineHeight:1}}>×</button>
+                          <button onClick={()=>setCxcPagoModal(m=>({...m,clientRif:'',clientName:'',clientSearch:'',nesSelec:{},distribucion:{},distribucionManual:{}}))} style={{border:'none',background:'none',color:'#9ca3af',cursor:'pointer',fontSize:16,fontWeight:900,lineHeight:1}}>×</button>
                         </div>
                       )}
                     </div>
@@ -24781,12 +24792,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <span style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:1}}>2 · Facturas</span>
                         <div style={{display:'flex',gap:8}}>
                           <button onClick={()=>{const all={};nesPendientes.forEach(ne=>{all[ne.id]=true;});setCxcPagoModal(m=>({...m,nesSelec:all}));}} style={{fontSize:9,color:'#16a34a',fontWeight:900,border:'none',background:'none',cursor:'pointer'}}>✓ Todas</button>
-                          <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{}}))} style={{fontSize:9,color:'#9ca3af',fontWeight:900,border:'none',background:'none',cursor:'pointer'}}>✕</button>
+                          <button onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{},distribucionManual:{}}))} style={{fontSize:9,color:'#9ca3af',fontWeight:900,border:'none',background:'none',cursor:'pointer'}}>✕</button>
                         </div>
                       </div>
                       {/* Anticipo sin factura */}
                       <div style={{padding:'8px 14px',borderBottom:'1px solid #f3f4f6',background:pm.esAnticipo?'#f0fdf4':'#fff'}}>
-                        <button onClick={()=>setCxcPagoModal(m=>({...m,esAnticipo:!m.esAnticipo,nesSelec:{}}))}
+                        <button onClick={()=>setCxcPagoModal(m=>({...m,esAnticipo:!m.esAnticipo,nesSelec:{},distribucionManual:{}}))}
                           style={{width:'100%',padding:'8px 10px',borderRadius:10,border:`2px solid ${pm.esAnticipo?'#16a34a':'#d1d5db'}`,background:pm.esAnticipo?'#16a34a':'#fff',color:pm.esAnticipo?'#fff':'#374151',fontSize:10,fontWeight:900,textTransform:'uppercase',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
                           {pm.esAnticipo?'✓':'＋'} Anticipo sin factura
                         </button>
@@ -24814,7 +24825,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <p style={{fontSize:9,color:'#6b7280'}}>No se selecciona factura. Registre las líneas de pago y confirme.</p>
                         </div>
                       ):(<>
-                      <div style={{padding:'6px 14px',background:'#fffbeb',borderBottom:'1px solid #fef3c7',fontSize:9,color:'#92400e',fontStyle:'italic'}}>Sin selección = distribuye automáticamente</div>
+                      <div style={{padding:'6px 14px',background:'#fffbeb',borderBottom:'1px solid #fef3c7',fontSize:9,color:'#92400e',fontStyle:'italic'}}>Sin selección = distribuye automáticamente · edita el monto "Aplicar $" de cada NE para repartirlo tú mismo</div>
+                      {montoUSD>0&&<div style={{padding:'6px 14px',background:Math.abs(totalDistribuido-montoUSD)<0.01?'#f0fdf4':'#fef2f2',borderBottom:'1px solid #f3f4f6',fontSize:10,fontWeight:900,display:'flex',justifyContent:'space-between'}}>
+                        <span style={{color:Math.abs(totalDistribuido-montoUSD)<0.01?'#16a34a':'#dc2626'}}>Distribuido: ${formatNum(totalDistribuido)} de ${formatNum(montoUSD)}</span>
+                        {Math.abs(totalDistribuido-montoUSD)>=0.01&&<span style={{color:'#dc2626'}}>{totalDistribuido<montoUSD?'Falta $'+formatNum(montoUSD-totalDistribuido):'Excede $'+formatNum(totalDistribuido-montoUSD)}</span>}
+                      </div>}
                       {nesPendientes.map((ne,i)=>{
                         const saldo=getSaldoNEAtFecha(ne,null);
                         const sel=!!pm.nesSelec?.[ne.id];
@@ -24844,9 +24859,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <span style={{fontWeight:900,fontSize:11,color:esCredito?'#0f766e':'#dc2626'}}>{esCredito?'-$'+formatNum(Math.abs(saldo)):'$'+formatNum(saldo)}</span>
                             </div>
                             {esCredito&&<div style={{marginTop:3}}><span style={{fontSize:8,fontWeight:900,color:'#0f766e',background:'#ccfbf1',padding:'1px 6px',borderRadius:4}}>Saldo a favor (sobrecobro) — cierre con ND o reasigne el pago</span></div>}
-                            <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:2}}>
                               <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}{ne._esNDDirecta&&ne._ndDescripcion?` · ${ne._ndDescripcion}`:''}</span>
-                              {montoUSD>0&&aplicado>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${formatNum(Math.max(0,saldo-aplicado))}</span>}
+                              {sel&&montoUSD>0&&(
+                                <div onClick={e=>e.stopPropagation()} style={{display:'flex',alignItems:'center',gap:4}}>
+                                  <span style={{fontSize:8,color:'#9ca3af'}}>Aplicar $</span>
+                                  <input type="number" step="0.01" value={distManual[ne.id]!=null?distManual[ne.id]:parseFloat((distMap[ne.id]||0).toFixed(2))}
+                                    onChange={ev=>setCxcPagoModal(m=>({...m,distribucionManual:{...(m.distribucionManual||{}),[ne.id]:ev.target.value===''?0:parseNum(ev.target.value)}}))}
+                                    style={{width:70,fontSize:10,fontWeight:900,color:'#16a34a',border:'1px solid #d1fae5',borderRadius:6,padding:'2px 5px',textAlign:'right'}}/>
+                                  <span style={{fontSize:9,fontWeight:900,color:'#9ca3af'}}>→ ${formatNum(Math.max(0,saldo-(distMap[ne.id]||0)))}</span>
+                                </div>
+                              )}
                             </div>
                             {ne._esNDDirecta&&<div style={{marginTop:3}}><span style={{fontSize:8,fontWeight:900,color:'#9333ea',background:'#f3e8ff',padding:'1px 6px',borderRadius:4}}>Nota de Débito — sin factura asociada</span></div>}
                             {nroFiscal&&!ne._esNDDirecta&&<div style={{marginTop:3,display:'flex',flexWrap:'wrap',gap:4,alignItems:'center'}}>
@@ -25249,7 +25272,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </select>
                   </div>
                   {cxcModo==='fecha' && <input type="date" value={cxcFechaRef} onChange={e=>setCxcFechaRef(e.target.value)} className="border-2 border-orange-300 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-500"/>}
-                  <button onClick={()=>setCxcPagoModal({clientSearch:'',clientRif:'',clientName:'',nesSelec:{},lineasPago:[],lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:getTodayDate()},distribucion:{}})}
+                  <button onClick={()=>setCxcPagoModal({clientSearch:'',clientRif:'',clientName:'',nesSelec:{},lineasPago:[],lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',concepto:'',fecha:getTodayDate()},distribucion:{},distribucionManual:{}})}
                     className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:shadow-xl transition-all"
                     style={{background:'linear-gradient(135deg,#16a34a,#15803d)'}}>
                     <DollarSign size={13}/> 💳 Registrar Cobro
