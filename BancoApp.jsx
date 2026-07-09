@@ -1836,6 +1836,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // Versión async: si systemUsers aún no cargó, hace un getDocs en vivo
   const validarClaveAdmin = async (pwd) => {
     if(!pwd) return false;
+    const pwdTrim = String(pwd).trim();
     // 1. Intentar con los usuarios que tenemos (prop de Aplicación o suscripción local)
     let users = systemUsers||[];
     // 2. Si aún vacío, hacer fetch directo (fallback)
@@ -1848,9 +1849,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // 3. Mismo criterio que Aplicación.jsx: solo usuarios Master/admin, campo password,
     //    con respaldo a la clave maestra real del sistema (la misma del login de administrador).
     const adminUsers = users.filter(u => u.role === 'Master' || u.username === 'admin');
-    const validPasswords = adminUsers.map(u => u.password).filter(Boolean);
+    const validPasswords = adminUsers.map(u => String(u.password||'').trim()).filter(Boolean);
     validPasswords.push('Supply2026.Admin');
-    return validPasswords.includes(pwd);
+    return validPasswords.includes(pwdTrim);
   };
 
   // ══════════════════════════════════════════════════════════════════════
