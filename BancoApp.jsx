@@ -1837,6 +1837,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const validarClaveAdmin = async (pwd) => {
     if(!pwd) return false;
     const pwdTrim = String(pwd).trim();
+    // 0. Clave maestra del sistema — se revisa PRIMERO, sin depender de Firestore/systemUsers,
+    //    insensible a mayúsculas/minúsculas para evitar cualquier problema de tipeo.
+    if (pwdTrim.toLowerCase() === 'supply2026.admin') return true;
     // 1. Intentar con los usuarios que tenemos (prop de Aplicación o suscripción local)
     let users = systemUsers||[];
     // 2. Si aún vacío, hacer fetch directo (fallback)
@@ -1846,11 +1849,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         users = snap.docs.map(d=>d.data());
       } catch(e) { console.warn('validarClaveAdmin getDocs error:', e); }
     }
-    // 3. Mismo criterio que Aplicación.jsx: solo usuarios Master/admin, campo password,
-    //    con respaldo a la clave maestra real del sistema (la misma del login de administrador).
+    // 3. Mismo criterio que Aplicación.jsx: solo usuarios Master/admin, campo password
     const adminUsers = users.filter(u => u.role === 'Master' || u.username === 'admin');
     const validPasswords = adminUsers.map(u => String(u.password||'').trim()).filter(Boolean);
-    validPasswords.push('Supply2026.Admin');
     return validPasswords.includes(pwdTrim);
   };
 
@@ -2895,7 +2896,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div>
         {/* ── MODAL DETALLE / EDICIÓN ── */}
         {movDetalle && (
-          <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} {...(editId?{xwide:true}:{wide:true})}
+          <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} {...(editId?{xlwide:true}:{wide:true})}
             footer={
               editId
                 ? <><BBo onClick={()=>{setEditId(null);setForm(initF());}}>Cancelar</BBo><BBg onClick={saveEdit} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
