@@ -1815,7 +1815,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       }),
       onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),,
-      onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>({_docId:d.id,...d.data()})))),
       onSnapshot(query(getColRef('caja_movimientos'), orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('caja_arques'), orderBy('fecha','desc')), s => setArques(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('banco_conciliaciones'), s => setConcils(s.docs.map(d=>d.data()))),
@@ -2703,7 +2703,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
 
     // Movimiento en detalle
-    const movDetalle = movBanco.find(m=>m.id===detalleId);
+    const movDetalle = movBanco.find(m=>(m._docId||m.id)===detalleId);
 
     // Guardar EDICIÓN COMPLETA (todos los campos)
     const saveEdit = async()=>{
@@ -2713,7 +2713,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(!form.concepto) return alert('Ingrese el concepto');
       setBusy(true);
       try {
-        const movOriginal = movBanco.find(m=>m.id===editId);
+        const movOriginal = movBanco.find(m=>(m._docId||m.id)===editId);
         const cuentaOrig  = cuentas.find(c=>c.id===movOriginal?.cuentaId);
         const cuentaNueva = cuentas.find(c=>c.id===form.cuentaId);
         const batch = writeBatch(db);
@@ -2742,6 +2742,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         });
         await batch.commit();
         setEditId(null); setDetalle(null); setForm(initF());
+      } catch(e) {
+        alert('❌ No se pudo guardar: '+(e?.message||e));
+        console.error('saveEdit error:', e);
       } finally { setBusy(false); }
     };
 
@@ -2762,13 +2765,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setBusy(true);
       try {
         const m = pwdModal;
+        const docId = m._docId || m.id;
+        if(!docId){ alert('No se pudo identificar el documento de este movimiento (falta ID). Contacta soporte.'); return; }
         const signo = m.tipo==='Ingreso'?-1:1;
         const cuenta = cuentas.find(c=>c.id===m.cuentaId);
         const batch=writeBatch(db);
-        batch.delete(getDocRef('banco_movimientos',m.id));
+        batch.delete(getDocRef('banco_movimientos',docId));
         if(cuenta) batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:Number(cuenta.saldo)+signo*Number(m.montoNativo||0)});
         await batch.commit();
         setPwdModal(null); setDetalle(null); setAdminPwd('');
+      } catch(e) {
+        alert('❌ No se pudo eliminar el movimiento: '+(e?.message||e));
+        console.error('confirmarEliminar error:', e);
       } finally { setBusy(false); }
     };
 
@@ -2813,7 +2821,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
 
     const abrirEdicion = (m)=>{
-      setEditId(m.id); setDetalle(m.id);
+      setEditId(m._docId||m.id); setDetalle(m._docId||m.id);
       setForm({...initF(),fecha:m.fecha,tipo:m.tipo,cuentaId:m.cuentaId,
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
@@ -3187,7 +3195,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh right>Bs.</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
                 <tbody>
                   {movRows.length===0&&<tr><td colSpan={8}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos nacionales" desc="Registre transacciones en cuentas Bs."/></td></tr>}
-                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m.id)}>
+                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
@@ -3201,7 +3209,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <BTd><BBadge v={m.estatus==='Conciliado'?'green':'gray'}>{m.estatus==='Conciliado'?'✓ Conc.':'Pend.'}</BBadge></BTd>
                   <BTd>
                     <div className="flex gap-1" onClick={e=>e.stopPropagation()}>
-                      <button onClick={()=>setDetalle(m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
+                      <button onClick={()=>setDetalle(m._docId||m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
                       <button onClick={()=>abrirEdicion(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
                       <button onClick={e=>{e.stopPropagation();pedirEliminar(m);}} disabled={m.estatus==='Conciliado'} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title="Eliminar (clave admin)"><Trash2 size={12}/></button>
                     </div>
@@ -3234,7 +3242,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh right>$</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
                 <tbody>
                   {movRows.length===0&&<tr><td colSpan={8}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos internacionales" desc="Registre transacciones en cuentas USD"/></td></tr>}
-                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m.id)}>
+                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
@@ -3248,7 +3256,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <BTd><BBadge v={m.estatus==='Conciliado'?'green':'gray'}>{m.estatus==='Conciliado'?'✓ Conc.':'Pend.'}</BBadge></BTd>
                   <BTd>
                     <div className="flex gap-1" onClick={e=>e.stopPropagation()}>
-                      <button onClick={()=>setDetalle(m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
+                      <button onClick={()=>setDetalle(m._docId||m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
                       <button onClick={()=>abrirEdicion(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
                       <button onClick={e=>{e.stopPropagation();pedirEliminar(m);}} disabled={m.estatus==='Conciliado'} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title="Eliminar (clave admin)"><Trash2 size={12}/></button>
                     </div>
@@ -5313,7 +5321,7 @@ function ContabilidadApp({ fbUser, onBack }) {
     if (!fbUser) return;
     const subs = [
       onSnapshot(getColRef('planDeCuentas'), s => setCuentas(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>({_docId:d.id,...d.data()})))),
       onSnapshot(query(getColRef('caja_movimientos'),  orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'), orderBy('fecha','desc')), s => setTasas(s.docs.map(d=>d.data()))),
     ];
