@@ -24228,9 +24228,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
                     <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
                     <td>${ne.fecha||'—'}</td>
+                    <td style="color:#b45309">${getVence(ne)}</td>
                     <td style="color:#4338ca">${docFiscalPDF}</td>
                     <td style="text-align:right">$${formatNum(totalUSD)}</td>
                     <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
+                    <td style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</td>
                   </tr>`;
                 }).join('');
                 clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF;
@@ -24238,7 +24240,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const notaAjustes=[
                   manualRetsCl2.length>0?'Ret. manual -$'+formatNum(manualRetUSDclPDF):'',
                   manualNCCl2.length>0?'NC/ND directa '+(manualNCSignedUSDPDF<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDPDF)):'',
-                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF):'',
+                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF)+' ('+(anticiposCl2.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
                 ].filter(Boolean).join(' · ');
                 return `<div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
@@ -24250,23 +24252,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <thead><tr style="background:#f1f5f9;color:#64748b;font-size:9px;text-transform:uppercase">
                       <th style="text-align:left;padding:5px 16px;font-weight:bold">N.E.</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Fecha</th>
+                      <th style="text-align:left;padding:5px;font-weight:bold">Vence</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Factura</th>
                       <th style="text-align:right;padding:5px;font-weight:bold">Total USD</th>
-                      <th style="text-align:right;padding:5px 16px;font-weight:bold">Saldo USD</th>
+                      <th style="text-align:right;padding:5px;font-weight:bold">Saldo USD</th>
+                      <th style="text-align:left;padding:5px 16px;font-weight:bold">Observación</th>
                     </tr></thead>
                     <tbody>${neRows}</tbody>
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
-                      <td colspan="3" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
+                      <td colspan="4" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
-                      <td style="text-align:right;padding:5px 16px;font-weight:bold;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
+                      <td style="text-align:right;padding:5px;font-weight:bold;font-size:13px;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
+                      <td style="padding:5px 16px"></td>
                     </tr></tfoot>
                   </table>
                 </div>`;
               }).join('');
-              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto;border-radius:6px;margin-top:4px">
+              body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto auto;border-radius:6px;margin-top:4px">
                 <span>TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</span>
                 <span style="text-align:right;padding-right:16px">$${formatNum(gTotTotalUSD)}</span>
                 <span style="text-align:right">$${formatNum(gTotUSD)}</span>
+                <span></span>
               </div>`;
             }
             const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
@@ -24341,8 +24347,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let body='';
               let gTotUSD=0,gTotTotalUSD=0;
               clientesList.forEach(cl=>{
-                body+=`<tr class="hdr"><td colspan="5" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
-                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td></tr>`;
+                body+=`<tr class="hdr"><td colspan="7" class="left" style="font-size:10pt;padding:6px 7px">${cl.clientName} · ${cl.clientRif}</td></tr>`;
+                body+=`<tr style="background:#f1f5f9;font-size:8pt"><td class="left">N.E.</td><td class="left">Fecha</td><td class="left" style="color:#b45309">Vence</td><td class="left">Factura</td><td>Total USD</td><td>Saldo USD</td><td class="left" style="color:#92400e">Observación</td></tr>`;
                 let clTotUSD=0,clSaldo=0;
                 cl.nes.forEach((ne,i)=>{
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
@@ -24350,7 +24356,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   clTotUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
                   const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
-                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td></tr>`;
+                  body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#b45309">${getVence(ne)}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                 });
                 const manualRetsClXls=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclXls=manualRetsClXls.reduce((s,r)=>s+r._montoUSD,0);
@@ -24363,11 +24369,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const notaAjustesXls=[
                   manualRetUSDclXls>0?'Ret. manual -$'+formatNum(manualRetUSDclXls):'',
                   manualNCSignedUSDXls!==0?'NC/ND directa '+(manualNCSignedUSDXls<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDXls)):'',
-                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls):'',
+                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls)+' ('+(anticiposClXls.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
                 ].filter(Boolean).join(' · ');
-                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="3">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td></tr><tr><td colspan="5"></td></tr>`;
+                body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="4">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="7"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="3">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="4">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
@@ -25870,6 +25876,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const kk=[n.neId,n.neOrigen,n.facturaId].filter(Boolean);
             for(const k of kk){ if(!_ncsByKeyEc.has(k)) _ncsByKeyEc.set(k,[]); _ncsByKeyEc.get(k).push(n); }
           }
+          const getVenceEc=(ne)=>{const f=new Date(ne.fecha||ne.fechaEmision||getTodayDate());f.setDate(f.getDate()+parseNum(ne.diasCredito||0));return f.toISOString().split('T')[0];};
           const getSaldoNE = (ne) => {
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             // NC/ND: matchear por NE Y por su factura vinculada (nroFiscal/documento/id), como lo hace Registrar Cobro
@@ -26028,7 +26035,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 // NE row
                 neRowsHtml+='<tr style="background:'+rowBg+';border-bottom:1px solid #e5e7eb">'
                   +'<td style="padding:3px 6px;color:#f97316;font-weight:900;font-size:9px">'+( ne.documento||ne.id)+'</td>'
-                  +'<td style="padding:3px 6px;font-size:8px;white-space:nowrap">'+fD(ne.fecha)+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;white-space:nowrap">'+fD(ne.fecha)+'<br><span style="color:#b45309;font-size:7px">Vence: '+fD(getVenceEc(ne))+'</span></td>'
                   +'<td style="padding:3px 6px">'+badge('NE','#eff6ff','#1d4ed8')+'</td>'
                   +'<td style="padding:3px 6px;font-size:8px;max-width:200px;overflow:hidden;text-overflow:ellipsis">'+(( ne.items||[])[0]?.desc||ne.descripcion||'—')+'</td>'
                   +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px">$'+fmtN(ne.total||ne.montoBase)+'</td>'
@@ -26203,7 +26210,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const cobrosNEx=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                   const totalCobNEx=cobrosNEx.reduce((s,c)=>s+parseNum(c.monto||0),0);
                   const retDx=getRetsDetalleNEec(ne);
-                  bodyXls+='<tr><td style="font-weight:bold;color:#ea580c">'+(ne.documento||ne.id)+'</td><td>'+(ne.fecha||'')+'</td><td>NE</td><td>'+((ne.items||[])[0]?.desc||ne.descripcion||'')+'</td><td>$'+fmtN2(ne.total||ne.montoBase)+'</td><td></td><td></td><td></td><td>'+(sNEx<0?'-$'+fmtN2(Math.abs(sNEx)):'$'+fmtN2(sNEx))+'</td></tr>';
+                  bodyXls+='<tr><td style="font-weight:bold;color:#ea580c">'+(ne.documento||ne.id)+'</td><td>'+(ne.fecha||'')+' (Vence: '+getVenceEc(ne)+')</td><td>NE</td><td>'+((ne.items||[])[0]?.desc||ne.descripcion||'')+'</td><td>$'+fmtN2(ne.total||ne.montoBase)+'</td><td></td><td></td><td></td><td>'+(sNEx<0?'-$'+fmtN2(Math.abs(sNEx)):'$'+fmtN2(sNEx))+'</td></tr>';
                   if(invVx||fiscalNumX){
                     bodyXls+='<tr><td style="padding-left:16px;color:#4338ca">\u21b3 '+(fiscalNumX?String(fiscalNumX).padStart(8,'0'):invVx?.documento||'')+'</td><td>'+(invVx?.fecha||'')+'</td><td>Fac. Fiscal</td><td>Tasa '+(parseNum(invVx?.tasa||0)>0?fmtN2(invVx.tasa)+' Bs/$':'')+'</td><td colspan="5"></td></tr>';
                   }
@@ -26333,6 +26340,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <tr className="text-gray-400 font-black uppercase">
                             <th className="py-2 px-3 text-left">Documento</th>
                             <th className="py-2 px-3 text-left">Fecha</th>
+                            <th className="py-2 px-3 text-left text-amber-500">Vence</th>
                             <th className="py-2 px-3 text-left">Tipo</th>
                             <th className="py-2 px-3 text-left">Detalle</th>
                             <th className="py-2 px-3 text-right">Cargo USD</th>
@@ -26358,6 +26366,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <tr className={`border-b border-gray-100 ${rowBg}`}>
                                 <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
                                 <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
+                                <td className="py-2 px-3 text-amber-600 font-bold">{getVenceEc(ne)}</td>
                                 <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span></td>
                                 <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
                                 <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
@@ -26371,6 +26380,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   ↳ {String(invV2.nroFiscal||localNroFiscal[invV2.id]).padStart(8,'0')}
                                 </td>
                                 <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
+                                <td className="py-1.5 px-3"></td>
                                 <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
                                 <td className="py-1.5 px-3 text-[8px] text-gray-500 col-span-2">
                                   {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
@@ -26384,6 +26394,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                                   <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
                                   <td className="py-1.5 px-3 text-[8px] text-purple-600">{nc.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"></td>
                                   <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
                                   <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}</span>}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
@@ -26406,6 +26417,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 <tr key={r.id||ri} className={'border-b '+r2Border} style={{background:r2Bg}}>
                                   <td className={'py-1.5 px-3 pl-7 text-[8px] font-black '+r2Txt}>↳ {r.nroRetencion||r.nroComprobante||'—'}</td>
                                   <td className={'py-1.5 px-3 text-[8px] '+r2Txt2}>{r.fechaComprobante||r.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"></td>
                                   <td className="py-1.5 px-3"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+r2Txt+' '+r2BadgeBg}>{r2Label}</span></td>
                                   <td className="py-1.5 px-3 text-[8px] text-gray-500">{r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}{rb>0&&<span className="ml-1 text-gray-400">· Bs.{formatNum(rb)}</span>}<span className="ml-1 text-gray-400">· Fac. {r._invNroFiscal||'—'}</span></td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
@@ -26419,6 +26431,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
                                   <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
                                   <td className="py-1.5 px-3 text-[8px] text-green-600">{cb.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"></td>
                                   <td className="py-1.5 px-3"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
                                   <td className="py-1.5 px-3 text-[8px] text-gray-500">
                                     <span className="font-bold text-green-700">{cb.metodo||'—'}</span>
@@ -26439,6 +26452,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <tr key={r.id||ri} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
                               <td className="py-2 px-3 font-black text-teal-700">↳ {r.nroRetencion||'RET-MANUAL'}</td>
                               <td className="py-2 px-3 text-teal-600">{r.fechaComprobante||r.fecha||'—'}</td>
+                              <td className="py-2 px-3"></td>
                               <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">{r.tipoLabel||'Ret. Manual'}</span></td>
                               <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{r._manualNroFiscal&&r._manualNroFiscal!=='—'?'Factura N° '+r._manualNroFiscal+' · no registrada en el sistema':'Sin factura asociada'}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
@@ -26454,6 +26468,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <tr className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                               <td className="py-2 px-3 font-black text-purple-700">↳ {n.tipo||'NC'} · {n.nroDocumento||'—'}</td>
                               <td className="py-2 px-3 text-purple-600">{n.fecha||'—'}</td>
+                              <td className="py-2 px-3"></td>
                               <td className="py-2 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{n.tipo==='NC'?'Nota Crédito':'Nota Débito'}</span></td>
                               <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{n.descripcion||'Cliente directo · sin NE asociada'}</td>
                               <td className="py-2 px-3 text-right">{n.tipo==='ND'&&!n._sinTasa?<span className="font-mono text-purple-700">${formatNum(n._montoUSD)}</span>:<span className="text-gray-300">—</span>}</td>
@@ -26466,6 +26481,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <tr key={c.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
                                 <td className="py-1.5 px-3 pl-8 font-bold text-green-700 text-[10px]">↳ Pago{pagosND.length>1?` ${ci+1}`:''}</td>
                                 <td className="py-1.5 px-3 text-green-700 text-[10px]">{c.fecha||'—'}</td>
+                                <td className="py-1.5 px-3"></td>
                                 <td className="py-1.5 px-3 text-gray-400 text-[10px]">{c.referencia||'—'}</td>
                                 <td className="py-1.5 px-3 text-gray-500 text-[10px] max-w-[180px] truncate">{c.metodo||''}{c.cuentaBancoNombre?` · ${c.cuentaBancoNombre}`:''}{parseNum(c.montoBs||0)>0?` · Bs.${formatNum(c.montoBs)}`:''}</td>
                                 <td className="py-1.5 px-3 text-right text-gray-300">—</td>
@@ -26481,6 +26497,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <tr key={a.id||`ant-${ai}`} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
                               <td className="py-2 px-3 font-black text-teal-700">💰 ANTICIPO</td>
                               <td className="py-2 px-3 text-teal-600">{a.fecha||'—'}</td>
+                              <td className="py-2 px-3"></td>
                               <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Anticipo</span></td>
                               <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||'Anticipo de cliente'}{a.referencia?` · Ref. ${a.referencia}`:''}{a._aplicadoHasta>0.01?` · Aplicado $${formatNum(a._aplicadoHasta)}`:''}</td>
                               <td className="py-2 px-3 text-right font-mono text-teal-700">${formatNum(a.monto||0)}</td>
@@ -26493,7 +26510,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </tbody>
                         <tfoot>
                           <tr style={{background:'#0f172a'}} className="text-[9px]">
-                            <td colSpan={4} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}</td>
+                            <td colSpan={5} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}</td>
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
                             <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(manualNCSignedUSDcli))>0?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(manualNCSignedUSDcli!==0?' / NC-ND $'+formatNum(manualNCSignedUSDcli):''):'—'}</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
