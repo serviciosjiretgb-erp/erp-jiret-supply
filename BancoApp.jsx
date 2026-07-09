@@ -2895,11 +2895,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div>
         {/* ── MODAL DETALLE / EDICIÓN ── */}
         {movDetalle && (
-          <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} xwide
+          <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} {...(editId?{xwide:true}:{wide:true})}
             footer={
               editId
                 ? <><BBo onClick={()=>{setEditId(null);setForm(initF());}}>Cancelar</BBo><BBg onClick={saveEdit} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
-                : <><BBd onClick={()=>eliminar(movDetalle)} disabled={busy||movDetalle.estatus==='Conciliado'}>{movDetalle.estatus==='Conciliado'?'🔒 Conciliado':'🗑 Eliminar'}</BBd><div className="flex-1"/><BBg onClick={()=>abrirEdicion(movDetalle)}>✏ Editar</BBg></>
+                : <><BBd onClick={()=>setPwdModal(movDetalle)} disabled={busy||movDetalle.estatus==='Conciliado'}>{movDetalle.estatus==='Conciliado'?'🔒 Conciliado':'🗑 Eliminar'}</BBd><div className="flex-1"/><BBg onClick={()=>abrirEdicion(movDetalle)}>✏ Editar</BBg></>
             }>
             {editId ? (
               /* MODO EDICIÓN COMPLETO */
