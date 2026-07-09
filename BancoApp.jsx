@@ -1209,7 +1209,7 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
       const hasHeader=/[a-zA-ZáéíóúÁÉÍÓÚ]/.test(firstCell)&&!firstCell.startsWith('C');
       const dataLines=hasHeader?lines.slice(1):lines;
       const existentes=new Set(clientes.map(c=>c.rif?.toUpperCase().replace(/[-\s]/g,'')));
-      const batch=writeBatch(db);let importados=0,omitidos=0;
+      const batch=writeBatch(_bancoDB);let importados=0,omitidos=0;
       for(const line of dataLines){
         const p=line.split('\t').map(v=>v.trim().replace(/^["']/,'').replace(/["']$/,''));
         if(p.length<2) continue;
@@ -1427,7 +1427,7 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
       try {
         const pId = bancoGid(); const nuevoSaldo = Math.max(0, fActiva.saldoUSD - abonoUSD);
         const nuevoEstado = nuevoSaldo < 0.01 ? 'Pagada' : 'Pendiente';
-        const batch = writeBatch(db);
+        const batch = writeBatch(_bancoDB);
         batch.set(getDocRef('facturacion_pagos', pId), { id: pId, facturaId: fActiva.id, facturaNumero: fActiva.numero, clienteNombre: fActiva.clienteNombre, fecha: formPago.fecha, monto: abonoUSD, igtf: montoIGTF, difCambiario, metodo: formPago.metodo, ref: formPago.ref, ts: serverTimestamp() });
         batch.update(getDocRef('facturacion_facturas', fActiva.id), { saldoUSD: nuevoSaldo, estado: nuevoEstado });
         await batch.commit();
@@ -1696,7 +1696,7 @@ function InventarioApp({ fbUser, onBack }) {
         const cant = Number(form.cantidad);
         const nuevoStock = form.tipo === 'Entrada' ? Number(prod.stockActual || 0) + cant : Math.max(0, Number(prod.stockActual || 0) - cant);
         const id = bancoGid();
-        const batch = writeBatch(db);
+        const batch = writeBatch(_bancoDB);
         batch.set(getDocRef('inv_movimientos', id), { id, fecha: form.fecha, tipo: form.tipo, productoId: prod.id, productoNombre: prod.nombre, productoCode: prod.codigo, cantidad: cant, descripcion: form.descripcion, referencia: form.referencia, stockAnterior: Number(prod.stockActual || 0), stockResultante: nuevoStock, ts: serverTimestamp() });
         batch.update(getDocRef('inv_productos', prod.id), { stockActual: nuevoStock });
         await batch.commit();
@@ -2229,7 +2229,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                               <button onClick={()=>openEdit(c)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
                               <button onClick={async()=>{
                                 if(!window.confirm(`¿Eliminar cuenta ${c.banco}? Se eliminarán también sus movimientos.`)) return;
-                                const batch=writeBatch(db);
+                                const batch=writeBatch(_bancoDB);
                                 batch.delete(getDocRef('banco_cuentas',c.id));
                                 movBanco.filter(m=>m.cuentaId===c.id).forEach(m=>batch.delete(getDocRef('banco_movimientos',m.id)));
                                 await batch.commit();
@@ -2384,7 +2384,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(!ctaBancoOrig) return alert('El banco origen no tiene cuenta contable. Configúrela en Cuentas Bancarias.');
       setRebBusy(true);
       try {
-        const batch=writeBatch(db); const id=bancoGid();
+        const batch=writeBatch(_bancoDB); const id=bancoGid();
         const yyyymm=form.fecha.substring(0,7).replace('-','');
         const numComp=`RB-${yyyymm}-${id.slice(0,4).toUpperCase()}`;
         const todasLineas=[
@@ -2558,7 +2558,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const cuenta=cuentas.find(c=>c.id===form.cuentaId);
         const signo=(form.tipo==='Ingreso'||form.tipo==='Nota de Crédito')?1:-1;
         const nuevoSaldo=Number(cuenta.saldo)+signo*mNat;
-        const id=bancoGid(); const batch=writeBatch(db);
+        const id=bancoGid(); const batch=writeBatch(_bancoDB);
         const tercero=form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):provs.find(p=>p.id===form.terceroId);
         const factura=form.cerrarCxC&&form.facturaId?facturas.find(f=>f.id===form.facturaId):null;
         // Asiento contable — cuentas
@@ -2716,7 +2716,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const movOriginal = movBanco.find(m=>(m._docId||m.id)===editId);
         const cuentaOrig  = cuentas.find(c=>c.id===movOriginal?.cuentaId);
         const cuentaNueva = cuentas.find(c=>c.id===form.cuentaId);
-        const batch = writeBatch(db);
+        const batch = writeBatch(_bancoDB);
         const signoOrig = movOriginal?.tipo==='Ingreso'?-1:1;
         if(cuentaOrig) batch.update(getDocRef('banco_cuentas',cuentaOrig.id),{saldo:Number(cuentaOrig.saldo)+signoOrig*Number(movOriginal?.montoNativo||0)});
         const signoNuevo = form.tipo==='Ingreso'?1:-1;
@@ -2769,7 +2769,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(!docId){ alert('No se pudo identificar el documento de este movimiento (falta ID). Contacta soporte.'); return; }
         const signo = m.tipo==='Ingreso'?-1:1;
         const cuenta = cuentas.find(c=>c.id===m.cuentaId);
-        const batch=writeBatch(db);
+        const batch=writeBatch(_bancoDB);
         batch.delete(getDocRef('banco_movimientos',docId));
         if(cuenta) batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:Number(cuenta.saldo)+signo*Number(m.montoNativo||0)});
         await batch.commit();
@@ -4640,7 +4640,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(!OK)return alert('Diferencia debe ser $0.00');
       if(!window.confirm('¿Aprobar conciliación? Acción IRREVERSIBLE.'))return;
       setBusy(true);
-      try{const batch=writeBatch(db);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,cargos,abonos,saldoConcil,diff,count:ids.length,ajustes,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');setAjustes([]);alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
+      try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,cargos,abonos,saldoConcil,diff,count:ids.length,ajustes,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');setAjustes([]);alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
     };
     return(<div className="space-y-5">
       <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
@@ -5379,7 +5379,7 @@ function ContabilidadApp({ fbUser, onBack }) {
     const hasHeader=!/^\d/.test(firstCell);
     const dataLines=hasHeader?lines.slice(1):lines;
     const existentes=new Set(cuentas.map(c=>String(c.codigo)));
-    const batch=writeBatch(db);let importados=0,omitidos=0;
+    const batch=writeBatch(_bancoDB);let importados=0,omitidos=0;
     const grupoMap={'ACTIVOS':'1','ACTIVO':'1','PASIVOS':'2','PASIVO':'2','PATRIMONIO':'3','INGRESOS':'4','INGRESO':'4','COSTOS':'5','COSTO':'5','GASTOS':'6','GASTO':'6','GASTOS ISLR':'6'};
     const gNombre={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5':'COSTOS','6':'GASTOS'};
     for(const line of dataLines){
@@ -6398,7 +6398,7 @@ function BalancesApp({ fbUser, onBack }) {
         const cntMes = asientos.filter(a=>a.fecha?.startsWith(mes)).length;
         await setDoc(getDocRef('cont_periodos',id),{id,mes,fechaCierre:getTodayDate(),asientosBloqueados:cntMes,ts:serverTimestamp()});
         // Marcar asientos del mes como cerrados
-        const batch=writeBatch(db);
+        const batch=writeBatch(_bancoDB);
         asientos.filter(a=>a.fecha?.startsWith(mes)).forEach(a=>batch.update(getDocRef('cont_asientos',a.id),{periodoCerrado:true,periodoId:id}));
         await batch.commit();
         alert(`✅ Período ${mes} cerrado. ${cntMes} asientos bloqueados.`);
