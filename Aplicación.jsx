@@ -24065,10 +24065,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             else if(d<=60) porCliente[k].v31_60+=saldo; else porCliente[k].vMas60+=saldo;
             porCliente[k].total+=saldo; porCliente[k].nes.push(ne);
           });
+          // Vendedor asignado en el Directorio de Clientes — solo se usa para clientes que NO tienen
+          // ninguna NE (retenciones manuales / NC-ND directa / anticipos), ya que esos registros no
+          // tienen su propio campo "vendedor" como sí lo tiene cada NE.
+          const _vendedorPorClienteCxC=new Map((clients||[]).map(c=>[(c.rif||'').trim().toUpperCase(),(c.vendedor||'').trim().toUpperCase()]));
+          const _pasaFiltroVendedorSinNE=(rif)=>cxcVendedorFilter==='TODOS'||_vendedorPorClienteCxC.get((rif||'').trim().toUpperCase())===cxcVendedorFilter.toUpperCase();
           // Inyectar/ajustar clientes con retenciones manuales (incluye clientes que solo tienen manuales, sin NEs)
           for(const [rif,rets] of _manualRetsPorCliente){
             const _nm=rets[0]?._manualCliente||rif;
             if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
+            if(!porCliente[rif] && !_pasaFiltroVendedorSinNE(rif)) continue;
             const totalManualUSD=rets.reduce((s,x)=>s+x._montoUSD,0);
             if(!porCliente[rif]){
               porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
@@ -24080,6 +24086,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const [rif,ncs] of _manualNCPorCliente){
             const _nm=ncs[0]?.clientName||rif;
             if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
+            if(!porCliente[rif] && !_pasaFiltroVendedorSinNE(rif)) continue;
             const totalSignedUSD=ncs.reduce((s,x)=>s+x._signedUSD,0);
             if(!porCliente[rif]){
               porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
@@ -24102,6 +24109,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const [rif,ants] of _anticiposPorCliente){
             const _nm=ants[0]?.clientName||rif;
             if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
+            if(!porCliente[rif] && !_pasaFiltroVendedorSinNE(rif)) continue;
             const totalAntUSD=ants.reduce((s,x)=>s+x._saldoAnt,0);
             if(!porCliente[rif]){
               porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
@@ -25954,21 +25962,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!porCli[k]) porCli[k]={clientName:ne.clientName||k,clientRif:k,vendedor:ne.vendedor||'—',nes:[]};
             porCli[k].nes.push(ne);
           });
-          // Inyectar clientes que solo tienen anticipos (sin NEs)
+          const _vendedorPorClienteEc=new Map((clients||[]).map(c=>[(c.rif||'').trim().toUpperCase(),(c.vendedor||'').trim()]));
+          // Inyectar clientes que solo tienen anticipos (sin NEs) — usa el vendedor asignado en Directorio de Clientes,
+          // ya que estos registros no tienen su propio campo "vendedor" como sí lo tiene cada NE.
           for(const [rif,ants] of _anticiposPorClienteEc){
-            if(!porCli[rif]) porCli[rif]={clientName:ants[0]?.clientName||rif,clientRif:rif,vendedor:'—',nes:[]};
+            if(!porCli[rif]) porCli[rif]={clientName:ants[0]?.clientName||rif,clientRif:rif,vendedor:_vendedorPorClienteEc.get(rif.toUpperCase())||'—',nes:[]};
           }
           // Inyectar clientes que solo tienen retenciones manuales (sin NEs)
           for(const [rif,rets] of _manualRetsPorClienteEc){
-            if(!porCli[rif]) porCli[rif]={clientName:rets[0]?._manualCliente||rif,clientRif:rif,vendedor:'—',nes:[]};
+            if(!porCli[rif]) porCli[rif]={clientName:rets[0]?._manualCliente||rif,clientRif:rif,vendedor:_vendedorPorClienteEc.get(rif.toUpperCase())||'—',nes:[]};
           }
           // Inyectar clientes que solo tienen NC/ND de cliente directo (sin NEs)
           for(const [rif,ncs] of _manualNCPorClienteEc){
-            if(!porCli[rif]) porCli[rif]={clientName:ncs[0]?.clientName||rif,clientRif:rif,vendedor:'—',nes:[]};
+            if(!porCli[rif]) porCli[rif]={clientName:ncs[0]?.clientName||rif,clientRif:rif,vendedor:_vendedorPorClienteEc.get(rif.toUpperCase())||'—',nes:[]};
           }
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
-          if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor));
+          if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor)||(cl.vendedor||'').toUpperCase()===ecVendedor);
           const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(_anticiposPorClienteEc.get(cl.clientRif)||[]).reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
           if(ecEstado==='SALDADO') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)<0.01);
           if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)>=0.01);
