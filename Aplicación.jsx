@@ -9243,6 +9243,7 @@ function App() {
   const [cxcCobroModal, setCxcCobroModal] = useState(null);
   const [cxcSearch, setCxcSearch] = useState('');
   const [cxcVendedorFilter, setCxcVendedorFilter] = useState('TODOS');
+  const [cxcEstadoFilter, setCxcEstadoFilter] = useState(['CRÍTICO','VENCIDO','POR COBRAR','AL DÍA','A FAVOR']);
   const [histPage, setHistPage] = useState(0);
   const [histSearch, setHistSearch] = useState('');
   const [histFiltFecha, setHistFiltFecha] = useState('');
@@ -24120,7 +24121,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             porCliente[rif]._totalAnticipos=totalAntUSD;
           }
           // Cuentas por Cobrar: los clientes con deuda cerrada (saldo 0) no se muestran; los saldos a favor (negativos) sí
-          const clientesList=Object.values(porCliente).filter(cl=>Math.abs(cl.total)>=0.01).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
+          const clientesList=Object.values(porCliente).filter(cl=>Math.abs(cl.total)>=0.01)
+            .map(cl=>({...cl,estado:cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA'}))
+            .filter(cl=>cxcEstadoFilter.includes(cl.estado))
+            .sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
 
           // ── Totales de cartera: SIEMPRE derivados de clientesList (misma fuente que la tabla en pantalla,
           // el PDF y el Excel) — así nunca puede haber un total de encabezado/pie que no cuadre con el detalle. ──
@@ -24211,7 +24215,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               // Detallado por cliente — 1 fila por NE abierta, sin sub-filas (pagos/retenciones/NC ya están netos en el saldo)
               let gTotUSD=0,gTotTotalUSD=0;
               body=clientesList.map(cl=>{
-                const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
+                const estado=cl.estado;
                 const anticiposCl2=(_anticiposPorCliente.get(cl.clientRif)||[]);
                 const anticiposUSDclPDF=anticiposCl2.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
                 const manualRetsCl2=(_manualRetsPorCliente.get(cl.clientRif)||[]);
@@ -24276,12 +24280,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>`;
             }
             const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
+            const estadoLabel = cxcEstadoFilter.length<5 ? ` · Estado: ${cxcEstadoFilter.join(', ')}` : '';
             const vendedorBanner = cxcVendedorFilter!=='TODOS' ? `<div style="background:#f97316;color:#fff;padding:6px 20px;font-weight:900;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">👤 VENDEDOR: ${cxcVendedorFilter}</div>` : '';
             const html=`<html><head><meta charset="utf-8"><title>${titulo}</title><style>${ESTILOS}</style></head><body>
               <div style="background:#0f172a;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                 <div><p style="color:#f97316;font-size:18px;font-weight:900;margin:0">Supply G&B</p><p style="color:#94a3b8;font-size:10px;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p></div>
                 <div style="text-align:right"><p style="color:#fff;font-weight:900;font-size:13px;margin:0;text-transform:uppercase">${titulo}</p>
-                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · ${nesAbiertas.length} documentos · Total: $${formatNum(totalCartera)}${vendedorLabel}</p></div>
+                  <p style="color:#94a3b8;font-size:9px;margin:0">Corte: ${corte} · ${nesAbiertas.length} documentos · Total: $${formatNum(totalCartera)}${vendedorLabel}${estadoLabel}</p></div>
               </div>
               ${vendedorBanner}
               <div style="padding:12px 0">${body}</div>
@@ -24297,7 +24302,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const corte=fechaRef||getTodayDate();
             const XH=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:10pt}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#f97316;font-weight:bold;padding:5px 7px;border:1px solid #334155;font-size:9pt;text-align:right}th.left{text-align:left}td{padding:4px 7px;border:1px solid #cbd5e1;font-size:9pt;text-align:right}.left{text-align:left}.hdr{background:#1e293b;color:#fff;font-weight:bold;font-size:9pt}.tot{background:#0f172a;color:#f97316;font-weight:bold}.g{color:#16a34a}.r{color:#dc2626}.a{color:#b45309}.o{color:#c2410c}.b{color:#3b82f6}.alt{background:#f8fafc}.sub{background:#f0fdf4;font-size:9pt}.nc{background:#eff6ff;font-size:9pt}.ret{background:#fef3c7;font-size:9pt}</style></head><body>`;
             const vendedorLabel = cxcVendedorFilter!=='TODOS' ? ` · Vendedor: ${cxcVendedorFilter}` : '';
-            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}${vendedorLabel}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Total cartera: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos · Corte: ${corte}${vendedorLabel}</p>`;
+            const estadoLabel = cxcEstadoFilter.length<5 ? ` · Estado: ${cxcEstadoFilter.join(', ')}` : '';
+            const EMPRESA=`<p style="font-size:14pt;font-weight:bold;margin:0">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</p><h3 style="margin:2px 0 6px;font-size:12pt">${tipo==='aging'?'Análisis de Vencimiento':'Cuentas por Cobrar Detallado'} · Corte: ${corte}${vendedorLabel}${estadoLabel}</h3><p style="color:#64748b;margin:0 0 10px;font-size:9pt">Total cartera: $${formatNum(totalCartera)} · ${nesAbiertas.length} documentos · Corte: ${corte}${vendedorLabel}${estadoLabel}</p>`;
             let rows='';
             if(tipo==='aging'){
               // Resumen por cliente
@@ -25219,6 +25225,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       {cxcVendedores.map(v=><option key={v} value={v}>{v==='TODOS'?'👥 Todos los vendedores':v}</option>)}
                     </select>
                   </div>
+                  {/* Filtro Estado (múltiple) */}
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[8px] font-black text-gray-400 uppercase tracking-wider">Estado</label>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {[['CRÍTICO','bg-red-600 text-white border-red-700'],['VENCIDO','bg-orange-500 text-white border-orange-600'],['POR COBRAR','bg-amber-400 text-amber-900 border-amber-500'],['AL DÍA','bg-green-500 text-white border-green-600'],['A FAVOR','bg-teal-500 text-white border-teal-600']].map(([e,activeCls])=>{
+                        const on=cxcEstadoFilter.includes(e);
+                        return (
+                          <button key={e} onClick={()=>setCxcEstadoFilter(f=>on?f.filter(x=>x!==e):[...f,e])}
+                            className={`px-2.5 py-2 rounded-xl text-[9px] font-black border-2 transition-all ${on?activeCls:'bg-white text-gray-300 border-gray-200'}`}>
+                            {e}
+                          </button>
+                        );
+                      })}
+                      {cxcEstadoFilter.length<5&&<button onClick={()=>setCxcEstadoFilter(['CRÍTICO','VENCIDO','POR COBRAR','AL DÍA','A FAVOR'])} className="text-[8px] text-gray-400 underline font-bold ml-1">Todos</button>}
+                    </div>
+                  </div>
                   <div className="flex items-center gap-2">
                     <label className="text-[9px] font-black text-gray-500 uppercase whitespace-nowrap">Vista:</label>
                     <select value={cxcModo} onChange={e=>setCxcModo(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-orange-400">
@@ -25297,7 +25319,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <tbody>
                         {clientesList.map((cl)=>{
                           const sel=cxcExpandAll||cxcSelectedClient===cl.clientRif;
-                          const estado=cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA';
+                          const estado=cl.estado;
                           const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700','A FAVOR':'bg-teal-100 text-teal-700'}[estado];
                           return (
                             <React.Fragment key={cl.clientRif}>
