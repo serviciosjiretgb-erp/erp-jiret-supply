@@ -1846,10 +1846,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       } catch(e) { console.warn('validarClaveAdmin getDocs error:', e); }
     }
     // 3. Mismo criterio que Aplicación.jsx: solo usuarios Master/admin, campo password,
-    //    con fallback a la clave admin por defecto si ninguno tiene password configurado.
+    //    con respaldo a la clave maestra real del sistema (la misma del login de administrador).
     const adminUsers = users.filter(u => u.role === 'Master' || u.username === 'admin');
     const validPasswords = adminUsers.map(u => u.password).filter(Boolean);
-    if (validPasswords.length === 0) validPasswords.push('1234');
+    validPasswords.push('Supply2026.Admin');
     return validPasswords.includes(pwd);
   };
 
