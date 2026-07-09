@@ -1845,14 +1845,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         users = snap.docs.map(d=>d.data());
       } catch(e) { console.warn('validarClaveAdmin getDocs error:', e); }
     }
-    if(users.length > 0){
-      return users.some(u =>
-        u.password===pwd || u.pin===pwd || u.clave===pwd ||
-        u.contraseña===pwd || u.contrasena===pwd || u.pass===pwd
-      );
-    }
-    // 3. Último recurso: validar contra Firebase Auth uid (si el pwd coincide con uid del usuario logueado)
-    return false;
+    // 3. Mismo criterio que Aplicación.jsx: solo usuarios Master/admin, campo password,
+    //    con fallback a la clave admin por defecto si ninguno tiene password configurado.
+    const adminUsers = users.filter(u => u.role === 'Master' || u.username === 'admin');
+    const validPasswords = adminUsers.map(u => u.password).filter(Boolean);
+    if (validPasswords.length === 0) validPasswords.push('1234');
+    return validPasswords.includes(pwd);
   };
 
   // ══════════════════════════════════════════════════════════════════════
