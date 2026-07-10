@@ -2791,32 +2791,32 @@ const PaginadorUI = ({total, pagina, setPagina, pageSize=PAGE_SIZE_DEFAULT}) => 
 // MÓDULO 2: PROVEEDORES
 // ══════════════════════════════════════════════════════════════════════
 const CXP_SALDO_INICIAL_JUNIO_2026 = [
-  {cod:'P0543',nombre:'LINKPOINT LLC',anticipo:-128280.0,facturas:[{doc:'1072',fecha:'2026-05-02',monto:67230.0,desc:'O.D.C 1072'},{doc:'1972',fecha:'2026-05-06',monto:38480.0,desc:'Factura 1072'},{doc:'1973',fecha:'2026-05-06',monto:6400.0,desc:'FACTURA 1073'},{doc:'1076',fecha:'2026-05-07',monto:64450.0,desc:'PROFORMA 1076'},{doc:'1091',fecha:'2026-06-04',monto:57700.0,desc:'PROFORMA 1091'},{doc:'1092',fecha:'2026-06-05',monto:45752.5,desc:'PROFORMA 1092'}]},
-  {cod:'P0082',nombre:'SURE PACK',anticipo:-36189.2,facturas:[{doc:'3284.',fecha:'2025-08-12',monto:145.59,desc:'Doc: 3284 Factor: 195.2490'},{doc:'3285.',fecha:'2025-08-12',monto:575.19,desc:'Doc: 3285 Factor: 195.2490'},{doc:'3286.',fecha:'2025-08-12',monto:372.18,desc:'Doc: 3286 Factor: 223.6450'},{doc:'-',fecha:'2026-06-15',monto:-7126.0,desc:'ABONO SURE PACK'},{doc:'3364',fecha:'2026-04-30',monto:60315.2,desc:'FACTURA  - STRECH FILM AUTOMATICO CLEAR - 20" x 16Kg'},{doc:'3365',fecha:'2026-04-30',monto:60315.2,desc:'FACTURA  STRECH FILM AUTOMATICO CLEAR - 50cm x 1600Mts x 20M'}]},
-  {cod:'P0556',nombre:'TINFLEX S.R.L',anticipo:-10000.0,facturas:[{doc:'000109',fecha:'2026-06-09',monto:59925.0,desc:'ODC 000109'}]},
-  {cod:'P0515',nombre:'SUMINISTROS QUIVEN, C.A.',anticipo:-13300.0,facturas:[{doc:'0102',fecha:'2026-06-02',monto:19656.0,desc:'ODC 0102'},{doc:'0110',fecha:'2026-06-09',monto:8424.0,desc:'ODC 0110'}]},
-  {cod:'P0511',nombre:'AGRO INDUSTRIAS LACTEAS PACOMELA, C.A',anticipo:-157374.31,facturas:[{doc:'2602',fecha:'2026-01-02',monto:169547.91,desc:'CONTRATO'}]},
-  {cod:'P0005',nombre:'YANCARLOS PEREZ CASANOVA',anticipo:-15388.81,facturas:[{doc:'001079',fecha:'2026-05-25',monto:2970.07,desc:'Doc : 001079'},{doc:'001080',fecha:'2026-06-08',monto:13662.06,desc:'Doc : 001080'},{doc:'001081',fecha:'2026-06-16',monto:4356.06,desc:'Doc : 001081'},{doc:'001082',fecha:'2026-06-26',monto:3564.06,desc:'Doc : 001082'}]},
-  {cod:'P0338',nombre:'AUTO TOTAL, C.A',anticipo:-12529.25,facturas:[{doc:'11166',fecha:'2025-10-07',monto:2797.98,desc:'Factor:187,2893 Doc:11166'},{doc:'11164',fecha:'2025-10-07',monto:17532.25,desc:'Factor:187,2893 Doc:11164'},{doc:'11165',fecha:'2025-10-07',monto:780.0,desc:'Factor:187,2893 Doc:11165'}]},
-  {cod:'P0467',nombre:'FERRETERIA ELECTRICA INDUSTRIAL, C.A.',anticipo:0.0,facturas:[{doc:'ODC 0061',fecha:'2026-03-16',monto:4187.76,desc:'ODC 0061'},{doc:'ODC 0066',fecha:'2026-03-24',monto:114.84,desc:'ODC 0066'}]},
-  {cod:'P0492',nombre:'EMPAQUES PLASTICOS CABIMAS C.A (EMPLASCA)',anticipo:-2985.0,facturas:[{doc:'0105',fecha:'2026-06-05',monto:5970.0,desc:'ODC 0105'}]},
-  {cod:'P0563',nombre:'EL GRAN GALPON DEL REMATE ,C.A',anticipo:-1600.0,facturas:[{doc:'ODC 116',fecha:'2026-06-25',monto:3016.0,desc:'ODC 116'}]},
-  {cod:'P0454',nombre:'RIGOBERTO ENRIQUE ATENCIO RINCON',anticipo:-2000.0,facturas:[{doc:'000566',fecha:'2026-06-15',monto:3038.56,desc:'Doc : 000566'}]},
-  {cod:'P0106',nombre:'JOSE LUIS BOHORQUEZ URDANETA',anticipo:0.0,facturas:[{doc:'0005281',fecha:'2026-05-28',monto:915.56,desc:'Doc : 0005281'}]},
-  {cod:'P0557',nombre:'SANDY DE JESUS PEREZ BADELL',anticipo:0.0,facturas:[{doc:'000698',fecha:'2026-06-12',monto:824.06,desc:'Doc : 000698'}]},
-  {cod:'P0473',nombre:'SUINFERCA CORP , C.A',anticipo:0.0,facturas:[{doc:'ODC 0090',fecha:'2026-05-11',monto:12.53,desc:'ODC 0090'},{doc:'PRESUPUESTO 836',fecha:'2026-05-14',monto:29.0,desc:'PRESUPUESTO 836'},{doc:'ODC 93',fecha:'2026-05-15',monto:4.06,desc:'ODC 93'},{doc:'00000856',fecha:'2026-05-21',monto:74.24,desc:'ODC 00000856'},{doc:'923',fecha:'2026-06-18',monto:279.1,desc:'PROPUESTO 923'},{doc:'943',fecha:'2026-06-25',monto:32.48,desc:'PROPUESTO 943'},{doc:'945',fecha:'2026-06-26',monto:31.32,desc:'PROPUESTO 945'},{doc:'1087',fecha:'2026-06-26',monto:22.01,desc:'PROPUESTO 1087'}]},
-  {cod:'P0550',nombre:'ADAN E.AVILA',anticipo:0.0,facturas:[{doc:'000824',fecha:'2026-05-25',monto:326.76,desc:'Doc : 000824'}]},
-  {cod:'P0105',nombre:'NADEN SEGUNDO HAJAR OLMOS',anticipo:0.0,facturas:[{doc:'001673',fecha:'2026-06-01',monto:10.36,desc:'Doc : 001673'},{doc:'001674',fecha:'2026-06-01',monto:181.34,desc:'Doc : 001674'}]},
-  {cod:'P0531',nombre:'LOSDEKLUZ 2.0., C.A',anticipo:-222.59,facturas:[{doc:'000000644',fecha:'2026-03-27',monto:311.63,desc:'Doc : 000000644'}]},
-  {cod:'P0074',nombre:'OK PIZZA, COMPAÑIA ANONIMA',anticipo:0.0,facturas:[{doc:'003077',fecha:'2025-09-09',monto:18.02,desc:'Factor:154,9825 Doc:003077'}]},
-  {cod:'P0078',nombre:'H2O FRESH, C.A',anticipo:0.0,facturas:[{doc:'00047030',fecha:'2026-05-20',monto:3.71,desc:'Doc : 00047030'},{doc:'00047029',fecha:'2026-05-20',monto:1.44,desc:'Doc : 00047029'}]},
-  {cod:'P0413',nombre:'ESTELAR LATINOAMERICA, C.A.',anticipo:-94.92,facturas:[]},
-  {cod:'P0030',nombre:'INVERSIONES AVICOLAS, C.A.',anticipo:-170.02,facturas:[{doc:'1800240387',fecha:'2026-05-14',monto:39.17,desc:'Doc : 1800240387'},{doc:'1800242079',fecha:'2026-06-09',monto:29.78,desc:'Doc : 1800242079'}]},
-  {cod:'P0533',nombre:'RUTAS AEREAS DE VENEZUELA RAV, S.A. (RAVSA)',anticipo:-128.46,facturas:[]},
-  {cod:'P0546',nombre:'HOTEL EMPERADOR C A',anticipo:-770.0,facturas:[{doc:'00009221',fecha:'2026-05-10',monto:479.23,desc:'Doc : 00009221'}]},
-  {cod:'P0243',nombre:'INVESTIGACION Y DESARROLLO, C.A.',anticipo:-519.73,facturas:[]},
-  {cod:'P0313',nombre:'GURCA',anticipo:-540.0,facturas:[]},
-  {cod:'P0424',nombre:'ZULIANA DE EMPAQUE, C.A',anticipo:-83511.56,facturas:[{doc:'000040',fecha:'2026-01-30',monto:2219.49,desc:'Doc : 000040'},{doc:'000039',fecha:'2026-01-30',monto:5192.87,desc:'Factor:367,3069 Doc:000039'},{doc:'000042',fecha:'2026-02-27',monto:5150.05,desc:'Doc : 000042'}]},
+  {cod:'P0005',nombre:'YANCARLOS PEREZ CASANOVA',facturas:[{doc:'001079',fecha:'2026-05-25',monto:2970.07,desc:'Doc : 001079'},{doc:'001080',fecha:'2026-06-08',monto:13662.06,desc:'Doc : 001080'},{doc:'001081',fecha:'2026-06-16',monto:4356.06,desc:'Doc : 001081'},{doc:'001082',fecha:'2026-06-26',monto:3564.06,desc:'Doc : 001082'}],pagos:[{fecha:'2026-05-21',monto:10.74,desc:'ADELANTO CONDOMINIO ABRIL Y MAYO FAC 1076'},{fecha:'2026-05-25',monto:337.4,desc:'METERIAL RECUPERADO 1077'},{fecha:'2026-05-29',monto:85.0,desc:'PAGO YORDYS GONZALEZ PERSONAL EVENTUAL'},{fecha:'2026-05-29',monto:70.0,desc:'PAGO KELVIN RODRIGUEZ PERSONAL EVENTUAL'},{fecha:'2026-05-29',monto:100.0,desc:'ABONO DE 100$'},{fecha:'2026-05-29',monto:85.0,desc:'ABONO 85$'},{fecha:'2026-05-29',monto:90.0,desc:'ABONO DE 90$'},{fecha:'2026-05-29',monto:70.0,desc:'ABONO DE 70$'},{fecha:'2026-05-29',monto:80.0,desc:'ABONO DE 80$'},{fecha:'2026-05-29',monto:25.0,desc:'ABONO'},{fecha:'2026-05-29',monto:40.37,desc:'ABONO KENNEL NUÑEZ 20$ FACT 1077'},{fecha:'2026-05-29',monto:40.37,desc:'ABONO KENNEL NUÑEZ 20$ FAC 1077'},{fecha:'2026-06-03',monto:180.0,desc:'GUSTAVO ESCOBAR CORE 1079'},{fecha:'2026-06-03',monto:239.71,desc:'COMISION PRODUVISA 1079'},{fecha:'2026-06-03',monto:340.0,desc:'WUALTER USECHE 1079'},{fecha:'2026-06-03',monto:1.0,desc:'ESTACIONAMIENTO 1079'},{fecha:'2026-06-03',monto:200.0,desc:'MP 1081'},{fecha:'2026-06-04',monto:80.0,desc:'ADELANTO FAC 1077 COMPRA DE ESTIBAS 80$'},{fecha:'2026-06-05',monto:100.0,desc:'JULIO ALBARRAN'},{fecha:'2026-06-05',monto:100.0,desc:'CARLOS RUMBO 1081'},{fecha:'2026-06-05',monto:85.0,desc:'YORDYS GONZALEZ 1081'},{fecha:'2026-06-05',monto:70.0,desc:'NAYLE ANDRADES 1081'},{fecha:'2026-06-05',monto:70.0,desc:'KEILIS RODRIGUEZ 1081'},{fecha:'2026-06-05',monto:50.0,desc:'MP 1081'},{fecha:'2026-06-08',monto:40.0,desc:'adelanto fac 1079 40$ cisterna'},{fecha:'2026-06-09',monto:120.0,desc:'EURO ACOSTA 1081'},{fecha:'2026-06-10',monto:261.23,desc:'PAGO DE SEDATEZ'},{fecha:'2026-06-12',monto:100.0,desc:'PAGO JULIO ALBARRAN YANCARLOS'},{fecha:'2026-06-12',monto:120.0,desc:'PAGO CARLOS RUMBO YANCARLOS'},{fecha:'2026-06-12',monto:80.0,desc:'PAGO YORDYS GONZALEZ YANCARLOS'},{fecha:'2026-06-12',monto:70.0,desc:'PAGO NAYLE ANDRADES YANCARLOS'},{fecha:'2026-06-12',monto:60.0,desc:'PAGO NYNOSKA FLORES YANCARLOS'},{fecha:'2026-06-12',monto:80.0,desc:'PAGO NESTOR ROA YANCARLOS'},{fecha:'2026-06-12',monto:700.0,desc:'MP 1081'},{fecha:'2026-06-15',monto:500.0,desc:'PM 1081'},{fecha:'2026-06-16',monto:1120.0,desc:'EGRESO 1079'},{fecha:'2026-06-17',monto:267.0,desc:'METERIAL RECUPERADO 1077 Y 1081'},{fecha:'2026-06-25',monto:300.0,desc:'MP 300$ 1081'},{fecha:'2026-06-26',monto:4525.0,desc:'EGRESO 1080'},{fecha:'2026-06-26',monto:1318.0,desc:'EGRESO 1080'},{fecha:'2026-06-26',monto:70.0,desc:'ADELANTO 1081'},{fecha:'2026-06-29',monto:117.99,desc:'PAGO LEANDRO MARTINEZ 117,99$ COMISIONES'},{fecha:'2026-06-29',monto:1830.0,desc:'EGRESO 1080'},{fecha:'2026-06-29',monto:1160.0,desc:'EGRESO 1080'}]},
+  {cod:'P0030',nombre:'INVERSIONES AVICOLAS, C.A.',facturas:[{doc:'1800240387',fecha:'2026-05-14',monto:39.17,desc:'Doc : 1800240387'},{doc:'1800242079',fecha:'2026-06-09',monto:29.78,desc:'Doc : 1800242079'}],pagos:[{fecha:'2026-06-10',monto:170.02,desc:'adelanto'}]},
+  {cod:'P0074',nombre:'OK PIZZA, COMPAÑIA ANONIMA',facturas:[{doc:'003077',fecha:'2025-09-09',monto:18.02,desc:'Factor:154,9825 Doc:003077'}],pagos:[]},
+  {cod:'P0078',nombre:'H2O FRESH, C.A',facturas:[{doc:'00047030',fecha:'2026-05-20',monto:3.71,desc:'Doc : 00047030'},{doc:'00047029',fecha:'2026-05-20',monto:1.44,desc:'Doc : 00047029'}],pagos:[]},
+  {cod:'P0082',nombre:'SURE PACK',facturas:[{doc:'3284.',fecha:'2025-08-12',monto:145.59,desc:'Doc: 3284 Factor: 195.2490'},{doc:'3285.',fecha:'2025-08-12',monto:575.19,desc:'Doc: 3285 Factor: 195.2490'},{doc:'3286.',fecha:'2025-08-12',monto:372.18,desc:'Doc: 3286 Factor: 223.6450'},{doc:'-',fecha:'2026-06-15',monto:-7126.0,desc:'ABONO SURE PACK'},{doc:'3364',fecha:'2026-04-30',monto:60315.2,desc:'FACTURA  - STRECH FILM AUTOMATICO CLEAR - 20" x 16Kg'},{doc:'3365',fecha:'2026-04-30',monto:60315.2,desc:'FACTURA  STRECH FILM AUTOMATICO CLEAR - 50cm x 1600Mts x 20Mic'}],pagos:[{fecha:'2026-06-05',monto:5315.2,desc:'ABONO SURE PACK'},{fecha:'2026-06-12',monto:30874.0,desc:'ABONO SURE PACK'}]},
+  {cod:'P0105',nombre:'NADEN SEGUNDO HAJAR OLMOS',facturas:[{doc:'001673',fecha:'2026-06-01',monto:10.36,desc:'Doc : 001673'},{doc:'001674',fecha:'2026-06-01',monto:181.34,desc:'Doc : 001674'}],pagos:[]},
+  {cod:'P0106',nombre:'JOSE LUIS BOHORQUEZ URDANETA',facturas:[{doc:'0005281',fecha:'2026-05-28',monto:915.56,desc:'Doc : 0005281'}],pagos:[]},
+  {cod:'P0243',nombre:'INVESTIGACION Y DESARROLLO, C.A.',facturas:[],pagos:[{fecha:'2026-05-06',monto:519.73,desc:'ABONO INDESCA'}]},
+  {cod:'P0313',nombre:'GURCA',facturas:[],pagos:[{fecha:'2026-06-25',monto:540.0,desc:'ANTICIPO IMPORTACION'}]},
+  {cod:'P0338',nombre:'AUTO TOTAL, C.A',facturas:[{doc:'11166',fecha:'2025-10-07',monto:2797.98,desc:'Factor:187,2893 Doc:11166'},{doc:'11164',fecha:'2025-10-07',monto:17532.25,desc:'Factor:187,2893 Doc:11164'},{doc:'11165',fecha:'2025-10-07',monto:780.0,desc:'Factor:187,2893 Doc:11165'},{doc:'2',fecha:'2025-10-08',monto:4092.27,desc:'[Ajuste] Financiamiento (gastos operativos+placa) prestamo 12.195,58 u'}],pagos:[{fecha:'2025-10-08',monto:7766.0,desc:'Adelanto'},{fecha:'2025-10-08',monto:4905.38,desc:'Adelanto'},{fecha:'2025-10-07',monto:335.54,desc:'AUTO TOTAL, C.A COMPRA FOTON DESCUENTO-NC 177'},{fecha:'2025-11-06',monto:444.19,desc:'CUOTA CAPITAL  1 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2025-12-06',monto:444.19,desc:'CUOTA CAPITAL  2 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2026-01-06',monto:437.63,desc:'CUOTA CAPITAL  3 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2026-02-06',monto:444.19,desc:'CUOTA CAPITAL  4 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2026-03-06',monto:450.85,desc:'CUOTA CAPITAL  5 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2026-04-06',monto:457.62,desc:'CUOTA CAPITAL  6 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2026-05-06',monto:464.48,desc:'CUOTA CAPITAL  7 FINANCIMIENTO VEHICULO FOTON'},{fecha:'2026-06-07',monto:471.45,desc:'CUOTA CAPITAL  7 FINANCIMIENTO VEHICULO FOTON inreteses 2107,82 +capit'}]},
+  {cod:'P0413',nombre:'ESTELAR LATINOAMERICA, C.A.',facturas:[],pagos:[{fecha:'2026-06-01',monto:94.92,desc:'PAGO ESTELAR LATINOAMERICA C.A.'}]},
+  {cod:'P0424',nombre:'ZULIANA DE EMPAQUE, C.A',facturas:[{doc:'000040',fecha:'2026-01-30',monto:2219.49,desc:'Doc : 000040'},{doc:'000039',fecha:'2026-01-30',monto:5192.87,desc:'Factor:367,3069 Doc:000039'},{doc:'000042',fecha:'2026-02-27',monto:5150.05,desc:'Doc : 000042'}],pagos:[{fecha:'2025-09-01',monto:11950.0,desc:'Adelanto'},{fecha:'2025-09-03',monto:3022.56,desc:'Adelanto'},{fecha:'2025-09-05',monto:200.0,desc:'Adelanto'},{fecha:'2025-09-09',monto:40.0,desc:'Adelanto'},{fecha:'2025-09-10',monto:30.0,desc:'Adelanto'},{fecha:'2025-11-13',monto:40000.0,desc:'Adelanto'},{fecha:'2025-11-13',monto:13269.0,desc:'Adelanto'},{fecha:'2025-11-17',monto:15000.0,desc:'Adelanto'}]},
+  {cod:'P0454',nombre:'RIGOBERTO ENRIQUE ATENCIO RINCON',facturas:[{doc:'000566',fecha:'2026-06-15',monto:3038.56,desc:'Doc : 000566'}],pagos:[{fecha:'2026-06-23',monto:500.0,desc:'ADELANTO DE 500$'},{fecha:'2026-06-25',monto:1000.0,desc:'anticipo 1000$'},{fecha:'2026-06-26',monto:500.0,desc:'ADELANTO 500$'}]},
+  {cod:'P0467',nombre:'FERRETERIA ELECTRICA INDUSTRIAL, C.A.',facturas:[{doc:'ODC 0061',fecha:'2026-03-16',monto:4187.76,desc:'ODC 0061'},{doc:'ODC 0066',fecha:'2026-03-24',monto:114.84,desc:'ODC 0066'}],pagos:[]},
+  {cod:'P0473',nombre:'SUINFERCA CORP , C.A',facturas:[{doc:'ODC 0090',fecha:'2026-05-11',monto:12.53,desc:'ODC 0090'},{doc:'PRESUPUESTO 836',fecha:'2026-05-14',monto:29.0,desc:'PRESUPUESTO 836'},{doc:'ODC 93',fecha:'2026-05-15',monto:4.06,desc:'ODC 93'},{doc:'00000856',fecha:'2026-05-21',monto:74.24,desc:'ODC 00000856'},{doc:'923',fecha:'2026-06-18',monto:279.1,desc:'PROPUESTO 923'},{doc:'943',fecha:'2026-06-25',monto:32.48,desc:'PROPUESTO 943'},{doc:'945',fecha:'2026-06-26',monto:31.32,desc:'PROPUESTO 945'},{doc:'1087',fecha:'2026-06-26',monto:22.01,desc:'PROPUESTO 1087'}],pagos:[]},
+  {cod:'P0492',nombre:'EMPAQUES PLASTICOS CABIMAS C.A (EMPLASCA)',facturas:[{doc:'0105',fecha:'2026-06-05',monto:5970.0,desc:'ODC 0105'}],pagos:[{fecha:'2026-06-11',monto:2985.0,desc:'ABONO 50% ODC 0105'}]},
+  {cod:'P0511',nombre:'AGRO INDUSTRIAS LACTEAS PACOMELA, C.A',facturas:[{doc:'2602',fecha:'2026-01-02',monto:169547.91,desc:'CONTRATO'}],pagos:[{fecha:'2026-03-04',monto:147546.91,desc:'ABONO PROVEEDOR PACOMELA'},{fecha:'2026-04-06',monto:1827.4,desc:'ABONO AGRO INDUSTRIAS LACTEAS PACOMELA, C.A'},{fecha:'2026-06-04',monto:8000.0,desc:'adelanto de 8000$ tasa 560,3753'}]},
+  {cod:'P0515',nombre:'SUMINISTROS QUIVEN, C.A.',facturas:[{doc:'0102',fecha:'2026-06-02',monto:19656.0,desc:'ODC 0102'},{doc:'0110',fecha:'2026-06-09',monto:8424.0,desc:'ODC 0110'}],pagos:[{fecha:'2026-05-29',monto:2000.0,desc:'ABONO'},{fecha:'2026-05-29',monto:2000.0,desc:'ABONO'},{fecha:'2026-06-04',monto:2000.0,desc:'ADELANTO'},{fecha:'2026-06-04',monto:3000.0,desc:'ADELANTO DE 3000$'},{fecha:'2026-06-11',monto:2000.0,desc:'ANTICIPO QUIVEN'},{fecha:'2026-06-29',monto:2300.0,desc:'ADELANTO QUIVEN'}]},
+  {cod:'P0531',nombre:'LOSDEKLUZ 2.0., C.A',facturas:[{doc:'000000644',fecha:'2026-03-27',monto:311.63,desc:'Doc : 000000644'}],pagos:[{fecha:'2026-03-27',monto:222.59,desc:'ABONO 70% LOSDKLUZ 2.0, C.A FAC: 000000644'}]},
+  {cod:'P0533',nombre:'RUTAS AEREAS DE VENEZUELA RAV, S.A. (RAVSA)',facturas:[],pagos:[{fecha:'2026-06-02',monto:111.38,desc:'PAGO RUTAS AEREAS DE VENEZUELA RAV S.A.'},{fecha:'2026-06-02',monto:17.08,desc:'PAGO RUTAS AEREAS DE VENEZUELA RAV S.A.'}]},
+  {cod:'P0543',nombre:'LINKPOINT LLC',facturas:[{doc:'1072',fecha:'2026-05-02',monto:67230.0,desc:'O.D.C 1072'},{doc:'1972',fecha:'2026-05-06',monto:38480.0,desc:'Factura 1072'},{doc:'1973',fecha:'2026-05-06',monto:6400.0,desc:'FACTURA 1073'},{doc:'1076',fecha:'2026-05-07',monto:64450.0,desc:'PROFORMA 1076'},{doc:'1091',fecha:'2026-06-04',monto:57700.0,desc:'PROFORMA 1091'},{doc:'1092',fecha:'2026-06-05',monto:45752.5,desc:'PROFORMA 1092'}],pagos:[{fecha:'2026-05-04',monto:15000.0,desc:'ANTICIPO DE PROFORMA 1073'},{fecha:'2026-05-04',monto:22000.0,desc:'ANTICIPO DE PROFORMA 1072'},{fecha:'2026-05-08',monto:17500.0,desc:'ANTICIPO DE PROFORMA 1076'},{fecha:'2026-05-12',monto:3500.0,desc:'ANCIPO DE PROFORMA 1076'},{fecha:'2026-05-29',monto:15000.0,desc:'ANTICIPO FAC 1073'},{fecha:'2026-06-11',monto:12000.0,desc:'ANTICIPO PORFORMA 1091'},{fecha:'2026-06-19',monto:7000.0,desc:'ANTICIPO 1091'},{fecha:'2026-06-23',monto:22000.0,desc:'ANTICIPO PORFORMA 1072'},{fecha:'2026-06-26',monto:14280.0,desc:'ADELANTO 1092'}]},
+  {cod:'P0546',nombre:'HOTEL EMPERADOR C A',facturas:[{doc:'00009221',fecha:'2026-05-10',monto:479.23,desc:'Doc : 00009221'}],pagos:[{fecha:'2026-05-04',monto:770.0,desc:'ABONO HOTEL EMPERADOR C.A. FAC: 00009221'}]},
+  {cod:'P0550',nombre:'ADAN E.AVILA',facturas:[{doc:'000824',fecha:'2026-05-25',monto:326.76,desc:'Doc : 000824'}],pagos:[]},
+  {cod:'P0556',nombre:'TINFLEX S.R.L',facturas:[{doc:'000109',fecha:'2026-06-09',monto:59925.0,desc:'ODC 000109'}],pagos:[{fecha:'2026-06-10',monto:10000.0,desc:'ADELANTO'}]},
+  {cod:'P0557',nombre:'SANDY DE JESUS PEREZ BADELL',facturas:[{doc:'000698',fecha:'2026-06-12',monto:824.06,desc:'Doc : 000698'}],pagos:[]},
+  {cod:'P0563',nombre:'EL GRAN GALPON DEL REMATE ,C.A',facturas:[{doc:'ODC 116',fecha:'2026-06-25',monto:3016.0,desc:'ODC 116'}],pagos:[{fecha:'2026-06-25',monto:1600.0,desc:'ANTICIPO'}]},
 ];
 
 const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
@@ -2857,7 +2857,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
 
   const cargarSaldoInicialCxP = () => setDialog({
     title:'Cargar Saldo Inicial CxP — Junio 2026',
-    text:`Esto va a crear ${CXP_SALDO_INICIAL_JUNIO_2026.reduce((s,p)=>s+p.facturas.length,0)} facturas pendientes y ${CXP_SALDO_INICIAL_JUNIO_2026.filter(p=>p.anticipo<-0.01).length} anticipos a proveedor, para ${CXP_SALDO_INICIAL_JUNIO_2026.length} proveedores (creando los que no existan en el Directorio). Esta acción es para hacerse UNA SOLA VEZ. ¿Continuar?`,
+    text:`Esto va a crear ${CXP_SALDO_INICIAL_JUNIO_2026.reduce((s,p)=>s+p.facturas.length,0)} facturas pendientes y ${CXP_SALDO_INICIAL_JUNIO_2026.reduce((s,p)=>s+(p.pagos||[]).length,0)} adelantos/pagos individuales (cada uno con su fecha y descripción original, sin unificar), para ${CXP_SALDO_INICIAL_JUNIO_2026.length} proveedores (creando los que no existan en el Directorio). Esta acción es para hacerse UNA SOLA VEZ. ¿Continuar?`,
     type:'confirm',
     onConfirm: async () => {
       setCargandoSaldoInicial(true);
@@ -2897,14 +2897,14 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
             });
             facturasCreadas++;
           }
-          if(p.anticipo<-0.01){
+          for(const pg of (p.pagos||[])){
             const antId=`ANTCXP-INI-${pId()}`;
             batch.set(getDocRef('procura_pagos_cxp',antId),{
               id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
               proveedorId:provId,proveedor:provNombre,
-              monto:parseFloat(Math.abs(p.anticipo).toFixed(2)),
-              fecha:'2026-06-30',metodo:'Saldo Inicial',banco:'',referencia:'',
-              concepto:'Saldo Inicial - Anticipo acumulado a junio 2026',
+              monto:parseFloat(Math.abs(pg.monto).toFixed(2)),
+              fecha:pg.fecha||'2026-06-30',metodo:'Saldo Inicial',banco:'',referencia:'',
+              concepto:pg.desc||'Adelanto Saldo Inicial Junio 2026',
               cuentaId:'',moneda:'USD',tasa:0,
               saldoInicialImportado:true,
               timestamp:Date.now(),user:'Sistema (Carga Inicial)'
@@ -22921,19 +22921,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(ventaNCForm.naturaleza==='FISCAL'&&!ventaNCForm.facturaId)
               return setDialog({title:'Falta factura',text:'Selecciona la factura a la que aplica.',type:'alert'});
             const esClienteDirecto=ventaNCForm.naturaleza==='NO_FISCAL'&&ventaNCForm._clienteDirecto;
+            const esUsdSinIva=ventaNCForm.naturaleza==='NO_FISCAL'; // NO_FISCAL siempre es USD directo, sin IVA (asociada a NE o cliente directo)
             if(ventaNCForm.naturaleza==='NO_FISCAL'&&!esClienteDirecto&&!ventaNCForm.neId)
               return setDialog({title:'Falta NE',text:'Selecciona la Nota de Entrega.',type:'alert'});
             if(esClienteDirecto&&!ventaNCForm.clientRif)
               return setDialog({title:'Falta cliente',text:'Busca y selecciona un cliente registrado.',type:'alert'});
-            if(esClienteDirecto&&!parseNum(ventaNCForm.montoUSD||0))
+            if(esUsdSinIva&&!parseNum(ventaNCForm.montoUSD||0))
               return setDialog({title:'Falta monto',text:'Ingresa el monto en USD.',type:'alert'});
             try {
               const esEdicionNC=!!ventaNCForm.id;
               const id=ventaNCForm.id||`VNC-${Date.now()}`;
               const facAfect=(invoices||[]).find(i=>i.id===ventaNCForm.facturaId);
               const neAfect=(notasEntrega||[]).find(e=>e.id===ventaNCForm.neId);
-              const tasaAfect=esClienteDirecto
-                ?(parseNum(ventaNCForm.tasaDirecta||0)||parseNum(settings?.tasaBCV||0)||1)
+              const tasaAfect=esUsdSinIva
+                ?(parseNum(ventaNCForm.tasaDirecta||0)||parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1)
                 :(parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
               const docSel=facAfect||neAfect;
               const esND = ventaNCForm.tipo==='ND';
@@ -22944,7 +22945,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 ?(modoAnulacion==='total'?itemsNCForm:itemsNCForm.filter(it=>it.seleccionado&&parseNum(it.cantNC||0)>0))
                 :[];
               const baseUSDCalc=itemsARevertir.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantNC||it.cantidad||0),0);
-              const montoFinal=esClienteDirecto
+              const montoFinal=esUsdSinIva
                 ?parseFloat((parseNum(ventaNCForm.montoUSD||0)*tasaAfect).toFixed(2))
                 :(ventaNCForm.monto?parseNum(ventaNCForm.monto):parseFloat((baseUSDCalc*tasaAfect).toFixed(2)));
               const batch=writeBatch(db);
@@ -22954,7 +22955,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const ncClean=Object.fromEntries(Object.entries({...ncFormSafe}).filter(([,v])=>v!==undefined));
               batch.set(getDocRef('notasVentaCreditoDebito',id),{
                 ...ncClean,id,monto:montoFinal,tasaFactura:tasaAfect,modoAnulacion,
-                tieneIva:esClienteDirecto?false:true,
+                tieneIva:esUsdSinIva?false:true,
                 itemsRevertidos:itemsARevertir.map(it=>({fgId:it.fgId||'',invCode:it.invCode||'',desc:it.desc||'',cantidad:parseNum(it.cantNC||it.cantidad||0),costoUnit:parseNum(it.costoUnit||0)})),
                 timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
               });
@@ -23434,7 +23435,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           )}
 
                           {/* Montos */}
-                          {!esFiscal&&ventaNCForm._clienteDirecto?(
+                          {!esFiscal?(
                             <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl p-4 space-y-3">
                               <p className="text-[9px] font-black text-purple-600 uppercase tracking-widest">💰 Monto de la {ventaNCForm.tipo} (USD · sin IVA)</p>
                               <div>
@@ -23443,17 +23444,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   placeholder="0,00" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
                               </div>
                               <div>
-                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$ (referencial, para el registro contable)</label>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$ (para el registro contable en Bs.)</label>
                                 <input type="number" step="0.0001" value={ventaNCForm.tasaDirecta||''} onChange={e=>setVentaNCForm(f=>({...f,tasaDirecta:e.target.value}))}
-                                  placeholder={String(parseNum(settings?.tasaBCV||0))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-400"/>
+                                  placeholder={String(docSel&&tasaNC>1?formatNum(tasaNC):parseNum(settings?.tasaBCV||0))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-400"/>
                               </div>
                               {parseNum(ventaNCForm.montoUSD||0)>0&&(
                                 <div className="bg-white border border-purple-200 rounded-xl p-3 text-[9px]">
-                                  <p className="text-gray-400 uppercase font-bold text-[8px]">Equivalente en Bs. (referencial)</p>
-                                  <p className="font-black text-purple-700 text-base">Bs. {formatNum(parseNum(ventaNCForm.montoUSD||0)*(parseNum(ventaNCForm.tasaDirecta||0)||parseNum(settings?.tasaBCV||0)||1))}</p>
+                                  <p className="text-gray-400 uppercase font-bold text-[8px]">Equivalente en Bs. (para efectos contables)</p>
+                                  <p className="font-black text-purple-700 text-base">Bs. {formatNum(parseNum(ventaNCForm.montoUSD||0)*(parseNum(ventaNCForm.tasaDirecta||0)||(docSel&&tasaNC>1?tasaNC:0)||parseNum(settings?.tasaBCV||0)||1))}</p>
                                 </div>
                               )}
-                              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste directo al cliente · sin IVA · sin movimiento de inventario · no asociado a NE</div>
+                              <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste financiero · sin IVA · sin movimiento de inventario{ventaNCForm._clienteDirecto?' · no asociado a NE':' · asociado a NE de referencia'}</div>
                             </div>
                           ):(
                           <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 space-y-3">
