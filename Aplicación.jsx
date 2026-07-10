@@ -3873,6 +3873,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
   const [srvSearch,setSrvSearch]=useState('');
   const [categoriasSrv,setCategoriasSrv]=useState([]);
   const [provSearch,setProvSearch]=useState('');
+  const [ordenesPagina,setOrdenesPagina]=useState(0);
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -3916,6 +3917,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
     const st=filtStatus==='TODOS'||o.status===filtStatus;
     return ms&&st;
   });
+  const pgOC=Math.max(0,Math.min(ordenesPagina,Math.ceil(filtradas.length/PAGE_SIZE_DEFAULT)-1));
+  const pageOC=filtradas.slice(pgOC*PAGE_SIZE_DEFAULT,(pgOC+1)*PAGE_SIZE_DEFAULT);
 
   const nextNroOC=()=>{
     const nums=ordenesCompra.map(o=>parseInt((o.nroOC||'OC-0000').replace(/[^0-9]/g,''))||0);
@@ -4190,11 +4193,11 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="relative" style={{minWidth:'200px',flex:1}}>
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9 text-xs py-2`}/>
+          <input value={search} onChange={e=>{setSearch(e.target.value);setOrdenesPagina(0);}} placeholder="Buscar OC o proveedor..." className={`${inp} pl-9 text-xs py-2`}/>
         </div>
         <div className="flex gap-1 flex-wrap">
           {statusList.map(s=>(
-            <button key={s} onClick={()=>setFiltStatus(s)} className={`text-[9px] font-black uppercase px-2.5 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white bg-slate-900':'text-slate-500 bg-white border border-slate-200 hover:bg-slate-100'}`}>{s}</button>
+            <button key={s} onClick={()=>{setFiltStatus(s);setOrdenesPagina(0);}} className={`text-[9px] font-black uppercase px-2.5 py-1.5 rounded-lg transition-all ${filtStatus===s?'text-white bg-slate-900':'text-slate-500 bg-white border border-slate-200 hover:bg-slate-100'}`}>{s}</button>
           ))}
         </div>
         <PBg onClick={()=>{setForm(initForm());setItems([]);setProvSearch('');setModal('form');}}><Plus size={13}/> Nueva OC</PBg>
@@ -4209,7 +4212,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
             </tr></thead>
             <tbody>
               {filtradas.length===0?<tr><td colSpan={8} className="py-10"><PEmpty icon={ClipboardList} title="Sin órdenes" desc="Crea tu primera orden de compra"/></td></tr>:
-              filtradas.map(oc=>{
+              pageOC.map(oc=>{
                 const st=statusOC(oc.status);
                 return (
                   <tr key={oc.id} className="hover:bg-slate-50">
@@ -4244,6 +4247,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
           </table>
         </div>
       </PCard>
+      {filtradas.length>PAGE_SIZE_DEFAULT&&<div className="mt-4 flex justify-center"><PaginadorUI total={filtradas.length} pagina={pgOC} setPagina={setOrdenesPagina}/></div>}
 
       {/* ── MODAL OC — COMPACTO ── */}
       {modal==='form'&&(
@@ -6220,21 +6224,22 @@ const CxPView = ({
 <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#dc2626;font-size:9px">${retIVAusd>0.001?'-$'+fN(retIVAusd):'—'}</td>
 <td style="padding:3px 6px;text-align:right;font-family:monospace;color:#7c3aed;font-size:9px">${retISLR>0.001?'-$'+fN(retISLR):'—'}</td>
 <td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;color:#f97316;font-size:9px">$${fN(saldo)}</td>
+<td style="padding:3px 6px;font-size:8px;color:#6b7280;font-style:italic">${f.observaciones||'—'}</td>
 </tr>
-${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#16a34a">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''} · ${p.banco||''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fN(pN(p.monto||0))}</td><td></td></tr>`).join('')}
-${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#dc2626">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td><td></td></tr>`).join('')}
-${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td></tr>`).join('')}`;
+${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#16a34a">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''} · ${p.banco||''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fN(pN(p.monto||0))}</td><td></td><td style="padding:2px 6px;color:#16a34a;font-style:italic">${p.concepto||'—'}</td></tr>`).join('')}
+${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#dc2626">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td><td></td><td></td></tr>`).join('')}
+${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}`;
       }).join('');
-      const ncRows = ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasa;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Proveedor directo'}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(u)}</td><td></td></tr>`;}).join('');
+      const ncRows = ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasa;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Proveedor directo'}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(u)}</td><td></td><td></td></tr>`;}).join('');
       return `<div style="margin-bottom:14px;page-break-inside:avoid">
 <div style="background:#1e293b;color:#fff;padding:7px 12px;display:flex;justify-content:space-between;align-items:center">
   <div><strong style="font-size:11px">${g.nombre}</strong> <span style="font-size:9px;color:#94a3b8">${g.rif}</span></div>
   <div><span style="font-family:monospace;font-weight:900;font-size:12px;color:#f97316">$${fN(g.total)}</span>&nbsp;<span style="background:${est==='CRÍTICO'?'#dc2626':est==='VENCIDO'?'#ea580c':est==='POR PAGAR'?'#d97706':'#16a34a'};color:#fff;padding:2px 8px;border-radius:10px;font-size:8px;font-weight:900">${est}</span></div>
 </div>
 <table style="width:100%;border-collapse:collapse;font-size:9px">
-  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">VENCE</th><th style="color:#f97316;padding:4px 6px;text-align:center">DÍAS</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#dc2626;padding:4px 6px;text-align:right">RET.IVA</th><th style="color:#7c3aed;padding:4px 6px;text-align:right">RET.ISLR</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th></tr></thead>
+  <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">VENCE</th><th style="color:#f97316;padding:4px 6px;text-align:center">DÍAS</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#dc2626;padding:4px 6px;text-align:right">RET.IVA</th><th style="color:#7c3aed;padding:4px 6px;text-align:right">RET.ISLR</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th><th style="color:#94a3b8;padding:4px 6px">DETALLE</th></tr></thead>
   <tbody>${factRows}${ncRows}</tbody>
-  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900">Subtotal ${g.facts.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td><td colspan="3"></td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(g.total)}</td></tr></tfoot>
+  <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900">Subtotal ${g.facts.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td><td colspan="3"></td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(g.total)}</td><td></td></tr></tfoot>
 </table></div>`;
     }).join('');
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:legal landscape;margin:1.2cm 1.5cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
@@ -6254,7 +6259,7 @@ ${body}
   // ── Excel ──────────────────────────────────────────────────────────
   const exportarExcelCxP = () => {
     const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const ths=['Proveedor','RIF','N° Factura','N° Control','Fecha Emis.','Fecha Vence','Días','Total USD','Pagado','Ret. IVA','Ret. ISLR','NC/ND','Saldo USD','Estado'];
+    const ths=['Proveedor','RIF','N° Factura','N° Control','Fecha Emis.','Fecha Vence','Días','Total USD','Pagado','Ret. IVA','Ret. ISLR','NC/ND','Saldo USD','Estado','Detalle'];
     const rows=[];
     filtrados.forEach(g=>{
       const est=getEstado(g);
@@ -6265,10 +6270,10 @@ ${body}
         const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
         const saldo=getSaldoFact(f);
         const dias=getAgingDias(f);
-        rows.push([g.nombre,g.rif,f.nroFactura||'—',f.nroControl||'—',f.fecha||'',f.fechaVencimiento||'',dias>0?dias:0,pN(f.total||0),pagosF,retIVA,retISLR,0,saldo,est]);
+        rows.push([g.nombre,g.rif,f.nroFactura||'—',f.nroControl||'—',f.fecha||'',f.fechaVencimiento||'',dias>0?dias:0,pN(f.total||0),pagosF,retIVA,retISLR,0,saldo,est,f.observaciones||'']);
       });
     });
-    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — CUENTAS POR PAGAR · Corte: ${fechaRef}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="12" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalCartera)}</td><td></td></tr></tfoot></table></body></html>`;
+    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — CUENTAS POR PAGAR · Corte: ${fechaRef}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="12" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalCartera)}</td><td></td><td></td></tr></tfoot></table></body></html>`;
     Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'CxP_Detallado.xls'}).click();
   };
 
@@ -6359,7 +6364,7 @@ ${body}
                           <table className="w-full text-[9px]">
                             <thead>
                               <tr className="bg-slate-800 text-white">
-                                {['DOCUMENTO','EMISIÓN','VENCE','DÍAS CR.','N° CONTROL','TOTAL USD','PAGADO','RET.IVA','RET.ISLR','SALDO USD'].map(h=>(
+                                {['DOCUMENTO','EMISIÓN','VENCE','DÍAS CR.','N° CONTROL','TOTAL USD','PAGADO','RET.IVA','RET.ISLR','SALDO USD','DETALLE'].map(h=>(
                                   <th key={h} className="py-2 px-3 font-black text-[8px] text-left">{h}</th>
                                 ))}
                               </tr>
@@ -6389,6 +6394,7 @@ ${body}
                                       <td className="py-2 px-3 text-right font-mono text-red-600">{retIVA>0.001?'-$'+fN(retIVA):'—'}</td>
                                       <td className="py-2 px-3 text-right font-mono text-purple-600">{retISLR>0.001?'-$'+fN(retISLR):'—'}</td>
                                       <td className="py-2 px-3 text-right font-mono font-black text-orange-600">${fN(saldo)}</td>
+                                      <td className="py-2 px-3 text-[8px] text-gray-500 italic">{f.observaciones||'—'}</td>
                                     </tr>
                                     {pagosF.map((p,pi)=>(
                                       <tr key={pi} className="bg-green-50 border-b border-green-100">
@@ -6396,6 +6402,7 @@ ${body}
                                         <td className="py-1.5 px-3 text-[8px] text-green-600">{p.banco||''}</td>
                                         <td colSpan={4}></td>
                                         <td className="py-1.5 px-3 text-right font-mono font-black text-green-700 text-[8px]">-${fN(pN(p.monto||0))}</td>
+                                        <td className="py-1.5 px-3 text-[8px] text-green-600 italic">{p.concepto||'—'}</td>
                                       </tr>
                                     ))}
                                     {rets.map((r,ri)=>(
@@ -6403,6 +6410,7 @@ ${body}
                                         <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-red-700">↳ Ret. IVA {r.pctRetencion||75}% · Comp. {r.nroComprobante||'—'} · Bs.{fN(pN(r.montoBs||0))}</td>
                                         <td colSpan={4}></td>
                                         <td className="py-1.5 px-3 text-right font-mono font-black text-red-700 text-[8px]">-${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td>
+                                        <td></td>
                                       </tr>
                                     ))}
                                     {(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map((r,ri)=>(
@@ -6410,6 +6418,7 @@ ${body}
                                         <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ Ret. ISLR {r.pct||0}% · {r.codigo||''} {r.concepto||''}</td>
                                         <td colSpan={4}></td>
                                         <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">-${fN(pN(r.monto||0))}</td>
+                                        <td></td>
                                       </tr>
                                     ))}
                                   </React.Fragment>
@@ -7408,21 +7417,22 @@ const EstadoCuentaProvView = ({
 <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:9px;color:#16a34a">$${fN(pagos.reduce((s,p)=>s+pN(p.monto||0),0))}</td>
 <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:9px;color:#f97316">$${fN(saldo)}</td>
 <td style="padding:3px 6px;font-size:8px;color:#6b7280">${saldoLabel}</td>
+<td style="padding:3px 6px;font-size:8px;color:#6b7280;font-style:italic">${f.observaciones||'—'}</td>
 </tr>
-${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#16a34a" colspan="3">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td><td style="color:#16a34a">${p.banco||''}</td><td colspan="3" style="text-align:right;color:#16a34a;font-family:monospace">-$${fN(pN(p.monto||0))}</td><td></td></tr>`).join('')}
-${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#dc2626" colspan="3">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'}</td><td></td><td colspan="3" style="text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasa)}</td><td></td></tr>`).join('')}
-${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td></tr>`).join('')}`;
+${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#16a34a" colspan="3">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td><td style="color:#16a34a">${p.banco||''}</td><td colspan="3" style="text-align:right;color:#16a34a;font-family:monospace">-$${fN(pN(p.monto||0))}</td><td></td><td style="color:#16a34a;font-style:italic">${p.concepto||'—'}</td></tr>`).join('')}
+${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#dc2626" colspan="3">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'}</td><td></td><td colspan="3" style="text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasa)}</td><td></td><td></td></tr>`).join('')}
+${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}`;
       }).join('');
-      const ncRows=ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'$'}${fN(u)}</td><td></td></tr>`;}).join('');
+      const ncRows=ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'$'}${fN(u)}</td><td></td><td></td></tr>`;}).join('');
       return `<div style="margin-bottom:16px;page-break-inside:avoid;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">
 <div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between">
   <div><strong style="font-size:11px">${g.nombre}</strong> <span style="font-size:9px;color:#94a3b8">${g.rif}</span></div>
   <div style="font-family:monospace;font-weight:900;font-size:12px;color:#f97316">$${fN(saldoG)}</div>
 </div>
 <table style="width:100%;border-collapse:collapse;font-size:9px">
-<thead><tr style="background:#0f172a"><th style="padding:4px 6px;color:#f97316;text-align:left">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">COND.PAGO</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th><th style="color:#94a3b8;padding:4px 6px">ESTADO</th></tr></thead>
+<thead><tr style="background:#0f172a"><th style="padding:4px 6px;color:#f97316;text-align:left">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">COND.PAGO</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th><th style="color:#94a3b8;padding:4px 6px">ESTADO</th><th style="color:#94a3b8;padding:4px 6px">DETALLE</th></tr></thead>
 <tbody>${factRows}${ncRows}</tbody>
-<tfoot><tr style="background:#1e293b;color:#fff"><td colspan="4" style="padding:4px 8px;font-weight:900">Subtotal ${factsProv.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(factsProv.reduce((s,f)=>s+pN(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fN(factsProv.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(saldoG)}</td><td></td></tr></tfoot>
+<tfoot><tr style="background:#1e293b;color:#fff"><td colspan="4" style="padding:4px 8px;font-weight:900">Subtotal ${factsProv.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(factsProv.reduce((s,f)=>s+pN(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fN(factsProv.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(saldoG)}</td><td></td><td></td></tr></tfoot>
 </table></div>`;
     }).join('');
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><style>@page{size:legal landscape;margin:1.2cm 1.5cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
