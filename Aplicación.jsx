@@ -2790,6 +2790,35 @@ const PaginadorUI = ({total, pagina, setPagina, pageSize=PAGE_SIZE_DEFAULT}) => 
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 2: PROVEEDORES
 // ══════════════════════════════════════════════════════════════════════
+const CXP_SALDO_INICIAL_JUNIO_2026 = [
+  {cod:'P0543',nombre:'LINKPOINT LLC',anticipo:-128280.0,facturas:[{doc:'1072',fecha:'2026-05-02',monto:67230.0,desc:'O.D.C 1072'},{doc:'1972',fecha:'2026-05-06',monto:38480.0,desc:'Factura 1072'},{doc:'1973',fecha:'2026-05-06',monto:6400.0,desc:'FACTURA 1073'},{doc:'1076',fecha:'2026-05-07',monto:64450.0,desc:'PROFORMA 1076'},{doc:'1091',fecha:'2026-06-04',monto:57700.0,desc:'PROFORMA 1091'},{doc:'1092',fecha:'2026-06-05',monto:45752.5,desc:'PROFORMA 1092'}]},
+  {cod:'P0082',nombre:'SURE PACK',anticipo:-36189.2,facturas:[{doc:'3284.',fecha:'2025-08-12',monto:145.59,desc:'Doc: 3284 Factor: 195.2490'},{doc:'3285.',fecha:'2025-08-12',monto:575.19,desc:'Doc: 3285 Factor: 195.2490'},{doc:'3286.',fecha:'2025-08-12',monto:372.18,desc:'Doc: 3286 Factor: 223.6450'},{doc:'-',fecha:'2026-06-15',monto:-7126.0,desc:'ABONO SURE PACK'},{doc:'3364',fecha:'2026-04-30',monto:60315.2,desc:'FACTURA  - STRECH FILM AUTOMATICO CLEAR - 20" x 16Kg'},{doc:'3365',fecha:'2026-04-30',monto:60315.2,desc:'FACTURA  STRECH FILM AUTOMATICO CLEAR - 50cm x 1600Mts x 20M'}]},
+  {cod:'P0556',nombre:'TINFLEX S.R.L',anticipo:-10000.0,facturas:[{doc:'000109',fecha:'2026-06-09',monto:59925.0,desc:'ODC 000109'}]},
+  {cod:'P0515',nombre:'SUMINISTROS QUIVEN, C.A.',anticipo:-13300.0,facturas:[{doc:'0102',fecha:'2026-06-02',monto:19656.0,desc:'ODC 0102'},{doc:'0110',fecha:'2026-06-09',monto:8424.0,desc:'ODC 0110'}]},
+  {cod:'P0511',nombre:'AGRO INDUSTRIAS LACTEAS PACOMELA, C.A',anticipo:-157374.31,facturas:[{doc:'2602',fecha:'2026-01-02',monto:169547.91,desc:'CONTRATO'}]},
+  {cod:'P0005',nombre:'YANCARLOS PEREZ CASANOVA',anticipo:-15388.81,facturas:[{doc:'001079',fecha:'2026-05-25',monto:2970.07,desc:'Doc : 001079'},{doc:'001080',fecha:'2026-06-08',monto:13662.06,desc:'Doc : 001080'},{doc:'001081',fecha:'2026-06-16',monto:4356.06,desc:'Doc : 001081'},{doc:'001082',fecha:'2026-06-26',monto:3564.06,desc:'Doc : 001082'}]},
+  {cod:'P0338',nombre:'AUTO TOTAL, C.A',anticipo:-12529.25,facturas:[{doc:'11166',fecha:'2025-10-07',monto:2797.98,desc:'Factor:187,2893 Doc:11166'},{doc:'11164',fecha:'2025-10-07',monto:17532.25,desc:'Factor:187,2893 Doc:11164'},{doc:'11165',fecha:'2025-10-07',monto:780.0,desc:'Factor:187,2893 Doc:11165'}]},
+  {cod:'P0467',nombre:'FERRETERIA ELECTRICA INDUSTRIAL, C.A.',anticipo:0.0,facturas:[{doc:'ODC 0061',fecha:'2026-03-16',monto:4187.76,desc:'ODC 0061'},{doc:'ODC 0066',fecha:'2026-03-24',monto:114.84,desc:'ODC 0066'}]},
+  {cod:'P0492',nombre:'EMPAQUES PLASTICOS CABIMAS C.A (EMPLASCA)',anticipo:-2985.0,facturas:[{doc:'0105',fecha:'2026-06-05',monto:5970.0,desc:'ODC 0105'}]},
+  {cod:'P0563',nombre:'EL GRAN GALPON DEL REMATE ,C.A',anticipo:-1600.0,facturas:[{doc:'ODC 116',fecha:'2026-06-25',monto:3016.0,desc:'ODC 116'}]},
+  {cod:'P0454',nombre:'RIGOBERTO ENRIQUE ATENCIO RINCON',anticipo:-2000.0,facturas:[{doc:'000566',fecha:'2026-06-15',monto:3038.56,desc:'Doc : 000566'}]},
+  {cod:'P0106',nombre:'JOSE LUIS BOHORQUEZ URDANETA',anticipo:0.0,facturas:[{doc:'0005281',fecha:'2026-05-28',monto:915.56,desc:'Doc : 0005281'}]},
+  {cod:'P0557',nombre:'SANDY DE JESUS PEREZ BADELL',anticipo:0.0,facturas:[{doc:'000698',fecha:'2026-06-12',monto:824.06,desc:'Doc : 000698'}]},
+  {cod:'P0473',nombre:'SUINFERCA CORP , C.A',anticipo:0.0,facturas:[{doc:'ODC 0090',fecha:'2026-05-11',monto:12.53,desc:'ODC 0090'},{doc:'PRESUPUESTO 836',fecha:'2026-05-14',monto:29.0,desc:'PRESUPUESTO 836'},{doc:'ODC 93',fecha:'2026-05-15',monto:4.06,desc:'ODC 93'},{doc:'00000856',fecha:'2026-05-21',monto:74.24,desc:'ODC 00000856'},{doc:'923',fecha:'2026-06-18',monto:279.1,desc:'PROPUESTO 923'},{doc:'943',fecha:'2026-06-25',monto:32.48,desc:'PROPUESTO 943'},{doc:'945',fecha:'2026-06-26',monto:31.32,desc:'PROPUESTO 945'},{doc:'1087',fecha:'2026-06-26',monto:22.01,desc:'PROPUESTO 1087'}]},
+  {cod:'P0550',nombre:'ADAN E.AVILA',anticipo:0.0,facturas:[{doc:'000824',fecha:'2026-05-25',monto:326.76,desc:'Doc : 000824'}]},
+  {cod:'P0105',nombre:'NADEN SEGUNDO HAJAR OLMOS',anticipo:0.0,facturas:[{doc:'001673',fecha:'2026-06-01',monto:10.36,desc:'Doc : 001673'},{doc:'001674',fecha:'2026-06-01',monto:181.34,desc:'Doc : 001674'}]},
+  {cod:'P0531',nombre:'LOSDEKLUZ 2.0., C.A',anticipo:-222.59,facturas:[{doc:'000000644',fecha:'2026-03-27',monto:311.63,desc:'Doc : 000000644'}]},
+  {cod:'P0074',nombre:'OK PIZZA, COMPAÑIA ANONIMA',anticipo:0.0,facturas:[{doc:'003077',fecha:'2025-09-09',monto:18.02,desc:'Factor:154,9825 Doc:003077'}]},
+  {cod:'P0078',nombre:'H2O FRESH, C.A',anticipo:0.0,facturas:[{doc:'00047030',fecha:'2026-05-20',monto:3.71,desc:'Doc : 00047030'},{doc:'00047029',fecha:'2026-05-20',monto:1.44,desc:'Doc : 00047029'}]},
+  {cod:'P0413',nombre:'ESTELAR LATINOAMERICA, C.A.',anticipo:-94.92,facturas:[]},
+  {cod:'P0030',nombre:'INVERSIONES AVICOLAS, C.A.',anticipo:-170.02,facturas:[{doc:'1800240387',fecha:'2026-05-14',monto:39.17,desc:'Doc : 1800240387'},{doc:'1800242079',fecha:'2026-06-09',monto:29.78,desc:'Doc : 1800242079'}]},
+  {cod:'P0533',nombre:'RUTAS AEREAS DE VENEZUELA RAV, S.A. (RAVSA)',anticipo:-128.46,facturas:[]},
+  {cod:'P0546',nombre:'HOTEL EMPERADOR C A',anticipo:-770.0,facturas:[{doc:'00009221',fecha:'2026-05-10',monto:479.23,desc:'Doc : 00009221'}]},
+  {cod:'P0243',nombre:'INVESTIGACION Y DESARROLLO, C.A.',anticipo:-519.73,facturas:[]},
+  {cod:'P0313',nombre:'GURCA',anticipo:-540.0,facturas:[]},
+  {cod:'P0424',nombre:'ZULIANA DE EMPAQUE, C.A',anticipo:-83511.56,facturas:[{doc:'000040',fecha:'2026-01-30',monto:2219.49,desc:'Doc : 000040'},{doc:'000039',fecha:'2026-01-30',monto:5192.87,desc:'Factor:367,3069 Doc:000039'},{doc:'000042',fecha:'2026-02-27',monto:5150.05,desc:'Doc : 000042'}]},
+];
+
 const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
   const [search,setSearch]=useState('');
   const [modal,setModal]=useState(null);
@@ -2802,6 +2831,74 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
   },[]);
 
   const [proveedoresPagina,setProveedoresPagina]=useState(0);
+  const [cargandoSaldoInicial,setCargandoSaldoInicial]=useState(false);
+  const yaCargoSaldoInicial = (facturasCompra||[]).some(f=>f.saldoInicialImportado) || (pagosCxP||[]).some(p=>p.saldoInicialImportado);
+
+  const cargarSaldoInicialCxP = () => setDialog({
+    title:'Cargar Saldo Inicial CxP — Junio 2026',
+    text:`Esto va a crear ${CXP_SALDO_INICIAL_JUNIO_2026.reduce((s,p)=>s+p.facturas.length,0)} facturas pendientes y ${CXP_SALDO_INICIAL_JUNIO_2026.filter(p=>p.anticipo<-0.01).length} anticipos a proveedor, para ${CXP_SALDO_INICIAL_JUNIO_2026.length} proveedores (creando los que no existan en el Directorio). Esta acción es para hacerse UNA SOLA VEZ. ¿Continuar?`,
+    type:'confirm',
+    onConfirm: async () => {
+      setCargandoSaldoInicial(true);
+      try {
+        const proveedoresPorNombre = new Map((proveedores||[]).map(p=>[(p.nombre||'').trim().toUpperCase(),p]));
+        const batch = writeBatch(db);
+        let facturasCreadas=0, anticiposCreados=0, proveedoresCreados=0;
+        for(const p of CXP_SALDO_INICIAL_JUNIO_2026){
+          const nombreNorm=p.nombre.trim().toUpperCase();
+          const existente = proveedoresPorNombre.get(nombreNorm);
+          let provId, provNombre;
+          if(existente){
+            provId=existente.id; provNombre=existente.nombre;
+          } else {
+            provId=`PROV-${pId()}`; provNombre=p.nombre;
+            batch.set(getDocRef('procura_proveedores',provId),{
+              id:provId,nombre:provNombre,rif:'',tipoContribuyente:'ORDINARIO',pctRetencion:'75',
+              categoria:'INSUMOS',contacto:'',telefono:'',email:'',pais:'Venezuela',ciudad:'',estadoProv:'',
+              direccion:'',moneda:'USD',condPago:'',cuentaContableId:'',cuentaContableNombre:'',
+              fechaCreacion:getTodayDate(),activo:true,
+              observaciones:`Creado por carga de Saldo Inicial CxP Junio 2026 (código origen ${p.cod}). Falta completar RIF y datos de contacto.`,
+              updatedAt:Date.now()
+            });
+            proveedoresCreados++;
+          }
+          for(const f of p.facturas){
+            const facId=`FACT-INI-${pId()}`;
+            batch.set(getDocRef('procura_facturas_compra',facId),{
+              id:facId,proveedorId:provId,proveedor:provNombre,
+              nroFactura:f.doc,nroControl:'',
+              fecha:f.fecha,fechaVencimiento:f.fecha,
+              tasa:0,total:f.monto,totalUSD:f.monto,montoBase:f.monto,iva:0,
+              status:'PENDIENTE',retISLRLista:[],
+              observaciones:f.desc||'',
+              saldoInicialImportado:true,
+              updatedAt:Date.now(),creadoEn:Date.now()
+            });
+            facturasCreadas++;
+          }
+          if(p.anticipo<-0.01){
+            const antId=`ANTCXP-INI-${pId()}`;
+            batch.set(getDocRef('procura_pagos_cxp',antId),{
+              id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
+              proveedorId:provId,proveedor:provNombre,
+              monto:parseFloat(Math.abs(p.anticipo).toFixed(2)),
+              fecha:'2026-06-30',metodo:'Saldo Inicial',banco:'',referencia:'',
+              concepto:'Saldo Inicial - Anticipo acumulado a junio 2026',
+              cuentaId:'',moneda:'USD',tasa:0,
+              saldoInicialImportado:true,
+              timestamp:Date.now(),user:'Sistema (Carga Inicial)'
+            });
+            anticiposCreados++;
+          }
+        }
+        await batch.commit();
+        setDialog({title:'✅ Saldo Inicial Cargado',text:`${proveedoresCreados} proveedores nuevos · ${facturasCreadas} facturas pendientes · ${anticiposCreados} anticipos a proveedor. Ya puedes verlas en Cuentas por Pagar y aplicarles pagos normalmente.`,type:'alert'});
+      } catch(e) {
+        setDialog({title:'Error',text:e.message,type:'alert'});
+      } finally { setCargandoSaldoInicial(false); }
+    }
+  });
+
 
   const filtrados = proveedores.filter(p=>
     (p.nombre||'').toLowerCase().includes(search.toLowerCase())||
@@ -3137,6 +3234,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
             }catch(err){setDialog({title:'Error al importar',text:err.message,type:'alert'});}
           }}/>
         </label>
+        {!yaCargoSaldoInicial && <button disabled={cargandoSaldoInicial} onClick={cargarSaldoInicialCxP} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2 transition-all"><Building2 size={13}/> {cargandoSaldoInicial?'Cargando...':'Cargar Saldo Inicial CxP'}</button>}
       </div>
 
       {/* Tabla */}
@@ -23439,6 +23537,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             fecha:ne.fecha||'',cliente:ne.clientName||ne.clientNombre||'',
             rif:ne.clientRif||'',vendedor:ne.vendedor||'Directa',
             montoBase:parseNum(ne.montoBase||0),
+            canal:ne.canal||'TRADICIONAL',
             localidad:ne.territorio||getLoc(ne.clientRif||'',ne.clientName||'')||'Sin territorio',
             items:(ne.items||[]).map(it=>{
               const tipo=getTipo(it.invCode||it.codigo,it.desc||it.descripcion);
