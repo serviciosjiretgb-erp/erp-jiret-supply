@@ -14625,8 +14625,15 @@ function App() {
 
     if (invView === 'alimentario') {
       // Orden de Salida de Almacén — generador de documentos sin columnas de costo
-      const currentOsaNum = osaCounter || 1;
-      const nroOSA = editingOsaId ? (osaHdr.nroOSAOriginal || `OSA-${new Date().getFullYear()}-${String(currentOsaNum).padStart(5,'0')}`) : `OSA-${new Date().getFullYear()}-${String(currentOsaNum).padStart(5,'0')}`;
+      const _anioOsaActual = new Date().getFullYear();
+      const _maxOsaExistente = (invRequisitions||[]).reduce((max,r)=>{
+        if(!(r.type==='OSA'||r.docType==='OSA'||(r.nroOSA||'').startsWith('OSA-'))) return max;
+        const m = (r.nroOSA||'').match(new RegExp(`^OSA-${_anioOsaActual}-(\\d+)$`));
+        if(!m) return max;
+        return Math.max(max, parseInt(m[1],10)||0);
+      },0);
+      const currentOsaNum = _maxOsaExistente + 1; // siempre la siguiente a la más alta que exista de verdad (respeta eliminaciones)
+      const nroOSA = editingOsaId ? (osaHdr.nroOSAOriginal || `OSA-${_anioOsaActual}-${String(currentOsaNum).padStart(5,'0')}`) : `OSA-${_anioOsaActual}-${String(currentOsaNum).padStart(5,'0')}`;
 
       const printOSA = (items, header) => {
         if(!items||items.length===0) return setDialog({title:'Aviso',text:'Agrega al menos un artículo a la orden.',type:'alert'});
