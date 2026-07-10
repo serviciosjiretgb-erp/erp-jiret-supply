@@ -14972,7 +14972,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                         <td className="py-2.5 px-4 text-center">
                           <div className="flex gap-1 justify-center">
                             <button onClick={()=>{
-                              const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—' };
+                              const hdr = { almacenOrigen: osa.almacenOrigen||'ALMACÉN', destino: osa.destino||'—', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||osa.procesadoPor||'—', clienteNombre: osa.clienteNombre||'', clienteRif: osa.clienteRif||'', clienteDireccion: osa.clienteDireccion||'' };
                               printOSA(osa.items||[], hdr);
                             }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white" title="Reimprimir PDF"><Printer size={10}/></button>
                             <button onClick={()=>requireAdminPassword(()=>{
