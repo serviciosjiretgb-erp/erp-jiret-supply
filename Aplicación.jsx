@@ -2833,6 +2833,27 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
   const [proveedoresPagina,setProveedoresPagina]=useState(0);
   const [cargandoSaldoInicial,setCargandoSaldoInicial]=useState(false);
   const yaCargoSaldoInicial = (facturasCompra||[]).some(f=>f.saldoInicialImportado) || (pagosCxP||[]).some(p=>p.saldoInicialImportado);
+  const [reversandoSaldoInicial,setReversandoSaldoInicial]=useState(false);
+
+  const reversarSaldoInicialCxP = () => setDialog({
+    title:'Reversar Saldo Inicial CxP',
+    text:'Esto borra ÚNICAMENTE las facturas y anticipos que se crearon con la carga de Saldo Inicial (las que quedan marcadas como importadas) — no toca ninguna factura, pago o proveedor que hayas registrado tú manualmente. Después de reversar, el botón de carga vuelve a aparecer para que cargues de nuevo. ¿Continuar?',
+    type:'confirm',
+    onConfirm: async () => {
+      setReversandoSaldoInicial(true);
+      try {
+        const factsImportadas=(facturasCompra||[]).filter(f=>f.saldoInicialImportado);
+        const pagosImportados=(pagosCxP||[]).filter(p=>p.saldoInicialImportado);
+        const batch = writeBatch(db);
+        factsImportadas.forEach(f=>batch.delete(getDocRef('procura_facturas_compra',f.id)));
+        pagosImportados.forEach(p=>batch.delete(getDocRef('procura_pagos_cxp',p.id)));
+        await batch.commit();
+        setDialog({title:'✅ Reversado',text:`Se borraron ${factsImportadas.length} facturas y ${pagosImportados.length} anticipos del Saldo Inicial. Ya puedes volver a cargarlo cuando quieras.`,type:'alert'});
+      } catch(e) {
+        setDialog({title:'Error',text:e.message,type:'alert'});
+      } finally { setReversandoSaldoInicial(false); }
+    }
+  });
 
   const cargarSaldoInicialCxP = () => setDialog({
     title:'Cargar Saldo Inicial CxP — Junio 2026',
@@ -3235,6 +3256,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
           }}/>
         </label>
         {!yaCargoSaldoInicial && <button disabled={cargandoSaldoInicial} onClick={cargarSaldoInicialCxP} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2 transition-all"><Building2 size={13}/> {cargandoSaldoInicial?'Cargando...':'Cargar Saldo Inicial CxP'}</button>}
+        {yaCargoSaldoInicial && <button disabled={reversandoSaldoInicial} onClick={reversarSaldoInicialCxP} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 flex items-center gap-2 transition-all"><X size={13}/> {reversandoSaldoInicial?'Reversando...':'Reversar Saldo Inicial CxP'}</button>}
       </div>
 
       {/* Tabla */}
@@ -9806,8 +9828,9 @@ function App() {
   const [osaItemForm, setOsaItemForm] = useState({ itemId:'', qty:'', lote:'' });
   const [osaSearch, setOsaSearch] = useState('');
   const [osaClienteSearch, setOsaClienteSearch] = useState('');
-  const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN ZI', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'', clienteNombre:'', clienteRif:'', clienteDireccion:'' });
+  const [osaHdr, setOsaHdr] = useState({ almacenOrigen:'ALMACEN ZI', destino:'Producción / Despacho', docRef:'', fecha:'', procesadoPor:'', clienteNombre:'', clienteRif:'', clienteDireccion:'', nroOSAOriginal:'' });
   const [osaCounter, setOsaCounter] = useState(null); // sequential OSA number from Firebase
+  const [editingOsaId, setEditingOsaId] = useState(null); // id de la OSA en edición (null = OSA nueva)
   // Fix 3: Partial delivery new product name
   const [partialNewName, setPartialNewName] = useState('');
   const [partialFgSearch, setPartialFgSearch] = useState('');
@@ -14603,7 +14626,7 @@ function App() {
     if (invView === 'alimentario') {
       // Orden de Salida de Almacén — generador de documentos sin columnas de costo
       const currentOsaNum = osaCounter || 1;
-      const nroOSA = `OSA-${new Date().getFullYear()}-${String(currentOsaNum).padStart(5,'0')}`;
+      const nroOSA = editingOsaId ? (osaHdr.nroOSAOriginal || `OSA-${new Date().getFullYear()}-${String(currentOsaNum).padStart(5,'0')}`) : `OSA-${new Date().getFullYear()}-${String(currentOsaNum).padStart(5,'0')}`;
 
       const printOSA = (items, header) => {
         if(!items||items.length===0) return setDialog({title:'Aviso',text:'Agrega al menos un artículo a la orden.',type:'alert'});
@@ -14673,17 +14696,26 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               </div>
               <button onClick={async()=>{
                 printOSA(osaItemList,osaHdr);
-                const next = currentOsaNum + 1;
-                setOsaCounter(next);
-                await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
-                await addDoc(getColRef('inventoryRequisitions'), {
-                  type: 'OSA', docType: 'OSA', nroOSA, 
-                  ...osaHdr, items: [...osaItemList],
-                  status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
-                });
-                setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada en historial. Para crear una nueva OSA usa el botón "Limpiar".`, type:'alert'});
-              }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> Imprimir & Confirmar OSA</button>
-              {osaItemList.length > 0 && <button onClick={()=>setDialog({title:'Limpiar OSA',text:'¿Vaciar la lista de artículos para comenzar una nueva OSA?',type:'confirm',onConfirm:()=>{setOsaItemList([]);setOsaHdr(h=>({...h,docRef:'',destino:'',fecha:getTodayDate(),clienteNombre:'',clienteRif:'',clienteDireccion:''}));setOsaClienteSearch('');}})} className="bg-red-100 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-200 flex items-center gap-1"><X size={13}/> Limpiar</button>}
+                if(editingOsaId){
+                  await updateDoc(getDocRef('inventoryRequisitions',editingOsaId), {
+                    ...osaHdr, items: [...osaItemList],
+                    status: 'PROCESADA', updatedAt: Date.now(), user: appUser?.name||'Admin'
+                  });
+                  setDialog({title:'✅ OSA Actualizada', text:`${nroOSA} actualizada en el historial (sin duplicar).`, type:'alert'});
+                  setEditingOsaId(null);
+                } else {
+                  const next = currentOsaNum + 1;
+                  setOsaCounter(next);
+                  await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
+                  await addDoc(getColRef('inventoryRequisitions'), {
+                    type: 'OSA', docType: 'OSA', nroOSA,
+                    ...osaHdr, items: [...osaItemList],
+                    status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
+                  });
+                  setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada en historial. Para crear una nueva OSA usa el botón "Limpiar".`, type:'alert'});
+                }
+              }} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2 shadow-md disabled:opacity-40" disabled={osaItemList.length===0}><Printer size={15}/> {editingOsaId?'Guardar Cambios (sin duplicar)':'Imprimir & Confirmar OSA'}</button>
+              {osaItemList.length > 0 && <button onClick={()=>setDialog({title:'Limpiar OSA',text:'¿Vaciar la lista de artículos para comenzar una nueva OSA?',type:'confirm',onConfirm:()=>{setOsaItemList([]);setOsaHdr(h=>({...h,docRef:'',destino:'',fecha:getTodayDate(),clienteNombre:'',clienteRif:'',clienteDireccion:'',nroOSAOriginal:''}));setOsaClienteSearch('');setEditingOsaId(null);}})} className="bg-red-100 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-200 flex items-center gap-1"><X size={13}/> Limpiar</button>}
               <button onClick={()=>requireAdminPassword(async()=>{await setDoc(getDocRef('settings','osaCounter'),{current:0},{merge:true});setOsaCounter(1);setDialog({title:'✅ Numeración Reiniciada',text:'La próxima OSA será OSA-2026-00001.',type:'alert'});},'Reiniciar numeración de OSA')} className="bg-gray-100 text-gray-600 px-3 py-3 rounded-2xl text-[9px] font-black uppercase hover:bg-gray-200 flex items-center gap-1" title="Reiniciar numeración a 00001"><RefreshCw size={12}/> Reset #</button>
             </div>
             <div className="p-6 space-y-5">
@@ -14864,16 +14896,25 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   <div className="p-4 flex justify-end">
                     <button onClick={async()=>{
                       printOSA(osaItemList,osaHdr);
-                      const next = currentOsaNum + 1;
-                      setOsaCounter(next);
-                      await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
-                      await addDoc(getColRef('inventoryRequisitions'), {
-                        type: 'OSA', docType: 'OSA', nroOSA,
-                        ...osaHdr, items: [...osaItemList],
-                        status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
-                      });
-                      setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada. Para nueva OSA limpia los artículos con el botón ✕.`, type:'alert'});
-                    }} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> Generar e Imprimir OSA</button>
+                      if(editingOsaId){
+                        await updateDoc(getDocRef('inventoryRequisitions',editingOsaId), {
+                          ...osaHdr, items: [...osaItemList],
+                          status: 'PROCESADA', updatedAt: Date.now(), user: appUser?.name||'Admin'
+                        });
+                        setDialog({title:'✅ OSA Actualizada', text:`${nroOSA} actualizada en el historial (sin duplicar).`, type:'alert'});
+                        setEditingOsaId(null);
+                      } else {
+                        const next = currentOsaNum + 1;
+                        setOsaCounter(next);
+                        await setDoc(getDocRef('settings','osaCounter'), { current: next }, { merge: true });
+                        await addDoc(getColRef('inventoryRequisitions'), {
+                          type: 'OSA', docType: 'OSA', nroOSA,
+                          ...osaHdr, items: [...osaItemList],
+                          status: 'PROCESADA', timestamp: Date.now(), user: appUser?.name||'Admin'
+                        });
+                        setDialog({title:'✅ OSA Generada', text:`${nroOSA} registrada. Para nueva OSA limpia los artículos con el botón ✕.`, type:'alert'});
+                      }
+                    }} className="bg-black text-white px-8 py-3 rounded-2xl font-black text-xs uppercase shadow-lg hover:bg-gray-800 flex items-center gap-2"><Printer size={15}/> {editingOsaId?'Guardar Cambios (sin duplicar)':'Generar e Imprimir OSA'}</button>
                   </div>
                 </div>
               ) : (
@@ -14936,9 +14977,10 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             }} className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white" title="Reimprimir PDF"><Printer size={10}/></button>
                             <button onClick={()=>requireAdminPassword(()=>{
                               // Load OSA into form for editing
+                              setEditingOsaId(osa.id);
                               setOsaItemList([...(osa.items||[])]);
-                              setOsaHdr({ almacenOrigen: osa.almacenOrigen||depositos[0]||'ALMACEN ZI', destino: osa.destino||'', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||appUser?.name||'Admin' });
-                              setDialog({title:'OSA Cargada para Editar', text:`${osa.nroOSA} cargada en el formulario. Modifica y vuelve a imprimir para actualizar.`, type:'alert'});
+                              setOsaHdr({ almacenOrigen: osa.almacenOrigen||depositos[0]||'ALMACEN ZI', destino: osa.destino||'', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||appUser?.name||'Admin', clienteNombre: osa.clienteNombre||'', clienteRif: osa.clienteRif||'', clienteDireccion: osa.clienteDireccion||'', nroOSAOriginal: osa.nroOSA||'' });
+                              setDialog({title:'OSA Cargada para Editar', text:`${osa.nroOSA} cargada en el formulario. Modifica y vuelve a imprimir para actualizar (no se va a duplicar).`, type:'alert'});
                             }, 'Editar OSA — requiere clave admin')} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar (requiere clave admin)"><Edit size={10}/></button>
                             <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar OSA',text:`¿Eliminar ${osa.nroOSA||osa.id}? Esta acción no revierte el inventario.`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('inventoryRequisitions',osa.id));setDialog({title:'Eliminada',text:`${osa.nroOSA} eliminada del historial.`,type:'alert'});}}), 'Eliminar OSA — requiere clave admin')}
                               className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar del historial (requiere clave admin)"><Trash2 size={10}/></button>
