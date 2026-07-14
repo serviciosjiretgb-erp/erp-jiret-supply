@@ -9337,6 +9337,21 @@ function App() {
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
+  const [finanzasPDFs, setFinanzasPDFs] = useState({});
+  const [finanzasSubiendo, setFinanzasSubiendo] = useState({});
+  const subirFinanzasPDF = async (file, campo, label) => {
+    if(!file) return;
+    if(file.type!=='application/pdf') return setDialog({title:'Archivo inválido',text:'Solo se aceptan archivos PDF.',type:'alert'});
+    setFinanzasSubiendo(s=>({...s,[campo]:true}));
+    try {
+      const sRef = storageRef(storage, `finanzas-provisional/${campo}_${Date.now()}.pdf`);
+      const snap = await uploadBytes(sRef, file, {contentType:'application/pdf'});
+      const url = await getDownloadURL(snap.ref);
+      await setDoc(getDocRef('settings','finanzasProvisional'), {[campo]:url, [`${campo}_nombre`]:file.name, [`${campo}_fecha`]:getTodayDate()}, {merge:true});
+      setDialog({title:'✅ Cargado',text:`${label} cargado correctamente.`,type:'alert'});
+    } catch(e) { setDialog({title:'Error',text:e.message,type:'alert'}); }
+    finally { setFinanzasSubiendo(s=>({...s,[campo]:false})); }
+  };
   const [showManageSubcats, setShowManageSubcats] = useState(false);
   const [newSubcatInput, setNewSubcatInput] = useState('');
   const DEFAULT_SUBCATS = ['Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Otros Terminados','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado'];
@@ -10551,6 +10566,7 @@ function App() {
       }
     });
     const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => { if(d.exists()) setSettings(d.data()); });
+    const unsubFinanzasPDFs = onSnapshot(getDocRef('settings', 'finanzasProvisional'), (d) => { setFinanzasPDFs(d.exists()?d.data():{}); });
     const unsubInv = onSnapshot(getColRef('inventory'), (s) => {
       const data = s.docs.map(d => ({ id: d.id, ...d.data() })); setInventory(data);
     });
@@ -10597,7 +10613,7 @@ function App() {
     const unsubComRep = onSnapshot(getColRef('comisionesReportes'), (s) => { setComReportes(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts||0)-(a.ts||0))); });
     
     return () => { 
-      unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
+      unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubFinanzasPDFs(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco(); unsubCajasCuentas();
       unsubResena(); unsubResenaImg(); unsubComRep();
       if (typeof unsubNotifs === 'function') unsubNotifs();
@@ -13778,6 +13794,58 @@ function App() {
       const colorMap = {produccion:'#f97316',administracion:'#3b82f6',finanzas:'#22c55e',contabilidad:'#06b6d4',resena_portal:'#E8541A',vendedores_portal:'#E8541A',configuracion_portal:'#64748b'};
       const color = colorMap[selectedPortal]||'#6b7280';
       const isInDev = ['finanzas','contabilidad','redes_portal'].includes(selectedPortal);
+
+      if (selectedPortal==='finanzas') {
+        const docsFinanzas=[
+          {campo:'balance',label:'Balance General',icon:<BookOpen size={22}/>},
+          {campo:'estadoResultados',label:'Estado de Resultados',icon:<TrendingUp size={22}/>},
+        ];
+        return (
+          <div className="max-w-5xl mx-auto py-8 px-4 animate-in fade-in">
+            <div className="text-center mb-8">
+              <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900 mb-2">PANEL PRINCIPAL ERP — FINANZAS</h1>
+              <div className="w-16 h-1 mx-auto rounded-full mb-3" style={{background:color}}/>
+              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">Vista provisional — este módulo se integrará por completo en la próxima etapa</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {docsFinanzas.map(d=>{
+                const url=finanzasPDFs[d.campo];
+                const nombre=finanzasPDFs[`${d.campo}_nombre`];
+                const fecha=finanzasPDFs[`${d.campo}_fecha`];
+                const subiendo=finanzasSubiendo[d.campo];
+                return (
+                  <div key={d.campo} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-4" style={{background:color+'15'}}>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{background:color+'22',color}}>{d.icon}</div>
+                        <div>
+                          <p className="font-black text-gray-800 text-sm uppercase">{d.label}</p>
+                          {nombre&&<p className="text-[10px] text-gray-400 font-bold">{nombre} · {fecha}</p>}
+                        </div>
+                      </div>
+                      <label className="cursor-pointer px-3 py-2 rounded-xl text-[10px] font-black uppercase text-white hover:opacity-90 flex items-center gap-1.5 flex-shrink-0" style={{background:color}}>
+                        <Upload size={12}/>{subiendo?'Subiendo...':(url?'Reemplazar':'Subir PDF')}
+                        <input type="file" accept="application/pdf" className="hidden" disabled={subiendo} onChange={e=>subirFinanzasPDF(e.target.files[0],d.campo,d.label)}/>
+                      </label>
+                    </div>
+                    {url?(
+                      <div className="bg-gray-50">
+                        <iframe src={url+'#toolbar=1'} title={d.label} className="w-full" style={{height:420,border:'none'}}/>
+                        <div className="px-5 py-3 flex justify-end"><a href={url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black uppercase hover:underline" style={{color}}>Abrir en pestaña completa ↗</a></div>
+                      </div>
+                    ):(
+                      <div className="flex flex-col items-center justify-center gap-2 py-14 text-gray-300">
+                        <FileText size={40}/>
+                        <p className="text-[11px] font-black uppercase">Sin documento cargado</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6 animate-in fade-in">
           <div className="text-center">
