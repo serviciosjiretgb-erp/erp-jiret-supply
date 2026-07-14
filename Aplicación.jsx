@@ -8931,6 +8931,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
   const [tasas,setTasas]=useState([]);
   const [dialog,setDialog]=useState(null);
   const [retIVACompra,setRetIVACompra]=useState([]);
+  const [retISLR,setRetISLR]=useState([]);
   // ── Compras: Notas de Crédito / Débito ──────────────────────────────────────
   const [notasCompraCD, setNotasCompraCD] = useState([]);
   const [showCompraNCModal, setShowCompraNCModal] = useState(false);
@@ -8947,6 +8948,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
       onSnapshot(query(getColRef('procura_facturas_compra'),orderBy('fecha','desc')),s=>setFacturasCompra(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('notasCompraCreditoDebito'),s=>setNotasCompraCD(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVACompra(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('procura_ret_islr'),orderBy('fecha','desc')),s=>setRetISLR(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_pagos_cxp'),orderBy('fecha','desc')),s=>setPagosCxP(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'),orderBy('fecha','desc')),s=>setTasas(s.docs.map(d=>d.data()))),
     ];
