@@ -4155,6 +4155,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
     .bx{background:#fef3c7;color:#b45309;padding:1px 4px;border-radius:7px;font-size:6.5px;font-weight:900}
     @media print{body{margin:0}@page{margin:1.5cm}}`;
 
+    const esBsPdf=String(oc.moneda||'USD').toUpperCase()==='BS';
     let html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>OC ${oc.nroOC}</title><style>${css}</style></head><body>
     <div class="hdr"><div class="brand">Supply G&amp;B</div><div class="emp-h"><strong>${empNombre}</strong>RIF: ${empRif}<br>${empDir}${empTel?'<br>Tel: '+empTel:''}<br>${empEmail}</div></div>
     <div class="oc-bar">ORDEN DE COMPRA N° ${oc.nroOC}</div>
@@ -4183,18 +4184,18 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       <th style="width:3%">#</th><th style="width:6%">Tipo</th><th>Descripción</th><th style="width:10%">Categoría</th>
       <th style="width:5%" class="r">Cant.</th><th style="width:5%">Und.</th>
       <th style="width:5%">IVA</th>
-      <th style="width:10%" class="r">P.Unit USD</th><th style="width:10%" class="r">Total USD</th>
-      ${ta>0?'<th style="width:10%" class="r">Total Bs.</th>':''}
+      <th style="width:10%" class="r">P.Unit ${esBsPdf?'Bs.':'USD'}</th><th style="width:10%" class="r">Total ${esBsPdf?'Bs.':'USD'}</th>
+      ${ta>0?`<th style="width:10%" class="r">Total ${esBsPdf?'USD':'Bs.'}</th>`:''}
     </tr></thead><tbody>`;
     ocItems.forEach((it,i)=>{
-      const totBs=ta>0?pNum(it.total||0)*ta:0;
+      const totOtraMoneda=ta>0?(esBsPdf?pNum(it.total||0)/ta:pNum(it.total||0)*ta):0;
       const ivaBadge=it.iva==='EXENTO'?'<span class="bx">EXENTO</span>':'<span class="bp">GRAV.</span>';
       html+=`<tr><td style="text-align:center">${i+1}</td>
       <td><span class="${it.tipo==='SERVICIO'?'bs':'bp'}">${it.tipo==='SERVICIO'?'SERV.':'PROD.'}</span></td>
       <td><strong>${it.desc||'—'}</strong></td><td>${it.categoria||'—'}</td>
       <td class="r">${fmtN(it.cantidad)}</td><td>${it.unidad||'Und'}</td><td>${ivaBadge}</td>
       <td class="r">${fmtN(pNum(it.precioUnit))}</td><td class="r">${fmtN(pNum(it.total||0))}</td>
-      ${ta>0?`<td class="r">${fmtN(totBs)}</td>`:''}</tr>`;
+      ${ta>0?`<td class="r">${fmtN(totOtraMoneda)}</td>`:''}</tr>`;
     });
     html+=`</tbody></table>
     <div style="display:flex;justify-content:flex-end;margin-top:4px">
@@ -20363,11 +20364,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
+            // Fecha efectiva para filtrar por período: la propia de la nota, o si no coincide con nada,
+            // la de la factura vinculada (una NC debe caer en el período de la operación que corrige,
+            // así su propia fecha tenga un error de captura).
+            const fechaNC=(nc.fecha||'');
+            const fechaFactVinc=(inv?.fechaFactura||inv?.fecha||'');
             // Aplicar filtros de cliente/periodo — si no hay factura vinculada, igual se evalúa con los datos propios de la nota
             if(pvFiltCliente!=='TODOS'&&(inv?.clientName||nc.clientName||'')!==pvFiltCliente) return false;
-            if(pvFilter&&pvFilter!=='general'&&!(nc.fecha||'').startsWith(pvFilter)) return false;
-            if(invFiltAnio&&!(nc.fecha||'').startsWith(invFiltAnio)) return false;
-            if(invFiltMes&&(nc.fecha||'').substring(5,7)!==invFiltMes) return false;
+            if(pvFilter&&pvFilter!=='general'&&!fechaNC.startsWith(pvFilter)&&!fechaFactVinc.startsWith(pvFilter)) return false;
+            if(invFiltAnio&&!fechaNC.startsWith(invFiltAnio)&&!fechaFactVinc.startsWith(invFiltAnio)) return false;
+            if(invFiltMes&&fechaNC.substring(5,7)!==invFiltMes&&fechaFactVinc.substring(5,7)!==invFiltMes) return false;
             if(pvFiltDoc){const d=nc.nroDocumento||'';const f=inv?.nroFiscal||'';if(!d.toUpperCase().includes(pvFiltDoc.toUpperCase())&&!f.toUpperCase().includes(pvFiltDoc.toUpperCase()))return false;}
             return true;
           }).map(nc=>{
