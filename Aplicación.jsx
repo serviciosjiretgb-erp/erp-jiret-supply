@@ -3902,7 +3902,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 3: ÓRDENES DE COMPRA
 // ══════════════════════════════════════════════════════════════════════
-const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setDialog,settings,navegarAFactura}) => {
+const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompra,retISLR,dialog,setDialog,settings,navegarAFactura}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [modal,setModal]=useState(null);
@@ -4056,6 +4056,48 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
     try{await updateDoc(getDocRef('procura_ordenes_compra',oc.id),{status:s,updatedAt:Date.now()});}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
+
+  // ── Anular OC en cascada: mantiene el correlativo (nroOC, nroFactura, N° de comprobante de cada
+  // retención) y las fechas, pero pone los montos/porcentajes en cero — no borra nada, así el número
+  // de OC, de factura y de comprobante de retención no se pierde ni se reutiliza.
+  const anularOCCascada = (oc) => setDialog({
+    title:'¿Anular Orden de Compra?',
+    text:`Esto anula ${oc.nroOC} (queda en cero, mantiene su número). Si ya tiene una factura de compra asociada, esa factura se ELIMINA (para que no quede afectando Libro de Compras) y sus retenciones de IVA/ISLR quedan en cero, conservando su N° de comprobante y fecha. Esta acción no se puede deshacer fácilmente. ¿Continuar?`,
+    type:'confirm',
+    onConfirm: async () => {
+      try {
+        const batch=writeBatch(db);
+        // 1. La OC misma: status ANULADA, ítems y totales en cero (conserva descripciones, mantiene nroOC)
+        const itemsCero=(oc.items||[]).map(it=>({...it,cantidad:0,precioUnit:0,total:0}));
+        batch.update(getDocRef('procura_ordenes_compra',oc.id),{
+          status:'ANULADA', items:itemsCero,
+          totales:calcTotales(itemsCero,oc.tasa,oc.moneda),
+          total:0, updatedAt:Date.now(),
+        });
+        // 2. Factura de compra asociada (si existe): se ELIMINA — se va a re-emitir de todos modos
+        const facturaAsoc=(facturasCompra||[]).find(f=>f.ocId===oc.nroOC);
+        if(facturaAsoc){
+          batch.delete(getDocRef('procura_facturas_compra',facturaAsoc.id));
+          // 3. Retenciones de IVA asociadas (colección separada) — mantiene N° de comprobante y fecha
+          (retIVACompra||[]).filter(r=>r.facturaId===facturaAsoc.id).forEach(r=>{
+            batch.update(getDocRef('procura_ret_iva',r.id),{
+              pctRetencion:0, monto:0, montoBs:0, baseIVAUSD:0, baseIVABs:0,
+              _anulada:true, _facturaEliminada:true, updatedAt:Date.now(),
+            });
+          });
+          // 4. Retenciones de ISLR asociadas (colección separada) — mantiene N° de comprobante y fecha
+          (retISLR||[]).filter(r=>r.facturaId===facturaAsoc.id).forEach(r=>{
+            batch.update(getDocRef('procura_ret_islr',r.id),{
+              pct:0, monto:0, montoBs:0, baseImponibleBs:0, sustraendoBs:0,
+              _anulada:true, _facturaEliminada:true, updatedAt:Date.now(),
+            });
+          });
+        }
+        await batch.commit();
+        setDialog({title:'✅ Anulada',text:`${oc.nroOC} anulada${facturaAsoc?'. Su factura fue eliminada y las retenciones quedaron en cero (correlativo conservado)':''}.`,type:'alert'});
+      } catch(e) { setDialog({title:'Error',text:e.message,type:'alert'}); }
+    }
+  });
 
   // ── PDF impresión ──────────────────────────────────────────────────
   const imprimirOC=(oc)=>{
@@ -4281,7 +4323,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
                             <FileText size={11}/> Facturar
                           </button>
                         )}
-                        {!['PROCESADA','ANULADA'].includes(oc.status)&&<PBd sm onClick={()=>cambiarStatus(oc,'ANULADA')} title="Anular"><Ban size={11}/></PBd>}
+                        {oc.status!=='ANULADA'&&<PBd sm onClick={()=>anularOCCascada(oc)} title="Anular"><Ban size={11}/></PBd>}
                         <PBd sm onClick={()=>eliminarOC(oc)}><Trash2 size={11}/></PBd>
                       </div>
                     </PTd>
@@ -4647,6 +4689,40 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const [servicios,setServicios]=useState([]);
   const [pendingDeleteFact,setPendingDeleteFact]=useState(null);
   const [factDelPwd,setFactDelPwd]=useState('');
+  const [revisarBsOpen,setRevisarBsOpen]=useState(false);
+  const [corrigiendoBs,setCorrigiendoBs]=useState(false);
+
+  const facturasBsRevisar = useMemo(()=>{
+    return (facturasCompra||[]).map(f=>{
+      if(String(f.moneda||'USD').toUpperCase()!=='BS') return null;
+      const tasa=pNum(f.tasa||0);
+      if(tasa<=0) return null;
+      const items=f.itemsOC||f.items||[];
+      if(items.length===0) return null;
+      const sumaBs=items.reduce((s,it)=>s+pNum(it._totalBsOriginal!=null?it._totalBsOriginal:it.total||0),0);
+      const correcto=parseFloat((sumaBs/tasa).toFixed(2));
+      const actual=pNum(f.total||f.montoBase||0);
+      if(Math.abs(actual-correcto)<0.05) return null; // ya está bien, no se toca
+      return {f,correcto,actual,sumaBs,tasa};
+    }).filter(Boolean);
+  },[facturasCompra]);
+
+  const corregirFacturasBs = async()=>{
+    setCorrigiendoBs(true);
+    try{
+      const batch=writeBatch(db);
+      facturasBsRevisar.forEach(({f,correcto})=>{
+        batch.update(getDocRef('procura_facturas_compra',f.id),{
+          total:correcto, montoBase:correcto, saldoPendiente:correcto,
+          _corregidoBugMoneda:true, _totalAnteriorAntesCorreccion:pNum(f.total||0),
+        });
+      });
+      await batch.commit();
+      setDialog({title:'✅ Corregidas',text:`${facturasBsRevisar.length} factura(s) actualizadas con su monto correcto en USD.`,type:'alert'});
+      setRevisarBsOpen(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    finally{ setCorrigiendoBs(false); }
+  };
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
@@ -5238,6 +5314,12 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 
   return(
     <div>
+      {facturasBsRevisar.length>0 && (
+        <div className="mb-3 bg-red-50 border-2 border-red-300 rounded-xl p-3 flex items-center justify-between flex-wrap gap-2">
+          <p className="text-[11px] font-black text-red-700 uppercase">⚠ {facturasBsRevisar.length} factura(s) en Bs. registrada(s) con el monto viejo incorrecto (antes de la corrección)</p>
+          <button onClick={()=>setRevisarBsOpen(true)} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700">Revisar y Corregir</button>
+        </div>
+      )}
       {/* Toolbar */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="flex-1 relative min-w-48">
@@ -6051,6 +6133,37 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
               <div className="flex gap-2">
                 <PBo onClick={()=>setModal(null)}>Cancelar</PBo>
                 <PBg onClick={guardar}><Save size={13}/> {form.id?'Actualizar':'Guardar y generar retenciones'}</PBg>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {revisarBsOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setRevisarBsOpen(false)}>
+          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+            <div className="bg-slate-900 px-5 py-4 flex items-center justify-between sticky top-0">
+              <h3 className="text-white font-black uppercase text-sm">Facturas en Bs. con monto a corregir</h3>
+              <button onClick={()=>setRevisarBsOpen(false)} className="text-white/70 hover:text-white"><X size={18}/></button>
+            </div>
+            <div className="p-5">
+              <p className="text-[10px] text-slate-400 mb-3">Estas facturas se registraron en Bs. antes del arreglo del cálculo de moneda — el monto guardado quedó mal (multiplicado de más). Aquí ves el valor viejo y el correcto, recalculado desde los ítems originales.</p>
+              <div className="space-y-2 mb-4">
+                {facturasBsRevisar.map(({f,correcto,actual},i)=>(
+                  <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl p-3 text-xs">
+                    <div>
+                      <p className="font-black text-slate-800">{f.proveedor||'—'} <span className="text-slate-400 font-bold">· {f.nroFactura||f.id}</span></p>
+                      <p className="text-[9px] text-slate-400">{f.fecha||'—'} · Tasa {pNum(f.tasa)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-red-500 font-bold line-through">${formatNum(actual)}</p>
+                      <p className="text-green-600 font-black">${formatNum(correcto)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={()=>setRevisarBsOpen(false)} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase border border-slate-200 hover:bg-slate-50">Cancelar</button>
+                <button disabled={corrigiendoBs} onClick={corregirFacturasBs} className="px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 disabled:opacity-50">{corrigiendoBs?'Corrigiendo...':`Corregir ${facturasBsRevisar.length} Factura(s)`}</button>
               </div>
             </div>
           </div>
@@ -8841,7 +8954,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -20273,7 +20386,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const allRows=[...rowsFiscal,...ncndRows].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 
           const totalVentas=allRows.reduce((s,r)=>s+r.total,0);
-          const totalVentasBs=allRows.reduce((s,r)=>s+r.total*(parseNum(r.tasa||0)||0),0);
+          let _baseBsFacturas=0;
+          filtInvs.forEach(inv=>{
+            const _tasaInv=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const _baseInv=parseNum(inv.montoBase||0);
+            _baseBsFacturas+=parseNum(inv.baseGravableBs||0)>0?parseNum(inv.baseGravableBs):_baseInv*_tasaInv;
+          });
+          const _baseBsNCND=ncndRows.reduce((s,r)=>s+r.total*(parseNum(r.tasa||0)||0),0);
+          const totalVentasBs=_baseBsFacturas+_baseBsNCND;
           let _ivaTotalBsRep=0;
           filtInvs.forEach(inv=>{
             if(inv.aplicaIva!=='SI') return;
