@@ -20273,6 +20273,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           const totalVentas=allRows.reduce((s,r)=>s+r.total,0);
           const totalVentasBs=allRows.reduce((s,r)=>s+r.total*(parseNum(r.tasa||0)||0),0);
+          let _ivaTotalBsRep=0;
+          filtInvs.forEach(inv=>{
+            if(inv.aplicaIva!=='SI') return;
+            const _tasaInv=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+            const _baseInv=parseNum(inv.montoBase||0);
+            const _ivaAmt=parseNum(inv.iva||0)||parseFloat((_baseInv*0.16).toFixed(2));
+            _ivaTotalBsRep+=parseNum(inv.ivaBs||0)||_ivaAmt*_tasaInv;
+          });
+          const totalVentasConIvaBs=totalVentasBs+_ivaTotalBsRep;
           const totalCosto=allRows.reduce((s,r)=>s+r.costoTotal,0);
           const totalUtil=totalVentas-totalCosto;
           const pctUtil=totalVentas>0?Math.round((totalUtil/totalVentas)*100):0;
@@ -20303,8 +20312,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-                {[{label:'Total Ventas',val:`$${formatNum(totalVentas)}`,color:'border-orange-500'},{label:'Total Ventas Bs.',val:`Bs.${formatNum(totalVentasBs)}`,color:'border-amber-600'},{label:'Total Costos',val:`$${formatNum(totalCosto)}`,color:'border-gray-800'},{label:'Utilidad Bruta',val:`$${formatNum(totalUtil)}`,color:totalUtil>=0?'border-green-500':'border-red-500'},{label:'% Margen',val:`${pctUtil}%`,color:pctUtil>=30?'border-green-500':pctUtil>=15?'border-yellow-500':'border-red-500'}].map((k,i)=>(
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
+                {[{label:'Total Ventas',val:`$${formatNum(totalVentas)}`,color:'border-orange-500'},{label:'Total Ventas Bs.',val:`Bs.${formatNum(totalVentasBs)}`,color:'border-amber-600'},{label:'Total Ventas + IVA (Bs.)',val:`Bs.${formatNum(totalVentasConIvaBs)}`,color:'border-red-600'},{label:'Total Costos',val:`$${formatNum(totalCosto)}`,color:'border-gray-800'},{label:'Utilidad Bruta',val:`$${formatNum(totalUtil)}`,color:totalUtil>=0?'border-green-500':'border-red-500'},{label:'% Margen',val:`${pctUtil}%`,color:pctUtil>=30?'border-green-500':pctUtil>=15?'border-yellow-500':'border-red-500'}].map((k,i)=>(
                   <div key={i} className={`bg-gray-50 border-l-4 ${k.color} rounded-xl p-3`}><div className="text-[9px] font-black text-gray-400 uppercase">{k.label}</div><div className="text-lg font-black text-gray-900 mt-0.5">{k.val}</div></div>
                 ))}
               </div>
