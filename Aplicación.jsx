@@ -20303,6 +20303,55 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div key={i} className={`bg-gray-50 border-l-4 ${k.color} rounded-xl p-3`}><div className="text-[9px] font-black text-gray-400 uppercase">{k.label}</div><div className="text-lg font-black text-gray-900 mt-0.5">{k.val}</div></div>
                 ))}
               </div>
+              {(()=>{
+                const _mesRef=pvFilter&&pvFilter!=='general'&&/^\d{4}-\d{2}$/.test(pvFilter)?pvFilter:null;
+                const _divergentes=(invoices||[]).filter(inv=>{
+                  if(!inv) return false;
+                  const fA=(inv.fecha||'').substring(0,7);
+                  const fB=(inv.fechaFactura||'').substring(0,7);
+                  if(!fB||fA===fB) return false; // sin fechaFactura propia, o coinciden: no hay divergencia
+                  if(_mesRef) return fA===_mesRef||fB===_mesRef; // solo las que tocan el mes filtrado, por cualquiera de las 2 fechas
+                  return true;
+                });
+                if(_divergentes.length===0) return null;
+                const _totUSD=_divergentes.reduce((s,i)=>s+parseNum(i.montoBase||0),0);
+                const _totBs=_divergentes.reduce((s,i)=>s+parseNum(i.montoBase||0)*parseNum(i.tasa||i.tasaBCV||0),0);
+                return (
+                  <div className="mb-5 bg-amber-50 border-2 border-amber-300 rounded-xl p-4">
+                    <p className="text-[10px] font-black text-amber-700 uppercase mb-1">⚠ {_divergentes.length} factura(s) con Fecha interna ≠ Fecha del Nro. Fiscal{_mesRef?` (tocando ${_mesRef})`:''}</p>
+                    <p className="text-[9px] text-amber-600 mb-3">Esto es lo que puede causar diferencia contra el Libro de Ventas — revisa cuál de las dos fechas es la correcta en cada una.</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[9px]">
+                        <thead><tr className="text-amber-700 uppercase font-black text-left">
+                          <th className="py-1 pr-3">Documento</th><th className="py-1 pr-3">Nro. Fiscal</th><th className="py-1 pr-3">Fecha Interna</th><th className="py-1 pr-3">Fecha Fiscal</th><th className="py-1 pr-3">Cliente</th><th className="py-1 pr-3 text-right">Monto USD</th><th className="py-1 pr-3 text-right">Monto Bs.</th>
+                        </tr></thead>
+                        <tbody>
+                          {_divergentes.map((inv,i)=>{
+                            const usd=parseNum(inv.montoBase||0);
+                            const bs=usd*parseNum(inv.tasa||inv.tasaBCV||0);
+                            return (
+                              <tr key={i} className="border-t border-amber-200">
+                                <td className="py-1 pr-3 font-black text-orange-700">{inv.documento||inv.id}</td>
+                                <td className="py-1 pr-3">{inv.nroFiscal||'—'}</td>
+                                <td className="py-1 pr-3">{inv.fecha||'—'}</td>
+                                <td className="py-1 pr-3 font-bold text-red-600">{inv.fechaFactura||'—'}</td>
+                                <td className="py-1 pr-3 max-w-[140px] truncate">{inv.clientName||inv.client||'—'}</td>
+                                <td className="py-1 pr-3 text-right font-mono">${formatNum(usd)}</td>
+                                <td className="py-1 pr-3 text-right font-mono">Bs.{formatNum(bs)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot><tr className="border-t-2 border-amber-400 font-black text-amber-800">
+                          <td colSpan={5} className="py-1.5 pr-3 text-right uppercase text-[8px]">Total divergente</td>
+                          <td className="py-1.5 pr-3 text-right font-mono">${formatNum(_totUSD)}</td>
+                          <td className="py-1.5 pr-3 text-right font-mono">Bs.{formatNum(_totBs)}</td>
+                        </tr></tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="overflow-x-auto rounded-xl border border-gray-100">
                 <table className="w-full border-collapse text-[8px]">
                   <thead><tr className="bg-black text-white">{['Fecha','Documento','NE Origen','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
