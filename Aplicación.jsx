@@ -4015,6 +4015,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
 
   const tot=calcTotales(items,form.tasa,form.moneda);
   const hasTasa=pNum(form.tasa||0)>0;
+  const esBsForm=String(form.moneda||'USD').toUpperCase()==='BS';
 
   const agregarItem=()=>{
     if(!itemForm.desc||!itemForm.cantidad||!itemForm.precioUnit){
@@ -4427,8 +4428,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,dialog,setD
                             <td className="px-2 py-1.5 text-right font-mono">{pFmt(it.cantidad)}</td>
                             <td className="px-2 py-1.5 text-slate-500">{it.unidad||'Und'}</td>
                             <td className="px-2 py-1.5 text-right font-mono">{pFmt(it.precioUnit)}</td>
-                            <td className="px-2 py-1.5 text-right font-black text-orange-600">{pFmt(it.total||0)}</td>
-                            {hasTasa&&<td className="px-2 py-1.5 text-right font-mono text-slate-500">{pFmt(pNum(it.total||0)*pNum(form.tasa||0))}</td>}
+                            <td className="px-2 py-1.5 text-right font-black text-orange-600">{pFmt(esBsForm?(hasTasa?pNum(it.total||0)/pNum(form.tasa||0):0):pNum(it.total||0))}</td>
+                            {hasTasa&&<td className="px-2 py-1.5 text-right font-mono text-slate-500">{pFmt(esBsForm?pNum(it.total||0):pNum(it.total||0)*pNum(form.tasa||0))}</td>}
                             <td className="px-2 py-1.5"><button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={12}/></button></td>
                           </tr>
                         ))}
