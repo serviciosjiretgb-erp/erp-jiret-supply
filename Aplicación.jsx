@@ -20363,13 +20363,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
-            if(!inv) return false;
-            // Aplicar filtros de cliente/periodo
-            if(pvFiltCliente!=='TODOS'&&(inv.clientName||'')!==pvFiltCliente) return false;
+            // Aplicar filtros de cliente/periodo — si no hay factura vinculada, igual se evalúa con los datos propios de la nota
+            if(pvFiltCliente!=='TODOS'&&(inv?.clientName||nc.clientName||'')!==pvFiltCliente) return false;
             if(pvFilter&&pvFilter!=='general'&&!(nc.fecha||'').startsWith(pvFilter)) return false;
             if(invFiltAnio&&!(nc.fecha||'').startsWith(invFiltAnio)) return false;
             if(invFiltMes&&(nc.fecha||'').substring(5,7)!==invFiltMes) return false;
-            if(pvFiltDoc){const d=nc.nroDocumento||'';const f=inv.nroFiscal||'';if(!d.toUpperCase().includes(pvFiltDoc.toUpperCase())&&!f.toUpperCase().includes(pvFiltDoc.toUpperCase()))return false;}
+            if(pvFiltDoc){const d=nc.nroDocumento||'';const f=inv?.nroFiscal||'';if(!d.toUpperCase().includes(pvFiltDoc.toUpperCase())&&!f.toUpperCase().includes(pvFiltDoc.toUpperCase()))return false;}
             return true;
           }).map(nc=>{
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
@@ -20378,7 +20377,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const signo=nc.tipo==='NC'?-1:1;
             return {
               fecha:nc.fecha, doc:nc.nroDocumento||nc.tipo, nroFiscal:inv?.nroFiscal||'',
-              vendedor:inv?.vendedor||'', op:'', cliente:inv?.clientName||'',
+              vendedor:inv?.vendedor||'', op:'', cliente:inv?.clientName||nc.clientName||'',
               codigo:'—', producto:nc.descripcion||`${nc.tipo} aplicada`,
               medida:'', cantidad:0, precioVenta:0,
               total:baseUsd*signo, costo:0, costoTotal:0, utilidad:baseUsd*signo,
