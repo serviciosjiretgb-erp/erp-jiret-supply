@@ -13801,21 +13801,22 @@ function App() {
           {campo:'estadoResultados',label:'Estado de Resultados',icon:<TrendingUp size={22}/>},
         ];
         return (
-          <div className="max-w-5xl mx-auto py-8 px-4 animate-in fade-in">
+          <div className="max-w-7xl mx-auto py-8 px-4 animate-in fade-in">
             <div className="text-center mb-8">
               <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900 mb-2">PANEL PRINCIPAL ERP — FINANZAS</h1>
               <div className="w-16 h-1 mx-auto rounded-full mb-3" style={{background:color}}/>
               <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">Vista provisional — este módulo se integrará por completo en la próxima etapa</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6">
               {docsFinanzas.map(d=>{
                 const url=finanzasPDFs[d.campo];
                 const nombre=finanzasPDFs[`${d.campo}_nombre`];
                 const fecha=finanzasPDFs[`${d.campo}_fecha`];
                 const subiendo=finanzasSubiendo[d.campo];
+                const iframeId=`finanzas-iframe-${d.campo}`;
                 return (
                   <div key={d.campo} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-4" style={{background:color+'15'}}>
+                    <div className="flex items-center justify-between px-5 py-4 flex-wrap gap-2" style={{background:color+'15'}}>
                       <div className="flex items-center gap-2.5">
                         <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{background:color+'22',color}}>{d.icon}</div>
                         <div>
@@ -13823,15 +13824,17 @@ function App() {
                           {nombre&&<p className="text-[10px] text-gray-400 font-bold">{nombre} · {fecha}</p>}
                         </div>
                       </div>
-                      <label className="cursor-pointer px-3 py-2 rounded-xl text-[10px] font-black uppercase text-white hover:opacity-90 flex items-center gap-1.5 flex-shrink-0" style={{background:color}}>
-                        <Upload size={12}/>{subiendo?'Subiendo...':(url?'Reemplazar':'Subir PDF')}
-                        <input type="file" accept="application/pdf" className="hidden" disabled={subiendo} onChange={e=>subirFinanzasPDF(e.target.files[0],d.campo,d.label)}/>
-                      </label>
+                      <div className="flex items-center gap-2">
+                        {url&&<button onClick={()=>{const el=document.getElementById(iframeId); if(el?.requestFullscreen) el.requestFullscreen(); else if(el?.webkitRequestFullscreen) el.webkitRequestFullscreen();}} className="px-3 py-2 rounded-xl text-[10px] font-black uppercase text-white hover:opacity-90 flex items-center gap-1.5 flex-shrink-0" style={{background:'#1e293b'}}><span className="text-sm leading-none">⛶</span>Pantalla Completa</button>}
+                        <label className="cursor-pointer px-3 py-2 rounded-xl text-[10px] font-black uppercase text-white hover:opacity-90 flex items-center gap-1.5 flex-shrink-0" style={{background:color}}>
+                          <Upload size={12}/>{subiendo?'Subiendo...':(url?'Reemplazar':'Subir PDF')}
+                          <input type="file" accept="application/pdf" className="hidden" disabled={subiendo} onChange={e=>subirFinanzasPDF(e.target.files[0],d.campo,d.label)}/>
+                        </label>
+                      </div>
                     </div>
                     {url?(
                       <div className="bg-gray-50">
-                        <iframe src={url+'#toolbar=1'} title={d.label} className="w-full" style={{height:420,border:'none'}}/>
-                        <div className="px-5 py-3 flex justify-end"><a href={url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-black uppercase hover:underline" style={{color}}>Abrir en pestaña completa ↗</a></div>
+                        <iframe id={iframeId} src={url+'#toolbar=1'} title={d.label} className="w-full" style={{height:'82vh',border:'none'}}/>
                       </div>
                     ):(
                       <div className="flex flex-col items-center justify-center gap-2 py-14 text-gray-300">
