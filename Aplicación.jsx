@@ -8126,21 +8126,10 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
        !(f.nroControl||'').toLowerCase().includes(filtFact.toLowerCase())) return false;
     if(filtProv && !(f.proveedor||'').toLowerCase().includes(filtProv.toLowerCase())) return false;
     return true;
-  }).sort((a,b)=>{
-    // N° de Comprobante de la retención IVA asociada manda primero (orden real de emisión);
-    // si alguna de las dos no tiene retención asociada, se cae a Fecha.
-    const ra=(retIVACompra||[]).find(r=>r.facturaId===a.id);
-    const rb=(retIVACompra||[]).find(r=>r.facturaId===b.id);
-    const pa=(ra?.nroComprobante||'').toString().trim();
-    const pb=(rb?.nroComprobante||'').toString().trim();
-    const na=pa?(parseInt(pa.replace(/\D/g,''))||0):null;
-    const nb=pb?(parseInt(pb.replace(/\D/g,''))||0):null;
-    if(na!==null&&nb!==null&&na!==nb) return na-nb;
-    return (a.fecha||'').localeCompare(b.fecha||'');
-  });
+  }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
-  // Construir filas del libro
-  const rows = []; let seq = 1;
+  // Construir filas del libro — cronológico real (facturas y retenciones intercaladas por su propia fecha)
+  let rows = [];
   factsPeriodo.forEach(f => {
     const prov = (proveedores||[]).find(p => p.id === f.proveedorId);
     const rif = prov?.rif || '';
@@ -8154,7 +8143,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     const exentoBs  = pNum(tot.exentoBs||0);
     const imp = f.importacion||null;
     rows.push({
-      seq:seq++, fecha:f.fecha||'', rif, nombre:f.proveedor||'—',
+      fecha:f.fecha||'', rif, nombre:f.proveedor||'—',
       tipo:'FACTURA', nroFactura:f.nroFactura||'', nroControl:f.nroControl||'',
       // Importaciones — tomar de DUA si esImportacion, si no va todo en Compras Internas
       impFechaAplic: f.esImportacion&&imp ? (imp.fechaAplic||'') : '',
@@ -8175,7 +8164,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     });
     const ret = (retIVACompra||[]).find(r => r.facturaId === f.id);
     if(ret) rows.push({
-      seq:seq++, fecha:ret.fecha||f.fecha||'', rif:ret.rifProveedor||rif, nombre:ret.proveedor||f.proveedor||'—',
+      fecha:ret.fecha||f.fecha||'', rif:ret.rifProveedor||rif, nombre:ret.proveedor||f.proveedor||'—',
       tipo:'RETENCIÓN', nroFactura:'', nroControl:'',
       impTotal:0, impBase:0, impIVA:0,
       ciTotal:0, ciSinDer:0, ciBase:0, ciCred:0,
@@ -8184,6 +8173,21 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
       retFact:ret.nroFactura||'', retComp:ret.nroComprobante||'',
     });
   });
+  // Orden cronológico real: cada fila (factura o retención) por su propia fecha —
+  // esto hace que una factura de mes anterior "aprovechada" en este período aparezca
+  // naturalmente cerca del inicio, y que las retenciones queden intercaladas donde
+  // realmente ocurrieron (no siempre pegadas justo debajo de su factura).
+  rows.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  // Validación de consistencia: dentro de las retenciones, el N° de comprobante debe ir
+  // subiendo en el mismo sentido que la fecha. Si no es así, se marca para revisar (no se reordena solo).
+  let _ultimoCompNum=null;
+  rows.forEach(r=>{
+    if(r.tipo!=='RETENCIÓN'||!r.retComp) return;
+    const n=parseInt((r.retComp||'').replace(/\D/g,''))||0;
+    if(_ultimoCompNum!==null && n<_ultimoCompNum) r._compInconsistente=true;
+    _ultimoCompNum=n;
+  });
+  rows=rows.map((r,i)=>({...r,seq:i+1}));
 
   // Totales
   const fRows = rows.filter(r=>r.tipo==='FACTURA');
@@ -8652,7 +8656,7 @@ ${resumenHtml}
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,background:!isFac?'#fef3c7':'',color:!isFac?'#ea580c':'#94a3b8',fontWeight:!isFac?900:400}}>{r.retPct||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#dc2626',fontWeight:700,fontSize:9,fontFamily:'monospace'}}>{r.retMonto>0?fmtV(r.retMonto):'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#ea580c',fontSize:9}}>{r.retFact||'—'}</td>
-                  <td style={{padding:'2px 4px',fontSize:8,color:'#374151'}}>{r.retComp||'—'}</td>
+                  <td style={{padding:'2px 4px',fontSize:8,color:r._compInconsistente?'#dc2626':'#374151',fontWeight:r._compInconsistente?900:400}} title={r._compInconsistente?'El N° de comprobante no sigue el mismo orden que la fecha — revisar':''}>{r.retComp||'—'}{r._compInconsistente?' ⚠':''}</td>
                 </tr>
               );
             })}
@@ -20268,6 +20272,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const allRows=[...rowsFiscal,...ncndRows].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 
           const totalVentas=allRows.reduce((s,r)=>s+r.total,0);
+          const totalVentasBs=allRows.reduce((s,r)=>s+r.total*(parseNum(r.tasa||0)||0),0);
           const totalCosto=allRows.reduce((s,r)=>s+r.costoTotal,0);
           const totalUtil=totalVentas-totalCosto;
           const pctUtil=totalVentas>0?Math.round((totalUtil/totalVentas)*100):0;
@@ -20298,8 +20303,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-                {[{label:'Total Ventas',val:`$${formatNum(totalVentas)}`,color:'border-orange-500'},{label:'Total Costos',val:`$${formatNum(totalCosto)}`,color:'border-gray-800'},{label:'Utilidad Bruta',val:`$${formatNum(totalUtil)}`,color:totalUtil>=0?'border-green-500':'border-red-500'},{label:'% Margen',val:`${pctUtil}%`,color:pctUtil>=30?'border-green-500':pctUtil>=15?'border-yellow-500':'border-red-500'}].map((k,i)=>(
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+                {[{label:'Total Ventas',val:`$${formatNum(totalVentas)}`,color:'border-orange-500'},{label:'Total Ventas Bs.',val:`Bs.${formatNum(totalVentasBs)}`,color:'border-amber-600'},{label:'Total Costos',val:`$${formatNum(totalCosto)}`,color:'border-gray-800'},{label:'Utilidad Bruta',val:`$${formatNum(totalUtil)}`,color:totalUtil>=0?'border-green-500':'border-red-500'},{label:'% Margen',val:`${pctUtil}%`,color:pctUtil>=30?'border-green-500':pctUtil>=15?'border-yellow-500':'border-red-500'}].map((k,i)=>(
                   <div key={i} className={`bg-gray-50 border-l-4 ${k.color} rounded-xl p-3`}><div className="text-[9px] font-black text-gray-400 uppercase">{k.label}</div><div className="text-lg font-black text-gray-900 mt-0.5">{k.val}</div></div>
                 ))}
               </div>
