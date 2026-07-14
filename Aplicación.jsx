@@ -4913,8 +4913,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         fechaVencimiento:form.fechaVencimiento||'',
         moneda:form.moneda||'USD',
         tasa:form.tasa||'',
-        periodoLibroMes:form._periodoLibroMes||(form.fecha||'').substring(0,7)||'',
-        periodoLibroQ:form._periodoLibroQ||'1',
+        periodoLibroMes:form.periodoLibroMes||(form.fecha||'').substring(0,7)||'',
+        periodoLibroQ:form.periodoLibroQ||'1',
         afectaLibroCompras:form.afectaLibroCompras!==false,
         aplicaRetIVA:!!form.aplicaRetIVA,
         pctRetIVA:pNum(form.pctRetIVA||75),
@@ -5469,11 +5469,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                     <div className="col-span-3 text-[9px] font-black text-amber-700 uppercase -mb-1">📖 Período de Aprovechamiento en Libro de Compras (si difiere de la fecha de la factura)</div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Aprovechar</label>
-                      <input type="month" className={`${inp} text-xs py-1.5`} value={form._periodoLibroMes||(form.fecha||'').substring(0,7)||''} onChange={e=>setForm(f=>({...f,_periodoLibroMes:e.target.value}))}/>
+                      <input type="month" className={`${inp} text-xs py-1.5`} value={form.periodoLibroMes||(form.fecha||'').substring(0,7)||''} onChange={e=>setForm(f=>({...f,periodoLibroMes:e.target.value}))}/>
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
-                      <select className={`${sel} text-xs py-1.5`} value={form._periodoLibroQ||'1'} onChange={e=>setForm(f=>({...f,_periodoLibroQ:e.target.value}))}>
+                      <select className={`${sel} text-xs py-1.5`} value={form.periodoLibroQ||'1'} onChange={e=>setForm(f=>({...f,periodoLibroQ:e.target.value}))}>
                         <option value="1">I Quincena (1-15)</option>
                         <option value="2">II Quincena (16-fin)</option>
                       </select>
@@ -20099,14 +20099,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'reporte_ventas' && (() => {
           const filtInvs = (invoices||[]).filter(inv=>{
             if(!inv) return false;
-            if(pvFilter && pvFilter !== 'general') { if(!(inv.fecha||'').startsWith(pvFilter)) return false; }
+            const _fechaMostrada=inv.fechaFactura||inv.fecha||'';
+            if(pvFilter && pvFilter !== 'general') { if(!_fechaMostrada.startsWith(pvFilter)) return false; }
             // Respetar filtros activos de Facturación (año + mes)
-            if(invFiltAnio && !(inv.fecha||'').startsWith(invFiltAnio)) return false;
-            if(invFiltMes && (inv.fecha||'').substring(5,7)!==invFiltMes) return false;
+            if(invFiltAnio && !_fechaMostrada.startsWith(invFiltAnio)) return false;
+            if(invFiltMes && _fechaMostrada.substring(5,7)!==invFiltMes) return false;
             if(pvFiltCliente){ const cli=(inv.clientName||inv.client||'').toUpperCase(); const rif=(inv.clientRif||'').toUpperCase(); if(!cli.includes(pvFiltCliente.toUpperCase())&&!rif.includes(pvFiltCliente.toUpperCase())) return false; }
             if(pvFiltDoc){ const doc=(inv.documento||'').toUpperCase(); const fisc=(inv.nroFiscal||'').toUpperCase(); if(!doc.includes(pvFiltDoc.toUpperCase())&&!fisc.includes(pvFiltDoc.toUpperCase())) return false; }
             return true;
-          }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+          }).sort((a,b)=>((b.fechaFactura||b.fecha||'')).localeCompare(a.fechaFactura||a.fecha||''));
           const rows = [];
           filtInvs.forEach(inv=>{
             const items = inv.itemsFacturados||[];
@@ -20280,7 +20281,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="flex gap-2 flex-wrap items-center">
                   <select value={pvFilter||'general'} onChange={e=>setPvFilter(e.target.value)} className="border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-black outline-none bg-white">
                     <option value="general">📊 General (Todo)</option>
-                    {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
+                    {Array.from(new Set((invoices||[]).filter(Boolean).map(i=>(i.fechaFactura||i.fecha||'').substring(0,7)).filter(ym=>ym&&ym.length===7))).sort().map(ym=>{const [y,m]=ym.split('-');const label=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(m,10)-1]+' '+y;return <option key={ym} value={ym}>{label}</option>;})}
                   </select>
                   <div className="relative flex items-center gap-1 border-2 border-gray-200 rounded-xl px-3 py-2 bg-white">
                     <Search size={12} className="text-gray-400"/>
@@ -40274,13 +40275,19 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                setResenaSaving(true);
                try{
                  const ref=getDocRef('resenaConfig','main');
-                 // updateDoc con campo específico evita conflictos y el bug del costo en 0
-                 await setDoc(ref,{[path]:val},{merge:true});
+                 // IMPORTANTE: setDoc+merge NO anida claves con punto como sí lo hace updateDoc —
+                 // hay que construir el objeto anidado real, si no, el valor nunca se guarda de verdad.
+                 const parts=path.split('.');
+                 const nested={};
+                 let cursor=nested;
+                 for(let i=0;i<parts.length-1;i++){cursor=cursor[parts[i]]={};}
+                 cursor[parts[parts.length-1]]=val;
+                 await setDoc(ref,nested,{merge:true});
                  setResenaData(prev=>{
                    const n={...(prev||DATA)};
-                   const parts=path.split('.');let obj=n;
-                   for(let i=0;i<parts.length-1;i++){obj=obj[parts[i]]=obj[parts[i]]||{};}
-                   obj[parts[parts.length-1]]=val;return n;
+                   const p2=path.split('.');let obj=n;
+                   for(let i=0;i<p2.length-1;i++){obj[p2[i]]={...(obj[p2[i]]||{})};obj=obj[p2[i]];}
+                   obj[p2[p2.length-1]]=val;return n;
                  });
                }catch(e){console.error('saveField error:',e);alert('Error al guardar: '+e.message);}
                setResenaSaving(false);setResenaEdit(null);
