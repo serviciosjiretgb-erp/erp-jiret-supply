@@ -7266,7 +7266,13 @@ const HistorialPagosView = ({
   const [histPage, setHistPage] = useState(0);
   const [editPago, setEditPago] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const HIST_PER_PAGE = 50;
+
+  useEffect(()=>{
+    const u = onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancarias(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return u;
+  }, []);
 
   const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
   const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pN(n)); const p=a.toFixed(2).split('.'); return(pN(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
@@ -7707,6 +7713,7 @@ const EstadoCuentaProvView = ({
       const saldoG=getSaldoProv(g);
       const factsProv=g.facts;
       const ncNDs=_ncPorProv.get(g.rif)||[];
+      const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
       const factRows=factsProv.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
         const tasa=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
         const pagos=(_pagosPorFact.get(f.id)||[]).filter(p=>(!ecHasta||(p.fecha||'')<=ecHasta));
@@ -7729,6 +7736,7 @@ ${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2
 ${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}`;
       }).join('');
       const ncRows=ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'$'}${fN(u)}</td><td></td><td></td></tr>`;}).join('');
+      const anticipoRows=anticiposG.map(a=>`<tr style="background:#ecfdf5;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#0f766e">↳ 💰 Anticipo ${fD(a.fecha)} · ${a.metodo||'—'} ${a.referencia?'#'+a.referencia:''}</td><td style="color:#0f766e">${a.banco||''}</td><td colspan="3" style="text-align:right;color:#0f766e;font-family:monospace">-$${fN(a._saldoAnt)}</td><td></td><td style="color:#0f766e;font-style:italic">${a.concepto||'Anticipo a proveedor'}</td></tr>`).join('');
       return `<div style="margin-bottom:16px;page-break-inside:avoid;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">
 <div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between">
   <div><strong style="font-size:11px">${g.nombre}</strong> <span style="font-size:9px;color:#94a3b8">${g.rif}</span></div>
@@ -7736,7 +7744,7 @@ ${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="backgr
 </div>
 <table style="width:100%;border-collapse:collapse;font-size:9px">
 <thead><tr style="background:#0f172a"><th style="padding:4px 6px;color:#f97316;text-align:left">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">COND.PAGO</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th><th style="color:#94a3b8;padding:4px 6px">ESTADO</th><th style="color:#94a3b8;padding:4px 6px">DETALLE</th></tr></thead>
-<tbody>${factRows}${ncRows}</tbody>
+<tbody>${factRows}${ncRows}${anticipoRows}</tbody>
 <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="4" style="padding:4px 8px;font-weight:900">Subtotal ${factsProv.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(factsProv.reduce((s,f)=>s+pN(f.total||0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;color:#6ee7b7">$${fN(factsProv.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0))}</td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(saldoG)}</td><td></td><td></td></tr></tfoot>
 </table></div>`;
     }).join('');
@@ -7757,7 +7765,7 @@ ${body}
   // ── Excel ──────────────────────────────────────────────────────────
   const exportarExcel = () => {
     const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const ths=['Proveedor','RIF','Facturado','Cobrado','Ret. IVA','Ret. ISLR','NC/ND','Saldo','Estado'];
+    const ths=['Proveedor','RIF','Facturado','Cobrado','Ret. IVA','Ret. ISLR','NC/ND','Anticipo','Saldo','Estado'];
     const rows=filtrados.map(g=>{
       const saldoG=getSaldoProv(g);
       const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
@@ -7765,9 +7773,9 @@ ${body}
       const retIVA=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
       const retISLR=g.facts.reduce((s,f)=>s+(f.retISLRLista||[]).reduce((ss,r)=>ss+pN(r.monto||0),0),0);
       const ncNet=(_ncPorProv.get(g.rif)||[]).reduce((s,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return s+(n.tipo==='ND'?u:-u);},0);
-      return [g.nombre,g.rif,facturado,pagado,retIVA,retISLR,ncNet,saldoG,saldoG<-0.01?'A favor':saldoG<0.01?'Saldado':'Pendiente'];
+      return [g.nombre,g.rif,facturado,pagado,retIVA,retISLR,ncNet,getAnticipoProv(g),saldoG,saldoG<-0.01?'A favor':saldoG<0.01?'Saldado':'Pendiente'];
     });
-    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — ESTADO DE CUENTA PROVEEDORES · Corte: ${ecHasta||hoy}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="7" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalSaldo)}</td><td></td></tr></tfoot></table></body></html>`;
+    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — ESTADO DE CUENTA PROVEEDORES · Corte: ${ecHasta||hoy}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="8" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalSaldo)}</td><td></td></tr></tfoot></table></body></html>`;
     Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'EC_Proveedores.xls'}).click();
   };
 
@@ -7804,6 +7812,7 @@ ${body}
             const saldoG=getSaldoProv(g);
             const isExp=ecExpandAll||!!ecExpanded[g.provId];
             const ncNDs=_ncPorProv.get(g.rif)||[];
+            const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
             const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
             const pagado=g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0);
             const retIVAtot=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
@@ -7916,10 +7925,23 @@ ${body}
                           <td colSpan={3}></td>
                         </tr>
                       );})}
+                      {anticiposG.map((a,ai)=>(
+                        <tr key={'ant'+ai} className="bg-teal-50/80 border-b border-teal-100">
+                          <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-teal-700">↳ 💰 Anticipo</td>
+                          <td className="py-1.5 px-3 text-[8px] text-teal-600">{fD(a.fecha)}</td>
+                          <td className="py-1.5 px-3"><span className="bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Anticipo</span></td>
+                          <td className="py-1.5 px-3 text-[8px] text-teal-600">{a.metodo||'—'}</td>
+                          <td className="py-1.5 px-3 text-[8px] text-gray-500">{`${a.concepto||'Anticipo a proveedor'}${a.referencia?' · #'+a.referencia:''}${a.banco?' · '+a.banco:''}${pN(a.montoAplicado||0)>0.01?' · disp. $'+fN(a._saldoAnt)+' de $'+fN(pN(a.monto||0)):''}`}</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
+                          <td className="py-1.5 px-3 text-right font-mono font-black text-teal-700 text-[8px]">-${fN(a._saldoAnt)}</td>
+                          <td colSpan={2}></td>
+                        </tr>
+                      ))}
                     </tbody>
                     <tfoot>
                       <tr className="bg-slate-900 text-white font-black">
-                        <td colSpan={4} className="py-2 px-3 text-[9px]">SUBTOTAL · {g.facts.length} doc(s){ncNDs.length>0?` + ${ncNDs.length} NC/ND directa`:''}</td>
+                        <td colSpan={4} className="py-2 px-3 text-[9px]">SUBTOTAL · {g.facts.length} doc(s){ncNDs.length>0?` + ${ncNDs.length} NC/ND directa`:''}{anticiposG.length>0?` + ${anticiposG.length} anticipo(s)`:''}</td>
                         <td></td>
                         <td className="py-2 px-3 text-right font-mono">${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td>
                         <td className="py-2 px-3 text-right font-mono text-red-300">${fN(retIVAtot)}</td>
