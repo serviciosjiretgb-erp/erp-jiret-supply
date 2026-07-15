@@ -9868,7 +9868,7 @@ function App() {
   // ── Ventas: Notas de Crédito / Débito ────────────────────────────────────────
   const [notasVentaCD, setNotasVentaCD] = useState([]);
   const [showVentaNCModal, setShowVentaNCModal] = useState(false);
-  const [ventaNCForm, setVentaNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
+  const [ventaNCForm, setVentaNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',ivaBs:'',totalBs:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
   const [ventaNCBusq, setVentaNCBusq] = useState('');
   const [ventaNCBusqCli, setVentaNCBusqCli] = useState('');
   const [retForm, setRetForm] = useState({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:'1'});
@@ -23458,7 +23458,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               }
               await batch.commit();
               setShowVentaNCModal(false); setVentaNCBusq(''); setVentaNCBusqCli('');
-              setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',itemsNC:undefined,modoAnulacion:'total',_prevDocId:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});
+              setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',itemsNC:undefined,modoAnulacion:'total',_prevDocId:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});
               setDialog({title:'✅ Guardada',text:`${ventaNCForm.tipo} ${ventaNCForm.nroDocumento} registrada.${ventaNCForm.tipo==='NC'&&itemsARevertir.length>0?' '+itemsARevertir.length+' producto(s) reversados al inventario.':''}`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
@@ -23493,7 +23493,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="flex gap-2 flex-wrap">
                   <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder="Buscar..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-40"/>
                   <button onClick={exportNCExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-green-700"><Download size={13}/>Excel</button>
-                  <button onClick={()=>{setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});setVentaNCBusq('');setVentaNCBusqCli('');setShowVentaNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
+                  <button onClick={()=>{setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});setVentaNCBusq('');setVentaNCBusqCli('');setShowVentaNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
                 </div>
               </div>
 
@@ -23576,7 +23576,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      </body></html>`;
                                      handlePDFFromHTML(_h,n.tipo+'_'+_doc);
                                    }} className="p-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all" title="Ver PDF"><FileText size={13}/></button>
-                                  <button onClick={()=>{setVentaNCForm({...n,monto:String(n.monto||'')});setVentaNCBusq('');setShowVentaNCModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={12}/></button>
+                                  <button onClick={()=>{setVentaNCForm({...n,monto:String(n.monto||''),ivaBs:String(n.ivaBs||''),totalBs:String(n.totalBs||'')});setVentaNCBusq('');setShowVentaNCModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={12}/></button>
                                   <button onClick={()=>setDialog({title:`Eliminar ${n.tipo} — ${n.nroDocumento}`,text:`¿Eliminar ${n.nroDocumento}? ${n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0?'Se deshará la reversión de inventario.':'No afecta inventario.'}`,type:'confirm',onConfirm:async()=>{
                                       try{
                                         // 1. Revertir inventario si era NC Devolución
@@ -23646,8 +23646,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const itemsActivos = modoAnulacion==='total' ? itemsNC : itemsNC.filter(it=>it.seleccionado);
                 const baseUSDCalc  = modoOp==='devolucion' ? itemsActivos.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantNC||it.cantidad||0),0) : 0;
                 const baseImpBs    = ventaNCForm.monto ? parseNum(ventaNCForm.monto) : parseFloat((baseUSDCalc*tasaNC).toFixed(2));
-                const ivaBs16      = parseFloat((baseImpBs*0.16).toFixed(2));
-                const totalBs      = baseImpBs+ivaBs16;
+                const ivaBs16Calc  = parseFloat((baseImpBs*0.16).toFixed(2));
+                const ivaBs16      = ventaNCForm.ivaBs?parseNum(ventaNCForm.ivaBs):ivaBs16Calc;
+                const totalBsCalc  = baseImpBs+ivaBs16;
+                const totalBs      = ventaNCForm.totalBs?parseNum(ventaNCForm.totalBs):totalBsCalc;
 
                 return(
                   <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
@@ -23947,14 +23949,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.)</label>
-                                <input type="number" value={ivaBs16.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-white rounded-xl px-3 py-2 text-xs font-bold"/>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.) <span className="text-gray-400 font-normal">— editable</span></label>
+                                <input type="number" step="0.01" value={ventaNCForm.ivaBs||''}
+                                  onChange={e=>setVentaNCForm(f=>({...f,ivaBs:e.target.value}))}
+                                  placeholder={ivaBs16Calc.toFixed(2)}
+                                  className="w-full border-2 border-gray-200 bg-white rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-400"/>
                               </div>
                               <div>
-                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total (Bs.)</label>
-                                <input type="number" value={totalBs.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-orange-50 rounded-xl px-3 py-2 text-xs font-black text-orange-600"/>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total (Bs.) <span className="text-gray-400 font-normal">— editable</span></label>
+                                <input type="number" step="0.01" value={ventaNCForm.totalBs||''}
+                                  onChange={e=>setVentaNCForm(f=>({...f,totalBs:e.target.value}))}
+                                  placeholder={totalBsCalc.toFixed(2)}
+                                  className="w-full border-2 border-orange-200 bg-orange-50 rounded-xl px-3 py-2 text-xs font-black text-orange-600 outline-none focus:border-orange-500"/>
                               </div>
                             </div>
+                            <p className="text-[7px] text-gray-400 font-bold">★ Si deja IVA/Total vacíos, se calculan automáticamente (Base × 16%). Lo que ingrese aquí es lo que aparece en el Libro de Ventas.</p>
                             {/* Equivalencia USD */}
                             {tasaNC>1&&baseImpBs>0&&(
                               <div className="bg-white border border-blue-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-[9px]">
@@ -27696,8 +27705,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const baseBs = parseNum(n.monto||0);          // Base Imponible en Bs
             const signo  = n.tipo==='NC' ? -1 : 1;
             const baseConSigno = baseBs * signo;           // (-) NC / (+) ND
-            const ivaBsNC = parseFloat((baseConSigno*0.16).toFixed(2));
-            const totalBsNC = baseConSigno + ivaBsNC;
+            const ivaBsAbs = parseNum(n.ivaBs||0) || parseFloat((baseBs*0.16).toFixed(2));     // prioriza IVA manual de la nota
+            const totalBsAbs = parseNum(n.totalBs||0) || parseFloat((baseBs+ivaBsAbs).toFixed(2)); // prioriza Total manual de la nota
+            const ivaBsNC = ivaBsAbs * signo;
+            const totalBsNC = totalBsAbs * signo;
             rows.push({seq:seq++, fecha:n.fecha, rif:inv.clientRif||'', nombre:inv.clientName||'',
               tipo:n.tipo,
               nroFactura:'',                               // vacío para NC/ND
