@@ -20494,6 +20494,43 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                 );
               })()}
+              {(()=>{
+                const _mesRef=pvFilter&&pvFilter!=='general'&&/^\d{4}-\d{2}$/.test(pvFilter)?pvFilter:null;
+                const _todasNC=(notasVentaCD||[]).filter(nc=>nc.naturaleza!=='NO_FISCAL'); // mostrar TODAS las fiscales, sin filtrar por fecha, para no esconder ninguna con fecha mal capturada
+                if(_todasNC.length===0) return null;
+                return (
+                  <div className="mb-5 bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
+                    <p className="text-[10px] font-black text-blue-700 uppercase mb-1">🔍 Diagnóstico: TODAS las Notas de Crédito/Débito fiscales del sistema ({_todasNC.length})</p>
+                    <p className="text-[9px] text-blue-600 mb-3">Sin filtrar por fecha (para no esconder ninguna con fecha mal capturada). Revisa "Factura Vinculada" y "¿Cuenta en {_mesRef||'este período'}?" para las de junio.</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[9px]">
+                        <thead><tr className="text-blue-700 uppercase font-black text-left">
+                          <th className="py-1 pr-3">Tipo</th><th className="py-1 pr-3">N° Doc.</th><th className="py-1 pr-3">Fecha NC</th><th className="py-1 pr-3">facturaId (guardado)</th><th className="py-1 pr-3">Factura Vinculada</th><th className="py-1 pr-3 text-right">Monto (moneda NC)</th><th className="py-1 pr-3 text-center">¿Cuenta en {_mesRef||'período'}?</th>
+                        </tr></thead>
+                        <tbody>
+                          {_todasNC.map((nc,i)=>{
+                            const inv=(invoices||[]).find(i2=>i2.id===nc.facturaId);
+                            const fechaNC=(nc.fecha||'').substring(0,7);
+                            const fechaFactVinc=(inv?.fechaFactura||inv?.fecha||'').substring(0,7);
+                            const cuenta=!_mesRef||fechaNC===_mesRef||fechaFactVinc===_mesRef;
+                            return (
+                              <tr key={i} className="border-t border-blue-200">
+                                <td className="py-1 pr-3 font-black">{nc.tipo}</td>
+                                <td className="py-1 pr-3">{nc.nroDocumento||'—'}</td>
+                                <td className="py-1 pr-3">{nc.fecha||'—'}</td>
+                                <td className="py-1 pr-3 font-mono text-[8px] text-gray-500">{nc.facturaId||'(vacío)'}</td>
+                                <td className="py-1 pr-3">{inv?`✅ ${inv.nroFiscal||inv.documento} (${inv.fechaFactura||inv.fecha})`:'❌ NO ENCONTRADA'}</td>
+                                <td className="py-1 pr-3 text-right font-mono">{formatNum(parseNum(nc.monto||0))}</td>
+                                <td className={`py-1 pr-3 text-center font-black ${cuenta?'text-green-600':'text-red-600'}`}>{cuenta?'SÍ':'NO'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="overflow-x-auto rounded-xl border border-gray-100">
                 <table className="w-full border-collapse text-[8px]">
                   <thead><tr className="bg-black text-white">{['Fecha','Documento','NE Origen','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
@@ -24992,11 +25029,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const linea=lineas[li];
                 if(linea.anticipoId||linea.cuentaId.startsWith('ANTICIPO::')) continue; // aplicar anticipo no mueve banco
                 const tk=trackLineas[li];
-                const usdAplicadoLinea=parseFloat(tk.usdAsignado.toFixed(2));
+                // El movimiento de banco/caja SIEMPRE es por el monto TOTAL de la línea (lo que realmente entró),
+                // no solo lo que se alcanzó a aplicar a NE — si sobra, el sobrante se registra aparte como anticipo.
+                const usdAplicadoLinea=parseFloat(tk.usdTotal.toFixed(2));
                 if(usdAplicadoLinea<0.005) continue;
                 const tasa=parseNum(linea.tasa||tasaBCV);
-                // Bs exacto: si la línea se aplicó completa, usar el Bs tecleado tal cual; si quedó parcial, la porción asignada
-                const bsAplicadoLinea=tk.bsTotal!=null?parseFloat(tk.bsAsignado.toFixed(2)):parseFloat((usdAplicadoLinea*tasa).toFixed(2));
+                const bsAplicadoLinea=tk.bsTotal!=null?parseFloat(tk.bsTotal.toFixed(2)):parseFloat((usdAplicadoLinea*tasa).toFixed(2));
+                const sobranteLinea=parseFloat((tk.usdTotal-tk.usdAsignado).toFixed(2));
                 const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
                 const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
                 if(cta){
@@ -25021,6 +25060,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     monto:usdAplicadoLinea,montoUSD:usdAplicadoLinea,montoBs:bsAplicadoLinea,tasa,
                     aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
                     metodo:linea.metodo,grupoCobroId:grupoId,timestamp:Date.now()
+                  });
+                }
+                // Si esta línea pagó más de lo que se aplicó a NE, el sobrante queda como saldo a favor del cliente (anticipo)
+                if(sobranteLinea>0.01){
+                  const antId=`ANT-${grupoId}-${li}`;
+                  const sobranteBs=tk.bsTotal!=null?parseFloat((bsAplicadoLinea-(tk.bsAsignado||0)).toFixed(2)):parseFloat((sobranteLinea*tasa).toFixed(2));
+                  batch.set(getDocRef('cobros_cxc',antId),{
+                    id:antId,neId:'',clientName:m.clientName,clientRif:m.clientRif,
+                    esAnticipo:true,montoAplicado:0,
+                    monto:sobranteLinea,montoUSD:sobranteLinea,montoBs:sobranteBs,tasa,
+                    moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
+                    concepto:`Saldo a favor del cliente (excedente de ${linea.concepto||'Cobro CxC'})`,
+                    fecha:linea.fecha,vendedor:m.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
                   });
                 }
               }
@@ -25982,22 +26034,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   </td>
                                                 </tr>);
                                               })}
-                                              {cobrosNE.map((cb,ci)=>(
+                                              {cobrosNE.map((cb,ci)=>{
+                                                const grupoCompleto=cb.grupoCobroId?(cobrosCxc||[]).filter(c=>c.grupoCobroId===cb.grupoCobroId):[cb];
+                                                const otrasNE=cb.grupoCobroId?[...new Set(grupoCompleto.filter(c=>c.neId&&c.neId!==cb.neId).map(c=>{const neOtra=(notasEntrega||[]).find(n=>n.id===c.neId);return neOtra?.documento||neOtra?.id||c.neId;}))]:[];
+                                                const totalGrupoUSD=grupoCompleto.reduce((s,c)=>s+parseNum(c.monto||0),0);
+                                                const totalGrupoBs=grupoCompleto.reduce((s,c)=>s+parseNum(c.montoBs||0),0);
+                                                const esParteDeGrupo=otrasNE.length>0;
+                                                return (
                                                 <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
                                                   <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-green-700">↳ Pago{cobrosNE.length>1?' '+(ci+1):''}</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-green-600 font-bold">{cb.fecha||'—'}</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
                                                   <td className="py-1.5 px-2 text-[8px] font-mono text-gray-500">{cb.referencia||'—'}</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
-                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-green-700">${formatNum(parseNum(cb.monto))}{esParteDeGrupo?<span className="block text-[7px] font-normal text-gray-400">de ${formatNum(totalGrupoUSD)} total</span>:null}</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={3}>—</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
                                                     <span className="font-bold text-green-700">{cb.metodo||'Pago'}</span>
                                                     {cb.cuentaBancoNombre&&<span className="ml-1 text-gray-500">· {cb.cuentaBancoNombre}</span>}
                                                     {cb.montoBs>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
+                                                    {esParteDeGrupo&&<span className="ml-1 text-teal-700 font-black">· PAGO ÚNICO de ${formatNum(totalGrupoUSD)}{totalGrupoBs>0?' / Bs.'+formatNum(totalGrupoBs):''} — también cubrió: {otrasNE.join(', ')}</span>}
                                                   </td>
                                                 </tr>
-                                              ))}
+                                                );
+                                              })}
                                             </React.Fragment>
                                           );
                                         })}
@@ -27313,6 +27373,37 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const nuevoSaldo=Math.max(0,totNE-totNC-totRet-totCob);
                         const st=totCob<0.01?'PENDIENTE':nuevoSaldo<0.01?'COBRADA':'COBRADA_PARCIAL';
                         batch.update(getDocRef('notasEntrega',ne.id),{statusCxC:st,montoCobrado:totCob,saldoPendiente:nuevoSaldo,updatedAt:Date.now()});
+                      }
+                      // Propagar el cambio al movimiento de banco/caja vinculado (mismo grupoCobroId), si existe,
+                      // y ajustar el saldo de la cuenta por la diferencia — para que banco/caja no queden desfasados.
+                      const deltaUSD=montoNuevo-montoAnterior;
+                      if(cxcEditCobro.grupoCobroId){
+                        const [bSnapEdit,kSnapEdit]=await Promise.all([
+                          getDocs(query(getColRef('banco_movimientos'),where('grupoCobroId','==',cxcEditCobro.grupoCobroId))),
+                          getDocs(query(getColRef('caja_movimientos'),where('grupoCobroId','==',cxcEditCobro.grupoCobroId))),
+                        ]);
+                        const mvBanco=bSnapEdit.docs[0]?.data();
+                        if(mvBanco){
+                          const nuevoMontoUSD=parseFloat((parseNum(mvBanco.montoUSD||0)+deltaUSD).toFixed(2));
+                          const nuevoMontoBs=montoBsEdit>0?montoBsEdit:parseFloat((parseNum(mvBanco.montoBs||0)+deltaUSD*(tasaEdit||parseNum(mvBanco.tasa||0))).toFixed(2));
+                          batch.update(getDocRef('banco_movimientos',mvBanco.id||bSnapEdit.docs[0].id),{
+                            montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,
+                            fecha:cxcEditForm.fecha||mvBanco.fecha,referencia:(cxcEditForm.referencia||mvBanco.referencia||'').toUpperCase(),
+                            updatedAt:Date.now(),
+                          });
+                          const ctaBanco=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
+                          if(ctaBanco) batch.update(getDocRef('banco_cuentas',ctaBanco.id),{saldo:parseFloat((parseNum(ctaBanco.saldo||0)+deltaUSD).toFixed(2))});
+                        }
+                        const mvCaja=kSnapEdit.docs[0]?.data();
+                        if(mvCaja){
+                          const nuevoMontoUSDCaja=parseFloat((parseNum(mvCaja.montoUSD||0)+deltaUSD).toFixed(2));
+                          const nuevoMontoBsCaja=montoBsEdit>0?montoBsEdit:parseFloat((parseNum(mvCaja.montoBs||0)+deltaUSD*(tasaEdit||parseNum(mvCaja.tasa||0))).toFixed(2));
+                          batch.update(getDocRef('caja_movimientos',mvCaja.id||kSnapEdit.docs[0].id),{
+                            monto:nuevoMontoUSDCaja,montoUSD:nuevoMontoUSDCaja,montoBs:nuevoMontoBsCaja,
+                            fecha:cxcEditForm.fecha||mvCaja.fecha,referencia:(cxcEditForm.referencia||mvCaja.referencia||'').toUpperCase(),
+                            updatedAt:Date.now(),
+                          });
+                        }
                       }
                     }
                     await batch.commit();
