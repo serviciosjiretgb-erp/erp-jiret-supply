@@ -6687,13 +6687,15 @@ ${body}
             try{
               const batch=writeBatch(db);
               let totalAnt=0;
+              const saldoAcumPorCtaAnt={};
               (pm.lineasPago||[]).forEach((l,li)=>{
                 const tasa=pN(l.tasa||tasaBCV||1);
                 const montoUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1);
                 totalAnt+=montoUSD;
+                const grupoPagoId=`GP-ANT-${Date.now().toString(36).toUpperCase()}-${li}`;
                 const antId=`ANTCXP-${Date.now().toString(36)}-${li}`;
                 batch.set(getDocRef('procura_pagos_cxp',antId),{
-                  id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
+                  id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',grupoPagoId,
                   proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',
                   monto:montoUSD,fecha:l.fecha||hoy,metodo:l.metodo||'Transferencia',
                   banco:l.cuentaNombre||'',referencia:l.referencia||'',concepto:l.concepto||'Anticipo a proveedor',
@@ -6708,25 +6710,30 @@ ${body}
                   const movId=`MOV-ANTCXP-${Date.now().toString(36)}-${li}`;
                   const ctaNombreAnt=(cuentasBancarias||[]).find(c=>c.id===l.cuentaId);
                   batch.set(getDocRef('banco_movimientos',movId),{
-                    id:movId,cuentaId:l.cuentaId,cuentaNombre:ctaNombreAnt?.banco||l.cuentaNombre||'',tipo:'Egreso',montoBs,montoUSD:montoUsdLinea,tasa,fecha:l.fecha||hoy,
+                    id:movId,cuentaId:l.cuentaId,cuentaNombre:ctaNombreAnt?.banco||l.cuentaNombre||'',tipo:'Egreso',montoBs,montoUSD:montoUsdLinea,tasa,fecha:l.fecha||hoy,grupoPagoId,
                     concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
                     referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
                     proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
                     timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                   });
+                  saldoAcumPorCtaAnt[l.cuentaId]=(saldoAcumPorCtaAnt[l.cuentaId]||0)+montoUsdLinea;
                 } else {
                   const cajaId=l.cuentaId.replace('CAJA::','');
                   const cajaObj=(cajasCuentasCxp||[]).find(c=>c.id===cajaId);
                   const movId=`MOVC-ANTCXP-${Date.now().toString(36)}-${li}`;
                   batch.set(getDocRef('caja_movimientos',movId),{
                     id:movId,cajaId,tipo:'Egreso',moneda:cajaObj?.moneda||'USD',
-                    monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,fecha:l.fecha||hoy,
+                    monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,fecha:l.fecha||hoy,grupoPagoId,
                     concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
                     referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
                     aplicaTercero:true,tipoTercero:'Proveedor',terceroId:provSel?.id||'',terceroNombre:provSel?.nombre||'',
                     timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                   });
                 }
+              });
+              Object.entries(saldoAcumPorCtaAnt).forEach(([ctaId,dec])=>{
+                const ctaDoc=(cuentasBancarias||[]).find(c=>c.id===ctaId);
+                if(ctaDoc) batch.update(getDocRef('banco_cuentas',ctaId),{saldo:parseFloat((pN(ctaDoc.saldo||0)-dec).toFixed(2))});
               });
               await batch.commit();
               setCxpPagoModal(null);
@@ -6742,6 +6749,7 @@ ${body}
           }
           try{
             const batch=writeBatch(db);
+            const grupoPagoId=`GP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2,5).toUpperCase()}`;
             const totalUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
             // Distribuir entre facturas SELECCIONADAS: primero las que tienen monto manual (se respeta tal cual),
             // luego el resto en cascada (más antigua primero) con lo que sobre; sin selección = todas
@@ -6762,7 +6770,7 @@ ${body}
               const antSobranteId=`ANTCXP-SOB-${Date.now().toString(36)}`;
               const tasaSobrante=pN((pm.lineasPago||[])[0]?.tasa||tasaBCV||1);
               batch.set(getDocRef('procura_pagos_cxp',antSobranteId),{
-                id:antSobranteId,esAnticipo:true,montoAplicado:0,facturaId:'',
+                id:antSobranteId,esAnticipo:true,montoAplicado:0,facturaId:'',grupoPagoId,
                 proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',
                 monto:parseFloat(restante.toFixed(2)),fecha:(pm.lineasPago||[])[0]?.fecha||hoy,
                 metodo:(pm.lineasPago||[])[0]?.metodo||'Transferencia',referencia:(pm.lineasPago||[])[0]?.referencia||'',
@@ -6780,7 +6788,7 @@ ${body}
                 if(montoPago<0.001) return;
                 const pid=`${pagoId}-L${li}`;
                 batch.set(getDocRef('procura_pagos_cxp',pid),{
-                  id:pid,facturaId:f.id,proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',
+                  id:pid,facturaId:f.id,proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',grupoPagoId,
                   monto:montoPago,fecha:l.fecha||hoy,metodo:l.metodo||'Transferencia',
                   banco:l.cuentaNombre||'',referencia:l.referencia||'',concepto:l.concepto||'Pago CxP',
                   cuentaId:l.cuentaId||'',moneda:l.moneda||'USD',tasa:pN(l.tasa||tasaBCV||1),
@@ -6804,6 +6812,7 @@ ${body}
               const ant=(pagosCxP||[]).find(a=>a.id===antId);
               if(ant) batch.update(getDocRef('procura_pagos_cxp',antId),{montoAplicado:parseFloat((pN(ant.montoAplicado||0)+aplicado).toFixed(2)),fechaUltimaAplicacion:hoy});
             });
+            const saldoAcumPorCtaCxp={};
             (pm.lineasPago||[]).forEach((l,li)=>{
               if(!l.cuentaId) return;
               if(l.anticipoId||l.cuentaId.startsWith('ANTICIPO::')) return;
@@ -6811,12 +6820,13 @@ ${body}
               const esCajaLinea=l.cuentaId.startsWith('CAJA::');
               if(!esCajaLinea){
                 const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
+                const montoUsdLinea=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1);
                 const movId=`MOV-PAGCXP-${Date.now().toString(36)}-${li}`;
                 const ctaNombreReg=(cuentasBancarias||[]).find(c=>c.id===l.cuentaId);
                 batch.set(getDocRef('banco_movimientos',movId),{
                   id:movId,cuentaId:l.cuentaId,cuentaNombre:ctaNombreReg?.banco||l.cuentaNombre||'',tipo:'Egreso',montoBs,
-                  montoUSD:l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1),
-                  tasa,fecha:l.fecha||hoy,
+                  montoUSD:montoUsdLinea,
+                  tasa,fecha:l.fecha||hoy,grupoPagoId,
                   concepto:`${l.concepto||'Pago CxP'} — ${provSel?.nombre||'—'}${distribFacts.length?` — Fact.${distribFacts.map(({f})=>f.nroFactura||f.id).join('/')}`:''}`,
                   notas:distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ${f.fecha||''} $${fN(ap)}`).join(' | '),
                   referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
@@ -6824,6 +6834,7 @@ ${body}
                   facturas:distribFacts.map(({f,ap})=>({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto:ap})),
                   timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                 });
+                saldoAcumPorCtaCxp[l.cuentaId]=(saldoAcumPorCtaCxp[l.cuentaId]||0)+montoUsdLinea;
               } else {
                 const cajaId=l.cuentaId.replace('CAJA::','');
                 const cajaObj=(cajasCuentasCxp||[]).find(c=>c.id===cajaId);
@@ -6833,14 +6844,20 @@ ${body}
                   id:movId,cajaId,tipo:'Egreso',
                   moneda:cajaObj?.moneda||'USD',
                   monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,
-                  fecha:l.fecha||hoy,
+                  fecha:l.fecha||hoy,grupoPagoId,
                   concepto:`${l.concepto||'Pago CxP'} — ${provSel?.nombre||'—'}${distribFacts.length?` — Fact.${distribFacts.map(({f})=>f.nroFactura||f.id).join('/')}`:''}`,
+                  notas:distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ${f.fecha||''} $${fN(ap)}`).join(' | '),
                   referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
                   aplicaTercero:true,tipoTercero:'Proveedor',terceroId:provSel?.id||'',terceroNombre:provSel?.nombre||'',
                   proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
+                  facturas:distribFacts.map(({f,ap})=>({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto:ap})),
                   timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                 });
               }
+            });
+            Object.entries(saldoAcumPorCtaCxp).forEach(([ctaId,dec])=>{
+              const ctaDoc=(cuentasBancarias||[]).find(c=>c.id===ctaId);
+              if(ctaDoc) batch.update(getDocRef('banco_cuentas',ctaId),{saldo:parseFloat((pN(ctaDoc.saldo||0)-dec).toFixed(2))});
             });
             await batch.commit();
             setCxpPagoModal(null);
@@ -7370,7 +7387,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
 
   // ── Reversar Pago ──────────────────────────────────────────────────
   const reversarPago = async (p) => {
-    if(!window.confirm(`¿Reversar el pago de $${fN(pN(p.monto||0))} a ${p.proveedor||'—'}? Esta acción restaura el saldo de la factura.`)) return;
+    if(!window.confirm(`¿Reversar el pago de $${fN(pN(p.monto||0))} a ${p.proveedor||'—'}? Esta acción restaura el saldo de la factura y del banco/caja.`)) return;
     try{
       const batch = writeBatch(db);
       batch.delete(getDocRef('procura_pagos_cxp', p.id));
@@ -7382,8 +7399,46 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           saldoPendiente: nuevoSaldo, status:'PENDIENTE', updatedAt:Date.now()
         });
       }
+      // Reversar el/los movimiento(s) de banco/caja vinculado(s) a este pago (mismo grupoPagoId)
+      // y ajustar el saldo real de la cuenta — para que banco/caja no queden desfasados ni huérfanos.
+      if(p.grupoPagoId){
+        const [bSnapRev,kSnapRev]=await Promise.all([
+          getDocs(query(getColRef('banco_movimientos'),where('grupoPagoId','==',p.grupoPagoId))),
+          getDocs(query(getColRef('caja_movimientos'),where('grupoPagoId','==',p.grupoPagoId))),
+        ]);
+        const reversarMov=(mv,docId,esCaja)=>{
+          const facturasMv=mv.facturas||[];
+          const idx=facturasMv.findIndex(x=>x.id===p.facturaId);
+          const otras=idx===-1?facturasMv:facturasMv.filter((_,i)=>i!==idx);
+          const ref=getDocRef(esCaja?'caja_movimientos':'banco_movimientos',mv.id||docId);
+          if(facturasMv.length===0||otras.length===0){
+            // única factura de este movimiento (o sin desglose): reversar completo
+            batch.delete(ref);
+            if(!esCaja){
+              const cta=(cuentasBancarias||[]).find(c=>c.id===mv.cuentaId);
+              if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseFloat((pN(cta.saldo||0)+pN(mv.montoUSD||0)).toFixed(2))});
+            }
+          } else {
+            // el movimiento cubre otras facturas además de esta: solo restar la porción reversada
+            const apRev=pN(facturasMv[idx]?.monto||0);
+            const proporRev=pN(mv.montoUSD||0)>0?apRev/pN(mv.montoUSD||0):0;
+            const nuevoMontoUSD=Math.max(0,parseFloat((pN(mv.montoUSD||0)-apRev).toFixed(2)));
+            const nuevoMontoBs=Math.max(0,parseFloat((pN(mv.montoBs||0)*(1-proporRev)).toFixed(2)));
+            batch.update(ref,{
+              montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,facturas:otras,
+              notas:otras.map(x=>`${x.nroFactura||x.id} ${x.fecha||''} $${fN(x.monto)}`).join(' | ')
+            });
+            if(!esCaja){
+              const cta=(cuentasBancarias||[]).find(c=>c.id===mv.cuentaId);
+              if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseFloat((pN(cta.saldo||0)+apRev).toFixed(2))});
+            }
+          }
+        };
+        bSnapRev.docs.forEach(d=>reversarMov(d.data(),d.id,false));
+        kSnapRev.docs.forEach(d=>reversarMov(d.data(),d.id,true));
+      }
       await batch.commit();
-      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. El saldo de la factura fue restaurado.`,type:'alert'});
+      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. Saldo de factura y de banco/caja restaurados.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
