@@ -6649,7 +6649,7 @@ ${body}
         // Facturas pendientes del proveedor seleccionado
         const factsPendProv=(provSel?.facts||[]).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
         const factsSelecIds=Object.keys(pm.factsSelec||{}).filter(k=>pm.factsSelec[k]);
-        const factsParaDistribuir=factsSelecIds.length>0?factsPendProv.filter(f=>factsSelecIds.includes(f.id)):factsPendProv;
+        const factsParaDistribuir=factsSelecIds.length>0?factsPendProv.filter(f=>factsSelecIds.includes(f.id)):[]; // sin selección explícita, no se toca ninguna factura
 
         // Totales de líneas de pago
         const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
@@ -6673,6 +6673,7 @@ ${body}
         const confirmarYRegistrar = async () => {
           if(!pm.provId) return setDialog({title:'Falta proveedor',text:'Selecciona un proveedor.',type:'alert'});
           if((pm.lineasPago||[]).length===0) return setDialog({title:'Sin pagos',text:'Agrega al menos una línea de pago.',type:'alert'});
+          if(!pm.esAnticipo&&factsParaDistribuir.length===0&&factsPendProv.length>0) return setDialog({title:'Selecciona las facturas',text:'No marcaste ninguna factura. Marca al menos una (o usa "Anticipo sin factura" si el pago no es para una factura específica).',type:'alert'});
           const _hoyValCxp=getTodayDate();
           const _lineaFutCxp=(pm.lineasPago||[]).find(l=>(l.fecha||'')>_hoyValCxp);
           if(_lineaFutCxp) return setDialog({title:'⚠️ Fecha futura',text:`Hay una línea de pago con fecha ${_lineaFutCxp.fecha}, posterior a hoy (${_hoyValCxp}). Corrija la fecha antes de registrar el pago.`,type:'alert'});
@@ -6951,8 +6952,8 @@ ${body}
                         </div>
                         <div style={{display:'flex',gap:4,marginTop:3,flexWrap:'wrap'}}>
                           {f.nroControl&&<span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Control: {f.nroControl}</span>}
-                          {retIva&&<span style={{fontSize:8,fontWeight:900,color:'#dc2626',background:'#fee2e2',padding:'1px 6px',borderRadius:4}}>Ret.IVA {pN(retIva.pctRetencion||75)}%</span>}
-                          {retIslr&&<span style={{fontSize:8,fontWeight:900,color:'#7c3aed',background:'#f3e8ff',padding:'1px 6px',borderRadius:4}}>Ret.ISLR {pN(retIslr.pct||0)}%</span>}
+                          {retIva&&<span style={{fontSize:8,fontWeight:900,color:'#dc2626',background:'#fee2e2',padding:'1px 6px',borderRadius:4,lineHeight:1.5}}>Ret.IVA {pN(retIva.pctRetencion||75)}% · Bs.{fN(pN(retIva.montoBs||0))} (${fN(pN(retIva.monto||0))}) · Comp. {retIva.nroComprobante||'—'}</span>}
+                          {retIslr&&<span style={{fontSize:8,fontWeight:900,color:'#7c3aed',background:'#f3e8ff',padding:'1px 6px',borderRadius:4,lineHeight:1.5}}>Ret.ISLR {pN(retIslr.pct||0)}% · Bs.{fN(pN(retIslr.montoBs||0))} (${fN(pN(retIslr.monto||0))}) · Comp. {retIslr.nroComprobante||'—'}</span>}
                         </div>
                       </div>
                     </div>);
