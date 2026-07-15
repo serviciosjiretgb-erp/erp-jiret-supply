@@ -6655,14 +6655,18 @@ ${body}
         const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
         const saldoTrasPago=Math.max(0,(provSel?.saldo||0)-totalLineasUSD);
 
-        // Distribución automática en facturas SELECCIONADAS (más antigua primero); sin selección = todas
-        let distRestante=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1));
+        // Distribución: respeta montos manuales por factura (pm.distribucionManual); el resto en cascada (más antigua primero)
+        const distManualCxp=pm.distribucionManual||{};
+        const totalManualCxpAsig=factsParaDistribuir.reduce((s,f)=>s+(distManualCxp[f.id]!=null?pN(distManualCxp[f.id]):0),0);
+        let distRestante=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1))-totalManualCxpAsig;
         const distMap={};
         factsParaDistribuir.forEach(f=>{
+          if(distManualCxp[f.id]!=null){ distMap[f.id]=pN(distManualCxp[f.id]); return; }
           if(distRestante<=0.001){distMap[f.id]=0;return;}
           const s=getSaldoFact(f); const ap=Math.min(distRestante,s);
           distMap[f.id]=ap; distRestante-=ap;
         });
+        const totalDistribuidoCxp=Object.values(distMap).reduce((s,v)=>s+v,0);
 
         // Bancos
         const bancosBS=(cuentasBancarias||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT'&&c.moneda!=='$');
@@ -6737,12 +6741,18 @@ ${body}
           try{
             const batch=writeBatch(db);
             const totalUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
-            // Distribuir entre facturas SELECCIONADAS (más antigua primero); sin selección = todas
+            // Distribuir entre facturas SELECCIONADAS: primero las que tienen monto manual (se respeta tal cual),
+            // luego el resto en cascada (más antigua primero) con lo que sobre; sin selección = todas
+            const distManualGuardar=pm.distribucionManual||{};
+            const factsConManual=factsParaDistribuir.filter(f=>distManualGuardar[f.id]!=null);
+            const factsSinManual=factsParaDistribuir.filter(f=>distManualGuardar[f.id]==null);
             let restante=totalUSD;
             const distribFacts=[];
-            factsParaDistribuir.forEach(f=>{
+            [...factsConManual,...factsSinManual].forEach(f=>{
               if(restante<=0.001) return;
-              const s=getSaldoFact(f); const ap=Math.min(restante,s);
+              const s=getSaldoFact(f);
+              const manualF=distManualGuardar[f.id];
+              const ap=manualF!=null?Math.min(pN(manualF),s,restante):Math.min(restante,s);
               if(ap>0.001){distribFacts.push({f,ap});restante-=ap;}
             });
             // Si sobra dinero tras pagar todo lo seleccionado, queda como anticipo a favor del proveedor (no se pierde)
@@ -6897,6 +6907,11 @@ ${body}
                     <span style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:1}}>2 · Facturas</span>
                     <span style={{fontSize:9,color:'#9ca3af',fontStyle:'italic'}}>{factsSelecIds.length>0?`${factsSelecIds.length} seleccionada(s)`:'Sin selección = todas'}</span>
                   </div>
+                  {factsSelecIds.length>0&&pN(pm.lineaActual?.monto||0)>0&&(
+                    <div style={{padding:'6px 18px',background:Math.abs(totalDistribuidoCxp-pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1)))<0.01?'#f0fdf4':'#fef2f2',borderBottom:'1px solid #f3f4f6',fontSize:9,fontWeight:900}}>
+                      <span style={{color:'#16a34a'}}>Distribuido: ${fN(totalDistribuidoCxp)}</span>
+                    </div>
+                  )}
                   {/* Anticipo sin factura */}
                   <div style={{padding:'8px 14px',borderBottom:'1px solid #f3f4f6',background:pm.esAnticipo?'#f0fdf4':'#fff'}}>
                     <button onClick={()=>setPM(m=>({esAnticipo:!m.esAnticipo}))}
@@ -6946,9 +6961,28 @@ ${body}
                             <div style={{fontSize:8,color:'#94a3b8'}}>Bs.{fN(sBs)}</div>
                           </div>
                         </div>
-                        <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+                        <div style={{display:'flex',justifyContent:'space-between',marginTop:2,alignItems:'center'}}>
                           <span style={{fontSize:9,color:'#9ca3af'}}>{f.fecha}</span>
-                          {montoLA>0&&ap>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${fN(Math.max(0,s-ap))}</span>}
+                          {seleccionada&&montoLA>0&&(()=>{
+                            const esBsLA=pm.lineaActual?.moneda==='Bs';
+                            const tasaLA=pN(pm.lineaActual?.tasa||tasaBCV||1);
+                            const usdActual=distManualCxp[f.id]!=null?pN(distManualCxp[f.id]):parseFloat((distMap[f.id]||0).toFixed(2));
+                            const valorMostrado=esBsLA?parseFloat((usdActual*tasaLA).toFixed(2)):usdActual;
+                            return (
+                            <div onClick={e=>e.stopPropagation()} style={{display:'flex',alignItems:'center',gap:4}}>
+                              <span style={{fontSize:8,color:'#9ca3af'}}>Aplicar {esBsLA?'Bs.':'$'}</span>
+                              <input type="number" step="0.01" value={valorMostrado}
+                                onChange={ev=>{
+                                  const val=ev.target.value===''?0:pN(ev.target.value);
+                                  const valUSD=esBsLA?parseFloat((val/Math.max(tasaLA,0.01)).toFixed(2)):val;
+                                  setPM(m=>({...m,distribucionManual:{...(m.distribucionManual||{}),[f.id]:valUSD}}));
+                                }}
+                                style={{width:66,fontSize:9,fontWeight:900,color:'#16a34a',border:'1px solid #d1fae5',borderRadius:6,padding:'2px 4px',textAlign:'right'}}/>
+                              {esBsLA&&<span style={{fontSize:8,color:'#9ca3af'}}>(${fN(usdActual)})</span>}
+                              <span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${fN(Math.max(0,s-(distMap[f.id]||0)))}</span>
+                            </div>
+                            );
+                          })()}
                         </div>
                         <div style={{display:'flex',gap:4,marginTop:3,flexWrap:'wrap'}}>
                           {f.nroControl&&<span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Control: {f.nroControl}</span>}
@@ -7560,6 +7594,20 @@ const EstadoCuentaProvView = ({
     return true;
   }),[facturasCompra,ecDesde,ecHasta]);
 
+  const _anticiposPorProv = useMemo(()=>{
+    const m = new Map();
+    for(const a of (pagosCxP||[]).filter(p=>p.esAnticipo)){
+      const rif=(a.proveedorId||a.proveedor||'').trim();
+      if(!rif) continue;
+      const aplicado=parseNum(a.montoAplicado||0);
+      const saldoAnt=parseNum(a.monto||0)-aplicado;
+      if(saldoAnt<=0.01) continue;
+      if(!m.has(rif)) m.set(rif,[]);
+      m.get(rif).push({...a,_saldoAnt:saldoAnt});
+    }
+    return m;
+  },[pagosCxP]);
+
   const porProveedor = useMemo(()=>{
     const m = {};
     allFacts.forEach(f=>{
@@ -7572,15 +7620,22 @@ const EstadoCuentaProvView = ({
       const prov=(proveedores||[]).find(p=>p.rif===rif);
       if(!m[rif]) m[rif]={provId:rif,nombre:prov?.nombre||rif,rif,facts:[]};
     });
+    _anticiposPorProv.forEach((ants,rif)=>{
+      const prov=(proveedores||[]).find(p=>p.rif===rif||p.id===rif);
+      const key=prov?.id||rif;
+      if(!m[key]) m[key]={provId:key,nombre:prov?.nombre||rif,rif:prov?.rif||rif,facts:[]};
+    });
     return Object.values(m).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
-  },[allFacts,proveedores,_ncPorProv]);
+  },[allFacts,proveedores,_ncPorProv,_anticiposPorProv]);
 
   const filtrados = ecSearch ? porProveedor.filter(g=>(g.nombre||'').toLowerCase().includes(ecSearch.toLowerCase())||(g.rif||'').includes(ecSearch)) : porProveedor;
+
+  const getAnticipoProv = (g) => (_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[]).reduce((s,a)=>s+a._saldoAnt,0);
 
   const getSaldoProv = (g) => {
     const s = g.facts.reduce((acc,f)=>acc+getSaldoFact(f),0);
     const ncNet = (_ncPorProv.get(g.rif)||[]).reduce((acc,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return acc+(n.tipo==='ND'?u:-u);},0);
-    return s + ncNet;
+    return s + ncNet - getAnticipoProv(g);
   };
 
   const totalSaldo = filtrados.reduce((s,g)=>s+getSaldoProv(g),0);
@@ -7708,8 +7763,10 @@ ${body}
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Facturado</div><div className="font-mono font-black">${fN(facturado)}</div></div>
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Pagado</div><div className="font-mono font-black text-green-700">${fN(pagado)}</div></div>
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Retención IVA</div><div className="font-mono font-black text-red-600">{retIVAtot>0.001?'$'+fN(retIVAtot):'—'}</div></div>
+                  {getAnticipoProv(g)>0.01&&<div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">💰 Anticipo</div><div className="font-mono font-black text-teal-600">${fN(getAnticipoProv(g))}</div></div>}
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Saldo</div>
                     <div className={`font-mono font-black text-base ${saldoG<-0.01?'text-teal-700':saldoG>0?'text-orange-700':'text-green-700'}`}>{saldoG<-0.01?'-$'+fN(Math.abs(saldoG)):'$'+fN(saldoG)}</div>
+                    {saldoG<-0.01&&<div className="text-[7px] text-teal-600 font-bold uppercase">a favor</div>}
                   </div>
                   <div className="text-gray-400 text-lg">{isExp?'▲':'▼'}</div>
                 </div>
