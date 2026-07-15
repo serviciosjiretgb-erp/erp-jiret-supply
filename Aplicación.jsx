@@ -7995,7 +7995,7 @@ const NotasCompraNCView = ({
       });
       await batch.commit();
       setShowCompraNCModal(false);setCompraNCBusq('');setCompraNCBusqCli('');
-      setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});
+      setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});
       setDialog({title:'✅ Guardada',text:`${compraNCForm.tipo} ${compraNCForm.nroDocumento} de compras registrada.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -8030,7 +8030,7 @@ const NotasCompraNCView = ({
         <div className="flex gap-2 flex-wrap">
           <input value={compraNCBusq} onChange={e=>setCompraNCBusq(e.target.value)} placeholder="Buscar N° doc, proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-52"/>
           <button onClick={exportNCExcelCompra} className="flex items-center gap-1 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase hover:bg-emerald-700"><Download size={13}/>Excel</button>
-          <button onClick={()=>{setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});setCompraNCBusq('');setCompraNCBusqCli('');setShowCompraNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
+          <button onClick={()=>{setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});setCompraNCBusq('');setCompraNCBusqCli('');setShowCompraNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
         </div>
       </div>
 
@@ -8106,8 +8106,10 @@ const NotasCompraNCView = ({
         const docSel=selFac||selFacNF;
         const tasaNC=pNum(docSel?.tasa||settings?.tasaBCV||1)||1;
         const baseImpBs=compraNCForm.monto?pNum(compraNCForm.monto):0;
-        const ivaBs16=parseFloat((baseImpBs*0.16).toFixed(2));
-        const totalBs=baseImpBs+ivaBs16;
+        const ivaBs16Calc=parseFloat((baseImpBs*0.16).toFixed(2));
+        const ivaBs16=compraNCForm.ivaBs?pNum(compraNCForm.ivaBs):ivaBs16Calc;
+        const totalBsCalc=baseImpBs+ivaBs16;
+        const totalBs=compraNCForm.totalBs?pNum(compraNCForm.totalBs):totalBsCalc;
 
         return(
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
@@ -8244,14 +8246,21 @@ const NotasCompraNCView = ({
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.)</label>
-                          <input type="number" value={ivaBs16.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-white rounded-xl px-3 py-2 text-xs font-bold"/>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.) <span className="text-gray-400 font-normal">— editable</span></label>
+                          <input type="number" step="0.01" value={compraNCForm.ivaBs||''}
+                            onChange={e=>setCompraNCForm(f=>({...f,ivaBs:e.target.value}))}
+                            placeholder={ivaBs16Calc.toFixed(2)}
+                            className="w-full border-2 border-gray-200 bg-white rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-400"/>
                         </div>
                         <div>
-                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total (Bs.)</label>
-                          <input type="number" value={totalBs.toFixed(2)} readOnly className="w-full border-2 border-gray-100 bg-orange-50 rounded-xl px-3 py-2 text-xs font-black text-orange-600"/>
+                          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total (Bs.) <span className="text-gray-400 font-normal">— editable</span></label>
+                          <input type="number" step="0.01" value={compraNCForm.totalBs||''}
+                            onChange={e=>setCompraNCForm(f=>({...f,totalBs:e.target.value}))}
+                            placeholder={totalBsCalc.toFixed(2)}
+                            className="w-full border-2 border-orange-200 bg-orange-50 rounded-xl px-3 py-2 text-xs font-black text-orange-600 outline-none focus:border-orange-500"/>
                         </div>
                       </div>
+                      <p className="text-[7px] text-gray-400 font-bold">★ Si deja IVA/Total vacíos, se calculan automáticamente (Base × 16%). Lo que ingrese aquí es lo que queda guardado.</p>
                       {tasaNC>1&&baseImpBs>0&&(
                         <div className="bg-white border border-blue-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-[9px]">
                           <div><p className="text-gray-400 uppercase font-bold text-[8px]">Base USD (tasa {fN(tasaNC)})</p><p className="font-black text-blue-700 text-base">${fN(baseImpBs/tasaNC)}</p></div>
@@ -9084,7 +9093,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
   // ── Compras: Notas de Crédito / Débito ──────────────────────────────────────
   const [notasCompraCD, setNotasCompraCD] = useState([]);
   const [showCompraNCModal, setShowCompraNCModal] = useState(false);
-  const [compraNCForm, setCompraNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
+  const [compraNCForm, setCompraNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',ivaBs:'',totalBs:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
   const [compraNCBusq, setCompraNCBusq] = useState('');
   const [compraNCBusqCli, setCompraNCBusqCli] = useState('');
   const [procCompraView, setProcCompraView] = useState('lista');
