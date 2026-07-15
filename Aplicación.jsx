@@ -6183,7 +6183,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // CUENTAS POR PAGAR — DETALLADO (espejo de CxC Ventas)
 // ══════════════════════════════════════════════════════════════════════════
 const CxPView = ({
-  facturasCompra, pagosCxP, proveedores, retIVACompra, notasCompraCD,
+  facturasCompra, pagosCxP, proveedores, retIVACompra, retISLR, notasCompraCD,
   tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal, appUser
 }) => {
   const [cxpSearch, setCxpSearch] = useState('');
@@ -6648,15 +6648,17 @@ ${body}
 
         // Facturas pendientes del proveedor seleccionado
         const factsPendProv=(provSel?.facts||[]).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+        const factsSelecIds=Object.keys(pm.factsSelec||{}).filter(k=>pm.factsSelec[k]);
+        const factsParaDistribuir=factsSelecIds.length>0?factsPendProv.filter(f=>factsSelecIds.includes(f.id)):factsPendProv;
 
         // Totales de líneas de pago
         const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
         const saldoTrasPago=Math.max(0,(provSel?.saldo||0)-totalLineasUSD);
 
-        // Distribución automática en facturas (más antigua primero)
+        // Distribución automática en facturas SELECCIONADAS (más antigua primero); sin selección = todas
         let distRestante=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1));
         const distMap={};
-        factsPendProv.forEach(f=>{
+        factsParaDistribuir.forEach(f=>{
           if(distRestante<=0.001){distMap[f.id]=0;return;}
           const s=getSaldoFact(f); const ap=Math.min(distRestante,s);
           distMap[f.id]=ap; distRestante-=ap;
@@ -6734,14 +6736,28 @@ ${body}
           try{
             const batch=writeBatch(db);
             const totalUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(pN(l.tasa),1)),0);
-            // Distribuir entre facturas (más antigua primero)
+            // Distribuir entre facturas SELECCIONADAS (más antigua primero); sin selección = todas
             let restante=totalUSD;
             const distribFacts=[];
-            factsPendProv.forEach(f=>{
+            factsParaDistribuir.forEach(f=>{
               if(restante<=0.001) return;
               const s=getSaldoFact(f); const ap=Math.min(restante,s);
               if(ap>0.001){distribFacts.push({f,ap});restante-=ap;}
             });
+            // Si sobra dinero tras pagar todo lo seleccionado, queda como anticipo a favor del proveedor (no se pierde)
+            if(restante>0.01){
+              const antSobranteId=`ANTCXP-SOB-${Date.now().toString(36)}`;
+              const tasaSobrante=pN((pm.lineasPago||[])[0]?.tasa||tasaBCV||1);
+              batch.set(getDocRef('procura_pagos_cxp',antSobranteId),{
+                id:antSobranteId,esAnticipo:true,montoAplicado:0,facturaId:'',
+                proveedorId:provSel?.id||pm.provId,proveedor:provSel?.nombre||'—',
+                monto:parseFloat(restante.toFixed(2)),fecha:(pm.lineasPago||[])[0]?.fecha||hoy,
+                metodo:(pm.lineasPago||[])[0]?.metodo||'Transferencia',referencia:(pm.lineasPago||[])[0]?.referencia||'',
+                concepto:'Saldo a favor del proveedor (excedente del pago)',
+                cuentaId:'',moneda:'USD',tasa:tasaSobrante,
+                timestamp:Date.now(),user:appUser?.name||'Sistema'
+              });
+            }
             // Registrar pagos por factura
             distribFacts.forEach(({f,ap})=>{
               const pagoId=`PAGCXP-${Date.now()}-${f.id.slice(-5)}`;
@@ -6878,7 +6894,7 @@ ${body}
                 {provSel && <div style={{flex:1,overflowY:'auto'}}>
                   <div style={{padding:'8px 18px',borderBottom:'1px solid #f3f4f6',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fff',position:'sticky',top:0,zIndex:1}}>
                     <span style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:1}}>2 · Facturas</span>
-                    <span style={{fontSize:9,color:'#9ca3af',fontStyle:'italic'}}>Distribución automática</span>
+                    <span style={{fontSize:9,color:'#9ca3af',fontStyle:'italic'}}>{factsSelecIds.length>0?`${factsSelecIds.length} seleccionada(s)`:'Sin selección = todas'}</span>
                   </div>
                   {/* Anticipo sin factura */}
                   <div style={{padding:'8px 14px',borderBottom:'1px solid #f3f4f6',background:pm.esAnticipo?'#f0fdf4':'#fff'}}>
@@ -6913,17 +6929,32 @@ ${body}
                   {factsPendProv.map((f,i)=>{
                     const s=getSaldoFact(f); const ap=distMap[f.id]||0;
                     const montoLA=pN(pm.lineaActual?.moneda==='USD'?pm.lineaActual?.monto:pN(pm.lineaActual?.monto)/Math.max(pN(pm.lineaActual?.tasa),1));
+                    const tasaF=pN(f.tasa||tasaBCV||1);
+                    const sBs=s*tasaF;
+                    const retIva=(retIVACompra||[]).find(r=>r.facturaId===f.id&&pN(r.monto||r.montoBs||0)>0);
+                    const retIslr=(retISLR||[]).find(r=>r.facturaId===f.id&&pN(r.monto||r.montoBs||0)>0);
+                    const seleccionada=!!(pm.factsSelec||{})[f.id];
                     return(
-                    <div key={f.id} style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',background:i%2===0?'#fff':'#fafafa'}}>
-                      <div style={{display:'flex',justifyContent:'space-between'}}>
-                        <span style={{fontWeight:900,fontSize:11,color:'#E8541A'}}>{f.nroFactura||f.id}</span>
-                        <span style={{fontWeight:900,fontSize:11,color:'#dc2626'}}>${fN(s)}</span>
+                    <div key={f.id} style={{padding:'10px 14px',borderBottom:'1px solid #f3f4f6',background:seleccionada?'#fff7ed':(i%2===0?'#fff':'#fafafa'),display:'flex',gap:8,alignItems:'flex-start'}}>
+                      <input type="checkbox" checked={seleccionada} onChange={()=>setPM(m=>({...m,factsSelec:{...(m.factsSelec||{}),[f.id]:!((m.factsSelec||{})[f.id])}}))} style={{marginTop:3,width:14,height:14,accentColor:'#E8541A',cursor:'pointer',flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:'flex',justifyContent:'space-between'}}>
+                          <span style={{fontWeight:900,fontSize:11,color:'#E8541A'}}>{f.nroFactura||f.id}</span>
+                          <div style={{textAlign:'right'}}>
+                            <span style={{fontWeight:900,fontSize:11,color:'#dc2626'}}>${fN(s)}</span>
+                            <div style={{fontSize:8,color:'#94a3b8'}}>Bs.{fN(sBs)}</div>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
+                          <span style={{fontSize:9,color:'#9ca3af'}}>{f.fecha}</span>
+                          {montoLA>0&&ap>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${fN(Math.max(0,s-ap))}</span>}
+                        </div>
+                        <div style={{display:'flex',gap:4,marginTop:3,flexWrap:'wrap'}}>
+                          {f.nroControl&&<span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Control: {f.nroControl}</span>}
+                          {retIva&&<span style={{fontSize:8,fontWeight:900,color:'#dc2626',background:'#fee2e2',padding:'1px 6px',borderRadius:4}}>Ret.IVA {pN(retIva.pctRetencion||75)}%</span>}
+                          {retIslr&&<span style={{fontSize:8,fontWeight:900,color:'#7c3aed',background:'#f3e8ff',padding:'1px 6px',borderRadius:4}}>Ret.ISLR {pN(retIslr.pct||0)}%</span>}
+                        </div>
                       </div>
-                      <div style={{display:'flex',justifyContent:'space-between',marginTop:2}}>
-                        <span style={{fontSize:9,color:'#9ca3af'}}>{f.fecha}</span>
-                        {montoLA>0&&ap>0&&<span style={{fontSize:9,fontWeight:900,color:'#16a34a'}}>→ ${fN(Math.max(0,s-ap))}</span>}
-                      </div>
-                      {f.nroControl&&<span style={{fontSize:8,fontWeight:900,color:'#4f46e5',background:'#ede9fe',padding:'1px 6px',borderRadius:4}}>Control: {f.nroControl}</span>}
                     </div>);
                   })}
                   </>)}
