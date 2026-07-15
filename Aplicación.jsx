@@ -6704,9 +6704,11 @@ ${body}
                 const esCajaLinea=l.cuentaId.startsWith('CAJA::');
                 if(!esCajaLinea){
                   const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
+                  const montoUsdLinea=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1);
                   const movId=`MOV-ANTCXP-${Date.now().toString(36)}-${li}`;
+                  const ctaNombreAnt=(cuentasBancarias||[]).find(c=>c.id===l.cuentaId);
                   batch.set(getDocRef('banco_movimientos',movId),{
-                    id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,montoUSD,tasa,fecha:l.fecha||hoy,
+                    id:movId,cuentaId:l.cuentaId,cuentaNombre:ctaNombreAnt?.banco||l.cuentaNombre||'',tipo:'Egreso',montoBs,montoUSD:montoUsdLinea,tasa,fecha:l.fecha||hoy,
                     concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
                     referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
                     proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
@@ -6810,8 +6812,9 @@ ${body}
               if(!esCajaLinea){
                 const montoBs=l.moneda==='Bs'?pN(l.monto):pN(l.monto)*tasa;
                 const movId=`MOV-PAGCXP-${Date.now().toString(36)}-${li}`;
+                const ctaNombreReg=(cuentasBancarias||[]).find(c=>c.id===l.cuentaId);
                 batch.set(getDocRef('banco_movimientos',movId),{
-                  id:movId,cuentaId:l.cuentaId,tipo:'EGRESO',monto:montoBs,
+                  id:movId,cuentaId:l.cuentaId,cuentaNombre:ctaNombreReg?.banco||l.cuentaNombre||'',tipo:'Egreso',montoBs,
                   montoUSD:l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1),
                   tasa,fecha:l.fecha||hoy,
                   concepto:l.concepto||`EGRESO CxP · ${provSel?.nombre||'—'} · ${distribFacts.map(({f})=>`Fact.${f.nroFactura||f.id} (${f.fecha||''})`.trim()).join(' | ')}`,
@@ -7070,16 +7073,17 @@ ${body}
                     {(pm.lineaActual?.moneda||'USD')==='Bs'&&pN(pm.lineaActual?.monto)>0&&pN(pm.lineaActual?.tasa)>0&&(
                       <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= ${fN(pN(pm.lineaActual.monto)/pN(pm.lineaActual.tasa))} USD</div>
                     )}
+                    {(pm.lineaActual?.moneda||'USD')==='USD'&&pN(pm.lineaActual?.monto)>0&&pN(pm.lineaActual?.tasa||tasaBCV)>0&&(
+                      <div style={{fontSize:10,color:'#16a34a',fontWeight:700,marginTop:4}}>= Bs.{fN(pN(pm.lineaActual.monto)*pN(pm.lineaActual?.tasa||tasaBCV))}</div>
+                    )}
                   </div>
 
-                  {(pm.lineaActual?.moneda||'USD')==='Bs'&&(
-                    <div style={{marginBottom:10}}>
-                      <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
-                      <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
-                        onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
-                        style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
-                    </div>
-                  )}
+                  <div style={{marginBottom:10}}>
+                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                    <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
+                      onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                      style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
+                  </div>
 
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
                     <div>
@@ -26150,6 +26154,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             </React.Fragment>
                                           );
                                         })}
+                                        {cl.nes.flatMap(ne=>getNCsNE(ne).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).map(n=>{
+                                          const t=parseNum(n.tasaFactura||0)||tasaBCVec;
+                                          const usdN=t>=2?parseFloat((parseNum(n.monto||0)/t).toFixed(2)):0;
+                                          const esND=n.tipo==='ND';
+                                          return (
+                                            <tr key={n.id} className="border-b" style={{background:esND?'#fff7ed':'#faf5ff',borderColor:esND?'#fed7aa':'#e9d5ff'}}>
+                                              <td className={`py-2 px-2 font-black text-[9px] ${esND?'text-orange-700':'text-purple-700'}`}>↳ {esND?'Nota Débito':'Nota Crédito'} {n.nroDocumento||''} · {ne.documento||ne.id}</td>
+                                              <td className={`py-2 px-2 text-center text-[9px] ${esND?'text-orange-600':'text-purple-600'}`}>{n.fecha||'—'}</td>
+                                              <td className="py-2 px-2 text-center text-gray-300 text-[9px]" colSpan={2}>{n.descripcion||n.observaciones||'—'}</td>
+                                              <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
+                                              <td className={`py-2 px-2 text-right font-black text-[9px] ${esND?'text-orange-700':'text-purple-700'}`}>{esND?'+':'-'}${formatNum(usdN)}</td>
+                                              <td className="py-2 px-2 text-right text-gray-300 text-[9px]" colSpan={2}>—</td>
+                                            </tr>
+                                          );
+                                        }))}
                                         {(_manualRetsPorCliente.get(cl.clientRif)||[]).map((r,ri)=>(
                                           <tr key={r.id||ri} className="border-b border-teal-100" style={{background:'#f0fdfa'}}>
                                             <td className="py-2 px-2 font-black text-teal-700 text-[9px]">↳ {r.tipoLabel?r.tipoLabel+' · ':''}{r.nroRetencion||'RET-MANUAL'}</td>
@@ -26515,9 +26534,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             for(const k of kk){ if(!_ncsByKeyEc.has(k)) _ncsByKeyEc.set(k,[]); _ncsByKeyEc.get(k).push(n); }
           }
           const getVenceEc=(ne)=>{const f=new Date(ne.fecha||ne.fechaEmision||getTodayDate());f.setDate(f.getDate()+parseNum(ne.diasCredito||0));return f.toISOString().split('T')[0];};
-          const getSaldoNE = (ne) => {
-            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            // NC/ND: matchear por NE Y por su factura vinculada (nroFiscal/documento/id), como lo hace Registrar Cobro
+          const getNCsNE = (ne) => {
             const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
             const invNc = ne.facturaId
               ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkNc(i))
@@ -26525,6 +26542,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
             const seenNc=new Set(); const ncsNe=[];
             for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
+            return ncsNe;
+          };
+          const getSaldoNE = (ne) => {
+            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            // NC/ND: matchear por NE Y por su factura vinculada (nroFiscal/documento/id), como lo hace Registrar Cobro
+            const ncsNe=getNCsNE(ne);
             const nc=ncsNe.filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).reduce((s,n)=>{
               const t=parseNum(n.tasaFactura||0)||tasaBCVec;
               if(!t||t<2) return s;
