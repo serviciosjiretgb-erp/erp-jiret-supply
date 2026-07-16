@@ -691,6 +691,8 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     if(na!==null&&nb!==null&&na!==nb) return na-nb;
     return (a.fecha||'').localeCompare(b.fecha||'');
   };
+  // Solo para las tablas en pantalla (fecha más reciente primero) — el XML fiscal sigue usando _ordCompIVA (por N° comprobante)
+  const _ordFechaDesc=(a,b)=>(b.fecha||'').localeCompare(a.fecha||'');
   const RET_PAGE_SIZE=25;
   const _MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   const _mesLabel=(r)=>{
@@ -711,8 +713,8 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
   };
   const hayFiltrosRetActivos=Object.values(retFiltros).some(Boolean);
   const limpiarFiltrosRet=()=>{setRetFiltros({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});setRetPageIVA(1);setRetPageISLR(1);};
-  const retFiltIVA=retIVA.filter(r=>_retPasaFiltros(r,'IVA')).sort(_ordCompIVA);
-  const retFiltISLR=retISLR.filter(r=>_retPasaFiltros(r,'ISLR')).sort(_ordCompIVA);
+  const retFiltIVA=retIVA.filter(r=>_retPasaFiltros(r,'IVA')).sort(_ordFechaDesc);
+  const retFiltISLR=retISLR.filter(r=>_retPasaFiltros(r,'ISLR')).sort(_ordFechaDesc);
   const totalPagIVA=Math.max(1,Math.ceil(retFiltIVA.length/RET_PAGE_SIZE));
   const totalPagISLR=Math.max(1,Math.ceil(retFiltISLR.length/RET_PAGE_SIZE));
   const pageIVA=Math.min(Math.max(1,retPageIVA),totalPagIVA);
@@ -6292,7 +6294,7 @@ const CxPView = ({
       }
       if(m[rif]) m[rif].total += netNC;
     });
-    return Object.values(m).filter(g=>Math.abs(g.total)>0.01).sort((a,b)=>b.vMas60-a.vMas60||b.total-a.total);
+    return Object.values(m).filter(g=>Math.abs(g.total)>0.01).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[_factsActivas, proveedores, notasCompraCD]);
 
@@ -7287,7 +7289,7 @@ const HistorialPagosView = ({
 
   const metodos = ['TODOS','Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Tarjeta Internacional (Banplus)'];
 
-  const allPagos = useMemo(()=>[...(pagosCxP||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0)),[pagosCxP]);
+  const allPagos = useMemo(()=>[...(pagosCxP||[])].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||(b.timestamp||0)-(a.timestamp||0)),[pagosCxP]);
 
   const histFiltered = allPagos.filter(p=>{
     if(histSearch){
@@ -8034,7 +8036,7 @@ const NotasCompraNCView = ({
   const ncFiltradas=(notasCompraCD||[]).filter(n=>
     !compraNCBusq||(n.nroDocumento||'').toUpperCase().includes(compraNCBusq.toUpperCase())||
     ((facturasCompra||[]).find(i=>i.id===n.facturaId)?.proveedor||'').toUpperCase().includes(compraNCBusq.toUpperCase())
-  );
+  ).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 
   const exportNCExcelCompra=()=>{
     const ths=['Tipo','N° Doc.','Fecha','Naturaleza','Factura Compra Afectada','Proveedor','Monto USD','N° Control','Descripción'];
@@ -13784,7 +13786,7 @@ function App() {
     (invoices || []).filter(inv =>
       String(inv?.documento || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase()) ||
       String(inv?.clientName || '').toUpperCase().includes(invoiceSearchTerm.toUpperCase())
-    ),
+    ).sort((a,b)=>(b?.fecha||'').localeCompare(a?.fecha||'')),
     [invoices, invoiceSearchTerm]
   );
 
@@ -20577,7 +20579,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const fechaNC=(nc.fecha||'');
             const fechaFactVinc=(inv?.fechaFactura||inv?.fecha||'');
             // Aplicar filtros de cliente/periodo — si no hay factura vinculada, igual se evalúa con los datos propios de la nota
-            if(pvFiltCliente!=='TODOS'&&(inv?.clientName||nc.clientName||'')!==pvFiltCliente) return false;
+            if(pvFiltCliente){
+              const cliN=(inv?.clientName||nc.clientName||'').toUpperCase();
+              const rifN=(inv?.clientRif||nc.clientRif||'').toUpperCase();
+              if(!cliN.includes(pvFiltCliente.toUpperCase())&&!rifN.includes(pvFiltCliente.toUpperCase())) return false;
+            }
             if(pvFilter&&pvFilter!=='general'&&!fechaNC.startsWith(pvFilter)&&!fechaFactVinc.startsWith(pvFilter)) return false;
             if(invFiltAnio&&!fechaNC.startsWith(invFiltAnio)&&!fechaFactVinc.startsWith(invFiltAnio)) return false;
             if(invFiltMes&&fechaNC.substring(5,7)!==invFiltMes&&fechaFactVinc.substring(5,7)!==invFiltMes) return false;
@@ -20588,13 +20594,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const tasaN=parseNum(nc.tasaFactura||inv?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseUsd=parseFloat((parseNum(nc.monto||0)/tasaN).toFixed(2));
             const signo=nc.tipo==='NC'?-1:1;
+            const ivaBsFiscal=nc.naturaleza==='FISCAL'?(parseNum(nc.ivaBs||0)||parseFloat((parseNum(nc.monto||0)*0.16).toFixed(2)))*signo:0;
             return {
               fecha:nc.fecha, doc:nc.nroDocumento||nc.tipo, nroFiscal:inv?.nroFiscal||'',
               vendedor:inv?.vendedor||'', op:'', cliente:inv?.clientName||nc.clientName||'',
               codigo:'—', producto:nc.descripcion||`${nc.tipo} aplicada`,
               medida:'', cantidad:0, precioVenta:0,
               total:baseUsd*signo, costo:0, costoTotal:0, utilidad:baseUsd*signo,
-              pctUtilidad:0, tasa:tasaN, isNota:true, tipoNota:nc.tipo
+              pctUtilidad:0, tasa:tasaN, isNota:true, tipoNota:nc.tipo, ivaBsFiscal
             };
           });
           const allRows=[...rowsFiscal,...ncndRows].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
@@ -20616,7 +20623,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const _ivaAmt=parseNum(inv.iva||0)||parseFloat((_baseInv*0.16).toFixed(2));
             _ivaTotalBsRep+=parseNum(inv.ivaBs||0)||_ivaAmt*_tasaInv;
           });
-          const totalVentasConIvaBs=totalVentasBs+_ivaTotalBsRep;
+          const _ivaTotalBsNCND=ncndRows.reduce((s,r)=>s+(r.ivaBsFiscal||0),0);
+          const totalVentasConIvaBs=totalVentasBs+_ivaTotalBsRep+_ivaTotalBsNCND;
           const totalCosto=allRows.reduce((s,r)=>s+r.costoTotal,0);
           const totalUtil=totalVentas-totalCosto;
           const pctUtil=totalVentas>0?Math.round((totalUtil/totalVentas)*100):0;
@@ -22284,7 +22292,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const matchMes=!neFiltMes||(ne.fecha||'').substring(5,7)===neFiltMes;
             const matchVendedor=neFiltVendedor==='TODOS'||(ne.vendedor||'').trim().toUpperCase()===neFiltVendedor.toUpperCase();
             return matchSearch&&matchStatus&&matchAnio&&matchMes&&matchVendedor;
-          });
+          }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
           const nePage = Math.max(0, Math.min(nePagina, Math.ceil(neFiltradas.length/PAGE_SIZE)-1));
           const nePageItems = neFiltradas.slice(nePage*PAGE_SIZE, (nePage+1)*PAGE_SIZE);
           const neTotalPages = Math.ceil(neFiltradas.length/PAGE_SIZE)||1;
@@ -22710,7 +22718,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               costo:costoNC,utilidad:utilidadNC,pctUtil:pctUtilNC,
               tipo:nc.tipo,isNota:true,tasaNC});
           });
-          rows.sort((a,b)=>a.fecha.localeCompare(b.fecha));
+          rows.sort((a,b)=>b.fecha.localeCompare(a.fecha));
           const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
           const pctTot=tot.montoBruto>0?(tot.utilidad/tot.montoBruto*100):0;
           const tvTotalPages=Math.ceil(rows.length/PAGE_SIZE_DEFAULT)||1;
@@ -26389,7 +26397,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
               {/* Historial cobros */}
               {(cobrosCxc||[]).length>0&&(()=>{
-                const allCobros = [...(cobrosCxc||[])].sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+                const allCobros = [...(cobrosCxc||[])].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||(b.timestamp||0)-(a.timestamp||0));
                 const metodos = ['TODOS',...new Set(allCobros.map(c=>c.metodo||'').filter(Boolean))];
                 const histFiltered = allCobros.filter(cb=>{
                   if(histSearch && !((cb.neDocumento||cb.neId||'').toLowerCase().includes(histSearch.toLowerCase()) || (cb.clientName||'').toLowerCase().includes(histSearch.toLowerCase()) || (cb.referencia||'').toLowerCase().includes(histSearch.toLowerCase()))) return false;
@@ -28449,7 +28457,7 @@ ${resumenHtml}
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                           if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                           return true;
-                        });
+                        }).sort((a,b)=>(b.fechaComprobante||b.fecha||'').localeCompare(a.fechaComprobante||a.fecha||''));
                         const totRet=retFilt.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
                         const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?parseNum(ret.montoRetenido||0)/rt:0;const isM=(ret?.facturaId||'').startsWith('MANUAL-');const neD=isM?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#4338ca;font-weight:700">${neD}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${isM?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#64748b">${rt>1?formatNum(rt):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700;color:#16a34a">${ru>0?'$'+formatNum(ru):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${(ret.quincena||((parseInt((ret.fechaComprobante||'').split('-')[2]||'16')<=15)?'1':'2'))==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
                         const h=`<div style="font-family:Arial;padding:16px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||''}</div><div style="font-weight:900;font-size:11px;margin-top:4px">REPORTE DE RETENCIONES DE IVA</div></div><div style="text-align:right;font-size:9px"><div>Período: ${mesLabel.toUpperCase()} ${libroAnio}</div><div>${retFilt.length} registros · Total: ${fmtVen(totRet)} Bs.</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:5px;font-size:8px">Fecha</th><th style="padding:5px;font-size:8px">N° Comp.</th><th style="padding:5px;font-size:8px">NE</th><th style="padding:5px;font-size:8px">N° Factura</th><th style="padding:5px;font-size:8px">Cliente</th><th style="padding:5px;font-size:8px">RIF</th><th style="padding:5px;font-size:8px;text-align:right">Monto Ret. Bs.</th><th style="padding:5px;font-size:8px;text-align:right">Tasa Bs/$</th><th style="padding:5px;font-size:8px;text-align:right">Equiv. USD</th><th style="padding:5px;font-size:8px">Quincena</th></tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="6" style="padding:4px 5px;font-size:8px">TOTAL</td><td style="padding:4px 5px;font-size:8px;text-align:right">${fmtVen(totRet)}</td><td></td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#6ee7b7">$${formatNum(retFilt.reduce((s,r)=>{const i=(invoices||[]).find(j=>j.id===r.facturaId);const t=parseNum(r.tasa||r.tasaFactura||i?.tasa||i?.tasaFactura||0);return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0))}</td><td></td></tr></tfoot></table></div>`;
@@ -28465,7 +28473,7 @@ ${resumenHtml}
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                           if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                           return true;
-                        });
+                        }).sort((a,b)=>(b.fechaComprobante||b.fecha||'').localeCompare(a.fechaComprobante||a.fecha||''));
                         const ths=['Fecha','N° Comp.','NE','N° Factura','Cliente','RIF','Monto Ret. Bs.','Tasa Bs/$','Equiv. USD','Quincena'];
                         const rH=retFilt.map(ret=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?(parseNum(ret.montoRetenido||0)/rt).toFixed(2):'';const isM2=(ret?.facturaId||'').startsWith('MANUAL-');const neD2=isM2?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return '<tr>'+[ret.fechaComprobante||'—',ret.nroRetencion||'—',neD2,isM2?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—'),isM2?(ret._manualCliente||'—'):(inv?.clientName||'—'),isM2?(ret._manualRif||'—'):(inv?.clientRif||'—'),fmtVen(ret.montoRetenido||0),rt>1?formatNum(rt):'',ru?'$'+formatNum(ru):'',ret.quincena==='1'?'I Quincena':'II Quincena'].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';}).join('');
                         const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${settings?.empresaRazonSocial||''} — RETENCIONES DE IVA</h2><table style="border-collapse:collapse;font-family:Arial"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody></table></body></html>`;
@@ -28505,7 +28513,7 @@ ${resumenHtml}
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
                           if(retFiltFact2&&!(inv?.nroFiscal||inv?.documento||'').toUpperCase().includes(retFiltFact2.toUpperCase()))return false;
                           return true;
-                        });
+                        }).sort((a,b)=>(b.fechaComprobante||b.fecha||'').localeCompare(a.fechaComprobante||a.fecha||''));
                         const PAGE_RET=15;
                         const retTotalPages=Math.ceil(retFilt.length/PAGE_RET)||1;
                         const retPageSafe=Math.min(retPage2,retTotalPages-1);
