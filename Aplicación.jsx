@@ -3521,13 +3521,13 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>{const dt=d.data();return{id:d.id,...dt,category:normCatVal(dt.category),subcategory:normCatVal(dt.subcategory)};})));
     const u3=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const u4=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
     return()=>{u1();u2();u3();u4();};
   },[]);
 
-  const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
+  const cats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Químicos','Pigmentos','Tintas','Otros Terminados'];
 
   const invFiltrado=useMemo(()=>{
     const seen=new Set();
@@ -3924,13 +3924,13 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
   const [ordenesPagina,setOrdenesPagina]=useState(0);
 
   useEffect(()=>{
-    const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>{const dt=d.data();return{id:d.id,...dt,category:normCatVal(dt.category),subcategory:normCatVal(dt.subcategory)};})));
     const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.activo!==false).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
     return()=>{u1();u2();u3();};
   },[]);
 
-  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Quimicos','Pigmento','Tintas','Otros Terminados'];
+  const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Químicos','Pigmentos','Tintas','Otros Terminados'];
 
   // Dedup: agrupar por código base (antes de ___), sin semielaborado
   const invDedup=useMemo(()=>{
@@ -9340,6 +9340,25 @@ const activateSandbox = (v) => { _sandboxMode = v; };
 const getColRef = (colName) => collection(db, _sandboxMode ? `sandbox_${colName}` : colName);
 const getDocRef = (colName, docId) => doc(db, _sandboxMode ? `sandbox_${colName}` : colName, String(docId));
 
+// ── Normalización de categoría/subcategoría de inventario ──
+// Distintos acentos/mayúsculas/singular-plural (p.ej. 'QUIMICOS' vs 'Químicos' vs 'Quimicos')
+// hacían que un mismo grupo se partiera en dos al mostrarse. Se normaliza a UNA sola forma canónica.
+const CANON_CATEGORIAS = {
+  'PRODUCTOS TERMINADOS':'Productos Terminados','MATERIA PRIMA':'Materia Prima','SEMIELABORADOS':'Semielaborados',
+  'PIGMENTOS':'Pigmentos','PIGMENTO':'Pigmentos','TINTAS':'Tintas','QUIMICOS':'Químicos','QUIMICO':'Químicos',
+  'CONSUMIBLES':'Consumibles','CONSUMIBLE':'Consumibles','HERRAMIENTAS':'Herramientas','HERRAMIENTA':'Herramientas',
+  'SEGURIDAD INDUSTRIAL':'Seguridad Industrial','OTROS':'Otros','CINTAS':'Cintas','CINTA':'Cintas',
+  'STRETCH FILM':'Stretch Film','PAPEL KRAFT':'Papel Kraft','DISPENSADORES':'Dispensadores','DISPENSADOR':'Dispensadores',
+  'BOLSAS PLASTICAS':'Bolsas Plásticas','BOLSA PLASTICA':'Bolsas Plásticas','TERMOENCOGIBLES':'Termoencogibles',
+  'TERMOENCOGIBLE':'Termoencogibles','EMPAQUES FLEXIBLES':'Empaques Flexibles','EMPAQUE FLEXIBLE':'Empaques Flexibles',
+  'OTROS TERMINADOS':'Otros Terminados'
+};
+const normCatVal = (v) => {
+  if(v===undefined||v===null||v==='') return v;
+  const key = String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+  return CANON_CATEGORIAS[key] || String(v).trim();
+};
+
 const getTodayDate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -10872,7 +10891,7 @@ function App() {
     const unsubSettings = onSnapshot(getDocRef('settings', 'general'), (d) => { if(d.exists()) setSettings(d.data()); });
     const unsubFinanzasPDFs = onSnapshot(getDocRef('settings', 'finanzasProvisional'), (d) => { setFinanzasPDFs(d.exists()?d.data():{}); });
     const unsubInv = onSnapshot(getColRef('inventory'), (s) => {
-      const data = s.docs.map(d => ({ id: d.id, ...d.data() })); setInventory(data);
+      const data = s.docs.map(d => { const dt=d.data(); return { id: d.id, ...dt, category:normCatVal(dt.category), subcategory:normCatVal(dt.subcategory) }; }); setInventory(data);
     });
     const unsubMovs = onSnapshot(getColRef('inventoryMovements'), (s) => setInvMovements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     // ── Limpieza única: borrar historial de traslados ya procesados ─────────────
