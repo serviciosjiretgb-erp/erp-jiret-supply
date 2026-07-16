@@ -9366,6 +9366,15 @@ const normCatVal = (v) => {
   return CANON_CATEGORIAS[key] || String(v).trim();
 };
 
+// ── Alias de códigos legacy de Productos Terminados ──
+// Códigos viejos (de antes de estandarizar la nomenclatura) que deben resolver al código ACTUAL
+// para efectos de costo — ampliar aquí si aparecen más casos.
+const CODIGO_ALIAS_PT = {
+  'FG-VENILACTERMO-48X0X0.007': 'TER-VENILAC-48-7',
+  'FG-VENILACBOLSA25-53X91X0.020': 'BOL-VENILAC-25KG-53X91-20'
+};
+const resolverAliasCodigo = (codigo) => CODIGO_ALIAS_PT[String(codigo||'').toUpperCase().trim()] || codigo;
+
 const getTodayDate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -20490,7 +20499,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 });
 
                 // 1. invCode is already a valid clean PT code
-                const _cc = getClean(it.invCode||'');
+                const _cc = getClean(resolverAliasCodigo(it.invCode||''));
                 if(_cc && !/^ALMACEN/i.test(_cc) && !/^\d{8,}$/.test(_cc) && !/^FG-MANUAL-\d/i.test(_cc) && ptMapForSales[_cc]) {
                   codigo = _cc;
                 }
@@ -20581,6 +20590,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
+            if(nc.naturaleza!=='FISCAL') return false;
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
             // Fecha efectiva para filtrar por período: la propia de la nota, o si no coincide con nada,
             // la de la factura vinculada (una NC debe caer en el período de la operación que corrige,
@@ -20660,7 +20670,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     {pvFiltDoc && <button onClick={()=>setPvFiltDoc('')} className="text-gray-400 hover:text-red-500"><X size={10}/></button>}
                   </div>
                   <span className="text-[9px] font-black text-gray-400">{allRows.length} reg.</span>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=rows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=allRows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -22191,7 +22201,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const _neNormDesc = (s='') => (s||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,24);
               const _ptInv = (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false);
               const _buscarCostoPT = (it) => {
-                const codeClean = _neGetClean(it.invCode||'').toUpperCase();
+                const codeClean = _neGetClean(resolverAliasCodigo(it.invCode||'')).toUpperCase();
                 if(codeClean){
                   const porCodigo = _ptInv.find(i=>_neGetClean(i.displayId||i.id||'').toUpperCase()===codeClean);
                   if(porCodigo && parseNum(porCodigo.cost||0)>0) return parseNum(porCodigo.cost);
@@ -37414,7 +37424,7 @@ const ActualizarCostosView = ({settings, appUser}) => {
       }
       // Costo actual: 1) código (limpio de sufijos) 2) descripción normalizada (mismo respaldo que usa el Reporte General)
       const buscarCostoActual=(it)=>{
-        const codeRaw=getClean(it.invCode||'').toUpperCase();
+        const codeRaw=getClean(resolverAliasCodigo(it.invCode||'')).toUpperCase();
         if(codeRaw&&costoPorCodigo.has(codeRaw)) return costoPorCodigo.get(codeRaw);
         const itDesc=it.desc||'';
         if(itDesc){
