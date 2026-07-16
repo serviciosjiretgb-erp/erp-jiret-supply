@@ -7298,7 +7298,8 @@ const HistorialPagosView = ({
         (f?.nroFactura||'').toLowerCase().includes(q)||
         (p.referencia||'').toLowerCase().includes(q)||
         (p.metodo||'').toLowerCase().includes(q)||
-        (p.banco||'').toLowerCase().includes(q)
+        (p.banco||'').toLowerCase().includes(q)||
+        (p.concepto||'').toLowerCase().includes(q)
       )) return false;
     }
     if(histFiltMes && !(p.fecha||'').startsWith(histFiltMes)) return false;
@@ -7323,7 +7324,7 @@ const HistorialPagosView = ({
 <td style="padding:6px 10px;color:#64748b">${p.fecha||'—'}</td>
 <td style="padding:6px 10px;font-weight:700;color:#f97316">${f?.nroFactura||'—'}</td>
 <td style="padding:6px 10px;font-weight:600">${p.proveedor||'—'}</td>
-<td style="padding:6px 10px;color:#64748b;font-size:9px">${p.banco||'—'}</td>
+<td style="padding:6px 10px;color:#64748b;font-size:9px">${p.banco||'—'}${p.concepto?`<div style="font-size:8px;color:#94a3b8;font-style:italic;margin-top:2px">${p.concepto}</div>`:''}</td>
 <td style="padding:6px 10px">${p.metodo||'—'}</td>
 <td style="padding:6px 10px;font-size:9px;color:#94a3b8;font-family:monospace">${p.referencia||'—'}</td>
 <td style="padding:6px 10px;text-align:right;font-weight:900;color:#3b82f6">${montoBs>0?`Bs.${fN(montoBs)}`:'—'}</td>
@@ -7385,6 +7386,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
   <div class="row"><span style="color:#64748b">N° Control</span><span style="font-weight:700">${f?.nroControl||'—'}</span></div>
   <div class="row"><span style="color:#64748b">Método de Pago</span><span style="font-weight:700">${p.metodo||'—'}</span></div>
   <div class="row"><span style="color:#64748b">Banco / Cuenta</span><span style="font-weight:700">${p.banco||'—'}</span></div>
+  ${p.concepto?`<div class="row"><span style="color:#64748b">Concepto</span><span style="font-weight:700;text-align:right">${p.concepto}</span></div>`:''}
   <div class="row"><span style="color:#64748b">N° Referencia</span><span style="font-weight:700;font-family:monospace">${p.referencia||'—'}</span></div>
   <div class="row"><span style="color:#64748b">Tasa Bs/$</span><span style="font-weight:700">${fN(tasa)}</span></div>
   <div class="row"><span>TOTAL PAGADO</span><span style="color:#16a34a;font-size:15px">$${fN(pN(p.monto||0))}</span></div>
@@ -7524,7 +7526,10 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                     <td className="py-2.5 px-4 text-gray-500 whitespace-nowrap">{p.fecha||'—'}</td>
                     <td className="py-2.5 px-4 font-bold text-orange-600">{f?.nroFactura||'—'}</td>
                     <td className="py-2.5 px-4 font-bold text-gray-700 max-w-[180px] truncate">{p.proveedor||'—'}</td>
-                    <td className="py-2.5 px-4 text-gray-500 text-[9px]">{p.banco||'—'}</td>
+                    <td className="py-2.5 px-4 text-gray-500 text-[9px]">
+                      {p.banco||'—'}
+                      {p.concepto&&<div className="text-[8px] text-gray-400 italic mt-0.5 max-w-[200px] truncate" title={p.concepto}>{p.concepto}</div>}
+                    </td>
                     <td className="py-2.5 px-4 text-gray-500">{p.metodo||'—'}</td>
                     <td className="py-2.5 px-4 text-gray-400 text-[9px] font-mono">{p.referencia||'—'}</td>
                     <td className="py-2.5 px-4 text-right font-black text-blue-600">{montoBs>0.01?`Bs.${fN(montoBs)}`:<span className="text-gray-300 text-[9px]">—</span>}</td>
@@ -7884,7 +7889,7 @@ ${body}
                                 <td className="py-1.5 px-3 text-[8px] text-green-600">{fD(p.fecha)}</td>
                                 <td className="py-1.5 px-3"><span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
                                 <td className="py-1.5 px-3 text-[8px] text-green-600">{p.metodo||'—'}</td>
-                                <td className="py-1.5 px-3 text-[8px] text-gray-500">{p.banco||''} {p.referencia?'· #'+p.referencia:''}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500">{[p.banco,p.referencia?'#'+p.referencia:'',p.concepto].filter(Boolean).join(' · ')||'—'}</td>
                                 <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
                                 <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
                                 <td className="py-1.5 px-3 text-right font-mono font-black text-green-700 text-[8px]">-${fN(pN(p.monto||0))}</td>
