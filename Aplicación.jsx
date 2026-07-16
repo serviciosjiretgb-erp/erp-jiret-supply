@@ -7272,6 +7272,8 @@ const HistorialPagosView = ({
   const [histPage, setHistPage] = useState(0);
   const [editPago, setEditPago] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [editAplicaciones, setEditAplicaciones] = useState([]);
+  const [editFacBusq, setEditFacBusq] = useState('');
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const HIST_PER_PAGE = 50;
 
@@ -7456,19 +7458,82 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  // ── Guardar edición ────────────────────────────────────────────────
+  // ── Guardar edición (fecha/método/referencia/banco + distribución a facturas) ──
   const guardarEdicion = async () => {
     if(!editPago) return;
+    const totalAplicado = editAplicaciones.reduce((s,a)=>s+pN(a.monto),0);
+    const totalPago = pN(editForm.monto!=null?editForm.monto:editPago.monto);
+    if(totalAplicado>totalPago+0.01){
+      setDialog({title:'Error',text:`Estás aplicando $${fN(totalAplicado)} pero el pago es de $${fN(totalPago)}.`,type:'alert'});
+      return;
+    }
     try{
-      await updateDoc(getDocRef('procura_pagos_cxp',editPago.id),{
-        fecha: editForm.fecha||editPago.fecha,
-        metodo: editForm.metodo||editPago.metodo,
-        referencia: editForm.referencia||'',
-        banco: editForm.banco||editPago.banco||'',
-        updatedAt: Date.now(), updatedBy: appUser?.name||'Sistema'
+      const batch = writeBatch(db);
+      const fechaF = editForm.fecha||editPago.fecha;
+      const metodoF = editForm.metodo||editPago.metodo;
+      const referenciaF = editForm.referencia||'';
+      const bancoF = editForm.banco||editPago.banco||'';
+
+      // 1) Revertir el efecto anterior: si este pago ya estaba aplicado a una factura, restaurar su saldo
+      if(editPago.facturaId){
+        const fAnt=_factMap.get(editPago.facturaId);
+        if(fAnt){
+          batch.update(getDocRef('procura_facturas_compra',fAnt.id),{
+            saldoPendiente: pN(fAnt.saldoPendiente||0)+pN(editPago.monto||0), status:'PENDIENTE', updatedAt:Date.now()
+          });
+        }
+      }
+      // 2) Borrar el registro de pago original y crear los nuevos según la distribución elegida
+      batch.delete(getDocRef('procura_pagos_cxp', editPago.id));
+      const nuevasFacturasMv=[]; // para actualizar el movimiento vinculado, si existe
+      editAplicaciones.filter(a=>pN(a.monto)>0.001).forEach((a,i)=>{
+        const f=_factMap.get(a.facturaId);
+        const monto=pN(a.monto);
+        const pid=`PAGCXP-EDIT-${Date.now().toString(36)}-${i}`;
+        batch.set(getDocRef('procura_pagos_cxp',pid),{
+          id:pid,esAnticipo:false,montoAplicado:0,facturaId:a.facturaId,
+          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
+          monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
+          concepto:editPago.concepto||'Pago CxP',cuentaId:editPago.cuentaId||'',moneda:editPago.moneda||'USD',
+          tasa:editPago.tasa||0,cuentaContableNombre:editPago.cuentaContableNombre||'',
+          saldoInicialImportado:editPago.saldoInicialImportado||false,
+          timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
+        });
+        if(f){
+          const nuevoSaldo=Math.max(0,pN(f.saldoPendiente||0)-monto);
+          batch.update(getDocRef('procura_facturas_compra',f.id),{
+            saldoPendiente:nuevoSaldo, status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE', updatedAt:Date.now()
+          });
+          nuevasFacturasMv.push({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto});
+        }
       });
+      // 3) Si queda un remanente sin aplicar, se guarda como anticipo del proveedor
+      const remanente=totalPago-totalAplicado;
+      if(remanente>0.01){
+        const antId=`ANTCXP-EDIT-${Date.now().toString(36)}`;
+        batch.set(getDocRef('procura_pagos_cxp',antId),{
+          id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
+          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
+          monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
+          concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:editPago.cuentaId||'',moneda:editPago.moneda||'USD',
+          tasa:editPago.tasa||0,cuentaContableNombre:editPago.cuentaContableNombre||'',
+          saldoInicialImportado:editPago.saldoInicialImportado||false,
+          timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
+        });
+      }
+      // 4) Si el pago tenía un movimiento de banco/caja vinculado, actualizar su desglose de facturas y fecha/referencia
+      if(editPago.grupoPagoId){
+        const [bSnap,kSnap]=await Promise.all([
+          getDocs(query(getColRef('banco_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
+          getDocs(query(getColRef('caja_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
+        ]);
+        [...bSnap.docs,...kSnap.docs].forEach(d=>{
+          batch.update(d.ref,{facturas:nuevasFacturasMv,fecha:fechaF,referencia:referenciaF,metodo:metodoF});
+        });
+      }
+      await batch.commit();
       setEditPago(null);
-      setDialog({title:'✅ Guardado',text:'Pago actualizado.',type:'alert'});
+      setDialog({title:'✅ Guardado',text:'Pago actualizado y distribuido.',type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
@@ -7542,7 +7607,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                           className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                           🖨 PDF
                         </button>
-                        <button onClick={()=>{setEditPago(p);setEditForm({fecha:p.fecha||'',metodo:p.metodo||'',referencia:p.referencia||'',banco:p.banco||'',monto:String(p.monto||'')});}} title="Editar pago"
+                        <button onClick={()=>{setEditPago(p);setEditForm({fecha:p.fecha||'',metodo:p.metodo||'',referencia:p.referencia||'',banco:p.banco||'',monto:String(p.monto||'')});setEditAplicaciones(p.facturaId?[{facturaId:p.facturaId,monto:pN(p.monto)}]:[]);setEditFacBusq('');}} title="Editar pago"
                           className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
                           ✏️ Editar
                         </button>
@@ -7590,9 +7655,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       {/* MODAL EDITAR PAGO */}
       {editPago&&(
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <h3 className="font-black text-sm uppercase mb-4 flex items-center gap-2"><DollarSign size={16} className="text-orange-500"/>Editar Pago</h3>
-            <div className="space-y-3">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="font-black text-sm uppercase mb-4 flex items-center gap-2"><DollarSign size={16} className="text-orange-500"/>Editar Pago — {editPago.proveedor}</h3>
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <div>
                 <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                 <input type="date" value={editForm.fecha||''} onChange={e=>setEditForm(f=>({...f,fecha:e.target.value}))}
@@ -7616,6 +7681,54 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
               </div>
             </div>
+
+            {(()=>{
+              const totalPago=pN(editForm.monto!=null?editForm.monto:editPago.monto);
+              const totalAplicado=editAplicaciones.reduce((s,a)=>s+pN(a.monto),0);
+              const facsProv=(facturasCompra||[]).filter(f=>
+                f.proveedorId===editPago.proveedorId && f.status!=='ANULADA' &&
+                (!editFacBusq||(f.nroFactura||'').toUpperCase().includes(editFacBusq.toUpperCase()))
+              ).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+              return(
+                <div className="border-2 border-orange-200 rounded-xl p-3 bg-orange-50/40">
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-[10px] font-black text-orange-700 uppercase">Aplicar a factura(s) de este proveedor</label>
+                    <span className={`text-[10px] font-black ${totalAplicado>totalPago+0.01?'text-red-600':'text-gray-600'}`}>Aplicado ${fN(totalAplicado)} de ${fN(totalPago)}</span>
+                  </div>
+                  <input value={editFacBusq} onChange={e=>setEditFacBusq(e.target.value)} placeholder="Buscar N° factura..."
+                    className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-orange-400 mb-2"/>
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                    {facsProv.length===0&&<p className="text-[10px] text-gray-400 text-center py-3">Este proveedor no tiene facturas registradas.</p>}
+                    {facsProv.map(f=>{
+                      const sel=editAplicaciones.find(a=>a.facturaId===f.id);
+                      const disponible=pN(f.saldoPendiente||0)+(f.id===editPago.facturaId?pN(editPago.monto||0):0);
+                      return(
+                        <div key={f.id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 border ${sel?'border-orange-400 bg-white':'border-gray-100 bg-white/60'}`}>
+                          <input type="checkbox" checked={!!sel} onChange={e=>{
+                            if(e.target.checked){
+                              const restante=Math.max(0,totalPago-totalAplicado);
+                              setEditAplicaciones(arr=>[...arr,{facturaId:f.id,monto:Math.min(disponible,restante)||0}]);
+                            } else {
+                              setEditAplicaciones(arr=>arr.filter(a=>a.facturaId!==f.id));
+                            }
+                          }} className="w-4 h-4 accent-orange-500"/>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-black truncate">Fact. {f.nroFactura||f.id}</p>
+                            <p className="text-[9px] text-gray-400">{fD(f.fecha)} · disponible ${fN(disponible)}</p>
+                          </div>
+                          {sel&&<input type="number" step="0.01" value={sel.monto} onChange={e=>{
+                            const v=parseFloat(e.target.value)||0;
+                            setEditAplicaciones(arr=>arr.map(a=>a.facturaId===f.id?{...a,monto:v}:a));
+                          }} className="w-24 border-2 border-orange-300 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:border-orange-500"/>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {totalPago-totalAplicado>0.01&&<p className="text-[9px] text-teal-600 font-bold mt-2">💰 El resto (${fN(totalPago-totalAplicado)}) queda como anticipo disponible del proveedor.</p>}
+                </div>
+              );
+            })()}
+
             <div className="flex gap-3 mt-5">
               <button onClick={()=>setEditPago(null)} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-50">Cancelar</button>
               <button onClick={guardarEdicion} className="flex-1 py-2.5 bg-orange-500 text-white rounded-xl font-black text-xs hover:bg-orange-600">Guardar cambios</button>
@@ -7922,6 +8035,13 @@ ${body}
                                 <td colSpan={3}></td>
                               </tr>
                             ))}
+                            {(pagosF.length>0||retsF.length>0||(f.retISLRLista||[]).some(r=>pN(r.monto||0)>0.001))&&(
+                              <tr className={`border-b-2 ${saldo<-0.01?'bg-teal-100/70 border-teal-200':saldo<0.01?'bg-green-100/70 border-green-200':'bg-orange-100/60 border-orange-200'}`}>
+                                <td colSpan={8} className={`py-1.5 px-3 pl-7 text-[9px] font-black ${saldo<-0.01?'text-teal-700':saldo<0.01?'text-green-700':'text-orange-700'}`}>Saldo de la factura {f.nroFactura||f.id}</td>
+                                <td className={`py-1.5 px-3 text-right font-mono font-black text-[9px] ${saldo<-0.01?'text-teal-700':saldo<0.01?'text-green-700':'text-orange-700'}`}>${fN(saldo)}</td>
+                                <td className="py-1.5 px-3"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${saldoLabel==='Saldado'?'bg-green-200 text-green-800':saldoLabel==='A favor'?'bg-teal-200 text-teal-800':'bg-orange-200 text-orange-800'}`}>{saldoLabel}</span></td>
+                              </tr>
+                            )}
                           </React.Fragment>
                         );
                       })}
