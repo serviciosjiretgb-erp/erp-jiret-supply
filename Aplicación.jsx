@@ -20450,17 +20450,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             } else {
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
-                // Look up real cost: saved costoUnit first, then from inventory by invCode
-                let costo=parseNum(it.costoUnit||0);
-                if(!costo && it.invCode) {
-                  const invDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode||(i.id||'').split('___')[0]===it.invCode);
-                  costo=parseNum(invDoc?.cost||0);
-                }
-                if(!costo && it.fgId) {
-                  const fgDoc=(finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-                  if(fgDoc) costo=it.esTermo?parseNum(fgDoc.costoUnitario||0):parseNum(fgDoc.costoUnitarioMillar||0);
-                }
-                const costoTotal=costo*qty;
                 // precio de venta: from saved precioUnit, or derive from invoice total / items
                 const precioVenta = parseNum(it.precioUnit||0) > 0
                   ? parseNum(it.precioUnit)
@@ -20559,6 +20548,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
+
+                // ── COSTO: usar el MISMO código ya resuelto arriba (robusto) en vez de solo el invCode crudo ──
+                // 1) costoUnit guardado en la factura (si existe, se respeta — es el costo histórico real de ese momento)
+                // 2) costo actual en Inventario, buscando por el código YA resuelto (mismo que usa el reporte para mostrar el producto)
+                // 3) costo actual en Inventario, buscando por el invCode crudo (por si acaso el código resuelto no aplicara)
+                // 4) costo desde finishedGoodsInventory por fgId
+                let costo=parseNum(it.costoUnit||0);
+                if(!costo && codigo && codigo!=='—') {
+                  const invDocByCodigo=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===codigo);
+                  if(invDocByCodigo) costo=parseNum(invDocByCodigo.cost||0);
+                }
+                if(!costo && it.invCode) {
+                  const invDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode||(i.id||'').split('___')[0]===it.invCode);
+                  costo=parseNum(invDoc?.cost||0);
+                }
+                if(!costo && it.fgId) {
+                  const fgDoc=(finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
+                  if(fgDoc) costo=it.esTermo?parseNum(fgDoc.costoUnitario||0):parseNum(fgDoc.costoUnitarioMillar||0);
+                }
+                const costoTotal=costo*qty;
                 rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{
                   if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
                   const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
@@ -22175,10 +22184,36 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const handleSaveNE = async (form, editId) => {
             try {
               const id = editId || nextNENum();
-              const base = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
+              // ── Costo real desde Inventario de Productos Terminados al emitir la NE ──
+              // (por código limpio, o por descripción si el ítem no trae código — p.ej. viene de una cotización)
+              const _neGetClean = (raw='') => (raw||'').split('___')[0]
+                .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+              const _neNormDesc = (s='') => (s||'').toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,24);
+              const _ptInv = (inventory||[]).filter(i=>i.category==='Productos Terminados'&&i.activo!==false);
+              const _buscarCostoPT = (it) => {
+                const codeClean = _neGetClean(it.invCode||'').toUpperCase();
+                if(codeClean){
+                  const porCodigo = _ptInv.find(i=>_neGetClean(i.displayId||i.id||'').toUpperCase()===codeClean);
+                  if(porCodigo && parseNum(porCodigo.cost||0)>0) return parseNum(porCodigo.cost);
+                }
+                const itDesc=(it.desc||'').toUpperCase().trim();
+                if(itDesc){
+                  const exact=_ptInv.find(i=>(i.desc||'').toUpperCase().trim()===itDesc);
+                  if(exact && parseNum(exact.cost||0)>0) return parseNum(exact.cost);
+                  const itNorm=_neNormDesc(itDesc);
+                  const porNorm=_ptInv.find(i=>_neNormDesc(i.desc||'')===itNorm);
+                  if(porNorm && parseNum(porNorm.cost||0)>0) return parseNum(porNorm.cost);
+                }
+                return null;
+              };
+              const itemsConCosto = form.items.map(it=>{
+                const costoPT = _buscarCostoPT(it);
+                return costoPT!==null ? {...it, costoUnit:costoPT} : it;
+              });
+              const base = itemsConCosto.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
               const ivaAmt = form.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
-              const costoTotal = form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
-              const data = { ...form, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
+              const costoTotal = itemsConCosto.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
+              const data = { ...form, items:itemsConCosto, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
                 tasa: form.esExtraContable?parseNum(form.tasa||0):(form.tasa||''),
                 totalBs: form.esExtraContable&&parseNum(form.tasa)>0?parseFloat(((base+ivaAmt)*parseNum(form.tasa)).toFixed(2)):(form.totalBs||0),
                 diasCredito: parseInt(form.diasCredito||0),
@@ -22488,7 +22523,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     className="w-20 border border-orange-300 rounded px-1.5 py-0.5 text-[10px] font-black text-right outline-none"/>
                                 </div>
                               )}
-                              <div className="ml-auto text-[9px] text-gray-500">Costo U.: <input type="number" value={it.costoUnit||0} onChange={e=>{const ni=[...form.items];ni[idx]={...ni[idx],costoUnit:parseFloat(e.target.value)||0};setForm(f=>({...f,items:ni}));}} className="w-20 border rounded px-1.5 py-0.5 text-[10px] text-right outline-none border-gray-200 ml-1"/></div>
+                              <div className="ml-auto text-[9px] text-gray-500 flex items-center gap-1">Costo U.: <input type="number" value={it.costoUnit||0} readOnly title="Viene de Inventario de Productos Terminados — no editable" className="w-20 bg-gray-100 border rounded px-1.5 py-0.5 text-[10px] text-right outline-none border-gray-200 text-gray-500 cursor-not-allowed ml-1"/></div>
                             </div>
                           </div>
                           );
@@ -37361,29 +37396,52 @@ const ActualizarCostosView = ({settings, appUser}) => {
         getDocs(getColRef('inventory')),
       ]);
       const inventarioAll = inventorySnap.docs.map(d=>({_id:d.id,...d.data()}));
+      const getClean = (raw='') => (raw||'').split('___')[0]
+        .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
+      const normDesc = (s='') => s.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,24);
       const costoPorCodigo = new Map();
+      const costoPorDescNorm = new Map();
       for(const i of inventarioAll){
-        const code=(i.displayId||(i._id||'').split('___')[0]||'').toUpperCase();
+        const code=getClean(i.displayId||i._id||'').toUpperCase();
         const c=parseNum(i.cost||0);
         if(code&&c>0&&!costoPorCodigo.has(code)) costoPorCodigo.set(code,c);
+        if(c>0&&i.desc){
+          const n=normDesc(i.desc);
+          if(n&&!costoPorDescNorm.has(n)) costoPorDescNorm.set(n,c);
+          const short=n.substring(0,18);
+          if(short&&!costoPorDescNorm.has(short)) costoPorDescNorm.set(short,c);
+        }
       }
+      // Costo actual: 1) código (limpio de sufijos) 2) descripción normalizada (mismo respaldo que usa el Reporte General)
+      const buscarCostoActual=(it)=>{
+        const codeRaw=getClean(it.invCode||'').toUpperCase();
+        if(codeRaw&&costoPorCodigo.has(codeRaw)) return costoPorCodigo.get(codeRaw);
+        const itDesc=it.desc||'';
+        if(itDesc){
+          const n=normDesc(itDesc);
+          if(costoPorDescNorm.has(n)) return costoPorDescNorm.get(n);
+          const short=n.substring(0,18);
+          if(costoPorDescNorm.has(short)) return costoPorDescNorm.get(short);
+        }
+        return null;
+      };
       const cambios=[];
       const procesar=(docs,coleccion)=>{
+        const campo = coleccion==='maquilaInvoices' ? 'itemsFacturados' : 'items';
         for(const d of docs){
           const data={_id:d.id,...d.data()};
           if(data.status==='ANULADA') continue;
-          const items=data.items||[];
+          const items=data[campo]||data.items||data.itemsFacturados||[];
           let modificado=false;
           const nuevos=items.map(it=>{
-            const code=(it.invCode||'').toUpperCase();
-            const nuevo=code?costoPorCodigo.get(code):null;
+            const nuevo=buscarCostoActual(it);
             if(nuevo&&Math.abs(parseNum(it.costoUnit||0)-nuevo)>0.005){
               modificado=true;
               return {...it,costoUnit:nuevo,_costoAnterior:parseNum(it.costoUnit||0)};
             }
             return it;
           });
-          if(modificado) cambios.push({coleccion,docId:data._id,docRef:data.id||data._id,items:nuevos,detalle:nuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode,antes:it._costoAnterior,ahora:it.costoUnit}))});
+          if(modificado) cambios.push({coleccion,campo,docId:data._id,docRef:data.id||data._id,items:nuevos,detalle:nuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode,antes:it._costoAnterior,ahora:it.costoUnit}))});
         }
       };
       procesar(neSnap.docs,'notasEntrega');
@@ -37403,7 +37461,7 @@ const ActualizarCostosView = ({settings, appUser}) => {
       for(const c of acPreview){
         if(ops>=BATCH_LIMIT){ batch=writeBatch(db); batches.push(batch); ops=0; }
         const itemsLimpios=c.items.map(({_costoAnterior,...it})=>it);
-        batch.update(getDocRef(c.coleccion, c.docId), { items: itemsLimpios, updatedAt: Date.now() });
+        batch.update(getDocRef(c.coleccion, c.docId), { [c.campo]: itemsLimpios, updatedAt: Date.now() });
         ops++;
       }
       for(const b of batches) await b.commit();
