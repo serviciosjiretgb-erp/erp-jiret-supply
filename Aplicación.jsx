@@ -9866,6 +9866,7 @@ function App() {
   const [cobrosCxc, setCobrosCxc] = useState([]);
   const [cuentasBanco, setCuentasBanco] = useState([]); // banco_cuentas para selector en modal cobro
   const [cajasCuentas, setCajasCuentas] = useState([]); // caja_cuentas para selector en modal cobro
+  const [bancoMovsFin, setBancoMovsFin] = useState([]); // banco_movimientos para Reporte de Reciprocidad de Banco (Finanzas)
   const [cxcSelectedClient, setCxcSelectedClient] = useState('');
   const [cxcExpandAll, setCxcExpandAll] = useState(false);
   const [cxcCobroModal, setCxcCobroModal] = useState(null);
@@ -10427,7 +10428,13 @@ function App() {
   const [kardexDateFrom, setKardexDateFrom] = useState('');
   const [kardexDateTo, setKardexDateTo] = useState('');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-  const [showReportType, setShowReportType] = useState(null); 
+  const [showReportType, setShowReportType] = useState(null);
+
+  // Estados para Reporte de Reciprocidad de Banco (Reportes Financieros)
+  const [recipFDesde, setRecipFDesde] = useState(getTodayDate().substring(0,7)+'-01');
+  const [recipFHasta, setRecipFHasta] = useState(getTodayDate());
+  const [recipBancoFiltro, setRecipBancoFiltro] = useState('');
+  const [recipClienteAbierto, setRecipClienteAbierto] = useState('');
 
   // Estados para Categorías Dinámicas de Costos
   const [costCategories, setCostCategories] = useState(COSTO_CATEGORIES);
@@ -11048,6 +11055,7 @@ function App() {
     const unsubCobrosCxc = onSnapshot(getColRef('cobros_cxc'), (s) => setCobrosCxc(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCuentasBanco = onSnapshot(getColRef('banco_cuentas'), (s) => setCuentasBanco(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCajasCuentas = onSnapshot(getColRef('caja_cuentas'), (s) => setCajasCuentas(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubBancoMovsFin = onSnapshot(getColRef('banco_movimientos'), (s) => setBancoMovsFin(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({_fsId:d.id, id:d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -11075,7 +11083,7 @@ function App() {
     
     return () => { 
       unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubFinanzasPDFs(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
-      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco(); unsubCajasCuentas();
+      unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco(); unsubCajasCuentas(); unsubBancoMovsFin();
       unsubResena(); unsubResenaImg(); unsubComRep();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
@@ -34487,6 +34495,7 @@ ${resumenHtml}
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple', perm: null },
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray', perm: 'costos_reportes' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red', perm: 'costos_reportes' },
+      { id: 'reciprocidad_banco', icon: <Activity size={26}/>, label: 'Reciprocidad de Banco', desc: 'Cobros de CxC por cuenta bancaria', color: 'emerald', perm: 'costos_reportes' },
     ];
     // Ventas-only users: ONLY Finiquito (perm:null). Others: filter by permission.
     const isVentasOnly = (hasPerm('ventas')||hasPerm('ventas_facturacion')||hasPerm('ventas_ops'))
@@ -35655,6 +35664,262 @@ ${resumenHtml}
                 </div>
               </div>
             );
+            })()}
+
+            {showReportType === 'reciprocidad_banco' && (() => {
+              // Reciprocidad de Banco: extensión del submódulo homónimo del Módulo Bancos & Tesorería.
+              // Lee la misma colección banco_movimientos en vivo, así que ambas vistas quedan siempre
+              // sincronizadas — no es una copia de datos, es la misma fuente vista desde Finanzas.
+              // Solo cuentan ingresos que provienen de cobros a clientes (CxC); traslados de fondo y
+              // pagos a proveedores quedan afuera (se identifican por el campo origenIngreso).
+              const ORIGENES_CXC_RECIP = ['Cobro CxC','Cobro NE','Anticipo Cliente'];
+              const fD = s => { if(!s) return '—'; const p = String(s).split('-'); return p.length===3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
+              const setRecipMes = (offset) => {
+                const d=new Date(); d.setMonth(d.getMonth()+offset);
+                const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0');
+                const ultimoDia=new Date(y,d.getMonth()+1,0).getDate();
+                setRecipFDesde(`${y}-${m}-01`); setRecipFHasta(`${y}-${m}-${String(ultimoDia).padStart(2,'0')}`);
+              };
+              const setRecipAnio = () => { setRecipFDesde(getTodayDate().substring(0,4)+'-01-01'); setRecipFHasta(getTodayDate()); };
+              const setRecipTodo = () => { setRecipFDesde('2000-01-01'); setRecipFHasta(getTodayDate()); };
+
+              // movsPeriodo: todos los cobros CxC del rango de fechas, SIN aplicar el filtro de banco —
+              // sirve de base para que el % de cada banco sea siempre relativo al total del período,
+              // sin importar si luego se filtra la vista a un solo banco.
+              const movsPeriodo = (bancoMovsFin||[]).filter(m =>
+                ORIGENES_CXC_RECIP.includes(m.origenIngreso) &&
+                (!recipFDesde || m.fecha>=recipFDesde) && (!recipFHasta || m.fecha<=recipFHasta)
+              );
+              const totalGrandUSD = movsPeriodo.reduce((s,m)=>s+parseNum(m.montoUSD||0),0);
+
+              const porBancoTodos = {};
+              movsPeriodo.forEach(m=>{
+                const key = m.cuentaId || 'sin-cuenta';
+                if(!porBancoTodos[key]) porBancoTodos[key] = {usd:0,bs:0,count:0};
+                porBancoTodos[key].usd += parseNum(m.montoUSD||0);
+                porBancoTodos[key].bs  += parseNum(m.montoBs||0);
+                porBancoTodos[key].count += 1;
+              });
+              const bancosDisponibles = Object.entries(porBancoTodos).map(([cuentaId,v])=>({
+                cuentaId, cta:(cuentasBanco||[]).find(c=>c.id===cuentaId), usd:v.usd,
+              })).sort((a,b)=>b.usd-a.usd);
+
+              // movsRecip: cobros del período que además respetan el filtro de banco seleccionado.
+              const movsRecip = recipBancoFiltro ? movsPeriodo.filter(m=>m.cuentaId===recipBancoFiltro) : movsPeriodo;
+              const totalRecipUSD = movsRecip.reduce((s,m)=>s+parseNum(m.montoUSD||0),0);
+              const totalRecipBs  = movsRecip.reduce((s,m)=>s+parseNum(m.montoBs||0),0);
+
+              const filasBancoRecip = Object.entries(porBancoTodos)
+                .filter(([cuentaId]) => !recipBancoFiltro || cuentaId===recipBancoFiltro)
+                .map(([cuentaId,v])=>({
+                  cuentaId, cta:(cuentasBanco||[]).find(c=>c.id===cuentaId), ...v,
+                  pct: totalGrandUSD>0 ? (v.usd/totalGrandUSD*100) : 0,
+                })).sort((a,b)=>b.usd-a.usd);
+
+              // clientesPorBanco: por cliente, totales + relación de cobros individuales (fecha, referencia,
+              // concepto, montos) — igual al desglose que se ve al desplegar un cliente en Estado de Cuenta.
+              const clientesPorBanco = (cuentaId) => {
+                const porCliente = {};
+                movsPeriodo.filter(m=>m.cuentaId===cuentaId).forEach(m=>{
+                  const nombre = m.clientName || m.terceroNombre || 'Cliente sin identificar';
+                  const key = m.clientRif || nombre;
+                  if(!porCliente[key]) porCliente[key] = {nombre, rif:m.clientRif||'', usd:0, bs:0, count:0, txns:[]};
+                  porCliente[key].usd += parseNum(m.montoUSD||0);
+                  porCliente[key].bs  += parseNum(m.montoBs||0);
+                  porCliente[key].count += 1;
+                  porCliente[key].txns.push({fecha:m.fecha||'', referencia:m.referencia||'', concepto:m.concepto||'', usd:parseNum(m.montoUSD||0), bs:parseNum(m.montoBs||0)});
+                });
+                const lista = Object.values(porCliente);
+                lista.forEach(c=>c.txns.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')));
+                return lista.sort((a,b)=>b.usd-a.usd);
+              };
+              const periodoLabel = `${fD(recipFDesde)} al ${fD(recipFHasta)}`;
+
+              return (
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center no-pdf flex-wrap gap-3">
+                    <h3 className="text-lg font-black uppercase">Reciprocidad de Banco — {periodoLabel}</h3>
+                    <button onClick={() => handleExportPDF('Reporte_Reciprocidad_Banco')} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir PDF</button>
+                  </div>
+
+                  <div className="flex flex-wrap items-end gap-3 no-pdf bg-white border border-gray-200 rounded-2xl p-4">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Desde</label>
+                      <input type="date" value={recipFDesde} onChange={e=>setRecipFDesde(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Hasta</label>
+                      <input type="date" value={recipFHasta} onChange={e=>setRecipFHasta(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500"/>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Banco</label>
+                      <select value={recipBancoFiltro} onChange={e=>{setRecipBancoFiltro(e.target.value);setRecipClienteAbierto('');}} className="border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-500 bg-white min-w-[180px]">
+                        <option value="">Todos los bancos</option>
+                        {bancosDisponibles.map(b=><option key={b.cuentaId} value={b.cuentaId}>{b.cta?.banco || 'Sin banco identificado'}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button onClick={()=>setRecipMes(0)} className="px-3 py-2.5 text-[9px] font-black uppercase rounded-xl border-2 border-gray-200 hover:bg-gray-50">Este Mes</button>
+                      <button onClick={()=>setRecipMes(-1)} className="px-3 py-2.5 text-[9px] font-black uppercase rounded-xl border-2 border-gray-200 hover:bg-gray-50">Mes Anterior</button>
+                      <button onClick={setRecipAnio} className="px-3 py-2.5 text-[9px] font-black uppercase rounded-xl border-2 border-gray-200 hover:bg-gray-50">Este Año</button>
+                      <button onClick={setRecipTodo} className="px-3 py-2.5 text-[9px] font-black uppercase rounded-xl border-2 border-gray-200 hover:bg-gray-50">Todo</button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 no-pdf">
+                    <div className="bg-white border border-gray-200 rounded-2xl p-6">
+                      <span className="text-[10px] font-black text-gray-400 uppercase block mb-1">Total Cobrado{recipBancoFiltro?' (banco filtrado)':' (Período)'}</span>
+                      <span className="text-2xl font-black text-green-600 block">${formatNum(totalRecipUSD)}</span>
+                      <span className="text-[10px] text-gray-400">Bs. {formatNum(totalRecipBs)}</span>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-2xl p-6">
+                      <span className="text-[10px] font-black text-gray-400 uppercase block mb-1">Cobros Registrados</span>
+                      <span className="text-2xl font-black text-blue-600 block">{movsRecip.length}</span>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-2xl p-6">
+                      <span className="text-[10px] font-black text-gray-400 uppercase block mb-1">Bancos con Reciprocidad</span>
+                      <span className="text-2xl font-black text-orange-600 block">{bancosDisponibles.length}</span>
+                    </div>
+                  </div>
+
+                  <div className="no-pdf">
+                    <h4 className="text-sm font-black uppercase text-black mb-3">Reciprocidad General por Banco</h4>
+                    {filasBancoRecip.length===0 ? (
+                      <p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin cobros de CxC en el período</p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-xl border border-gray-200">
+                        <table className="w-full text-xs text-left">
+                          <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">Banco</th><th className="py-3 px-4 border-r text-right">%</th><th className="py-3 px-4 border-r text-right">Monto USD</th><th className="py-3 px-4 text-right">Monto Bs.</th></tr></thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {filasBancoRecip.map(f=>(
+                              <tr key={f.cuentaId} className="hover:bg-gray-50">
+                                <td className="py-3 px-4 border-r font-black uppercase">{f.cta?.banco || 'Sin banco identificado'}</td>
+                                <td className="py-3 px-4 border-r text-right font-bold">{f.pct.toFixed(1)}%</td>
+                                <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(f.usd)}</td>
+                                <td className="py-3 px-4 text-right font-bold text-gray-500">Bs. {formatNum(f.bs)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── Detalle en pantalla: Banco → Cliente (clic para desplegar), igual que Estado de Cuenta ── */}
+                  {filasBancoRecip.length>0 && (
+                    <div className="no-pdf">
+                      <h4 className="text-sm font-black uppercase text-black mb-3">Detalle por Banco — Clientes que Pagaron</h4>
+                      <p className="text-[10px] text-gray-400 mb-3">Clic en un cliente para ver su relación de cobros, igual que en Estado de Cuenta.</p>
+                      <div className="space-y-4">
+                        {filasBancoRecip.map(f=>{
+                          const clientesB = clientesPorBanco(f.cuentaId);
+                          return (
+                            <div key={f.cuentaId} className="rounded-xl border border-gray-200 overflow-hidden">
+                              <div className="flex justify-between items-center px-4 py-3 bg-emerald-50 border-b border-emerald-100">
+                                <p className="text-xs font-black uppercase text-emerald-700">{f.cta?.banco || 'Sin banco identificado'} <span className="text-emerald-500 font-bold">({f.pct.toFixed(1)}%)</span></p>
+                                <p className="text-xs font-black text-emerald-700">${formatNum(f.usd)} <span className="text-[10px] text-emerald-500 font-bold">Bs. {formatNum(f.bs)}</span></p>
+                              </div>
+                              <table className="w-full text-xs text-left">
+                                <thead className="bg-gray-50 border-b border-gray-100"><tr className="uppercase font-black text-gray-400 text-[9px]"><th className="py-2 px-4">Cliente</th><th className="py-2 px-4 text-right">Cobros</th><th className="py-2 px-4 text-right">Monto USD</th><th className="py-2 px-4 text-right">Monto Bs.</th></tr></thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {clientesB.map(c=>{
+                                    const key = `${f.cuentaId}::${c.rif||c.nombre}`;
+                                    const abierto = recipClienteAbierto===key;
+                                    return (
+                                      <React.Fragment key={key}>
+                                        <tr className={`cursor-pointer hover:bg-gray-50 ${abierto?'bg-blue-50':''}`} onClick={()=>setRecipClienteAbierto(abierto?'':key)}>
+                                          <td className="py-2.5 px-4 font-black uppercase">
+                                            <span className="inline-block w-3 text-gray-400">{abierto?'▼':'▶'}</span> {c.nombre}
+                                            <span className="block text-[9px] font-mono text-gray-400 font-normal pl-4">{c.rif||'—'}</span>
+                                          </td>
+                                          <td className="py-2.5 px-4 text-right">{c.count}</td>
+                                          <td className="py-2.5 px-4 text-right font-black text-green-600">${formatNum(c.usd)}</td>
+                                          <td className="py-2.5 px-4 text-right font-bold text-gray-500">Bs. {formatNum(c.bs)}</td>
+                                        </tr>
+                                        {abierto && (
+                                          <tr><td colSpan={4} className="p-0">
+                                            <div style={{background:'#0f172a'}} className="p-3">
+                                              <table className="w-full text-[10px]">
+                                                <thead>
+                                                  <tr className="text-gray-400"><th className="py-1.5 px-3 text-left font-black uppercase">Fecha</th><th className="py-1.5 px-3 text-left font-black uppercase">Referencia</th><th className="py-1.5 px-3 text-left font-black uppercase">Concepto</th><th className="py-1.5 px-3 text-right font-black uppercase">Monto USD</th><th className="py-1.5 px-3 text-right font-black uppercase">Monto Bs.</th></tr>
+                                                </thead>
+                                                <tbody>
+                                                  {c.txns.map((t,ti)=>(
+                                                    <tr key={ti} className="border-t border-gray-700">
+                                                      <td className="py-1.5 px-3 text-gray-200">{fD(t.fecha)}</td>
+                                                      <td className="py-1.5 px-3 text-blue-300 font-mono">{t.referencia||'—'}</td>
+                                                      <td className="py-1.5 px-3 text-gray-300">{t.concepto||'—'}</td>
+                                                      <td className="py-1.5 px-3 text-right font-black text-green-400">${formatNum(t.usd)}</td>
+                                                      <td className="py-1.5 px-3 text-right text-gray-400">Bs. {formatNum(t.bs)}</td>
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </td></tr>
+                                        )}
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Contenido del PDF: siempre completo (Banco → Cliente → detalle de cobros), respeta el filtro de banco ── */}
+                  <div id="pdf-content" className="hidden">
+                    <div className="pdf-header mb-6"><ReportHeader /><h1 className="text-xl font-black uppercase border-b-4 border-emerald-500 pb-2">RECIPROCIDAD DE BANCO — {periodoLabel}</h1></div>
+                    <h4 className="text-sm font-black uppercase text-black mb-3">Resumen General</h4>
+                    <div className="overflow-x-auto rounded-xl border border-gray-200 mb-6">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">Banco</th><th className="py-3 px-4 border-r text-right">%</th><th className="py-3 px-4 border-r text-right">Monto USD</th><th className="py-3 px-4 text-right">Monto Bs.</th></tr></thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {filasBancoRecip.map(f=>(
+                            <tr key={f.cuentaId}>
+                              <td className="py-3 px-4 border-r font-black uppercase">{f.cta?.banco || 'Sin banco identificado'}</td>
+                              <td className="py-3 px-4 border-r text-right font-bold">{f.pct.toFixed(1)}%</td>
+                              <td className="py-3 px-4 border-r text-right font-black text-green-600">${formatNum(f.usd)}</td>
+                              <td className="py-3 px-4 text-right font-bold text-gray-500">Bs. {formatNum(f.bs)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-gray-100 font-black"><tr><td className="py-3 px-4 border-r uppercase">Total</td><td className="py-3 px-4 border-r text-right">100%</td><td className="py-3 px-4 border-r text-right text-green-600">${formatNum(totalRecipUSD)}</td><td className="py-3 px-4 text-right text-gray-500">Bs. {formatNum(totalRecipBs)}</td></tr></tfoot>
+                      </table>
+                    </div>
+                    {filasBancoRecip.map(f=>{
+                      const clientesB = clientesPorBanco(f.cuentaId);
+                      return (
+                        <div key={f.cuentaId} className="mb-6">
+                          <h4 className="text-sm font-black uppercase text-black border-t-2 border-gray-100 pt-3 mb-2">{f.cta?.banco || 'Sin banco identificado'} — ${formatNum(f.usd)} ({f.pct.toFixed(1)}%)</h4>
+                          {clientesB.map(c=>(
+                            <div key={c.rif||c.nombre} className="mb-3">
+                              <p className="text-[10px] font-black uppercase text-orange-600 mb-1">{c.nombre} · {c.rif||'—'}</p>
+                              <table className="w-full text-xs text-left">
+                                <thead className="bg-gray-100 border-b border-gray-200"><tr className="uppercase font-black text-[9px]"><th className="py-1.5 px-3 border-r">Fecha</th><th className="py-1.5 px-3 border-r">Referencia</th><th className="py-1.5 px-3 border-r">Concepto</th><th className="py-1.5 px-3 border-r text-right">Monto USD</th><th className="py-1.5 px-3 text-right">Monto Bs.</th></tr></thead>
+                                <tbody className="divide-y divide-gray-100">
+                                  {c.txns.map((t,ti)=>(
+                                    <tr key={ti}>
+                                      <td className="py-1.5 px-3 border-r">{fD(t.fecha)}</td>
+                                      <td className="py-1.5 px-3 border-r">{t.referencia||'—'}</td>
+                                      <td className="py-1.5 px-3 border-r">{t.concepto||'—'}</td>
+                                      <td className="py-1.5 px-3 border-r text-right font-black text-green-600">${formatNum(t.usd)}</td>
+                                      <td className="py-1.5 px-3 text-right text-gray-500">Bs. {formatNum(t.bs)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
             })()}
 
             {!showReportType && (
