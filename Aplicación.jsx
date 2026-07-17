@@ -24339,6 +24339,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           let totV=0,totM=0,totU=0,kgSF=0,kgPK=0,kgT=0;
           const byProd={},byProdQ={},byCli={},byCliQ={},byVend={},byVendQ={},byCat={},byCatQ={},byLoc={},byLocQ={},byCanal={},byCanalQ={};
           const rows=[];
+          // Algunos ítems guardan desc como "CÓDIGO — Nombre" y otros solo "Nombre" para el mismo
+          // producto; se quita el prefijo de código para que el TOP 10 no lo cuente como dos filas.
+          const limpiarNombreProd=s=>(s||'').replace(/^[A-Z][A-Z0-9.\/-]{1,30}\s+—\s+/,'').trim();
           nesFilt.forEach(v=>{
             totV+=v.montoBase;
             byCli[v.cliente]=(byCli[v.cliente]||0)+v.montoBase;
@@ -24348,7 +24351,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             byCanal[vCanal]=(byCanal[vCanal]||0)+v.montoBase;
             v.items.forEach(it=>{
               if(fVF.cat&&it.tipo!==fVF.cat)return;
-              const pk=it.desc||it.codigo||'?';
+              const pk=limpiarNombreProd(it.desc)||it.codigo||'?';
               byProd[pk]=(byProd[pk]||0)+it.subtotal; byProdQ[pk]=(byProdQ[pk]||0)+it.cant;
               byCat[it.tipo]=(byCat[it.tipo]||0)+it.subtotal; byCatQ[it.tipo]=(byCatQ[it.tipo]||0)+it.cant;
               byCliQ[v.cliente]=(byCliQ[v.cliente]||0)+it.cant;
