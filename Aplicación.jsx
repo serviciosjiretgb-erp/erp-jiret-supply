@@ -7359,7 +7359,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
     const rif = settings?.empresaRif||'J-41230937-4';
     const f = _factMap.get(p.facturaId);
     const tasa=pN(p.tasa||tasaBCV||1);
-    const montoBs=p.moneda==='Bs'?pN(p.monto||0):pN(p.monto||0)*tasa;
+    const esBs=p.moneda==='Bs';
+    const montoUSD=esBs?pN(p.monto||0)/Math.max(tasa,0.01):pN(p.monto||0);
+    const montoBs=esBs?pN(p.monto||0):pN(p.monto||0)*tasa;
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de Pago</title>
 <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
 .hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
@@ -7381,8 +7383,8 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
 <div class="body">
 <div class="kpis">
   <div class="kpi"><div class="kpi-label">Proveedor</div><div class="kpi-value" style="font-size:12px;color:#111">${p.proveedor||'—'}</div></div>
-  <div class="kpi"><div class="kpi-label">Total Pagado USD</div><div class="kpi-value" style="color:#ea580c">$${fN(pN(p.monto||0))}</div></div>
-  <div class="kpi"><div class="kpi-label">Total Pagado Bs.</div><div class="kpi-value" style="color:#2563eb">Bs.${fN(montoBs)}</div></div>
+  <div class="kpi"><div class="kpi-label">Total Pagado USD${esBs?' (equiv.)':''}</div><div class="kpi-value" style="color:#ea580c">$${fN(montoUSD)}</div></div>
+  <div class="kpi"><div class="kpi-label">Total Pagado Bs.${!esBs?' (equiv.)':''}</div><div class="kpi-value" style="color:#2563eb">Bs.${fN(montoBs)}</div></div>
 </div>
 <div class="detalle">
   <div class="row"><span style="color:#64748b">N° Factura</span><span style="font-weight:700;color:#f97316">${f?.nroFactura||'—'}</span></div>
@@ -7393,7 +7395,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
   ${p.concepto?`<div class="row"><span style="color:#64748b">Concepto</span><span style="font-weight:700;text-align:right">${p.concepto}</span></div>`:''}
   <div class="row"><span style="color:#64748b">N° Referencia</span><span style="font-weight:700;font-family:monospace">${p.referencia||'—'}</span></div>
   <div class="row"><span style="color:#64748b">Tasa Bs/$</span><span style="font-weight:700">${fN(tasa)}</span></div>
-  <div class="row"><span>TOTAL PAGADO</span><span style="color:#16a34a;font-size:15px">$${fN(pN(p.monto||0))}</span></div>
+  <div class="row"><span>TOTAL PAGADO</span><span style="color:#16a34a;font-size:15px">${esBs?'Bs.'+fN(montoBs)+' (≈ $'+fN(montoUSD)+')':'$'+fN(montoUSD)+' (≈ Bs.'+fN(montoBs)+')'}</span></div>
 </div>
 <div class="footer">${emp} · Generado: ${hoy} · Usuario: ${appUser?.name||'—'}</div>
 </div>
@@ -26226,6 +26228,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </thead>
                       <tbody>
                         {clientesList.map((cl)=>{
+                          const _ncsByKeyEc = new Map();
+                          for(const n of (notasVentaCD||[])){
+                            const kk=[n.neId,n.neOrigen,n.facturaId].filter(Boolean);
+                            for(const k of kk){ if(!_ncsByKeyEc.has(k)) _ncsByKeyEc.set(k,[]); _ncsByKeyEc.get(k).push(n); }
+                          }
+                          const getNCsNE = (ne) => {
+                            const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
+                            const invNc = ne.facturaId
+                              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkNc(i))
+                              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOkNc(i));
+                            const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
+                            const seenNc=new Set(); const ncsNe=[];
+                            for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
+                            return ncsNe;
+                          };
                           const sel=cxcExpandAll||cxcSelectedClient===cl.clientRif;
                           const estado=cl.estado;
                           const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700','A FAVOR':'bg-teal-100 text-teal-700'}[estado];
@@ -26676,16 +26693,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   const grupoId=cb.grupoCobroId;
                                   const lineasGrupo=grupoId?(cobrosCxc||[]).filter(c=>c.grupoCobroId===grupoId):[cb];
                                   const totalGrupo=lineasGrupo.reduce((s,c)=>s+parseNum(c.monto||0),0);
-                                  const rows=lineasGrupo.map(c=>`<tr style="border-bottom:1px solid #f1f5f9">
-                                    <td style="padding:8px 12px;font-weight:700;color:#f97316">${c.neDocumento||c.neId||'—'}</td>
-                                    <td style="padding:8px 12px">${c.metodo||'—'}</td>
-                                    <td style="padding:8px 12px;color:#64748b">${c.cuentaBancoNombre||'—'}</td>
-                                    <td style="padding:8px 12px;font-family:monospace;color:#94a3b8;font-size:10px">${c.referencia||'—'}</td>
-                                    <td style="padding:8px 12px">${c.fecha||'—'}</td>
-                                    <td style="padding:8px 12px;text-align:right;font-weight:900;color:#3b82f6">${parseNum(c.montoBs||0)>0?`Bs.${formatNum(parseNum(c.montoBs))}`:'—'}</td>
-                                    <td style="padding:8px 12px;text-align:right;font-weight:900;color:#16a34a">$${formatNum(parseNum(c.monto))}</td>
-                                  </tr>`).join('');
-                                  const totalBsGrupo=lineasGrupo.reduce((s,c)=>s+parseNum(c.montoBs||0),0);
+                                  const totalBsGrupo=lineasGrupo.reduce((s,c)=>{
+                                    const t=parseNum(c.tasa||settings?.tasaBCV||1);
+                                    return s+(c.moneda==='Bs'?parseNum(c.montoBs||c.monto||0):parseNum(c.monto||0)*t);
+                                  },0);
+                                  const totalUSDGrupo=lineasGrupo.reduce((s,c)=>{
+                                    const t=Math.max(parseNum(c.tasa||settings?.tasaBCV||1),0.01);
+                                    return s+(c.moneda==='Bs'?parseNum(c.montoBs||c.monto||0)/t:parseNum(c.monto||0));
+                                  },0);
+                                  const rows=lineasGrupo.map(c=>{
+                                    const t=parseNum(c.tasa||settings?.tasaBCV||1);
+                                    const esBsLinea=c.moneda==='Bs';
+                                    const uUSD=esBsLinea?parseNum(c.montoBs||c.monto||0)/Math.max(t,0.01):parseNum(c.monto||0);
+                                    const uBs=esBsLinea?parseNum(c.montoBs||c.monto||0):parseNum(c.monto||0)*t;
+                                    return `<div class="detalle">
+                                    <div class="row"><span style="color:#64748b">Nota de Entrega</span><span style="font-weight:700;color:#f97316">${c.neDocumento||c.neId||'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Fecha</span><span style="font-weight:700">${c.fecha||'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Método de Cobro</span><span style="font-weight:700">${c.metodo||'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Banco / Caja</span><span style="font-weight:700">${c.cuentaBancoNombre||'—'}</span></div>
+                                    ${c.concepto?`<div class="row"><span style="color:#64748b">Concepto</span><span style="font-weight:700;text-align:right">${c.concepto}</span></div>`:''}
+                                    <div class="row"><span style="color:#64748b">N° Referencia</span><span style="font-weight:700;font-family:monospace">${c.referencia||'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Tasa Bs/$</span><span style="font-weight:700">${formatNum(t)}</span></div>
+                                    <div class="row"><span>MONTO COBRADO</span><span style="color:#16a34a;font-size:14px">${esBsLinea?'Bs.'+formatNum(uBs)+' (≈ $'+formatNum(uUSD)+')':'$'+formatNum(uUSD)+' (≈ Bs.'+formatNum(uBs)+')'}</span></div>
+                                  </div>`;
+                                  }).join('');
                                   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de Cobro</title>
                                   <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
                                   .hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
@@ -26695,9 +26726,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   .kpi{border:1px solid #e2e8f0;border-radius:10px;padding:12px;text-align:center;}
                                   .kpi-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px;}
                                   .kpi-value{font-size:18px;font-weight:900;}
-                                  table{width:100%;border-collapse:collapse;}
-                                  thead tr{background:#0f172a;}thead th{padding:8px 12px;text-align:left;font-size:8px;font-weight:900;text-transform:uppercase;color:#fff;}
-                                  tfoot td{background:#f8fafc;padding:8px 12px;font-weight:900;}
+                                  .detalle{border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-top:14px;}
+                                  .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;}
+                                  .row:last-child{border-bottom:none;font-weight:900;background:#f8fafc;margin:-16px;padding:10px 16px;border-radius:0 0 10px 10px;}
                                   .footer{text-align:center;font-size:8px;color:#94a3b8;margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;}
                                   @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
                                   <div class="hdr">
@@ -26708,17 +26739,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   <div class="body">
                                     <div class="kpis">
                                       <div class="kpi"><div class="kpi-label">Cliente</div><div class="kpi-value" style="font-size:13px;color:#111">${cb.clientName||'—'}</div></div>
-                                      <div class="kpi"><div class="kpi-label">Total Cobrado</div><div class="kpi-value" style="color:#16a34a">$${formatNum(totalGrupo)}</div></div>
-                                      <div class="kpi"><div class="kpi-label">Líneas de pago</div><div class="kpi-value" style="color:#3b82f6">${lineasGrupo.length}</div></div>
+                                      <div class="kpi"><div class="kpi-label">Total Cobrado USD</div><div class="kpi-value" style="color:#ea580c">$${formatNum(totalUSDGrupo)}</div></div>
+                                      <div class="kpi"><div class="kpi-label">Total Cobrado Bs.</div><div class="kpi-value" style="color:#2563eb">Bs.${formatNum(totalBsGrupo)}</div></div>
                                     </div>
-                                    <table><thead><tr><th>Documento</th><th>Método</th><th>Cuenta / Caja</th><th>Referencia</th><th>Fecha</th><th style="text-align:right">Monto Bs.</th><th style="text-align:right">Monto USD</th></tr></thead>
-                                    <tbody>${rows}</tbody>
-                                    <tfoot><tr><td colspan="5" style="text-align:right;padding:8px 12px">TOTAL COBRADO</td><td style="text-align:right;padding:8px 12px;color:#3b82f6;font-weight:900">${totalBsGrupo>0?`Bs.${formatNum(totalBsGrupo)}`:'—'}</td><td style="text-align:right;padding:8px 12px;color:#16a34a;font-weight:900">$${formatNum(totalGrupo)}</td></tr></tfoot>
-                                    </table>
+                                    ${rows}
                                     <div class="footer">Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}</div>
                                   </div>
                                   <script>window.onload=()=>window.print();</script></body></html>`;
-                                  const w=window.open('','_blank','width=860,height=650');w.document.write(html);w.document.close();
+                                  const w=window.open('','_blank','width=700,height=650');w.document.write(html);w.document.close();
                                 }} title="Comprobante PDF"
                                   className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                                   🖨 PDF
@@ -27461,7 +27489,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
                               <td className="py-2 px-3 text-right font-black text-teal-700">-${formatNum(Math.max(0,a._saldoAnt))}</td>
-                              <td className="py-2 px-3 text-center"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">A favor</span></td>
+                              <td className="py-2 px-3 text-center">{Math.max(0,a._saldoAnt)>0.01?<span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">A favor</span>:<span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded text-[8px] font-black">Aplicado</span>}</td>
                             </tr>
                           ))}
                         </tbody>
