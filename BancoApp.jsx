@@ -5146,6 +5146,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [fDesde, setFDesde] = useState(bancoMesActual()+'-01');
     const [fHasta, setFHasta] = useState(getTodayDate());
     const [bancoSel, setBancoSel] = useState('');
+    const [clienteAbierto, setClienteAbierto] = useState('');
 
     const setRangoMes = (offset) => {
       const d = new Date(); d.setMonth(d.getMonth()+offset);
@@ -5156,38 +5157,54 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const setRangoAnio = () => { setFDesde(getTodayDate().substring(0,4)+'-01-01'); setFHasta(getTodayDate()); };
     const setRangoTodo = () => { setFDesde('2000-01-01'); setFHasta(getTodayDate()); };
 
-    const movsCxC = movBanco.filter(m =>
+    // movsPeriodo: cobros CxC del rango de fechas, sin aplicar el filtro de banco — así el % de
+    // cada banco es siempre relativo al total del período, aunque luego se filtre a uno solo.
+    const movsPeriodo = movBanco.filter(m =>
       ORIGENES_CXC_RECIPROCIDAD.includes(m.origenIngreso) &&
       (!fDesde || m.fecha>=fDesde) && (!fHasta || m.fecha<=fHasta)
     );
+    const totalGrandUSD = movsPeriodo.reduce((a,m)=>a+Number(m.montoUSD||0),0);
+
+    const porBancoTodos = {};
+    movsPeriodo.forEach(m=>{
+      const key = m.cuentaId || 'sin-cuenta';
+      if(!porBancoTodos[key]) porBancoTodos[key] = {usd:0,bs:0,count:0};
+      porBancoTodos[key].usd += Number(m.montoUSD||0);
+      porBancoTodos[key].bs  += Number(m.montoBs||0);
+      porBancoTodos[key].count += 1;
+    });
+    const bancosDisponibles = Object.entries(porBancoTodos).map(([cuentaId,v])=>({
+      cuentaId, cta: cuentas.find(c=>c.id===cuentaId), usd: v.usd,
+    })).sort((a,b)=>b.usd-a.usd);
+
+    const movsCxC = bancoSel ? movsPeriodo.filter(m=>m.cuentaId===bancoSel) : movsPeriodo;
     const totalUSD = movsCxC.reduce((a,m)=>a+Number(m.montoUSD||0),0);
     const totalBs  = movsCxC.reduce((a,m)=>a+Number(m.montoBs||0),0);
 
-    const porBanco = {};
-    movsCxC.forEach(m=>{
-      const key = m.cuentaId || 'sin-cuenta';
-      if(!porBanco[key]) porBanco[key] = {usd:0,bs:0,count:0};
-      porBanco[key].usd += Number(m.montoUSD||0);
-      porBanco[key].bs  += Number(m.montoBs||0);
-      porBanco[key].count += 1;
-    });
-    const filasBanco = Object.entries(porBanco).map(([cuentaId,v])=>({
-      cuentaId, cta: cuentas.find(c=>c.id===cuentaId), ...v,
-      pct: totalUSD>0 ? (v.usd/totalUSD*100) : 0,
-    })).sort((a,b)=>b.usd-a.usd);
+    const filasBanco = Object.entries(porBancoTodos)
+      .filter(([cuentaId]) => !bancoSel || cuentaId===bancoSel)
+      .map(([cuentaId,v])=>({
+        cuentaId, cta: cuentas.find(c=>c.id===cuentaId), ...v,
+        pct: totalGrandUSD>0 ? (v.usd/totalGrandUSD*100) : 0,
+      })).sort((a,b)=>b.usd-a.usd);
 
-    const movsDetalle = bancoSel ? movsCxC.filter(m=>m.cuentaId===bancoSel) : movsCxC;
-    const porCliente = {};
-    movsDetalle.forEach(m=>{
-      const nombre = m.clientName || m.terceroNombre || 'Cliente sin identificar';
-      const key = m.clientRif || nombre;
-      if(!porCliente[key]) porCliente[key] = {nombre, rif:m.clientRif||'', usd:0, bs:0, count:0};
-      porCliente[key].usd += Number(m.montoUSD||0);
-      porCliente[key].bs  += Number(m.montoBs||0);
-      porCliente[key].count += 1;
-    });
-    const filasCliente = Object.values(porCliente).sort((a,b)=>b.usd-a.usd);
-    const bancoSelObj = bancoSel ? cuentas.find(c=>c.id===bancoSel) : null;
+    // clientesPorBanco: por cliente, totales + relación de cobros individuales (fecha, referencia,
+    // concepto, montos) — se despliega con un clic, igual que en Estado de Cuenta de CxC.
+    const clientesPorBanco = (cuentaId) => {
+      const porCliente = {};
+      movsPeriodo.filter(m=>m.cuentaId===cuentaId).forEach(m=>{
+        const nombre = m.clientName || m.terceroNombre || 'Cliente sin identificar';
+        const key = m.clientRif || nombre;
+        if(!porCliente[key]) porCliente[key] = {nombre, rif:m.clientRif||'', usd:0, bs:0, count:0, txns:[]};
+        porCliente[key].usd += Number(m.montoUSD||0);
+        porCliente[key].bs  += Number(m.montoBs||0);
+        porCliente[key].count += 1;
+        porCliente[key].txns.push({fecha:m.fecha||'', referencia:m.referencia||'', concepto:m.concepto||'', usd:Number(m.montoUSD||0), bs:Number(m.montoBs||0)});
+      });
+      const lista = Object.values(porCliente);
+      lista.forEach(c=>c.txns.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')));
+      return lista.sort((a,b)=>b.usd-a.usd);
+    };
 
     return (
       <div className="space-y-5 w-full min-w-0">
@@ -5195,6 +5212,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <div className="flex flex-wrap items-end gap-3">
             <BFG label="Desde"><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} className={inp}/></BFG>
             <BFG label="Hasta"><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} className={inp}/></BFG>
+            <BFG label="Banco">
+              <select value={bancoSel} onChange={e=>{setBancoSel(e.target.value);setClienteAbierto('');}} className={sel}>
+                <option value="">Todos los bancos</option>
+                {bancosDisponibles.map(b=><option key={b.cuentaId} value={b.cuentaId}>{b.cta?.banco || 'Sin banco identificado'}</option>)}
+              </select>
+            </BFG>
             <div className="flex gap-1.5 pb-0.5">
               <button onClick={()=>setRangoMes(0)}  className="px-3 py-2 text-[9px] font-black uppercase rounded-lg border-2 border-slate-200 hover:bg-slate-50">Este Mes</button>
               <button onClick={()=>setRangoMes(-1)} className="px-3 py-2 text-[9px] font-black uppercase rounded-lg border-2 border-slate-200 hover:bg-slate-50">Mes Anterior</button>
@@ -5205,9 +5228,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </BCard>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <BKPI label="Total Cobrado (Período)" value={`$${bancoFmt(totalUSD)}`} sub={`Bs. ${bancoFmt(totalBs)}`} accent="green" Icon={DollarSign}/>
+          <BKPI label={bancoSel?'Total Cobrado (Banco Filtrado)':'Total Cobrado (Período)'} value={`$${bancoFmt(totalUSD)}`} sub={`Bs. ${bancoFmt(totalBs)}`} accent="green" Icon={DollarSign}/>
           <BKPI label="Cobros Registrados" value={String(movsCxC.length)} accent="blue" Icon={Receipt}/>
-          <BKPI label="Bancos con Reciprocidad" value={String(filasBanco.length)} accent="gold" Icon={Building2}/>
+          <BKPI label="Bancos con Reciprocidad" value={String(bancosDisponibles.length)} accent="gold" Icon={Building2}/>
         </div>
 
         <BCard title="Reciprocidad por Banco" subtitle={`${bancoDd(fDesde)} al ${bancoDd(fHasta)}`}>
@@ -5216,8 +5239,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             : (
               <div className="space-y-3.5">
                 {filasBanco.map(f=>(
-                  <div key={f.cuentaId} onClick={()=>setBancoSel(bancoSel===f.cuentaId?'':f.cuentaId)}
-                    className={`cursor-pointer rounded-xl p-3 border-2 transition-all ${bancoSel===f.cuentaId?'border-orange-400 bg-orange-50/40':'border-transparent hover:bg-slate-50'}`}>
+                  <div key={f.cuentaId} className="rounded-xl p-3 border-2 border-transparent">
                     <div className="flex justify-between items-end text-[10px] font-bold text-slate-700 mb-1.5">
                       <span className="uppercase flex items-center gap-2">
                         <BBankLogo banco={f.cta?.banco||'?'} logoUrl={f.cta?.logoUrl} className="w-6 h-6 rounded shadow-sm border border-slate-200 object-contain"/>
@@ -5239,25 +5261,70 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             )}
         </BCard>
 
-        <BCard title={bancoSelObj?`Clientes que pagaron por ${bancoSelObj.banco}`:'Clientes que pagaron (todos los bancos)'}
-          subtitle={bancoSelObj?'Clic en el banco de nuevo para ver todos':'Selecciona un banco arriba para filtrar'}>
-          {filasCliente.length===0
+        <BCard title="Detalle por Banco — Clientes que Pagaron" subtitle="Clic en un cliente para ver su relación de cobros, igual que en Estado de Cuenta">
+          {filasBanco.length===0
             ? <BEmptyState icon={Users} title="Sin clientes" desc="No hay cobros de clientes en el período/banco seleccionado"/>
             : (
-              <div className="overflow-x-auto w-full min-w-0"><table className="w-full min-w-[560px]">
-                <thead><tr><BTh>Cliente</BTh><BTh>RIF</BTh><BTh right>Cobros</BTh><BTh right>Monto USD</BTh><BTh right>Monto Bs.</BTh></tr></thead>
-                <tbody>
-                  {filasCliente.map(c=>(
-                    <tr key={c.rif||c.nombre} className="hover:bg-slate-50">
-                      <BTd className="font-black">{c.nombre}</BTd>
-                      <BTd mono className="text-[10px] text-slate-400">{c.rif||'—'}</BTd>
-                      <BTd right>{c.count}</BTd>
-                      <BTd right mono className="text-emerald-600 font-black">${bancoFmt(c.usd)}</BTd>
-                      <BTd right mono className="text-slate-500">Bs. {bancoFmt(c.bs)}</BTd>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>
+              <div className="space-y-4">
+                {filasBanco.map(f=>{
+                  const clientesB = clientesPorBanco(f.cuentaId);
+                  return (
+                    <div key={f.cuentaId} className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex justify-between items-center px-4 py-2.5 bg-orange-50 border-b border-orange-100">
+                        <p className="text-[10px] font-black uppercase text-orange-700 flex items-center gap-2">
+                          <BBankLogo banco={f.cta?.banco||'?'} logoUrl={f.cta?.logoUrl} className="w-5 h-5 rounded shadow-sm border border-orange-200 object-contain"/>
+                          {f.cta?.banco || 'Sin banco identificado'} <span className="text-orange-400 font-bold">({f.pct.toFixed(1)}%)</span>
+                        </p>
+                        <p className="text-[10px] font-black text-orange-700">${bancoFmt(f.usd)} <span className="text-[9px] text-orange-400 font-bold">Bs. {bancoFmt(f.bs)}</span></p>
+                      </div>
+                      <table className="w-full min-w-[560px]">
+                        <thead><tr><BTh>Cliente</BTh><BTh right>Cobros</BTh><BTh right>Monto USD</BTh><BTh right>Monto Bs.</BTh></tr></thead>
+                        <tbody>
+                          {clientesB.map(c=>{
+                            const key = `${f.cuentaId}::${c.rif||c.nombre}`;
+                            const abierto = clienteAbierto===key;
+                            return (
+                              <React.Fragment key={key}>
+                                <tr className={`cursor-pointer hover:bg-slate-50 ${abierto?'bg-blue-50':''}`} onClick={()=>setClienteAbierto(abierto?'':key)}>
+                                  <BTd className="font-black">
+                                    <span className="inline-block w-3 text-slate-400">{abierto?'▼':'▶'}</span> {c.nombre}
+                                    <span className="block text-[9px] font-mono text-slate-400 font-normal pl-4">{c.rif||'—'}</span>
+                                  </BTd>
+                                  <BTd right>{c.count}</BTd>
+                                  <BTd right mono className="text-emerald-600 font-black">${bancoFmt(c.usd)}</BTd>
+                                  <BTd right mono className="text-slate-500">Bs. {bancoFmt(c.bs)}</BTd>
+                                </tr>
+                                {abierto && (
+                                  <tr><td colSpan={4} className="p-0">
+                                    <div style={{background:'#0f172a'}} className="p-3">
+                                      <table className="w-full text-[10px]">
+                                        <thead>
+                                          <tr className="text-slate-400"><th className="py-1.5 px-3 text-left font-black uppercase">Fecha</th><th className="py-1.5 px-3 text-left font-black uppercase">Referencia</th><th className="py-1.5 px-3 text-left font-black uppercase">Concepto</th><th className="py-1.5 px-3 text-right font-black uppercase">Monto USD</th><th className="py-1.5 px-3 text-right font-black uppercase">Monto Bs.</th></tr>
+                                        </thead>
+                                        <tbody>
+                                          {c.txns.map((t,ti)=>(
+                                            <tr key={ti} className="border-t border-slate-700">
+                                              <td className="py-1.5 px-3 text-slate-200">{bancoDd(t.fecha)}</td>
+                                              <td className="py-1.5 px-3 text-blue-300 font-mono">{t.referencia||'—'}</td>
+                                              <td className="py-1.5 px-3 text-slate-300">{t.concepto||'—'}</td>
+                                              <td className="py-1.5 px-3 text-right font-black text-emerald-400">${bancoFmt(t.usd)}</td>
+                                              <td className="py-1.5 px-3 text-right text-slate-400">Bs. {bancoFmt(t.bs)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </td></tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
             )}
         </BCard>
       </div>
