@@ -5135,11 +5135,141 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     );
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  // RECIPROCIDAD DE BANCO — % y monto de cobros de CxC por cuenta bancaria
+  // ══════════════════════════════════════════════════════════════════════
+  // Solo cuentan ingresos que provienen de cobros a clientes (CxC): se identifican
+  // por el campo origenIngreso guardado en banco_movimientos al registrar un cobro
+  // en Aplicación.jsx. Traslados de fondo y pagos a proveedores (CxP) quedan afuera.
+  const ORIGENES_CXC_RECIPROCIDAD = ['Cobro CxC','Cobro NE','Anticipo Cliente'];
+  const ReciprocidadView = () => {
+    const [fDesde, setFDesde] = useState(bancoMesActual()+'-01');
+    const [fHasta, setFHasta] = useState(getTodayDate());
+    const [bancoSel, setBancoSel] = useState('');
+
+    const setRangoMes = (offset) => {
+      const d = new Date(); d.setMonth(d.getMonth()+offset);
+      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0');
+      const ultimoDia = new Date(y, d.getMonth()+1, 0).getDate();
+      setFDesde(`${y}-${m}-01`); setFHasta(`${y}-${m}-${String(ultimoDia).padStart(2,'0')}`);
+    };
+    const setRangoAnio = () => { setFDesde(getTodayDate().substring(0,4)+'-01-01'); setFHasta(getTodayDate()); };
+    const setRangoTodo = () => { setFDesde('2000-01-01'); setFHasta(getTodayDate()); };
+
+    const movsCxC = movBanco.filter(m =>
+      ORIGENES_CXC_RECIPROCIDAD.includes(m.origenIngreso) &&
+      (!fDesde || m.fecha>=fDesde) && (!fHasta || m.fecha<=fHasta)
+    );
+    const totalUSD = movsCxC.reduce((a,m)=>a+Number(m.montoUSD||0),0);
+    const totalBs  = movsCxC.reduce((a,m)=>a+Number(m.montoBs||0),0);
+
+    const porBanco = {};
+    movsCxC.forEach(m=>{
+      const key = m.cuentaId || 'sin-cuenta';
+      if(!porBanco[key]) porBanco[key] = {usd:0,bs:0,count:0};
+      porBanco[key].usd += Number(m.montoUSD||0);
+      porBanco[key].bs  += Number(m.montoBs||0);
+      porBanco[key].count += 1;
+    });
+    const filasBanco = Object.entries(porBanco).map(([cuentaId,v])=>({
+      cuentaId, cta: cuentas.find(c=>c.id===cuentaId), ...v,
+      pct: totalUSD>0 ? (v.usd/totalUSD*100) : 0,
+    })).sort((a,b)=>b.usd-a.usd);
+
+    const movsDetalle = bancoSel ? movsCxC.filter(m=>m.cuentaId===bancoSel) : movsCxC;
+    const porCliente = {};
+    movsDetalle.forEach(m=>{
+      const nombre = m.clientName || m.terceroNombre || 'Cliente sin identificar';
+      const key = m.clientRif || nombre;
+      if(!porCliente[key]) porCliente[key] = {nombre, rif:m.clientRif||'', usd:0, bs:0, count:0};
+      porCliente[key].usd += Number(m.montoUSD||0);
+      porCliente[key].bs  += Number(m.montoBs||0);
+      porCliente[key].count += 1;
+    });
+    const filasCliente = Object.values(porCliente).sort((a,b)=>b.usd-a.usd);
+    const bancoSelObj = bancoSel ? cuentas.find(c=>c.id===bancoSel) : null;
+
+    return (
+      <div className="space-y-5 w-full min-w-0">
+        <BCard title="Reciprocidad de Banco" subtitle="Solo cobros de Cuentas por Cobrar (excluye traslados de fondo y pagos a proveedores)">
+          <div className="flex flex-wrap items-end gap-3">
+            <BFG label="Desde"><input type="date" value={fDesde} onChange={e=>setFDesde(e.target.value)} className={inp}/></BFG>
+            <BFG label="Hasta"><input type="date" value={fHasta} onChange={e=>setFHasta(e.target.value)} className={inp}/></BFG>
+            <div className="flex gap-1.5 pb-0.5">
+              <button onClick={()=>setRangoMes(0)}  className="px-3 py-2 text-[9px] font-black uppercase rounded-lg border-2 border-slate-200 hover:bg-slate-50">Este Mes</button>
+              <button onClick={()=>setRangoMes(-1)} className="px-3 py-2 text-[9px] font-black uppercase rounded-lg border-2 border-slate-200 hover:bg-slate-50">Mes Anterior</button>
+              <button onClick={setRangoAnio}        className="px-3 py-2 text-[9px] font-black uppercase rounded-lg border-2 border-slate-200 hover:bg-slate-50">Este Año</button>
+              <button onClick={setRangoTodo}         className="px-3 py-2 text-[9px] font-black uppercase rounded-lg border-2 border-slate-200 hover:bg-slate-50">Todo</button>
+            </div>
+          </div>
+        </BCard>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <BKPI label="Total Cobrado (Período)" value={`$${bancoFmt(totalUSD)}`} sub={`Bs. ${bancoFmt(totalBs)}`} accent="green" Icon={DollarSign}/>
+          <BKPI label="Cobros Registrados" value={String(movsCxC.length)} accent="blue" Icon={Receipt}/>
+          <BKPI label="Bancos con Reciprocidad" value={String(filasBanco.length)} accent="gold" Icon={Building2}/>
+        </div>
+
+        <BCard title="Reciprocidad por Banco" subtitle={`${bancoDd(fDesde)} al ${bancoDd(fHasta)}`}>
+          {filasBanco.length===0
+            ? <BEmptyState icon={Activity} title="Sin cobros en el período" desc="No hay cobros de CxC registrados en las cuentas bancarias para el rango seleccionado"/>
+            : (
+              <div className="space-y-3.5">
+                {filasBanco.map(f=>(
+                  <div key={f.cuentaId} onClick={()=>setBancoSel(bancoSel===f.cuentaId?'':f.cuentaId)}
+                    className={`cursor-pointer rounded-xl p-3 border-2 transition-all ${bancoSel===f.cuentaId?'border-orange-400 bg-orange-50/40':'border-transparent hover:bg-slate-50'}`}>
+                    <div className="flex justify-between items-end text-[10px] font-bold text-slate-700 mb-1.5">
+                      <span className="uppercase flex items-center gap-2">
+                        <BBankLogo banco={f.cta?.banco||'?'} logoUrl={f.cta?.logoUrl} className="w-6 h-6 rounded shadow-sm border border-slate-200 object-contain"/>
+                        {f.cta?.banco || 'Sin banco identificado'}
+                        <span className="text-[8px] text-slate-400 font-mono normal-case">{f.count} cobro(s)</span>
+                      </span>
+                      <span className="text-right">
+                        <span className="block font-mono text-slate-900 font-black">${bancoFmt(f.usd)}</span>
+                        <span className="block text-[8px] text-slate-400 font-mono">Bs. {bancoFmt(f.bs)}</span>
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                      <div className={`${f.cta?.moneda==='BS'?'bg-blue-500':'bg-emerald-500'} h-full rounded-full`} style={{width:`${Math.min(f.pct,100)}%`}}/>
+                    </div>
+                    <p className="text-[9px] text-slate-400 font-mono mt-1 text-right">{f.pct.toFixed(1)}%</p>
+                  </div>
+                ))}
+              </div>
+            )}
+        </BCard>
+
+        <BCard title={bancoSelObj?`Clientes que pagaron por ${bancoSelObj.banco}`:'Clientes que pagaron (todos los bancos)'}
+          subtitle={bancoSelObj?'Clic en el banco de nuevo para ver todos':'Selecciona un banco arriba para filtrar'}>
+          {filasCliente.length===0
+            ? <BEmptyState icon={Users} title="Sin clientes" desc="No hay cobros de clientes en el período/banco seleccionado"/>
+            : (
+              <div className="overflow-x-auto w-full min-w-0"><table className="w-full min-w-[560px]">
+                <thead><tr><BTh>Cliente</BTh><BTh>RIF</BTh><BTh right>Cobros</BTh><BTh right>Monto USD</BTh><BTh right>Monto Bs.</BTh></tr></thead>
+                <tbody>
+                  {filasCliente.map(c=>(
+                    <tr key={c.rif||c.nombre} className="hover:bg-slate-50">
+                      <BTd className="font-black">{c.nombre}</BTd>
+                      <BTd mono className="text-[10px] text-slate-400">{c.rif||'—'}</BTd>
+                      <BTd right>{c.count}</BTd>
+                      <BTd right mono className="text-emerald-600 font-black">${bancoFmt(c.usd)}</BTd>
+                      <BTd right mono className="text-slate-500">Bs. {bancoFmt(c.bs)}</BTd>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            )}
+        </BCard>
+      </div>
+    );
+  };
+
   const navGroupsBanco = [
     { group:'Analítica',   color:'#f97316', items:[{id:'dashboard',    label:'Panel General',      icon:LayoutDashboard}] },
     { group:'Bancos',      color:'#3b82f6', items:[{id:'cuentas',      label:'Cuentas Bancarias',  icon:Building2},
                                                     {id:'movimientos',  label:'Movimientos Banco',  icon:ArrowLeftRight},
-                                                    {id:'conciliacion', label:'Conciliación',       icon:CheckCircle}] },
+                                                    {id:'conciliacion', label:'Conciliación',       icon:CheckCircle},
+                                                    {id:'reciprocidad', label:'Reciprocidad de Banco',icon:Activity}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_banco',label:'General de Banco',   icon:Building2},
                                                     {id:'rpt_comp_banco',label:'Comprobante Bancario',icon:FileText},
                                                     {id:'rpt_libro',    label:'Libro Diario General',icon:BookOpen}] },
@@ -5159,7 +5289,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
-    conciliacion:<ConciliacionView/>, cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
+    conciliacion:<ConciliacionView/>, reciprocidad:<ReciprocidadView/>,
+    cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
     caja_dashboard:<CajaOpView/>,
     rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
     rpt_gral_caja:<ReportesGeneralView tipo="caja"/>,
@@ -5200,7 +5331,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <h2 className="text-lg font-black text-slate-900 uppercase tracking-wide mb-2">🏦 Bancos</h2>
             <p className="text-sm text-slate-400 mb-5">Gestión de cuentas bancarias, movimientos y conciliación</p>
             <div className="space-y-1.5">
-              {['Panel General','Cuentas Bancarias','Movimientos Banco','Conciliación','General de Banco','Comprobante Bancario','Tasas de Cambio'].map(m=>(
+              {['Panel General','Cuentas Bancarias','Movimientos Banco','Conciliación','Reciprocidad de Banco','General de Banco','Comprobante Bancario','Tasas de Cambio'].map(m=>(
                 <div key={m} className="flex items-center gap-2 text-[11px] text-slate-500">
                   <div className="w-1.5 h-1.5 rounded-full" style={{background:'#3b82f6'}}/>
                   {m}
