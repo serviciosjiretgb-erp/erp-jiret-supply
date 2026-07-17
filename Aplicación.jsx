@@ -25355,6 +25355,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 bsTotal:l.moneda==='Bs'?parseNum(l.monto):null,
                 usdAsignado:0,bsAsignado:0
               }));
+              // Desglose por línea de qué NE(s)/excedente cubre — se adjunta al movimiento de banco/caja
+              // para poder reversar solo la porción de un cobro sin borrar el movimiento completo (igual que en CxP).
+              const facturasPorLinea=lineas.map(()=>[]);
               const grupoId=Date.now().toString(36).toUpperCase();
               const distManualSubmit=m.distribucionManual||{};
               // Primero se procesan las NE con monto manual (se respeta su monto exacto tal cual se tecleó);
@@ -25397,6 +25400,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
                     vendedor:ne.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
                   });
+                  facturasPorLinea[li].push({id:ne.id,nroFactura:ne._esNDDirecta?(ne.nroFiscal||ne.id):ne.id,fecha:linea.fecha,monto:montoLineaNE});
                 }
                 if(ne._esNDDirecta){
                   batch.update(getDocRef('notasVentaCreditoDebito',ne._ndOrigId),{
@@ -25429,6 +25433,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const sobranteLinea=parseFloat((tk.usdTotal-tk.usdAsignado).toFixed(2));
                 const cta=!linea.cuentaId.startsWith('CAJA::')?(cuentasBanco||[]).find(c=>c.id===linea.cuentaId):null;
                 const cajaCob=linea.cuentaId.startsWith('CAJA::')?(cajasCuentas||[]).find(c=>`CAJA::${c.id}`===linea.cuentaId):null;
+                // Desglose de qué NE(s) y/o excedente cubre este movimiento — se calcula ANTES de crear el
+                // movimiento para poder adjuntarlo, y permite reversar solo la porción de una NE más adelante.
+                const facturasMovLinea=(facturasPorLinea[li]||[]).map(f=>({...f}));
+                let antId=null,sobranteBs=0;
+                if(sobranteLinea>0.01){
+                  antId=`ANT-${grupoId}-${li}`;
+                  sobranteBs=tk.bsTotal!=null?parseFloat((bsAplicadoLinea-(tk.bsAsignado||0)).toFixed(2)):parseFloat((sobranteLinea*tasa).toFixed(2));
+                  facturasMovLinea.push({id:antId,nroFactura:'Saldo a favor',fecha:linea.fecha,monto:sobranteLinea,esAnticipo:true});
+                }
                 if(cta){
                   const mvId=`MV-${grupoId}-${li}`;
                   batch.set(getDocRef('banco_movimientos',mvId),{
@@ -25437,7 +25450,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     referencia:linea.referencia,clientName:m.clientName,clientRif:m.clientRif,
                     cuentaId:linea.cuentaId,cuentaNombre:cta.banco||'',
                     montoUSD:usdAplicadoLinea,montoBs:bsAplicadoLinea,tasa,moneda:linea.moneda,metodo:linea.metodo,
-                    grupoCobroId:grupoId,estatus:'No Conciliado',timestamp:Date.now()
+                    facturas:facturasMovLinea,grupoCobroId:grupoId,estatus:'No Conciliado',timestamp:Date.now()
                   });
                   saldoAcumPorCta[cta.id]=(saldoAcumPorCta[cta.id]||0)+usdAplicadoLinea;
                 }
@@ -25450,19 +25463,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     referencia:linea.referencia,
                     monto:usdAplicadoLinea,montoUSD:usdAplicadoLinea,montoBs:bsAplicadoLinea,tasa,
                     aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
-                    metodo:linea.metodo,grupoCobroId:grupoId,timestamp:Date.now()
+                    metodo:linea.metodo,facturas:facturasMovLinea,grupoCobroId:grupoId,timestamp:Date.now()
                   });
                 }
                 // Si esta línea pagó más de lo que se aplicó a NE, el sobrante queda como saldo a favor del cliente (anticipo)
-                if(sobranteLinea>0.01){
-                  const antId=`ANT-${grupoId}-${li}`;
-                  const sobranteBs=tk.bsTotal!=null?parseFloat((bsAplicadoLinea-(tk.bsAsignado||0)).toFixed(2)):parseFloat((sobranteLinea*tasa).toFixed(2));
+                if(antId){
                   batch.set(getDocRef('cobros_cxc',antId),{
                     id:antId,neId:'',clientName:m.clientName,clientRif:m.clientRif,
                     esAnticipo:true,montoAplicado:0,
                     monto:sobranteLinea,montoUSD:sobranteLinea,montoBs:sobranteBs,tasa,
                     moneda:linea.moneda,metodo:linea.metodo,referencia:linea.referencia,
                     concepto:`Saldo a favor del cliente (excedente de ${linea.concepto||'Cobro CxC'})`,
+                    cuentaBancariaId:linea.cuentaId,cuentaBancoNombre:linea.cuentaNombre||cta?.banco||cajaCob?.nombre||'',
                     fecha:linea.fecha,vendedor:m.vendedor||'',grupoCobroId:grupoId,timestamp:Date.now()
                   });
                 }
@@ -25483,7 +25495,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // ── REVERSAR COBRO ─────────────────────────────────────────────
           const reversarCobro=async(cobro)=>{
-            setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento bancario también será eliminado. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
+            setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento de banco/caja vinculado también se ajustará. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
               try{
                 const batch=writeBatch(db);
                 const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
@@ -25515,31 +25527,76 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   });
                 }
 
-                // 3. Buscar y ELIMINAR movimiento bancario — intentar por múltiples criterios
-                const todosMovsSnap=await getDocs(getColRef('banco_movimientos'));
-                const todosMovs=todosMovsSnap.docs.map(d=>({...d.data(),_docId:d.id}));
-                const mvBanco=todosMovs.find(mv=>
-                  // Por referencia + cuenta + monto
-                  (mv.referencia===cobro.referencia && mv.cuentaId===cobro.cuentaBancariaId && Math.abs(parseNum(mv.montoUSD||mv.monto||0)-parseNum(cobro.monto))<0.05) ||
-                  // Por ID del cobro en el concepto
-                  (mv.concepto||'').includes(cobro.id) ||
-                  // Por referencia + neId en concepto
-                  (mv.referencia===cobro.referencia && (mv.concepto||'').includes(cobro.neId)) ||
-                  // Por referencia + clientName
-                  (mv.referencia===cobro.referencia && mv.terceroNombre===cobro.clientName && Math.abs(parseNum(mv.montoUSD||0)-parseNum(cobro.monto))<0.05)
-                );
+                // 3. Reversar el/los movimiento(s) de banco/caja vinculado(s) (mismo grupoCobroId). Si el
+                // movimiento cubre otras NEs o el excedente de otra línea, solo se resta la porción de este
+                // cobro (no se borra el movimiento completo) — mismo patrón ya usado en Reversar Pago de CxP.
+                let mvEncontrado=false;
+                if(cobro.grupoCobroId){
+                  const [bSnapRev,kSnapRev]=await Promise.all([
+                    getDocs(query(getColRef('banco_movimientos'),where('grupoCobroId','==',cobro.grupoCobroId))),
+                    getDocs(query(getColRef('caja_movimientos'),where('grupoCobroId','==',cobro.grupoCobroId))),
+                  ]);
+                  const targetId=cobro.esAnticipo?cobro.id:cobro.neId;
+                  const reversarMov=(mv,docId,esCaja)=>{
+                    const facturasMv=mv.facturas||[];
+                    const idx=facturasMv.findIndex(x=>x.id===targetId);
+                    if(idx===-1) return;
+                    mvEncontrado=true;
+                    const otras=facturasMv.filter((_,i)=>i!==idx);
+                    const ref=getDocRef(esCaja?'caja_movimientos':'banco_movimientos',mv.id||docId);
+                    const apRev=parseNum(facturasMv[idx]?.monto||0);
+                    if(otras.length===0){
+                      // única NE/excedente de este movimiento (o movimiento antiguo sin desglose): reversar completo
+                      batch.delete(ref);
+                      if(!esCaja){
+                        const cta=(cuentasBanco||[]).find(c=>c.id===mv.cuentaId);
+                        if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseFloat((parseNum(cta.saldo||0)-parseNum(mv.montoUSD||0)).toFixed(2))});
+                      }
+                    } else {
+                      // el movimiento cubre otras NEs además de esta: solo restar la porción reversada
+                      const proporRev=parseNum(mv.montoUSD||0)>0?apRev/parseNum(mv.montoUSD||0):0;
+                      const nuevoMontoUSD=Math.max(0,parseFloat((parseNum(mv.montoUSD||0)-apRev).toFixed(2)));
+                      const nuevoMontoBs=Math.max(0,parseFloat((parseNum(mv.montoBs||0)*(1-proporRev)).toFixed(2)));
+                      batch.update(ref,esCaja
+                        ?{monto:nuevoMontoUSD,montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,facturas:otras}
+                        :{montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,facturas:otras});
+                      if(!esCaja){
+                        const cta=(cuentasBanco||[]).find(c=>c.id===mv.cuentaId);
+                        if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseFloat((parseNum(cta.saldo||0)-apRev).toFixed(2))});
+                      }
+                    }
+                  };
+                  bSnapRev.docs.forEach(d=>reversarMov(d.data(),d.id,false));
+                  kSnapRev.docs.forEach(d=>reversarMov(d.data(),d.id,true));
+                }
 
-                if(mvBanco){
-                  batch.delete(getDocRef('banco_movimientos', mvBanco._docId||mvBanco.id));
-                  const cta=(cuentasBanco||[]).find(c=>c.id===cobro.cuentaBancariaId||c.id===mvBanco.cuentaId);
-                  if(cta){
-                    const nuevoSaldoCta=parseNum(cta.saldo||0)-parseNum(cobro.monto);
-                    batch.update(getDocRef('banco_cuentas',cta.id),{saldo:nuevoSaldoCta});
+                // 4. Fallback para cobros antiguos sin grupoCobroId o sin desglose de facturas guardado
+                if(!mvEncontrado){
+                  const todosMovsSnap=await getDocs(getColRef('banco_movimientos'));
+                  const todosMovs=todosMovsSnap.docs.map(d=>({...d.data(),_docId:d.id}));
+                  const mvBanco=todosMovs.find(mv=>
+                    // Por referencia + cuenta + monto
+                    (mv.referencia===cobro.referencia && mv.cuentaId===cobro.cuentaBancariaId && Math.abs(parseNum(mv.montoUSD||mv.monto||0)-parseNum(cobro.monto))<0.05) ||
+                    // Por ID del cobro en el concepto
+                    (mv.concepto||'').includes(cobro.id) ||
+                    // Por referencia + neId en concepto
+                    (mv.referencia===cobro.referencia && (mv.concepto||'').includes(cobro.neId)) ||
+                    // Por referencia + clientName
+                    (mv.referencia===cobro.referencia && mv.terceroNombre===cobro.clientName && Math.abs(parseNum(mv.montoUSD||0)-parseNum(cobro.monto))<0.05)
+                  );
+                  if(mvBanco){
+                    mvEncontrado=true;
+                    batch.delete(getDocRef('banco_movimientos', mvBanco._docId||mvBanco.id));
+                    const cta=(cuentasBanco||[]).find(c=>c.id===cobro.cuentaBancariaId||c.id===mvBanco.cuentaId);
+                    if(cta){
+                      const nuevoSaldoCta=parseNum(cta.saldo||0)-parseNum(cobro.monto);
+                      batch.update(getDocRef('banco_cuentas',cta.id),{saldo:nuevoSaldoCta});
+                    }
                   }
                 }
 
                 await batch.commit();
-                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvBanco?'\nMovimiento bancario también eliminado.':'\n⚠ No se encontró el movimiento bancario asociado.'}`,type:'alert'});
+                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvEncontrado?'\nMovimiento de banco/caja también ajustado.':'\n⚠ No se encontró el movimiento bancario/caja asociado.'}`,type:'alert'});
               }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
             }});
           };
@@ -25717,6 +25774,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <span style={{color:Math.abs(totalDistribuido-montoUSD)<0.01?'#16a34a':'#dc2626'}}>Distribuido: ${formatNum(totalDistribuido)} de ${formatNum(montoUSD)}</span>
                         {Math.abs(totalDistribuido-montoUSD)>=0.01&&<span style={{color:'#dc2626'}}>{totalDistribuido<montoUSD?'Falta $'+formatNum(montoUSD-totalDistribuido):'Excede $'+formatNum(totalDistribuido-montoUSD)}</span>}
                       </div>}
+                      {montoUSD>0&&nesSelecIds.length>0&&totalDistribuido<montoUSD-0.01&&(()=>{
+                        const faltante=montoUSD-totalDistribuido;
+                        const otrasNes=nesPendientes.filter(ne=>!nesSelecIds.includes(ne.id)&&getSaldoNEAtFecha(ne,null)>0.01);
+                        if(otrasNes.length===0) return null;
+                        return (
+                          <div style={{padding:'8px 14px',background:'#fff7ed',borderBottom:'1px solid #fed7aa'}}>
+                            <div style={{fontSize:9,fontWeight:900,color:'#c2410c',marginBottom:5}}>Sobran ${formatNum(faltante)} sin aplicar — ¿a qué factura pendiente lo aplicas?</div>
+                            {otrasNes.map(ne=>(
+                              <button key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:true}}))}
+                                style={{display:'flex',justifyContent:'space-between',width:'100%',fontSize:9,fontWeight:700,color:'#9a3412',border:'1px dashed #fdba74',background:'#fff',borderRadius:6,padding:'4px 8px',marginBottom:3,cursor:'pointer'}}>
+                                <span>+ {ne._esNDDirecta?`ND ${ne.nroFiscal||ne.id}`:ne.id}</span><span>${formatNum(getSaldoNEAtFecha(ne,null))}</span>
+                              </button>
+                            ))}
+                            <div style={{fontSize:8,color:'#9a3412',marginTop:2}}>Si no seleccionas ninguna, el sobrante queda como saldo a favor del cliente.</div>
+                          </div>
+                        );
+                      })()}
                       {nesPendientes.map((ne,i)=>{
                         const saldo=getSaldoNEAtFecha(ne,null);
                         const sel=!!pm.nesSelec?.[ne.id];
