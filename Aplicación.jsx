@@ -13869,7 +13869,7 @@ function App() {
   const NAV_PORTAL_TABS = {
     produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
     administracion:      ['ventas','banco','procura','impuestos'],
-    finanzas:            [],
+    finanzas:            ['costos_operativos','kpi','costos'],
     contabilidad:        [],
     resena_portal:       ['resena'],
     vendedores_portal:   [],
