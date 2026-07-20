@@ -36291,7 +36291,7 @@ ${resumenHtml}
       const baseImpBs = parseNum(nc.monto||0);
       const baseUsd = tasaNC>0 ? parseFloat((baseImpBs/tasaNC).toFixed(2)) : baseImpBs;
       const ajuste = nc.tipo==='NC' ? -baseUsd : baseUsd;
-      ncRows.push({ tipo:nc.tipo||'NC', doc:nc.nroDocumento||nc.id, fecha:nc.fecha||'', cliente:ne?.clientName||inv?.clientName||n.clientName||'—', monto:ajuste });
+      ncRows.push({ tipo:nc.tipo||'NC', doc:nc.nroDocumento||nc.id, fecha:nc.fecha||'', cliente:ne?.clientName||inv?.clientName||nc.clientName||'—', monto:ajuste });
       return s + ajuste;
     }, 0);
 
