@@ -93,6 +93,10 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [retFiltros,setRetFiltros]=useState({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});
   const [retPageIVA,setRetPageIVA]=useState(1);
   const [retPageISLR,setRetPageISLR]=useState(1);
+  // ── Filtro rápido por quincena para Retenciones IVA / ISLR (ambas tablas comparten el toolbar) ──
+  const [retQAnio,setRetQAnio]=useState(getTodayDate().substring(0,4));
+  const [retQMes,setRetQMes]=useState(getTodayDate().substring(5,7));
+  const [retQSel,setRetQSel]=useState(''); // '' = ninguna quincena aplicada aún, '1' o '2' = activa
   const [editRet,setEditRet]=useState(null);  // {doc, tipo:'IVA'|'ISLR'}
   const [editRetForm,setEditRetForm]=useState({});
   const [impDialog,setImpDialog]=useState(null);
@@ -701,6 +705,9 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     return (y&&mi>=0&&mi<12)?`${_MESES[mi]} ${y}`:'—';
   };
   const _normRet=s=>(s||'').toString().toLowerCase();
+  // Detecta la quincena (1 o 2) a partir del texto guardado en periodo, sin importar el formato:
+  // "2da Q julio 2026" (el que realmente genera getPeriodo) o "II QUINCENA JULIO 2026" (formato legado).
+  const _detectQ=(periodo)=>/^\s*2/.test(periodo||'')||/\bII\b/i.test(periodo||'')?'2':'1';
   const _retPasaFiltros=(r,tipoR)=>{
     const f=retFiltros;
     if(f.proveedor&&!(_normRet(r.proveedor).includes(_normRet(f.proveedor))||_normRet(r.rifProveedor).includes(_normRet(f.proveedor)))) return false;
@@ -712,7 +719,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     return true;
   };
   const hayFiltrosRetActivos=Object.values(retFiltros).some(Boolean);
-  const limpiarFiltrosRet=()=>{setRetFiltros({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});setRetPageIVA(1);setRetPageISLR(1);};
+  const limpiarFiltrosRet=()=>{setRetFiltros({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});setRetPageIVA(1);setRetPageISLR(1);setRetQSel('');};
   const retFiltIVA=retIVA.filter(r=>_retPasaFiltros(r,'IVA')).sort(_ordFechaDesc);
   const retFiltISLR=retISLR.filter(r=>_retPasaFiltros(r,'ISLR')).sort(_ordFechaDesc);
   const totalPagIVA=Math.max(1,Math.ceil(retFiltIVA.length/RET_PAGE_SIZE));
@@ -910,6 +917,18 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
   };
 
   // ── Toolbar de filtros + export, reutilizable para IVA e ISLR ──
+  const _qRangeRet=(anio,mes,q)=>{
+    const lastDay=new Date(parseInt(anio),parseInt(mes),0).getDate();
+    const desde=q==='2'?`${anio}-${mes}-16`:`${anio}-${mes}-01`;
+    const hasta=q==='1'?`${anio}-${mes}-15`:`${anio}-${mes}-${String(lastDay).padStart(2,'0')}`;
+    return {desde,hasta};
+  };
+  const aplicarQuincenaRet=(q)=>{
+    const {desde,hasta}=_qRangeRet(retQAnio,retQMes,q);
+    setRetQSel(q);
+    setRetFiltros(f=>({...f,desde,hasta}));
+    setRetPageIVA(1);setRetPageISLR(1);
+  };
   const renderRetToolbar=(tipoR)=>(
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-3 mb-4">
       <div className="flex flex-wrap items-center gap-2 mb-2.5">
@@ -922,13 +941,25 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         {tipoR==='ISLR'&&<input value={retFiltros.concepto} onChange={e=>{setRetFiltros(f=>({...f,concepto:e.target.value}));setRetPageISLR(1);}} placeholder="Concepto SENIAT" className="w-40 border border-slate-200 rounded-lg px-2.5 py-2 text-[10px] outline-none focus:border-orange-500"/>}
         <div className="flex items-center gap-1">
           <span className="text-[8px] text-slate-400 font-black uppercase">Desde</span>
-          <input type="date" value={retFiltros.desde} onChange={e=>{setRetFiltros(f=>({...f,desde:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
+          <input type="date" value={retFiltros.desde} onChange={e=>{setRetFiltros(f=>({...f,desde:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);setRetQSel('');}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
         </div>
         <div className="flex items-center gap-1">
           <span className="text-[8px] text-slate-400 font-black uppercase">Hasta</span>
-          <input type="date" value={retFiltros.hasta} onChange={e=>{setRetFiltros(f=>({...f,hasta:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
+          <input type="date" value={retFiltros.hasta} onChange={e=>{setRetFiltros(f=>({...f,hasta:e.target.value}));setRetPageIVA(1);setRetPageISLR(1);setRetQSel('');}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] outline-none focus:border-orange-500"/>
         </div>
         {hayFiltrosRetActivos&&<button onClick={limpiarFiltrosRet} className="flex items-center gap-1 px-2.5 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-500"><X size={11}/>Limpiar</button>}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 mb-2.5 pt-2.5 border-t border-slate-100">
+        <span className="text-[8px] text-slate-400 font-black uppercase mr-0.5">Quincena</span>
+        <select value={retQMes} onChange={e=>setRetQMes(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
+          {_MESES.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+        </select>
+        <select value={retQAnio} onChange={e=>setRetQAnio(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
+          {[parseInt(retQAnio)-1,parseInt(retQAnio),parseInt(retQAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+        </select>
+        <button onClick={()=>aplicarQuincenaRet('1')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='1'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>I Quincena</button>
+        <button onClick={()=>aplicarQuincenaRet('2')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='2'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>II Quincena</button>
+        {retQSel&&<span className="text-[9px] text-slate-400">{retQSel==='1'?'01':'16'} al {retQSel==='1'?'15':'fin de mes'} de {_MESES[parseInt(retQMes,10)-1]}</span>}
       </div>
       <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-slate-100">
         <span className="text-[9px] text-slate-400 font-black uppercase">
@@ -1095,7 +1126,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                           <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:_mes,_periodoQ:_detectQ(r.periodo)});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -1156,7 +1187,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                           <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:_mes,_periodoQ:(r.periodo||'').includes('II')?'2':'1'});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:_mes,_periodoQ:_detectQ(r.periodo)});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -1877,13 +1908,12 @@ td,th{border:1px solid #333;padding:5px 7px}
           const ventasM2=_baseVentas(`${rtAnio}-${rtMes}-16`,mHasta);
           const ventasBrutasMes=ventasM1.totBruta+ventasM2.totBruta;
 
-          const _enQuincena=(r)=>{
-            const mesOK=(r.fecha||'').substring(0,7)===`${rtAnio}-${rtMes}`;
-            const qOK=((r.periodo||'').toUpperCase().includes('II')?2:1)===parseInt(rtQ,10);
-            return mesOK&&qOK;
-          };
+          const _enMes=(r)=>(r.fecha||'').substring(0,7)===`${rtAnio}-${rtMes}`;
+          const _enQuincena=(r)=>_enMes(r)&&_detectQ(r.periodo)===rtQ;
           const retIvaBs=(retIVA||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
-          const retIslrBs=(retISLR||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
+          // Retenciones de ISLR se declaran MENSUALMENTE ante el SENIAT (no por quincena, a diferencia de IVA) —
+          // por eso este total suma todo el mes, no solo la quincena seleccionada arriba.
+          const retIslrBs=(retISLR||[]).filter(_enMes).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           const anticipoIslrBs=parseFloat((ventasQ.totGravada*0.01).toFixed(2));
           const igtfBs=pNum(rtManual.igtf||0);
 
@@ -1905,7 +1935,7 @@ td,th{border:1px solid #333;padding:5px 7px}
             {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIvaBs,campo:'venceIva'},
             {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
             {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:igtfBs,campo:'venceIgtf',editable:true},
-            {label:'RETENCIONES DE ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIslrBs,campo:'venceRetIslr'},
+            {label:'RETENCIONES DE ISLR',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIslrBs,campo:'venceRetIslr'},
             {label:'PENSIONES',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:pensionesBs,campo:'vencePensiones'},
             {label:'IMPUESTO SOBRE LA RENTA',periodo:`ANUAL-${rtAnio}`,monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
           ];
@@ -2413,7 +2443,14 @@ ${filasAlcaldia.map(_filaXls).join('')}
                 <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes / Año</label>
                 <input type="month" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
                   value={editRetForm._periodoMes||((editRet?.doc?.fecha||'').substring(0,7))||''}
-                  onChange={e=>setEditRetForm(f=>({...f,_periodoMes:e.target.value}))}/>
+                  onChange={e=>{
+                    const mes=e.target.value;
+                    const [yr,mo]=mes.split('-');
+                    const q=editRetForm._periodoQ||'1';
+                    const qLabel=q==='1'?'1ra Q':'2da Q';
+                    const label=(yr&&mo)?`${qLabel} ${new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleString('es-VE',{month:'long'})} ${yr}`:editRetForm.periodo;
+                    setEditRetForm(f=>({...f,_periodoMes:mes,periodo:label}));
+                  }}/>
               </div>
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
@@ -2423,8 +2460,8 @@ ${filasAlcaldia.map(_filaXls).join('')}
                     const q=e.target.value;
                     const mes=editRetForm._periodoMes||((editRet?.doc?.fecha||'').substring(0,7))||'';
                     const [yr,mo]=mes.split('-');
-                    const qLabel=q==='1'?'I QUINCENA':'II QUINCENA';
-                    const label=`${qLabel} ${new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleString('es-VE',{month:'long'}).toUpperCase()} ${yr}`;
+                    const qLabel=q==='1'?'1ra Q':'2da Q';
+                    const label=`${qLabel} ${new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleString('es-VE',{month:'long'})} ${yr}`;
                     setEditRetForm(f=>({...f,_periodoQ:q,periodo:label}));
                   }}>
                   <option value="1">I Quincena (1-15)</option>
@@ -5076,7 +5113,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
               pctRetencion:pNum(form.pctRetIVA||75),
               baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
               monto:retIVA.monto,montoBs:retIVA.montoBs,
-              fecha:getTodayDate(),periodo:getPeriodo(),status:'PENDIENTE',timestamp:Date.now()
+              fecha:getTodayDate(),periodo:getPeriodo(form.fecha),status:'PENDIENTE',timestamp:Date.now()
             });
             await setDoc(getDocRef('settings','general'),{correlativoIVA:_seqIVA+1},{merge:true});
           }
@@ -5090,7 +5127,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
               codConcepto:r.codigo,concepto:r.concepto||'',
               tipoContrib:r.tipoContrib||'PJD',pct:r.pct,
               baseImponibleBs:r.baseImponibleBs,sustraendoBs:r.sustraendoBs,
-              monto:r.monto,montoBs:r.montoBs,valorUT,periodo:getPeriodo()});
+              monto:r.monto,montoBs:r.montoBs,valorUT,periodo:getPeriodo(form.fecha)});
           });
         } else if(_validISLR.length>0&&_eISLR.docs.length===0){
           // No existían antes, crear nuevos
@@ -5102,7 +5139,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
               tipoContrib:r.tipoContrib||'PJD',pct:r.pct,
               baseImponibleBs:r.baseImponibleBs,sustraendoBs:r.sustraendoBs,
               monto:r.monto,montoBs:r.montoBs,valorUT,
-              fecha:getTodayDate(),periodo:getPeriodo(),status:'PENDIENTE',timestamp:Date.now()
+              fecha:getTodayDate(),periodo:getPeriodo(form.fecha),status:'PENDIENTE',timestamp:Date.now()
             });
           });
           await setDoc(getDocRef('settings','general'),{correlativoISLR:_seqISLR+_validISLR.length},{merge:true});
@@ -5121,7 +5158,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
             monto:retIVA.monto,montoBs:retIVA.montoBs,
             totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
             exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
-            tasa:form.tasa,periodo:getPeriodo(),
+            tasa:form.tasa,periodo:getPeriodo(form.fecha),
             status:'PENDIENTE',timestamp:Date.now()
           });
         }
@@ -5139,7 +5176,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
             monto:r.monto,montoBs:r.montoBs,
             totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
             exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
-            valorUT,tasa:form.tasa,periodo:getPeriodo(),
+            valorUT,tasa:form.tasa,periodo:getPeriodo(form.fecha),
             status:'PENDIENTE',timestamp:Date.now()
           });
         });
@@ -5160,10 +5197,14 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const getPeriodo=()=>{
-    const d=new Date();
-    const q=d.getDate()<=15?'1ra Q':'2da Q';
-    return`${q} ${d.toLocaleString('es-VE',{month:'long'})} ${d.getFullYear()}`;
+  const getPeriodo=(fechaRef)=>{
+    // Usa la fecha de la factura (fechaRef, 'YYYY-MM-DD') para determinar la quincena — no la fecha de hoy,
+    // para que no dependa de cuándo se registra el comprobante sino de a qué período pertenece la factura.
+    const base=fechaRef||getTodayDate();
+    const [y,m,dd]=base.split('-').map(n=>parseInt(n,10));
+    const q=dd<=15?'1ra Q':'2da Q';
+    const mesNombre=new Date(y,(m||1)-1,1).toLocaleString('es-VE',{month:'long'});
+    return`${q} ${mesNombre} ${y}`;
   };
 
   // ── PDF de factura de compra ──────────────────────────────────────
@@ -9937,6 +9978,7 @@ function App() {
         clientRif:inv?.clientRif||otraRetForm.clientRif||'',clientName:inv?.clientName||otraRetForm.clientName||'',
         _manualRif:esManualOtra?(otraRetForm.clientRif||''):'',_manualCliente:esManualOtra?(otraRetForm.clientName||''):'',
         nroRetencion:nroComprobante,fechaComprobante,
+        quincena:(parseInt((fechaComprobante||'').split('-')[2],10)||1)<=15?'1':'2',
         montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
         baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
         observaciones:otraRetForm.observaciones||'',
@@ -10065,6 +10107,14 @@ function App() {
   const [ventaNCBusq, setVentaNCBusq] = useState('');
   const [ventaNCBusqCli, setVentaNCBusqCli] = useState('');
   const [retForm, setRetForm] = useState({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:'1'});
+  // Quincena efectiva de una retención: usa el campo guardado si es válido ('1'/'2'); si no
+  // (p.ej. registros de "Otra Retención" guardados antes de este fix, que no lo tenían), la
+  // deriva de fechaComprobante — así no desaparecen de ambos filtros de quincena a la vez.
+  const getQuincenaRet=(r)=>{
+    if(r?.quincena==='1'||r?.quincena==='2') return r.quincena;
+    const dd=parseInt((r?.fechaComprobante||r?.fecha||'').split('-')[2],10);
+    return dd&&dd<=15?'1':'2';
+  };
   const [reqFiltAnio, setReqFiltAnio] = useState(''); // 'YYYY' o '' para todos
   const [neInvSearch, setNeInvSearch] = useState('');
   const [neShowInvDrop, setNeShowInvDrop] = useState(false);
@@ -28647,8 +28697,7 @@ ${resumenHtml}
                       const rf=(retenciones||[]).filter(r=>{
                         const f=r.fechaComprobante||r.fecha||'';
                         if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                        if(retFiltQ2==='1'&&r.quincena!=='1')return false;
-                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
+                        if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
                         if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                         const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                         const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -28758,8 +28807,7 @@ ${resumenHtml}
                       <button onClick={()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                          if(retFiltQ2==='1'&&r.quincena!=='1')return false;
-                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
+                          if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -28774,8 +28822,7 @@ ${resumenHtml}
                       <button onClick={()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                          if(retFiltQ2==='1'&&r.quincena!=='1')return false;
-                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
+                          if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -28814,8 +28861,7 @@ ${resumenHtml}
                       {(()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                          if(retFiltQ2==='1'&&r.quincena!=='1')return false;
-                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
+                          if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -28873,8 +28919,7 @@ ${resumenHtml}
                 // Recalcular retFilt para el paginador inferior
                 const retFiltPag=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                   if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
-                  if(retFiltQ2==='1'&&r.quincena!=='1')return false;
-                         if(retFiltQ2==='2'&&r.quincena!=='2')return false;
+                  if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
                   if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                   const inv2=(invoices||[]).find(i=>i.id===r.facturaId);
                   if(retFiltCli2&&!(inv2?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
