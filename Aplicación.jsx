@@ -9681,7 +9681,7 @@ const SYSTEM_MODULES = [
   },
   {
     id: 'reportes',
-    label: '8. MÓDULO Reportes Financieros',
+    label: '8. MÓDULO Reportes Financieros (PRODUCCIÓN)',
     icon: '📊',
     submodules: [
       { id: 'rep_mermas',      label: 'Mermas (OPs + Bobinas)' },
@@ -10430,7 +10430,7 @@ function App() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null);
 
-  // Estados para Reporte de Reciprocidad de Banco (Reportes Financieros)
+  // Estados para Reporte de Reciprocidad Bancaria (módulo propio)
   const [recipFDesde, setRecipFDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [recipFHasta, setRecipFHasta] = useState(getTodayDate());
   const [recipBancoFiltro, setRecipBancoFiltro] = useState('');
@@ -14032,8 +14032,24 @@ function App() {
         stats: ()=>({ s1:'KPI', s2:'YLD', s3:'RPI' }),
         chart:null
       },
-      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'costos', icon:<TrendingUp size={20}/>, title:'Reportes Financieros', color:'#3b82f6',
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'costos', icon:<TrendingUp size={20}/>, title:'Reportes Financieros (PRODUCCIÓN)', color:'#3b82f6',
         stats: ()=>({ s1:'Reportes', s2:'Resultado integral', list:['Finiquito','Estado Financiero','Variaciones']}),
+        chart:null
+      },
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'reciprocidad_bancaria', icon:<Activity size={20}/>, title:'Reciprocidad Bancaria', color:'#10b981',
+        stats: ()=>({ s1:'Finanzas', s2:'Cobros de CxC por cuenta bancaria'}),
+        chart:null
+      },
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'estados_financieros', icon:<FileSpreadsheet size={20}/>, title:'Estados Financieros', color:'#0ea5e9',
+        stats: ()=>({ s1:'Finanzas', s2:'Estados financieros consolidados'}),
+        chart:null
+      },
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'inversiones', icon:<ArrowUpFromLine size={20}/>, title:'Inversiones', color:'#ca8a04',
+        stats: ()=>({ s1:'Finanzas', s2:'Cartera de inversiones'}),
+        chart:null
+      },
+      (hasPerm('costos')||hasPerm('costos_reportes')) && { tab:'activos_fijos', icon:<Building2 size={20}/>, title:'Activos Fijos', color:'#78716c',
+        stats: ()=>({ s1:'Finanzas', s2:'Registro y depreciación'}),
         chart:null
       },
       hasAnyPerm('configuracion') && { tab:'configuracion', icon:<Settings2 size={20}/>, title:'Configuración', color:'#6b7280',
@@ -14069,7 +14085,7 @@ function App() {
     const PORTAL_TABS = {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
       administracion:      ['ventas','banco','procura','impuestos'],
-      finanzas:            ['costos'],
+      finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
       contabilidad:        [],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
@@ -14511,7 +14527,7 @@ function App() {
                 go: ()=>{ clearAllReports(); setActiveTab('simulador'); } },
               { id:'vext_finiquito', title:'Finiquito por OP', icon:<FileText size={22}/>, color:'#f59e0b',
                 perms:['rep_finiquito'],
-                sub:'Reportes Financieros — Por orden individual', chart:[40,65,50,75,55,70],
+                sub:'Reportes Financieros (Producción) — Por orden individual', chart:[40,65,50,75,55,70],
                 portalGate: 'produccion',
                 go: ()=>{ clearAllReports(); setActiveTab('costos'); } },
             ];
@@ -34509,7 +34525,6 @@ ${resumenHtml}
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple', perm: null },
       { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero (PLANTA)', desc: 'Estado de resultado integral', color: 'gray', perm: 'costos_reportes' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red', perm: 'costos_reportes' },
-      { id: 'reciprocidad_banco', icon: <Activity size={26}/>, label: 'Reciprocidad de Banco', desc: 'Cobros de CxC por cuenta bancaria', color: 'emerald', perm: 'costos_reportes' },
     ];
     // Ventas-only users: ONLY Finiquito (perm:null). Others: filter by permission.
     const isVentasOnly = (hasPerm('ventas')||hasPerm('ventas_facturacion')||hasPerm('ventas_ops'))
@@ -34539,7 +34554,7 @@ ${resumenHtml}
                 {settings.empresaTelefono && <p className="text-[10px] text-gray-500">Tel: {settings.empresaTelefono}</p>}
               </div>
             </div>
-            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 no-pdf"><BarChart3 className="text-blue-600" size={28}/> Reportes Financieros / Rentabilidad</h2>
+            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 no-pdf"><BarChart3 className="text-blue-600" size={28}/> Reportes Financieros (Producción) / Rentabilidad</h2>
             <p className="text-xs font-bold text-gray-500 uppercase mt-1 no-pdf">Dashboard de Ingresos, Costos y Utilidad</p>
             <div className="mt-3 flex flex-wrap gap-2 text-[9px] no-pdf">
               {REPORT_CARDS.map(card=>(
@@ -35667,7 +35682,41 @@ ${resumenHtml}
             );
             })()}
 
-            {showReportType === 'reciprocidad_banco' && (() => {
+
+            {!showReportType && (
+              <div className="text-center py-12 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Seleccione un tipo de reporte para comenzar</p></div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
+  // ============================================================================
+  // Placeholder simple para paneles de Finanzas nuevos aún sin funcionalidad propia
+  // (Estados Financieros, Inversiones, Activos Fijos) — listo para recibir contenido.
+  // ============================================================================
+  const renderFinanzasPlaceholder = (title, Icon, colorHex, desc) => (
+    <div className="w-full animate-in fade-in space-y-6">
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6">
+        <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+          <Icon style={{color:colorHex}} size={32}/> {title}
+        </h2>
+        <p className="text-xs font-bold text-gray-500 uppercase mt-1">{desc}</p>
+      </div>
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-12 text-center text-gray-400">
+        <Icon size={48} className="mx-auto mb-4 opacity-20"/>
+        <p className="font-black text-sm uppercase">Módulo en construcción</p>
+        <p className="text-xs mt-1">Dime qué necesitas que incluya y lo armamos.</p>
+      </div>
+    </div>
+  );
+
+  // ============================================================================
+  // RECIPROCIDAD BANCARIA — módulo propio (antes vivía como sub-reporte dentro de Reportes Financieros (Producción))
+  // ============================================================================
+  const renderReciprocidadBancariaModule = () => {
               // Reciprocidad de Banco: extensión del submódulo homónimo del Módulo Bancos & Tesorería.
               // Lee la misma colección banco_movimientos en vivo, así que ambas vistas quedan siempre
               // sincronizadas — no es una copia de datos, es la misma fuente vista desde Finanzas.
@@ -35738,6 +35787,12 @@ ${resumenHtml}
 
               return (
                 <div className="space-y-6">
+                <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6">
+                  <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+                    <Activity className="text-emerald-600" size={32}/> Reciprocidad Bancaria
+                  </h2>
+                  <p className="text-xs font-bold text-gray-500 uppercase mt-1">Cobros de CxC por cuenta bancaria</p>
+                </div>
                   <div className="flex justify-between items-center no-pdf flex-wrap gap-3">
                     <h3 className="text-lg font-black uppercase">Reciprocidad de Banco — {periodoLabel}</h3>
                     <button onClick={() => handleExportPDF('Reporte_Reciprocidad_Banco')} className="bg-black text-white px-6 py-3 rounded-xl font-black text-xs uppercase flex items-center gap-2 shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir PDF</button>
@@ -35921,17 +35976,7 @@ ${resumenHtml}
                   </div>
                 </div>
               );
-            })()}
-
-            {!showReportType && (
-              <div className="text-center py-12 text-gray-400"><BarChart3 size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Seleccione un tipo de reporte para comenzar</p></div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
   };
-
   // ============================================================================
   // PLAN DE CUENTAS — IMPORTAR TXT
   // ============================================================================
@@ -42715,7 +42760,6 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                    {id:'super_finiquito',icon:<FileText size={13}/>,label:'Finiquito OP'},
                    {id:'estado_financiero',icon:<DollarSign size={13}/>,label:'Estado Financiero (PLANTA)'},
                    {id:'variaciones',icon:<TrendingDown size={13}/>,label:'Variaciones'},
-                   {id:'reciprocidad_banco',icon:<Activity size={13}/>,label:'Reciprocidad de Banco'},
                  ].filter(t=>hasPerm('costos')||hasPerm('costos_reportes')||hasPerm('rep_finiquito')||appUser?.role==='Master').map(t=>(
                    <button key={t.id} onClick={()=>{setShowReportType(t.id);setShowFiniquitoOP(null);}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${showReportType===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
@@ -42723,6 +42767,20 @@ const RestaurarCobrosView = ({settings, appUser}) => {
              </div>
            )}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && renderReportesFinancierosModule()}
+
+           {/* ── RECIPROCIDAD BANCARIA / ESTADOS FINANCIEROS / INVERSIONES / ACTIVOS FIJOS — Panel Finanzas ── */}
+           {activeTab === 'reciprocidad_bancaria' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
+             <div className="p-4 sm:p-6">{renderReciprocidadBancariaModule()}</div>
+           )}
+           {activeTab === 'estados_financieros' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
+             <div className="p-4 sm:p-6">{renderFinanzasPlaceholder('Estados Financieros', FileSpreadsheet, '#0ea5e9', 'Estados financieros consolidados')}</div>
+           )}
+           {activeTab === 'inversiones' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
+             <div className="p-4 sm:p-6">{renderFinanzasPlaceholder('Inversiones', ArrowUpFromLine, '#ca8a04', 'Cartera de inversiones')}</div>
+           )}
+           {activeTab === 'activos_fijos' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
+             <div className="p-4 sm:p-6">{renderFinanzasPlaceholder('Activos Fijos', Building2, '#78716c', 'Registro y depreciación')}</div>
+           )}
 
            {/* ── ESTADO DE RESULTADO SUB-NAV ── */}
            {activeTab === 'estado_resultado' && (
