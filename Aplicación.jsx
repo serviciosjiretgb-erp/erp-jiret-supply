@@ -9688,7 +9688,7 @@ const SYSTEM_MODULES = [
       { id: 'rep_bobinas',     label: 'Reporte Bobinas' },
       { id: 'rep_mensual',     label: 'Resumen Mensual' },
       { id: 'rep_finiquito',   label: 'Finiquito por OP' },
-      { id: 'rep_estado',      label: 'Estado Financiero' },
+      { id: 'rep_estado',      label: 'Estado Financiero (PLANTA)' },
       { id: 'rep_variaciones', label: 'Variaciones' },
     ]
   },
@@ -13867,7 +13867,7 @@ function App() {
   // Decide si un tab debe aparecer en la nav según el portal activo.
   // Solo tabs nativos del portal. Las vistas cross-portal viven DENTRO del módulo de Ventas.
   const NAV_PORTAL_TABS = {
-    produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
+    produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
     administracion:      ['ventas','banco','procura','impuestos'],
     finanzas:            ['costos_operativos','kpi','costos'],
     contabilidad:        [],
@@ -14067,9 +14067,9 @@ function App() {
     // asignados al portal activo se ocultan del Panel Principal. El código de cada
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
-      produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi','costos'],
+      produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
       administracion:      ['ventas','banco','procura','impuestos'],
-      finanzas:            [],
+      finanzas:            ['costos'],
       contabilidad:        [],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
@@ -25662,6 +25662,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // Multicobro totals
             const totalLineasUSD=(pm.lineasPago||[]).reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
             const saldoTrasPago=Math.max(0,saldoTotalCliente-totalLineasUSD);
+            // Total disponible para distribuir en la vista previa: el monto que se está tecleando AHORA
+            // + lo que ya está en líneasPago (incluye anticipos ya agregados con "Usar", que no pasan por pm.monto).
+            // Sin esto, el bloque "Aplicar $" no aparecía cuando el único dinero era un anticipo.
+            const montoDisponibleTotal = montoUSD + totalLineasUSD;
 
             // Distribución: respeta montos manuales por NE (pm.distribucionManual); el resto se distribuye
             // automáticamente en cascada (más antigua primero) con lo que quede del monto total.
@@ -25670,7 +25674,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               : nesPendientes;
             const distManual = pm.distribucionManual||{};
             const totalManualAsignado = nesParaDistribuir.reduce((s,ne)=>s+(distManual[ne.id]!=null?parseNum(distManual[ne.id]):0),0);
-            let distRestante=montoUSD-totalManualAsignado;
+            let distRestante=montoDisponibleTotal-totalManualAsignado;
             const distMap={};
             nesParaDistribuir.forEach(ne=>{
               if(distManual[ne.id]!=null){ distMap[ne.id]=parseNum(distManual[ne.id]); return; }
@@ -25722,7 +25726,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       {!pm.clientRif && clientesFiltrados.length>0 && (
                         <div style={{background:'#fff',border:'2px solid #e5e7eb',borderRadius:10,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
                           {clientesFiltrados.map(cl=>(
-                            <button key={cl.clientRif} onClick={()=>setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{},distribucionManual:{}}))}
+                            <button key={cl.clientRif} onClick={()=>{
+                              // Saldo a favor existente del cliente: se pre-aplica solo (misma cascada que guardarPagoMasivo,
+                              // más antigua primero). El usuario puede quitarlo/reasignarlo en "3 · Métodos de Pago" — no se
+                              // guarda nada hasta pulsar Guardar.
+                              const antsCliente=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif===cl.clientRif||c.clientName===cl.clientName))
+                                .map(a=>({...a,_saldoAnt:parseNum(a.monto||0)-parseNum(a.montoAplicado||0)}))
+                                .filter(a=>a._saldoAnt>0.01);
+                              setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{},distribucionManual:{},
+                                lineasPago:[...(m.lineasPago||[]).filter(l=>!l.anticipoId),...antsCliente.map(a=>({moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo (automática)',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}))]
+                              }));
+                            }}
                               style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',border:'none',borderBottom:'1px solid #f9fafb',background:'transparent',cursor:'pointer',textAlign:'left'}}
                               onMouseEnter={e=>e.currentTarget.style.background='#fff7ed'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                               <span style={{fontSize:11,fontWeight:700,color:'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{cl.clientName}</span>
@@ -25781,12 +25795,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </div>
                       ):(<>
                       <div style={{padding:'6px 14px',background:'#fffbeb',borderBottom:'1px solid #fef3c7',fontSize:9,color:'#92400e',fontStyle:'italic'}}>Sin selección = distribuye automáticamente · edita el monto "Aplicar $" de cada NE para repartirlo tú mismo</div>
-                      {montoUSD>0&&<div style={{padding:'6px 14px',background:Math.abs(totalDistribuido-montoUSD)<0.01?'#f0fdf4':'#fef2f2',borderBottom:'1px solid #f3f4f6',fontSize:10,fontWeight:900,display:'flex',justifyContent:'space-between'}}>
-                        <span style={{color:Math.abs(totalDistribuido-montoUSD)<0.01?'#16a34a':'#dc2626'}}>Distribuido: ${formatNum(totalDistribuido)} de ${formatNum(montoUSD)}</span>
-                        {Math.abs(totalDistribuido-montoUSD)>=0.01&&<span style={{color:'#dc2626'}}>{totalDistribuido<montoUSD?'Falta $'+formatNum(montoUSD-totalDistribuido):'Excede $'+formatNum(totalDistribuido-montoUSD)}</span>}
+                      {montoDisponibleTotal>0&&<div style={{padding:'6px 14px',background:Math.abs(totalDistribuido-montoDisponibleTotal)<0.01?'#f0fdf4':'#fef2f2',borderBottom:'1px solid #f3f4f6',fontSize:10,fontWeight:900,display:'flex',justifyContent:'space-between'}}>
+                        <span style={{color:Math.abs(totalDistribuido-montoDisponibleTotal)<0.01?'#16a34a':'#dc2626'}}>Distribuido: ${formatNum(totalDistribuido)} de ${formatNum(montoDisponibleTotal)}</span>
+                        {Math.abs(totalDistribuido-montoDisponibleTotal)>=0.01&&<span style={{color:'#dc2626'}}>{totalDistribuido<montoDisponibleTotal?'Falta $'+formatNum(montoDisponibleTotal-totalDistribuido):'Excede $'+formatNum(totalDistribuido-montoDisponibleTotal)}</span>}
                       </div>}
-                      {montoUSD>0&&nesSelecIds.length>0&&totalDistribuido<montoUSD-0.01&&(()=>{
-                        const faltante=montoUSD-totalDistribuido;
+                      {montoDisponibleTotal>0&&nesSelecIds.length>0&&totalDistribuido<montoDisponibleTotal-0.01&&(()=>{
+                        const faltante=montoDisponibleTotal-totalDistribuido;
                         const otrasNes=nesPendientes.filter(ne=>!nesSelecIds.includes(ne.id)&&getSaldoNEAtFecha(ne,null)>0.01);
                         if(otrasNes.length===0) return null;
                         return (
@@ -25833,7 +25847,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             {esCredito&&<div style={{marginTop:3}}><span style={{fontSize:8,fontWeight:900,color:'#0f766e',background:'#ccfbf1',padding:'1px 6px',borderRadius:4}}>Saldo a favor (sobrecobro) — cierre con ND o reasigne el pago</span></div>}
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:2}}>
                               <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}{ne._esNDDirecta&&ne._ndDescripcion?` · ${ne._ndDescripcion}`:''}</span>
-                              {sel&&montoUSD>0&&(
+                              {sel&&montoDisponibleTotal>0&&(
                                 <div onClick={e=>e.stopPropagation()} style={{display:'flex',alignItems:'center',gap:4}}>
                                   <span style={{fontSize:8,color:'#9ca3af'}}>Aplicar $</span>
                                   <input type="number" step="0.01" value={distManual[ne.id]!=null?distManual[ne.id]:parseFloat((distMap[ne.id]||0).toFixed(2))}
@@ -34493,7 +34507,7 @@ ${resumenHtml}
       { id: 'reporte_bobinas', icon: <Box size={26}/>, label: 'Reporte Bobinas', desc: 'Reporte de producción de semielaborados', color: 'indigo', perm: 'costos' },
       { id: 'resumen_mensual', icon: <ClipboardList size={26}/>, label: 'Resumen Mensual', desc: 'Todas las OPs del mes', color: 'teal', perm: 'costos' },
       { id: 'super_finiquito', icon: <FileCheck size={26}/>, label: 'Finiquito por OP', desc: 'Por orden individual', color: 'purple', perm: null },
-      { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero', desc: 'Estado de resultado integral', color: 'gray', perm: 'costos_reportes' },
+      { id: 'estado_financiero', icon: <TrendingUp size={26}/>, label: 'Estado Financiero (PLANTA)', desc: 'Estado de resultado integral', color: 'gray', perm: 'costos_reportes' },
       { id: 'variaciones', icon: <TrendingDown size={26}/>, label: 'Variaciones', desc: 'Mes actual vs anterior', color: 'red', perm: 'costos_reportes' },
       { id: 'reciprocidad_banco', icon: <Activity size={26}/>, label: 'Reciprocidad de Banco', desc: 'Cobros de CxC por cuenta bancaria', color: 'emerald', perm: 'costos_reportes' },
     ];
@@ -42712,7 +42726,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                    {id:'reporte_bobinas',icon:<Package size={13}/>,label:'Bobinas'},
                    {id:'resumen_mensual',icon:<CalendarDays size={13}/>,label:'Resumen Mensual'},
                    {id:'super_finiquito',icon:<FileText size={13}/>,label:'Finiquito OP'},
-                   {id:'estado_financiero',icon:<DollarSign size={13}/>,label:'Estado Financiero'},
+                   {id:'estado_financiero',icon:<DollarSign size={13}/>,label:'Estado Financiero (PLANTA)'},
                  ].filter(t=>hasPerm('costos')||hasPerm('costos_reportes')||hasPerm('rep_finiquito')||appUser?.role==='Master').map(t=>(
                    <button key={t.id} onClick={()=>{setShowReportType(t.id);setShowFiniquitoOP(null);}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${showReportType===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
