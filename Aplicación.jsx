@@ -34549,19 +34549,6 @@ ${resumenHtml}
           </div>
 
           <div className="p-4 sm:p-6 space-y-6 w-full">
-            <div className="no-pdf">
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                {REPORT_CARDS.map(card => (
-                  <button key={card.id} onClick={() => { setShowReportType(card.id); setShowFiniquitoOP(null); }}
-                    className={`p-4 rounded-2xl border-2 text-left transition-all hover:shadow-md ${showReportType === card.id ? 'border-orange-400 bg-orange-50 shadow-md' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                    <div className={`mb-2 ${showReportType===card.id?'text-orange-500':'text-gray-400'}`}>{card.icon}</div>
-                    <div className="font-black text-[10px] uppercase text-black leading-tight">{card.label}</div>
-                    <div className="text-[9px] text-gray-400 mt-0.5 leading-tight">{card.desc}</div>
-                  </button>
-                ))}
-              </div>
-              {/* Acceso a Estado de Resultado está en el menú lateral */}
-            </div>
 
             {['general','ingresos_vs_costos','mermas','mermas_bobinas','reporte_bobinas','super_finiquito','resumen_mensual'].includes(showReportType) && (
               <div className="flex gap-4 items-center flex-wrap no-pdf">
@@ -42727,6 +42714,8 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                    {id:'resumen_mensual',icon:<CalendarDays size={13}/>,label:'Resumen Mensual'},
                    {id:'super_finiquito',icon:<FileText size={13}/>,label:'Finiquito OP'},
                    {id:'estado_financiero',icon:<DollarSign size={13}/>,label:'Estado Financiero (PLANTA)'},
+                   {id:'variaciones',icon:<TrendingDown size={13}/>,label:'Variaciones'},
+                   {id:'reciprocidad_banco',icon:<Activity size={13}/>,label:'Reciprocidad de Banco'},
                  ].filter(t=>hasPerm('costos')||hasPerm('costos_reportes')||hasPerm('rep_finiquito')||appUser?.role==='Master').map(t=>(
                    <button key={t.id} onClick={()=>{setShowReportType(t.id);setShowFiniquitoOP(null);}} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${showReportType===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
