@@ -4778,6 +4778,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const [tab,setTab]=useState('datos');
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
   const [servicios,setServicios]=useState([]);
+  const [cuentaServicioSearch,setCuentaServicioSearch]=useState('');
   const [pendingDeleteFact,setPendingDeleteFact]=useState(null);
   const [factDelPwd,setFactDelPwd]=useState('');
   const [revisarBsOpen,setRevisarBsOpen]=useState(false);
@@ -4970,6 +4971,21 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     return`⚠️ Sin cuenta asignada (${it.categoria||it.tipo||'—'})`;
   };
 
+  // Cuenta contable para facturas manuales (sin ítems): Producto usa P_CUENTA_MAP (igual que antes);
+  // Servicio usa una cuenta real elegida del Plan de Cuentas (no el catálogo de "servicios", que es para
+  // otra cosa y puede estar vacío) — así siempre resuelve a una cuenta que de verdad existe en su plan.
+  const resolverCuentaManual=(f)=>{
+    if((f.tipoCompra||'PRODUCTO')==='SERVICIO'){
+      const cta=planDeCuentas.find(c=>c.id===f.cuentaServicioId);
+      if(cta) return`${cta.codigo} — ${cta.nombre}`;
+      return'⚠️ Sin cuenta asignada (Servicio)';
+    }
+    const cat=f.categoriaCompra||'';
+    const ctaP=pGetCuenta(cat);
+    if(ctaP.codigo) return`${ctaP.codigo} — ${ctaP.nombre}`;
+    return`⚠️ Sin cuenta asignada (${cat||'Producto'})`;
+  };
+
   const generarAsiento=(f,tot,retIVA,retISLRLista,neto)=>{
     const tasa=pNum(f.tasa||0);
     const lineas=[];
@@ -4981,7 +4997,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
           montoUSD:pNum(it.total||0),montoBs:tasa?pNum(it.total||0)*tasa:0});
       });
     } else {
-      const ctaManual=resolverCuenta({tipo:f.tipoCompra||'PRODUCTO',categoria:f.categoriaCompra||'',srvId:f.srvIdCompra||'',desc:f.observaciones||f.nroFactura});
+      const ctaManual=resolverCuentaManual(f);
       lineas.push({tipo:'DEBITO',cuenta:ctaManual,concepto:'Compra según factura '+(f.nroFactura||''),
         montoUSD:tot.sub,montoBs:tot.subBs});
     }
@@ -5018,7 +5034,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     fecha:getTodayDate(),fechaVencimiento:'',
     moneda:'USD',tasa:'',
     montoBase:0,aplicaIva:'SI',iva:0,total:0,saldoPendiente:0,
-    tipoCompra:'PRODUCTO',categoriaCompra:'',srvIdCompra:'',
+    tipoCompra:'PRODUCTO',categoriaCompra:'',cuentaServicioId:'',
     afectaLibroCompras:true,
     aplicaRetIVA:false,pctRetIVA:75,
     islrRetenciones:[], // lista: [{codigo,tipoContrib,activo}]
@@ -5097,7 +5113,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         status:form.status||'PENDIENTE',
         tipoCompra:form.tipoCompra||'PRODUCTO',
         categoriaCompra:form.categoriaCompra||'',
-        srvIdCompra:form.srvIdCompra||'',
+        cuentaServicioId:form.cuentaServicioId||'',
         itemsOC:(form.itemsOC||[]).map(it=>clean(it)),
         diasCredito:form.diasCredito||'',
         condPago:form.condPago||'',
@@ -5405,6 +5421,12 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 
   // Datos calculados en tiempo real para el modal
   const fTot=calcTotalesFC(form);
+  // Cuentas de tipo Gasto para clasificar facturas manuales de Servicio — filtra por grupo/subgrupo/nombre
+  // que contengan "GASTO"; si el plan de cuentas no usa esa palabra, muestra el plan completo como respaldo.
+  const cuentasGasto=(()=>{
+    const filtradas=planDeCuentas.filter(c=>/gasto/i.test(`${c.grupo||''} ${c.subGrupo||''} ${c.nombre||''}`));
+    return filtradas.length>0?filtradas:planDeCuentas;
+  })();
   const fRetIVA=calcRetIVA(form,fTot);
   const fRetISLRLista=calcRetISLRLista(form,fTot);
   const fRetISLRTotal=fRetISLRLista.reduce((s,r)=>s+pNum(r.monto),0);
@@ -5770,33 +5792,54 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                         <div className="col-span-3 text-[9px] font-black text-slate-500 uppercase -mb-1">🧾 Clasificación contable (para el asiento — esta factura no tiene ítems)</div>
                         <div>
                           <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tipo</label>
-                          <select className={`${sel} text-xs py-1.5`} value={form.tipoCompra||'PRODUCTO'} onChange={e=>setForm(f=>({...f,tipoCompra:e.target.value}))}>
+                          <select className={`${sel} text-xs py-1.5`} value={form.tipoCompra||'PRODUCTO'} onChange={e=>setForm(f=>({...f,tipoCompra:e.target.value,categoriaCompra:'',cuentaServicioId:''}))}>
                             <option value="PRODUCTO">🏭 Producto (inventario)</option>
                             <option value="SERVICIO">⚙️ Servicio</option>
                           </select>
                         </div>
                         {form.tipoCompra!=='SERVICIO'?(
                           <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Categoría</label>
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">🏭 Categoría (Producto)</label>
                             <select className={`${sel} text-xs py-1.5`} value={form.categoriaCompra||''} onChange={e=>setForm(f=>({...f,categoriaCompra:e.target.value}))}>
                               <option value="">— Seleccionar —</option>
                               {Object.keys(P_CUENTA_MAP).map(cat=><option key={cat} value={cat}>{cat}</option>)}
                             </select>
                           </div>
                         ):(
-                          <div>
-                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Servicio</label>
-                            <select className={`${sel} text-xs py-1.5`} value={form.srvIdCompra||''} onChange={e=>setForm(f=>({...f,srvIdCompra:e.target.value}))}>
-                              <option value="">— Seleccionar —</option>
-                              {servicios.map(s=><option key={s.id} value={s.id}>{s.nombre}</option>)}
-                            </select>
+                          <div className="relative">
+                            <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">🗂️ Categoría de Servicio</label>
+                            {form.cuentaServicioId?(
+                              <div className="flex items-center justify-between border-2 border-slate-200 rounded-xl px-3 py-1.5 bg-white">
+                                <span className="text-[10px] font-bold text-slate-600 truncate">{resolverCuentaManual(form)}</span>
+                                <button type="button" onClick={()=>{setForm(f=>({...f,cuentaServicioId:''}));setCuentaServicioSearch('');}} className="text-slate-400 hover:text-red-500 ml-2 flex-shrink-0"><X size={12}/></button>
+                              </div>
+                            ):(
+                              <>
+                                <input value={cuentaServicioSearch} onChange={e=>setCuentaServicioSearch(e.target.value)}
+                                  placeholder="Buscar por código o nombre..." className={`${inp} text-xs py-1.5`}/>
+                                {cuentaServicioSearch&&(()=>{
+                                  const q=cuentaServicioSearch.toLowerCase();
+                                  const res=cuentasGasto.filter(c=>`${c.codigo} ${c.nombre}`.toLowerCase().includes(q)).slice(0,30);
+                                  return(
+                                    <div className="absolute z-10 mt-1 w-full max-h-40 overflow-y-auto bg-white border-2 border-slate-200 rounded-xl shadow-lg">
+                                      {res.length===0?<div className="px-3 py-2 text-[10px] text-slate-400">Sin resultados</div>:res.map(c=>(
+                                        <div key={c.id} onClick={()=>{setForm(f=>({...f,cuentaServicioId:c.id}));setCuentaServicioSearch('');}}
+                                          className="px-3 py-1.5 text-[10px] hover:bg-orange-50 cursor-pointer border-b border-slate-100 last:border-0">
+                                          <span className="font-mono text-slate-400">{c.codigo}</span> — <span className="font-bold text-slate-700">{c.nombre}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
+                              </>
+                            )}
                           </div>
                         )}
                         <div>
                           <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta contable</label>
                           <div className="text-[10px] font-bold text-slate-600 bg-white border-2 border-slate-200 rounded-xl px-3 py-1.5 truncate"
-                            title={resolverCuenta({tipo:form.tipoCompra||'PRODUCTO',categoria:form.categoriaCompra||'',srvId:form.srvIdCompra||'',desc:form.observaciones||form.nroFactura})}>
-                            {resolverCuenta({tipo:form.tipoCompra||'PRODUCTO',categoria:form.categoriaCompra||'',srvId:form.srvIdCompra||'',desc:form.observaciones||form.nroFactura})}
+                            title={resolverCuentaManual(form)}>
+                            {resolverCuentaManual(form)}
                           </div>
                         </div>
                       </div>
