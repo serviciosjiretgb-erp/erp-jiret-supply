@@ -7853,6 +7853,12 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                 <input value={editForm.banco||''} onChange={e=>setEditForm(f=>({...f,banco:e.target.value}))}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
               </div>
+              <div>
+                <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto ({editPago.esAnticipo?'Anticipo':'Pago'}, USD)</label>
+                <input type="number" step="0.01" value={editForm.monto!=null?editForm.monto:(editPago.monto||0)}
+                  onChange={e=>setEditForm(f=>({...f,monto:parseFloat(e.target.value)||0}))}
+                  className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
+              </div>
             </div>
 
             {(()=>{
