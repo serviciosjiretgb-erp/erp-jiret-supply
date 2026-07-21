@@ -152,6 +152,12 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [rtPP,setRtPP]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0});
   const [rtAE,setRtAE]=useState({licenciaSolvencias:0,tasaBcvEuro:0,tasaBcvUsd:0});
   const [rtLibroVentasCfg,setRtLibroVentasCfg]=useState({saldoCierre:0,saldoCierreCF:0});
+  // Qué impuestos mostrar en Resumen Tributario (config global, no por período — ej. ocultar
+  // "Impuesto Sobre la Renta" si casi siempre está en 0, u ocultar Pensiones/Alcaldía cuando aún
+  // no se han determinado para el mes en curso).
+  const [rtTaxVisible,setRtTaxVisible]=useState({});
+  const [showRtConfigVis,setShowRtConfigVis]=useState(false);
+  const rtEsVisible=(label)=>rtTaxVisible[label]!==false;
 
   useEffect(()=>{
     if(!fbUser)return;
@@ -256,6 +262,18 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     const u6=onSnapshot(getDocRef('libroVentasConfig',periodoKey),d=>setRtLibroVentasCfg(d.exists()?{saldoCierre:pNum(d.data().saldoCierre||0),saldoCierreCF:pNum(d.data().saldoCierreCF||0)}:{saldoCierre:0,saldoCierreCF:0}));
     return()=>{u1();u2();u3();u4();u5();u6();};
   },[fbUser,sec,rtAnio,rtMes,rtQ]);
+
+  // ── Config global de impuestos visibles en Resumen Tributario (no depende del período) ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='resumen_tributario') return;
+    const u=onSnapshot(getDocRef('settings','resumenTributarioVisibilidad'),d=>setRtTaxVisible(d.exists()?d.data():{}));
+    return()=>u();
+  },[fbUser,sec]);
+  const guardarRtTaxVisible=async(next)=>{
+    setRtTaxVisible(next);
+    try{ await setDoc(getDocRef('settings','resumenTributarioVisibilidad'),next,{merge:false}); }
+    catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+  };
 
   const guardarRt=async()=>{
     setRtSaving(true);
@@ -1932,17 +1950,22 @@ td,th{border:1px solid #333;padding:5px 7px}
           const usd=n=>n/tasaRT;
 
           const filasNacional=[
-            {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIvaBs,campo:'venceIva'},
-            {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
-            {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA ${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:igtfBs,campo:'venceIgtf',editable:true},
-            {label:'RETENCIONES DE ISLR',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:retIslrBs,campo:'venceRetIslr'},
-            {label:'PENSIONES',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:pensionesBs,campo:'vencePensiones'},
-            {label:'IMPUESTO SOBRE LA RENTA',periodo:`ANUAL-${rtAnio}`,monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
+            {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:retIvaBs,campo:'venceIva'},
+            {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
+            {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:igtfBs,campo:'venceIgtf',editable:true},
+            {label:'RETENCIONES DE ISLR',periodo:'MENSUAL',monto:retIslrBs,campo:'venceRetIslr'},
+            {label:'PENSIONES',periodo:'MENSUAL',monto:pensionesBs,campo:'vencePensiones'},
+            {label:'IMPUESTO SOBRE LA RENTA',periodo:'ANUAL',monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
           ];
           const filasAlcaldia=[
-            {label:'SEDEMAT (ALCALDÍA)',periodo:`MENSUAL-${MESES_RT[parseInt(rtMes,10)-1].toUpperCase()}`,monto:sedematBs,campo:'venceSedemat'},
+            {label:'SEDEMAT (ALCALDÍA)',periodo:'MENSUAL',monto:sedematBs,campo:'venceSedemat'},
           ];
-          const totalGeneral=[...filasNacional,...filasAlcaldia].reduce((s,f)=>s+f.monto,0);
+          const TODOS_LOS_IMPUESTOS_RT=[...filasNacional,...filasAlcaldia].map(f=>f.label);
+          const filasNacionalVis=filasNacional.filter(f=>rtEsVisible(f.label)&&(f.editable||Math.abs(f.monto)>0.01));
+          const filasAlcaldiaVis=filasAlcaldia.filter(f=>rtEsVisible(f.label)&&(f.editable||Math.abs(f.monto)>0.01));
+          const totalNacional=filasNacionalVis.reduce((s,f)=>s+f.monto,0);
+          const totalAlcaldia=filasAlcaldiaVis.reduce((s,f)=>s+f.monto,0);
+          const totalGeneral=totalNacional+totalAlcaldia;
           const _emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
           const _rif=settings?.empresaRif||'J-41230937-4';
           const _dir=settings?.empresaDireccion||'';
@@ -1984,13 +2007,15 @@ th{background:#0f172a;color:#f97316;padding:5px 8px;font-size:8px;text-transform
 <div class="sec">Tesoro Nacional</div>
 <table style="margin-bottom:8px">
   <thead><tr><th>Impuesto</th><th style="text-align:center">Período</th><th style="text-align:center">Vence</th><th style="text-align:right">Monto Bs</th><th style="text-align:right">Eq. Divisas</th></tr></thead>
-  <tbody>${filasNacional.map(_filaHtmlPDF).join('')}</tbody>
+  <tbody>${filasNacionalVis.map(_filaHtmlPDF).join('')}</tbody>
+  <tr class="tot"><td colspan="3" style="padding:5px 8px">Subtotal Tesoro Nacional</td><td style="padding:5px 8px;text-align:right;font-family:monospace">Bs. ${_fV(totalNacional)}</td><td style="padding:5px 8px;text-align:right;font-family:monospace">USD ${_fV(usd(totalNacional))}</td></tr>
 </table>
 <div class="sec">Alcaldía</div>
 <table style="margin-bottom:8px">
-  <tbody>${filasAlcaldia.map(_filaHtmlPDF).join('')}</tbody>
+  <tbody>${filasAlcaldiaVis.map(_filaHtmlPDF).join('')}</tbody>
+  <tr class="tot"><td colspan="3" style="padding:5px 8px">Subtotal Alcaldía</td><td style="padding:5px 8px;text-align:right;font-family:monospace">Bs. ${_fV(totalAlcaldia)}</td><td style="padding:5px 8px;text-align:right;font-family:monospace">USD ${_fV(usd(totalAlcaldia))}</td></tr>
 </table>
-<table style="margin-bottom:8px"><tr class="tot"><td style="padding:6px 8px">TOTAL Bs / $</td><td style="padding:6px 8px;text-align:right;font-family:monospace">Bs. ${_fV(totalGeneral)}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">USD ${_fV(usd(totalGeneral))}</td></tr></table>
+<table style="margin-bottom:8px"><tr class="tot"><td style="padding:6px 8px">TOTAL IMPUESTOS Bs / $</td><td style="padding:6px 8px;text-align:right;font-family:monospace">Bs. ${_fV(totalGeneral)}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">USD ${_fV(usd(totalGeneral))}</td></tr></table>
 <div class="sec">Saldos por Aprovechar Siguiente Período</div>
 <table>
   <tr><td style="padding:5px 8px;font-weight:900">Excedente de Crédito Fiscal para el mes siguiente</td><td style="padding:5px 8px;text-align:right;font-family:monospace">Bs. ${_fV(rtLibroVentasCfg.saldoCierreCF||0)}</td><td style="padding:5px 8px;text-align:right;font-family:monospace;color:#555">USD ${_fV(usd(rtLibroVentasCfg.saldoCierreCF||0))}</td></tr>
@@ -2010,10 +2035,12 @@ th{background:#0f172a;color:#f97316;padding:5px 8px;font-size:8px;text-transform
 <p style="color:#64748b;margin:0 0 10px;font-size:9pt">RIF: ${_rif} · Corte: ${pD(getTodayDate())}</p>
 <table><tr class="sec"><td colspan="5">TESORO NACIONAL</td></tr>
 <tr><th>Impuesto</th><th>Período</th><th>Vence</th><th>Monto Bs</th><th>Eq. Divisas</th></tr>
-${filasNacional.map(_filaXls).join('')}
+${filasNacionalVis.map(_filaXls).join('')}
+<tr class="tot"><td colspan="3">Subtotal Tesoro Nacional</td><td style="text-align:right">${_fV(totalNacional)}</td><td style="text-align:right">${_fV(usd(totalNacional))}</td></tr>
 <tr class="sec"><td colspan="5">ALCALDÍA</td></tr>
-${filasAlcaldia.map(_filaXls).join('')}
-<tr class="tot"><td colspan="3">TOTAL Bs / $</td><td style="text-align:right">${_fV(totalGeneral)}</td><td style="text-align:right">${_fV(usd(totalGeneral))}</td></tr>
+${filasAlcaldiaVis.map(_filaXls).join('')}
+<tr class="tot"><td colspan="3">Subtotal Alcaldía</td><td style="text-align:right">${_fV(totalAlcaldia)}</td><td style="text-align:right">${_fV(usd(totalAlcaldia))}</td></tr>
+<tr class="tot"><td colspan="3">TOTAL IMPUESTOS Bs / $</td><td style="text-align:right">${_fV(totalGeneral)}</td><td style="text-align:right">${_fV(usd(totalGeneral))}</td></tr>
 <tr class="sec"><td colspan="5">SALDOS POR APROVECHAR SIGUIENTE PERÍODO</td></tr>
 <tr><td colspan="3">Excedente de Crédito Fiscal para el mes siguiente</td><td style="text-align:right">${_fV(rtLibroVentasCfg.saldoCierreCF||0)}</td><td style="text-align:right">${_fV(usd(rtLibroVentasCfg.saldoCierreCF||0))}</td></tr>
 <tr><td colspan="3">Saldo de Retenciones de IVA no aplicado</td><td style="text-align:right">${_fV(rtLibroVentasCfg.saldoCierre||0)}</td><td style="text-align:right">${_fV(usd(rtLibroVentasCfg.saldoCierre||0))}</td></tr>
@@ -2045,7 +2072,7 @@ ${filasAlcaldia.map(_filaXls).join('')}
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <div>
                     <h3 className="font-black text-sm uppercase">Resumen Tributario</h3>
-                    <p className="text-[10px] text-slate-400">{rtQ==='1'?'I':'II'}era Quincena {MESES_RT[parseInt(rtMes,10)-1]}-{rtAnio}</p>
+                    <p className="text-[10px] text-slate-400">{rtQ==='1'?'I':'II'} Quincena</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <select value={rtMes} onChange={e=>setRtMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
@@ -2058,6 +2085,7 @@ ${filasAlcaldia.map(_filaXls).join('')}
                       <option value="1">I Quincena</option>
                       <option value="2">II Quincena</option>
                     </select>
+                    <button onClick={()=>setShowRtConfigVis(v=>!v)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-slate-700"><Settings2 size={12}/>Impuestos</button>
                     <button onClick={exportarRtPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700"><FileText size={12}/>PDF</button>
                     <button onClick={exportarRtExcel} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-green-700"><Download size={12}/>Excel</button>
                     <button disabled={rtSaving} onClick={guardarRt} className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-500 text-white rounded-lg text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={12}/>{rtSaving?'Guardando...':'Guardar'}</button>
@@ -2067,6 +2095,19 @@ ${filasAlcaldia.map(_filaXls).join('')}
                   <span className="text-[10px] text-slate-400">Tasa BCV para equivalencia en USD de este resumen:</span>
                   <input type="number" step="0.01" value={rtManual.tasaRt||0} onChange={e=>setRtManual(x=>({...x,tasaRt:pNum(e.target.value)}))} placeholder={fmtN(tasaRT)} className="w-24 border-2 border-orange-200 rounded-lg px-2 py-1 text-xs font-black text-right outline-none focus:border-orange-500"/>
                 </div>
+                {showRtConfigVis&&(
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Impuestos a mostrar en este resumen (aplica a todos los períodos)</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                      {TODOS_LOS_IMPUESTOS_RT.map(label=>(
+                        <label key={label} className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600 cursor-pointer">
+                          <input type="checkbox" checked={rtEsVisible(label)} onChange={e=>guardarRtTaxVisible({...rtTaxVisible,[label]:e.target.checked})} className="accent-orange-500"/>
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
@@ -2079,19 +2120,25 @@ ${filasAlcaldia.map(_filaXls).join('')}
                     <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Monto Bs</th>
                     <th className="px-3 py-2 text-right text-[8px] text-orange-400 font-black uppercase">Eq. Divisas</th>
                   </tr></thead>
-                  <tbody>{filasNacional.map(f=><Fila key={f.label} f={f}/>)}</tbody>
+                  <tbody>
+                    {filasNacionalVis.length===0?<tr><td colSpan={5} className="py-6 text-center text-slate-400 text-[10px] uppercase">Nada que mostrar — en cero este período o sin seleccionar en "Impuestos" arriba</td></tr>:filasNacionalVis.map(f=><Fila key={f.label} f={f}/>)}
+                    {filasNacionalVis.length>0&&<tr className="bg-slate-50"><td colSpan={3} className="px-3 py-2 text-right font-black uppercase text-[10px] text-slate-600">Subtotal Tesoro Nacional</td><td className="px-3 py-2 text-right font-mono font-black">Bs. {fmtN(totalNacional)}</td><td className="px-3 py-2 text-right font-mono text-slate-500">USD {fmtN(usd(totalNacional))}</td></tr>}
+                  </tbody>
                 </table>
               </div>
 
               <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
                 <div className="px-4 py-2.5" style={{background:'#3f3f46'}}><span className="text-[11px] text-white font-black uppercase">Alcaldía</span></div>
                 <table className="w-full text-xs">
-                  <tbody>{filasAlcaldia.map(f=><Fila key={f.label} f={f}/>)}</tbody>
+                  <tbody>
+                    {filasAlcaldiaVis.length===0?<tr><td colSpan={5} className="py-6 text-center text-slate-400 text-[10px] uppercase">Nada que mostrar — en cero este período o sin seleccionar en "Impuestos" arriba</td></tr>:filasAlcaldiaVis.map(f=><Fila key={f.label} f={f}/>)}
+                    {filasAlcaldiaVis.length>0&&<tr className="bg-slate-50"><td colSpan={3} className="px-3 py-2 text-right font-black uppercase text-[10px] text-slate-600">Subtotal Alcaldía</td><td className="px-3 py-2 text-right font-mono font-black">Bs. {fmtN(totalAlcaldia)}</td><td className="px-3 py-2 text-right font-mono text-slate-500">USD {fmtN(usd(totalAlcaldia))}</td></tr>}
+                  </tbody>
                 </table>
               </div>
 
               <div className="bg-slate-900 rounded-xl p-4 flex items-center justify-between">
-                <span className="text-white font-black uppercase text-sm">Total Bs / $</span>
+                <span className="text-white font-black uppercase text-sm">Total Impuestos Bs / $</span>
                 <div className="text-right">
                   <div className="text-white font-mono font-black text-lg">Bs. {fmtN(totalGeneral)}</div>
                   <div className="text-slate-400 font-mono text-xs">USD {fmtN(usd(totalGeneral))}</div>
