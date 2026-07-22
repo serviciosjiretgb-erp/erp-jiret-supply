@@ -3847,17 +3847,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [modal, setModal]   = useState(false);
     const [editando, setEdit] = useState(null);
     const [busy, setBusy]     = useState(false);
-    const initF = ()=>({nombre:'',moneda:'BS',saldoInicial:'0',cuentaContableCod:'',cuentaContableNom:'',descripcion:''});
+    const initF = ()=>({nombre:'',moneda:'BS',saldoInicial:'0',mesSaldoInicial:getTodayDate().substring(0,7),cuentaContableCod:'',cuentaContableNom:'',descripcion:''});
     const [form, setForm] = useState(initF());
 
     const openNew  = ()=>{ setEdit(null); setForm(initF()); setModal(true); };
-    const openEdit = c  =>{ setEdit(c); setForm({nombre:c.nombre||'',moneda:c.moneda||'BS',saldoInicial:String(c.saldoInicial||0),cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',descripcion:c.descripcion||''}); setModal(true); };
+    const openEdit = c  =>{ setEdit(c); setForm({nombre:c.nombre||'',moneda:c.moneda||'BS',saldoInicial:String(c.saldoInicial||0),mesSaldoInicial:c.mesSaldoInicial||getTodayDate().substring(0,7),cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',descripcion:c.descripcion||''}); setModal(true); };
 
     const save = async()=>{
       if(!form.nombre.trim()) return alert('El nombre de la caja es requerido');
       setBusy(true);
       try {
-        const data = { nombre:form.nombre.trim().toUpperCase(), moneda:form.moneda, saldoInicial:Number(form.saldoInicial)||0, cuentaContableCod:form.cuentaContableCod, cuentaContableNom:form.cuentaContableNom, descripcion:form.descripcion, activo:true };
+        const data = { nombre:form.nombre.trim().toUpperCase(), moneda:form.moneda, saldoInicial:Number(form.saldoInicial)||0, mesSaldoInicial:form.mesSaldoInicial, cuentaContableCod:form.cuentaContableCod, cuentaContableNom:form.cuentaContableNom, descripcion:form.descripcion, activo:true };
         if(editando) {
           await updateDoc(getDocRef('caja_cuentas', editando.id), data);
         } else {
@@ -3930,7 +3930,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <p className={`text-2xl font-black ${saldoTotal>=0?'text-emerald-600':'text-red-500'}`}>
                       {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(Math.abs(saldoTotal))}
                     </p>
-                    <p className="text-[9px] text-slate-400">Inicial: {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldoInicial||0)}</p>
+                    <p className="text-[9px] text-slate-400">Inicial: {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldoInicial||0)}{c.mesSaldoInicial?` · ${new Date(c.mesSaldoInicial+'-01T00:00').toLocaleString('es-VE',{month:'long',year:'numeric'})}`:''}</p>
                   </div>
                   {c.cuentaContableCod&&(
                     <div className="bg-blue-50 rounded-lg px-2 py-1 mb-3">
@@ -4034,6 +4034,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 {/* Saldo inicial */}
                 <BFG label={`Saldo Inicial (${form.moneda==='BS'?'Bs':'USD'})`}>
                   <input type="number" step="0.01" className={inp} value={form.saldoInicial} onChange={e=>setForm({...form,saldoInicial:e.target.value})}/>
+                </BFG>
+                <BFG label="Mes al que corresponde el Saldo Inicial">
+                  <input type="month" className={inp} value={form.mesSaldoInicial} onChange={e=>setForm({...form,mesSaldoInicial:e.target.value})}/>
                 </BFG>
                 {/* Cuenta Contable PUC */}
                 <BFG label="Cuenta Contable Asociada (PUC)">
@@ -4634,25 +4637,35 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // Balance del mes filtrado, respetando la caja filtrada — el saldo inicial de un mes
     // es el saldo inicial de la(s) caja(s) más todo lo acumulado ANTES de ese mes, así que
     // el disponible de un mes queda automáticamente como el inicial del mes siguiente.
+    // Cada caja tiene su propio mes de partida (mesSaldoInicial) — si el mes elegido es ANTERIOR
+    // a ese mes de partida, esa caja no aporta nada (aún no existía su saldo inicial).
     const cajasEnFiltro = cajFiltCaja ? cajas.filter(c=>c.id===cajFiltCaja) : cajas;
-    const saldoInicialCajasBs  = cajasEnFiltro.filter(c=>c.moneda==='BS').reduce((s,c)=>s+Number(c.saldoInicial||0),0);
-    const saldoInicialCajasUSD = cajasEnFiltro.filter(c=>c.moneda!=='BS').reduce((s,c)=>s+Number(c.saldoInicial||0),0);
-    const perteneceCajaFiltro = (m) => {
-      if(!cajFiltCaja) return true;
-      const mid = m._cajaId||m.cajaId||'';
-      if(mid) return mid===cajFiltCaja;
-      return !m._fromBanco;
+    const primerDiaMes  = `${cajFiltMes}-01`;
+    const calcularCaja = (c) => {
+      const inicioCaja = `${c.mesSaldoInicial||'2000-01'}-01`;
+      const movsCaja = allMovsCajaBase.filter(m=>(m._cajaId||m.cajaId||'')===c.id);
+      const acumu=(lo,hi,moneda)=>movsCaja.filter(m=>m.moneda===moneda&&(m.fecha||'')>=lo&&(m.fecha||'')<hi)
+        .reduce((s,m)=>s+(m.tipo==='Ingreso'?1:-1)*Number((moneda==='BS'?m.montoBs:m.montoUSD)||0),0);
+      if(primerDiaMes<inicioCaja) return {iniBs:0,iniUSD:0,entBs:0,entUSD:0,salBs:0,salUSD:0};
+      const antesBs  = acumu(inicioCaja,primerDiaMes,'BS');
+      const antesUSD = acumu(inicioCaja,primerDiaMes,'USD');
+      const delMes = movsCaja.filter(m=>(m.fecha||'').startsWith(cajFiltMes));
+      const entBs = delMes.filter(m=>m.moneda==='BS'&&m.tipo==='Ingreso').reduce((s,m)=>s+Number(m.montoBs||0),0);
+      const salBs = delMes.filter(m=>m.moneda==='BS'&&m.tipo==='Egreso').reduce((s,m)=>s+Number(m.montoBs||0),0);
+      const entUSD = delMes.filter(m=>m.moneda==='USD'&&m.tipo==='Ingreso').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const salUSD = delMes.filter(m=>m.moneda==='USD'&&m.tipo==='Egreso').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      return {
+        iniBs:(c.moneda==='BS'?Number(c.saldoInicial||0):0)+antesBs,
+        iniUSD:(c.moneda!=='BS'?Number(c.saldoInicial||0):0)+antesUSD,
+        entBs, entUSD, salBs, salUSD
+      };
     };
-    const primerDiaMes   = `${cajFiltMes}-01`;
-    const movsAntesDelMes = allMovsCajaBase.filter(m=>perteneceCajaFiltro(m)&&(m.fecha||'')<primerDiaMes);
-    const movsDelMes      = allMovsCajaBase.filter(m=>perteneceCajaFiltro(m)&&(m.fecha||'').startsWith(cajFiltMes));
-    const acumMoneda=(lista,moneda)=>lista.filter(m=>m.moneda===moneda).reduce((s,m)=>s+(m.tipo==='Ingreso'?1:-1)*Number((moneda==='BS'?m.montoBs:m.montoUSD)||0),0);
-    const saldoInicialBs  = saldoInicialCajasBs  + acumMoneda(movsAntesDelMes,'BS');
-    const saldoInicialUSD = saldoInicialCajasUSD + acumMoneda(movsAntesDelMes,'USD');
-    const entradasBs  = movsDelMes.filter(m=>m.moneda==='BS'&&m.tipo==='Ingreso').reduce((s,m)=>s+Number(m.montoBs||0),0);
-    const entradasUSD = movsDelMes.filter(m=>m.moneda==='USD'&&m.tipo==='Ingreso').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-    const salidasBs  = movsDelMes.filter(m=>m.moneda==='BS'&&m.tipo==='Egreso').reduce((s,m)=>s+Number(m.montoBs||0),0);
-    const salidasUSD = movsDelMes.filter(m=>m.moneda==='USD'&&m.tipo==='Egreso').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+    const totCaja = cajasEnFiltro.map(calcularCaja).reduce((a,r)=>({
+      iniBs:a.iniBs+r.iniBs, iniUSD:a.iniUSD+r.iniUSD, entBs:a.entBs+r.entBs, entUSD:a.entUSD+r.entUSD, salBs:a.salBs+r.salBs, salUSD:a.salUSD+r.salUSD
+    }),{iniBs:0,iniUSD:0,entBs:0,entUSD:0,salBs:0,salUSD:0});
+    const saldoInicialBs=totCaja.iniBs, saldoInicialUSD=totCaja.iniUSD;
+    const entradasBs=totCaja.entBs, entradasUSD=totCaja.entUSD;
+    const salidasBs=totCaja.salBs, salidasUSD=totCaja.salUSD;
     const disponibleBs  = saldoInicialBs + entradasBs - salidasBs;
     const disponibleUSD = saldoInicialUSD + entradasUSD - salidasUSD;
     // Se mantienen por compatibilidad con el resto de la vista (saldo global, sin filtro de mes/caja)
@@ -4662,6 +4675,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const saldoUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0)
                    + movDesdeCobrosCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+Number(m.montoUSD||0),0)
                    - movDesdePagosCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+Number(m.montoUSD||0),0);
+
+
 
     const save = async()=>{
       if(!form.monto||monto<=0) return alert('Ingrese un monto válido');
