@@ -2573,7 +2573,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const signo=(form.tipo==='Ingreso'||form.tipo==='Nota de Crédito')?1:-1;
         const nuevoSaldo=Number(cuenta.saldo)+signo*mNat;
         const id=bancoGid(); const batch=writeBatch(_bancoDB);
-        const tercero=form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):provs.find(p=>p.id===form.terceroId);
+        const tercero=form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):form.tipoTercero==='Proveedor'?provs.find(p=>p.id===form.terceroId):tercerosRel.find(r=>r.id===form.terceroId);
         const factura=form.cerrarCxC&&form.facturaId?facturas.find(f=>f.id===form.facturaId):null;
         // Asiento contable — cuentas
         const ctaBancoCod  = cuentaSel?.cuentaContable?.split('·')[0]?.trim()||'';
@@ -2717,6 +2717,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(factura&&form.cerrarCxC){
           const ns=Math.max(0,factura.saldoUSD-montoUSD);
           batch.update(getDocRef('facturacion_facturas',factura.id),{saldoUSD:ns,estado:ns<0.01?'Pagada':'Pendiente'});
+        }
+        if(form.aplicaTercero&&form.tipoTercero==='Relacionado'&&form.terceroId){
+          const idPagoRel=bancoGid();
+          batch.set(getDocRef('cxp_pagos_relacionados',idPagoRel),{
+            id:idPagoRel,terceroId:form.terceroId,terceroNombre:tercero?.nombre||'',
+            fecha:form.fecha,concepto:form.concepto,referencia:form.referencia,
+            monto:form.tipo==='Ingreso'?-montoUSD:montoUSD,
+            origen:'banco',movimientoId:id,ts:serverTimestamp()
+          });
         }
         await batch.commit();
         // Armar datos del comprobante imprimible
@@ -3676,20 +3685,30 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   {form.aplicaTercero&&<div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <BFG label="Tipo">
-                        <div className="flex gap-1">{['Cliente','Proveedor'].map(t=>(
-                          <button key={t} onClick={()=>setForm({...form,tipoTercero:t,terceroId:'',facturaId:''})} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase border-2 transition-all ${form.tipoTercero===t?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
+                        <div className="flex gap-1">{['Cliente','Proveedor','Relacionado'].map(t=>(
+                          <button key={t} onClick={()=>setForm({...form,tipoTercero:t,terceroId:'',facturaId:''})} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase border-2 transition-all ${form.tipoTercero===t?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200'}`}>{t==='Relacionado'?'CxP Relac.':t}</button>
                         ))}</div>
                       </BFG>
-                      <BFG label={form.tipoTercero==='Cliente'?`Clientes (${clientes.length})`:`Proveedores (${provs.length})`}>
+                      <BFG label={form.tipoTercero==='Cliente'?`Clientes (${clientes.length})`:form.tipoTercero==='Proveedor'?`Proveedores (${provs.length})`:`Terceros Relacionados (${tercerosRel.length})`}>
                         <div className="space-y-2">
-                          <div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={searchTercero} onChange={e=>setSearchTercero(e.target.value)} placeholder={`Buscar ${form.tipoTercero.toLowerCase()}...`} className={`${inp} pl-8`}/></div>
+                          <div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={searchTercero} onChange={e=>setSearchTercero(e.target.value)} placeholder={`Buscar ${form.tipoTercero==='Relacionado'?'tercero':form.tipoTercero.toLowerCase()}...`} className={`${inp} pl-8`}/></div>
                           <select className={sel} value={form.terceroId} onChange={e=>{setForm({...form,terceroId:e.target.value,facturaId:''});setSearchTercero('');}}>
                             <option value="">— Seleccione —</option>
-                            {(form.tipoTercero==='Cliente'?clientes.filter(c=>!searchTercero||(c.rif+' '+c.nombre).toUpperCase().includes(searchTercero.toUpperCase())):provs.filter(p=>!searchTercero||((p.rif||'')+' '+(p.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase()))).map(x=><option key={x.id} value={x.id}>{x.rif} · {x.nombre}</option>)}
+                            {(form.tipoTercero==='Cliente'?clientes.filter(c=>!searchTercero||(c.rif+' '+c.nombre).toUpperCase().includes(searchTercero.toUpperCase())):form.tipoTercero==='Proveedor'?provs.filter(p=>!searchTercero||((p.rif||'')+' '+(p.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase())):tercerosRel.filter(r=>!searchTercero||((r.cedulaRif||'')+' '+(r.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase()))).map(x=><option key={x.id} value={x.id}>{x.rif||x.cedulaRif} · {x.nombre}</option>)}
                           </select>
                         </div>
                       </BFG>
                     </div>
+                    {form.tipoTercero==='Relacionado'&&form.terceroId&&(()=>{
+                      const trSel=tercerosRel.find(x=>x.id===form.terceroId);
+                      const saldoAntes=trSel?saldoTercero(trSel):0;
+                      return (
+                        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-orange-700">Saldo actual del tercero</span>
+                          <span className={`font-mono font-black text-sm ${saldoAntes>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldoAntes)}</span>
+                        </div>
+                      );
+                    })()}
                     {form.tipoTercero==='Cliente'&&form.terceroId&&(
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
@@ -4042,8 +4061,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // CUENTAS POR PAGAR RELACIONADAS — Terceros (alquileres, servicios, etc.)
   // ══════════════════════════════════════════════════════════════════════
   const saldoTercero = (t) => {
-    const pagos = pagosRel.filter(p=>p.terceroId===t.id).reduce((s,p)=>s+Number(p.monto||0),0);
-    return Number(t.saldoInicial||0) - pagos;
+    const movs = pagosRel.filter(p=>p.terceroId===t.id);
+    const efecto = movs.reduce((s,p)=>s+(p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)),0);
+    return Number(t.saldoInicial||0) + efecto;
   };
 
   const TercerosRelacionadosView = () => {
@@ -4071,9 +4091,34 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const ctasFiltradas=(contCuentas||[]).filter(c=>!busqCta||(c.codigo+' '+c.nombre).toUpperCase().includes(busqCta.toUpperCase())).sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
 
+    const [filtro,setFiltro]=useState('');
+    const tercerosFiltrados=tercerosRel.filter(t=>!filtro||((t.nombre||'')+' '+(t.cedulaRif||'')).toUpperCase().includes(filtro.toUpperCase()));
+    const totalGeneral=tercerosFiltrados.reduce((s,t)=>s+saldoTercero(t),0);
+
+    const filasHtml=()=>tercerosFiltrados.map((t,i)=>{
+      const saldo=saldoTercero(t);
+      return `<tr><td>${i+1}</td><td>${t.nombre}</td><td>${t.cedulaRif}</td><td>${t.telefono||'—'}</td><td>${t.cuentaContableCod?t.cuentaContableCod+' · '+t.cuentaContableNom:'—'}</td><td style="text-align:right">$${bancoFmt(t.saldoInicial||0)}</td><td style="text-align:right;font-weight:bold;color:${saldo>0?'#dc2626':'#16a34a'}">$${bancoFmt(saldo)}</td></tr>`;
+    }).join('');
+
+    const exportarPDF=()=>{
+      const html=bancoLetterheadOpen('Terceros — Cuentas por Pagar Relacionadas',`Corte: ${getTodayDate()} · ${tercerosFiltrados.length} terceros · Total: $${bancoFmt(totalGeneral)}`)+
+        `<table><thead><tr><th>#</th><th>Nombre / Razón Social</th><th>Cédula/RIF</th><th>Teléfono</th><th>Cuenta Contable</th><th>Saldo Inicial</th><th>Saldo Actual</th></tr></thead><tbody>${filasHtml()}</tbody>
+        <tfoot><tr style="background:#000"><td colspan="6" style="color:#94a3b8;font-weight:bold;font-size:9px">TOTAL PENDIENTE</td><td style="text-align:right;color:#f97316;font-weight:bold">$${bancoFmt(totalGeneral)}</td></tr></tfoot></table>`+
+        bancoLetterheadClose(`Cuentas por Pagar Relacionadas · ${bancoDd(getTodayDate())}`);
+      bancoPrintWindow(html);
+    };
+    const exportarExcel=()=>{
+      const html=bancoLetterheadOpen('Terceros — Cuentas por Pagar Relacionadas',`Corte: ${getTodayDate()} · ${tercerosFiltrados.length} terceros`)+
+        `<table><thead><tr><th>#</th><th>Nombre / Razón Social</th><th>Cédula/RIF</th><th>Teléfono</th><th>Cuenta Contable</th><th>Saldo Inicial</th><th>Saldo Actual</th></tr></thead><tbody>${filasHtml()}</tbody></table>`+
+        bancoLetterheadClose();
+      const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');
+      a.href=url;a.download=`terceros_relacionados_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+    };
+
     return (
       <div>
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <div>
             <h2 className="text-xl font-black uppercase text-slate-900">Terceros — Cuentas por Pagar Relacionadas</h2>
             <p className="text-xs text-slate-400 font-medium mt-0.5">Alquileres, servicios y otros compromisos recurrentes fuera de Procura</p>
@@ -4083,33 +4128,45 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </button>
         </div>
 
-        {tercerosRel.length===0 ? (
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={filtro} onChange={e=>setFiltro(e.target.value)} placeholder="Buscar por Nombre o Razón Social / Cédula o RIF..." className="w-full border-2 border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs outline-none focus:border-orange-400"/>
+          </div>
+          <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><FileText size={13}/> PDF</button>
+          <button onClick={exportarExcel} className="flex items-center gap-1.5 px-3 py-2.5 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><Download size={13}/> Excel</button>
+        </div>
+
+        {tercerosFiltrados.length===0 ? (
           <BEmptyState icon={Users} title="Sin terceros registrados" desc="Cree un tercero para llevar su cuenta por pagar relacionada"/>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-            {tercerosRel.map(t=>{
-              const saldo = saldoTercero(t);
-              return (
-                <div key={t.id} className="rounded-2xl border-2 border-slate-100 bg-white p-5 shadow-sm hover:shadow-md transition-all">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-orange-500"><Users size={18} className="text-white"/></div>
-                      <div>
-                        <p className="font-black text-sm text-slate-900">{t.nombre}</p>
-                        <p className="text-[10px] text-slate-400 font-mono">{t.cedulaRif}</p>
-                      </div>
-                    </div>
-                    <button onClick={()=>openEdit(t)} className="text-slate-300 hover:text-orange-500"><Edit3 size={14}/></button>
-                  </div>
-                  {t.telefono&&<p className="text-[10px] text-slate-400 mb-1">☎ {t.telefono}</p>}
-                  {t.cuentaContableCod&&<p className="text-[10px] text-slate-400 mb-3">{t.cuentaContableCod} · {t.cuentaContableNom}</p>}
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Saldo Actual</span>
-                    <span className={`font-mono font-black text-sm ${saldo>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-50"><tr>
+                <BTh>Nombre / Razón Social</BTh><BTh>Cédula/RIF</BTh><BTh>Teléfono</BTh><BTh>Cuenta Contable</BTh><BTh right>Saldo Inicial</BTh><BTh right>Saldo Actual</BTh><BTh></BTh>
+              </tr></thead>
+              <tbody>
+                {tercerosFiltrados.map(t=>{
+                  const saldo=saldoTercero(t);
+                  return (
+                    <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <BTd><span className="font-black">{t.nombre}</span></BTd>
+                      <BTd mono>{t.cedulaRif}</BTd>
+                      <BTd>{t.telefono||'—'}</BTd>
+                      <BTd>{t.cuentaContableCod?`${t.cuentaContableCod} · ${t.cuentaContableNom}`:'—'}</BTd>
+                      <BTd right mono>${bancoFmt(t.saldoInicial||0)}</BTd>
+                      <BTd right><span className={`font-mono font-black ${saldo>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span></BTd>
+                      <BTd><button onClick={()=>openEdit(t)} className="text-slate-300 hover:text-orange-500"><Edit3 size={14}/></button></BTd>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot><tr className="border-t-2 border-slate-200 bg-slate-50">
+                <td colSpan={5} className="px-3 py-2.5 text-[9px] font-black uppercase text-slate-500 text-right">Total Pendiente</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-orange-600">${bancoFmt(totalGeneral)}</td>
+                <td></td>
+              </tr></tfoot>
+            </table>
           </div>
         )}
 
@@ -4176,35 +4233,61 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   };
 
   const CxPRelacionadasView = () => {
-    const total = tercerosRel.reduce((s,t)=>s+Math.max(0,saldoTercero(t)),0);
+    const [filtro,setFiltro]=useState('');
+    const filtrados=tercerosRel.filter(t=>!filtro||((t.nombre||'')+' '+(t.cedulaRif||'')).toUpperCase().includes(filtro.toUpperCase()));
+    const total = filtrados.reduce((s,t)=>s+Math.max(0,saldoTercero(t)),0);
+    const filasHtml=()=>filtrados.map((t,i)=>{
+      const saldo=saldoTercero(t);
+      return `<tr><td>${i+1}</td><td>${t.nombre}</td><td>${t.cedulaRif}</td><td>${t.cuentaContableCod?t.cuentaContableCod+' · '+t.cuentaContableNom:'—'}</td><td style="text-align:right;font-weight:bold;color:${saldo>0?'#dc2626':'#16a34a'}">$${bancoFmt(saldo)}</td></tr>`;
+    }).join('');
+    const exportarPDF=()=>{
+      const html=bancoLetterheadOpen('Cuentas por Pagar Relacionadas',`Corte: ${getTodayDate()} · ${filtrados.length} terceros · Pendiente: $${bancoFmt(total)}`)+
+        `<table><thead><tr><th>#</th><th>Nombre / Razón Social</th><th>Cédula/RIF</th><th>Cuenta Contable</th><th>Saldo Pendiente</th></tr></thead><tbody>${filasHtml()}</tbody>
+        <tfoot><tr style="background:#000"><td colspan="4" style="color:#94a3b8;font-weight:bold;font-size:9px">TOTAL PENDIENTE</td><td style="text-align:right;color:#f97316;font-weight:bold">$${bancoFmt(total)}</td></tr></tfoot></table>`+
+        bancoLetterheadClose(`Cuentas por Pagar Relacionadas · ${bancoDd(getTodayDate())}`);
+      bancoPrintWindow(html);
+    };
+    const exportarExcel=()=>{
+      const html=bancoLetterheadOpen('Cuentas por Pagar Relacionadas',`Corte: ${getTodayDate()} · ${filtrados.length} terceros`)+
+        `<table><thead><tr><th>#</th><th>Nombre / Razón Social</th><th>Cédula/RIF</th><th>Cuenta Contable</th><th>Saldo Pendiente</th></tr></thead><tbody>${filasHtml()}</tbody></table>`+
+        bancoLetterheadClose();
+      const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');
+      a.href=url;a.download=`cuentas_por_pagar_relacionadas_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+    };
     return (
       <div>
         <div className="mb-6">
           <h2 className="text-xl font-black uppercase text-slate-900">Cuentas por Pagar Relacionadas</h2>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Saldo pendiente por tercero</p>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Saldo pendiente actual por tercero</p>
         </div>
         <div className="bg-slate-900 rounded-2xl p-5 mb-6 flex items-center justify-between">
           <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Total Pendiente</span>
           <span className="text-2xl font-black text-white font-mono">${bancoFmt(total)}</span>
         </div>
-        {tercerosRel.length===0?(
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <div className="relative flex-1 min-w-[240px]">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={filtro} onChange={e=>setFiltro(e.target.value)} placeholder="Buscar por Nombre o Razón Social / Cédula o RIF..." className="w-full border-2 border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs outline-none focus:border-orange-400"/>
+          </div>
+          <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><FileText size={13}/> PDF</button>
+          <button onClick={exportarExcel} className="flex items-center gap-1.5 px-3 py-2.5 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><Download size={13}/> Excel</button>
+        </div>
+        {filtrados.length===0?(
           <BEmptyState icon={FileText} title="Sin terceros registrados" desc="Registre terceros en el submódulo Terceros"/>
         ):(
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <table className="w-full">
               <thead className="bg-slate-50"><tr>
-                <BTh>Tercero</BTh><BTh>Cuenta Contable</BTh><BTh right>Saldo Inicial</BTh><BTh right>Pagado</BTh><BTh right>Saldo Actual</BTh>
+                <BTh>Tercero</BTh><BTh>Cuenta Contable</BTh><BTh right>Saldo Actual</BTh>
               </tr></thead>
               <tbody>
-                {tercerosRel.map(t=>{
-                  const pagado = pagosRel.filter(p=>p.terceroId===t.id).reduce((s,p)=>s+Number(p.monto||0),0);
-                  const saldo = Number(t.saldoInicial||0)-pagado;
+                {filtrados.map(t=>{
+                  const saldo = saldoTercero(t);
                   return (
                     <tr key={t.id} className="border-t border-slate-100">
                       <BTd><span className="font-black">{t.nombre}</span><br/><span className="text-[10px] text-slate-400">{t.cedulaRif}</span></BTd>
                       <BTd>{t.cuentaContableCod?`${t.cuentaContableCod} · ${t.cuentaContableNom}`:'—'}</BTd>
-                      <BTd right mono>${bancoFmt(t.saldoInicial||0)}</BTd>
-                      <BTd right mono>${bancoFmt(pagado)}</BTd>
                       <BTd right><span className={`font-mono font-black ${saldo>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span></BTd>
                     </tr>
                   );
@@ -4224,17 +4307,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         <p className="text-xs text-slate-400 font-medium mt-0.5">Pagos registrados a terceros relacionados</p>
       </div>
       {pagosRel.length===0?(
-        <BEmptyState icon={Clock} title="Sin pagos registrados" desc="Los pagos vinculados a un tercero relacionado aparecerán aquí"/>
+        <BEmptyState icon={Clock} title="Sin movimientos registrados" desc="Los movimientos de un tercero relacionado aparecerán aquí"/>
       ):(
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
           <table className="w-full">
-            <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Tercero</BTh><BTh>Concepto</BTh><BTh>Referencia</BTh><BTh right>Monto USD</BTh></tr></thead>
+            <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Tercero</BTh><BTh>Concepto</BTh><BTh>Tipo</BTh><BTh right>Monto USD</BTh></tr></thead>
             <tbody>
               {[...pagosRel].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map((p,i)=>{
                 const t=tercerosRel.find(x=>x.id===p.terceroId);
                 return (<tr key={i} className="border-t border-slate-100">
-                  <BTd>{bancoDd(p.fecha)}</BTd><BTd>{t?.nombre||p.terceroNombre||'—'}</BTd><BTd>{p.concepto||'—'}</BTd><BTd>{p.referencia||'—'}</BTd>
-                  <BTd right mono>${bancoFmt(p.monto||0)}</BTd>
+                  <BTd>{bancoDd(p.fecha)}</BTd><BTd>{t?.nombre||p.terceroNombre||'—'}</BTd><BTd>{p.concepto||'—'}{p.referencia?` · ${p.referencia}`:''}</BTd>
+                  <BTd><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo||'Egreso'}</span></BTd>
+                  <BTd right mono className={p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</BTd>
                 </tr>);
               })}
             </tbody>
@@ -4246,14 +4330,52 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const EstadoCuentaRelacionadosView = () => {
     const [terceroId, setTerceroId] = useState('');
+    const [modal, setModal] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const initMov = ()=>({tipo:'Egreso',monto:'',concepto:'',referencia:'',fecha:getTodayDate()});
+    const [movForm, setMovForm] = useState(initMov());
     const t = tercerosRel.find(x=>x.id===terceroId);
-    const pagos = t ? [...pagosRel].filter(p=>p.terceroId===terceroId).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')) : [];
-    let corrido = t ? Number(t.saldoInicial||0) : 0;
+    const movs = t ? [...pagosRel].filter(p=>p.terceroId===terceroId).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')) : [];
+
+    const openModal = ()=>{ setMovForm(initMov()); setModal(true); };
+    const guardarMov = async()=>{
+      if(!movForm.monto||Number(movForm.monto)<=0) return alert('Ingrese un monto válido');
+      if(!movForm.concepto.trim()) return alert('Ingrese el concepto');
+      setBusy(true);
+      try{
+        const id=bancoGid();
+        await setDoc(getDocRef('cxp_pagos_relacionados',id),{id,terceroId,terceroNombre:t.nombre,tipo:movForm.tipo,monto:Number(movForm.monto),concepto:movForm.concepto.trim(),referencia:movForm.referencia.trim(),fecha:movForm.fecha,ts:serverTimestamp()});
+        setModal(false);
+      }catch(e){ alert('Error: '+e.message); } finally{ setBusy(false); }
+    };
+
+    const filasHtml=(corridoIni)=>{
+      let c=corridoIni; const rows=[`<tr><td>—</td><td>Saldo Inicial</td><td>—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:bold">$${bancoFmt(c)}</td></tr>`];
+      movs.forEach(p=>{ c += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0));
+        rows.push(`<tr><td>${bancoDd(p.fecha)}</td><td>${p.concepto||''}${p.referencia?' · '+p.referencia:''}</td><td>${p.tipo}</td><td style="text-align:right;color:${p.tipo==='Ingreso'?'#16a34a':'#dc2626'}">${p.tipo==='Ingreso'?'+':'-'}$${bancoFmt(p.monto||0)}</td><td style="text-align:right;font-weight:bold">$${bancoFmt(c)}</td></tr>`);
+      });
+      return rows.join('');
+    };
+    const exportarPDF=()=>{
+      if(!t) return;
+      const saldoFinal=saldoTercero(t);
+      const html=bancoLetterheadOpen(`Estado de Cuenta — ${t.nombre}`,`RIF: ${t.cedulaRif} · Corte: ${getTodayDate()} · Saldo actual: $${bancoFmt(saldoFinal)}`)+
+        `<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Tipo</th><th>Monto</th><th>Saldo</th></tr></thead><tbody>${filasHtml(Number(t.saldoInicial||0))}</tbody></table>`+
+        bancoLetterheadClose(`Estado de Cuenta Relacionado · ${bancoDd(getTodayDate())}`);
+      bancoPrintWindow(html);
+    };
+
     return (
       <div>
-        <div className="mb-6">
-          <h2 className="text-xl font-black uppercase text-slate-900">Estado de Cuenta — Tercero Relacionado</h2>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Movimiento detallado por tercero</p>
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+          <div>
+            <h2 className="text-xl font-black uppercase text-slate-900">Estado de Cuenta — Tercero Relacionado</h2>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">Movimiento detallado, transacción por transacción</p>
+          </div>
+          {t&&<div className="flex gap-2">
+            <button onClick={openModal} className="flex items-center gap-1.5 px-3 py-2.5 text-white rounded-xl text-[10px] font-black uppercase hover:opacity-90" style={{background:'#f97316'}}><Plus size={13}/> Registrar Movimiento</button>
+            <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><FileText size={13}/> PDF</button>
+          </div>}
         </div>
         <div className="max-w-sm mb-6">
           <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400" value={terceroId} onChange={e=>setTerceroId(e.target.value)}>
@@ -4266,19 +4388,64 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         ):(
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
             <table className="w-full">
-              <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Concepto</BTh><BTh right>Monto</BTh><BTh right>Saldo</BTh></tr></thead>
+              <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Concepto</BTh><BTh>Tipo</BTh><BTh right>Monto</BTh><BTh right>Saldo</BTh></tr></thead>
               <tbody>
-                <tr className="border-t border-slate-100 bg-slate-50">
-                  <BTd>—</BTd><BTd><span className="font-black">Saldo Inicial</span></BTd><BTd right mono>—</BTd><BTd right mono>${bancoFmt(corrido)}</BTd>
-                </tr>
-                {pagos.map((p,i)=>{ corrido -= Number(p.monto||0); return (
-                  <tr key={i} className="border-t border-slate-100">
-                    <BTd>{bancoDd(p.fecha)}</BTd><BTd>{p.concepto||'Pago'}{p.referencia?` · ${p.referencia}`:''}</BTd>
-                    <BTd right mono className="text-red-500">-${bancoFmt(p.monto||0)}</BTd><BTd right mono>${bancoFmt(corrido)}</BTd>
+                {(()=>{ let corrido=Number(t.saldoInicial||0); return (<>
+                  <tr className="border-t border-slate-100 bg-slate-50">
+                    <BTd>—</BTd><BTd><span className="font-black">Saldo Inicial</span></BTd><BTd>—</BTd><BTd right mono>—</BTd><BTd right mono>${bancoFmt(corrido)}</BTd>
                   </tr>
-                );})}
+                  {movs.map((p,i)=>{ corrido += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)); return (
+                    <tr key={i} className="border-t border-slate-100">
+                      <BTd>{bancoDd(p.fecha)}</BTd><BTd>{p.concepto||''}{p.referencia?` · ${p.referencia}`:''}</BTd>
+                      <BTd><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo}</span></BTd>
+                      <BTd right mono className={p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</BTd>
+                      <BTd right mono>${bancoFmt(corrido)}</BTd>
+                    </tr>
+                  );})}
+                </>); })()}
               </tbody>
             </table>
+          </div>
+        )}
+        {modal&&(
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setModal(false)}>
+            <div className="bg-white rounded-2xl max-w-md w-full" onClick={e=>e.stopPropagation()}>
+              <div className="px-5 py-4 flex items-center justify-between" style={{background:'#0f172a'}}>
+                <p className="text-white font-black text-sm uppercase">Registrar Movimiento — {t?.nombre}</p>
+                <button onClick={()=>setModal(false)} className="text-slate-400 hover:text-white"><X size={18}/></button>
+              </div>
+              <div className="p-5 space-y-3">
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tipo</label>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setMovForm({...movForm,tipo:'Ingreso'})} className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${movForm.tipo==='Ingreso'?'bg-emerald-500 text-white border-emerald-500':'bg-white text-slate-500 border-slate-200'}`}>Ingreso (nos presta)</button>
+                    <button onClick={()=>setMovForm({...movForm,tipo:'Egreso'})} className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${movForm.tipo==='Egreso'?'bg-red-500 text-white border-red-500':'bg-white text-slate-500 border-slate-200'}`}>Egreso (le pagamos)</button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto (USD)</label>
+                    <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={movForm.monto} onChange={e=>setMovForm({...movForm,monto:e.target.value})}/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha</label>
+                    <input type="date" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={movForm.fecha} onChange={e=>setMovForm({...movForm,fecha:e.target.value})}/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Concepto</label>
+                  <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={movForm.concepto} onChange={e=>setMovForm({...movForm,concepto:e.target.value})} placeholder="Ej: Abono a préstamo / Nuevo préstamo recibido"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Referencia</label>
+                  <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={movForm.referencia} onChange={e=>setMovForm({...movForm,referencia:e.target.value})} placeholder="Opcional"/>
+                </div>
+              </div>
+              <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+                <button onClick={()=>setModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-slate-500 bg-slate-100 hover:bg-slate-200">Cancelar</button>
+                <button onClick={guardarMov} disabled={busy} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white disabled:opacity-50" style={{background:'#f97316'}}>{busy?'Guardando...':'Guardar'}</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
