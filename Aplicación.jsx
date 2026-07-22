@@ -6894,19 +6894,9 @@ ${body}
                     timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                   });
                   saldoAcumPorCtaAnt[l.cuentaId]=(saldoAcumPorCtaAnt[l.cuentaId]||0)+montoUsdLinea;
-                } else {
-                  const cajaId=l.cuentaId.replace('CAJA::','');
-                  const cajaObj=(cajasCuentasCxp||[]).find(c=>c.id===cajaId);
-                  const movId=`MOVC-ANTCXP-${Date.now().toString(36)}-${li}`;
-                  batch.set(getDocRef('caja_movimientos',movId),{
-                    id:movId,cajaId,tipo:'Egreso',moneda:cajaObj?.moneda||'USD',
-                    monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,fecha:l.fecha||hoy,grupoPagoId,
-                    concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
-                    referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
-                    aplicaTercero:true,tipoTercero:'Proveedor',terceroId:provSel?.id||'',terceroNombre:provSel?.nombre||'',
-                    timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
-                  });
                 }
+                // Nota: para anticipos por CAJA:: NO se crea un caja_movimientos aparte — BancoApp.jsx
+                // ya deriva el movimiento desde este registro de procura_pagos_cxp (evita duplicado en Caja).
               });
               Object.entries(saldoAcumPorCtaAnt).forEach(([ctaId,dec])=>{
                 const ctaDoc=(cuentasBancarias||[]).find(c=>c.id===ctaId);
@@ -7012,25 +7002,9 @@ ${body}
                   timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                 });
                 saldoAcumPorCtaCxp[l.cuentaId]=(saldoAcumPorCtaCxp[l.cuentaId]||0)+montoUsdLinea;
-              } else {
-                const cajaId=l.cuentaId.replace('CAJA::','');
-                const cajaObj=(cajasCuentasCxp||[]).find(c=>c.id===cajaId);
-                const montoUSD=l.moneda==='USD'?pN(l.monto):pN(l.monto)/Math.max(tasa,1);
-                const movId=`MOVC-PAGCXP-${Date.now().toString(36)}-${li}`;
-                batch.set(getDocRef('caja_movimientos',movId),{
-                  id:movId,cajaId,tipo:'Egreso',
-                  moneda:cajaObj?.moneda||'USD',
-                  monto:montoUSD,montoUSD,montoBs:montoUSD*tasa,tasa,
-                  fecha:l.fecha||hoy,grupoPagoId,
-                  concepto:`${l.concepto||'Pago CxP'} — ${provSel?.nombre||'—'}${distribFacts.length?` — Fact.${distribFacts.map(({f})=>f.nroFactura||f.id).join('/')}`:''}`,
-                  notas:distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ${f.fecha||''} $${fN(ap)}`).join(' | '),
-                  referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
-                  aplicaTercero:true,tipoTercero:'Proveedor',terceroId:provSel?.id||'',terceroNombre:provSel?.nombre||'',
-                  proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
-                  facturas:distribFacts.map(({f,ap})=>({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto:ap})),
-                  timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
-                });
               }
+              // Nota: para pagos por CAJA:: NO se crea un caja_movimientos aparte — BancoApp.jsx ya
+              // deriva el movimiento desde este registro de procura_pagos_cxp (evita duplicado en Caja).
             });
             Object.entries(saldoAcumPorCtaCxp).forEach(([ctaId,dec])=>{
               const ctaDoc=(cuentasBancarias||[]).find(c=>c.id===ctaId);
@@ -25532,18 +25506,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     });
                     batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+montoUSDLin});
                   }
-                  if(cajaCob){
-                    const mvId=`MVC-${grupoId}-${Math.random().toString(36).slice(2,4).toUpperCase()}`;
-                    batch.set(getDocRef('caja_movimientos',mvId),{
-                      id:mvId,cajaId:cajaCob.id,fecha:linea.fecha,tipo:'Ingreso',
-                      moneda:cajaCob.moneda||'USD',
-                      concepto:`Anticipo — ${m.clientName}${linea.concepto?` — ${linea.concepto}`:''}`,
-                      referencia:linea.referencia,
-                      monto:montoUSDLin,montoUSD:montoUSDLin,montoBs:montoBsLin,tasa,
-                      aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
-                      metodo:linea.metodo,grupoCobroId:grupoId,timestamp:Date.now()
-                    });
-                  }
+                  // Nota: para anticipos por CAJA:: NO se crea un caja_movimientos aparte — BancoApp.jsx
+                  // ya deriva el movimiento desde este registro de cobros_cxc (evita duplicado en Caja).
                 }
                 await batch.commit();
                 setCxcPagoModal(null);
@@ -25682,18 +25646,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   });
                   saldoAcumPorCta[cta.id]=(saldoAcumPorCta[cta.id]||0)+usdAplicadoLinea;
                 }
-                if(cajaCob){
-                  const mvId=`MVC-${grupoId}-${li}`;
-                  batch.set(getDocRef('caja_movimientos',mvId),{
-                    id:mvId,cajaId:cajaCob.id,fecha:linea.fecha,tipo:'Ingreso',
-                    moneda:cajaCob.moneda||'USD',
-                    concepto:`${linea.concepto||'Cobro CxC'} — ${m.clientName}${nesCubiertas?` — ${nesCubiertas}`:''}`,
-                    referencia:linea.referencia,
-                    monto:usdAplicadoLinea,montoUSD:usdAplicadoLinea,montoBs:bsAplicadoLinea,tasa,
-                    aplicaTercero:true,tipoTercero:'Cliente',terceroId:m.clientRif||'',terceroNombre:m.clientName||'',
-                    metodo:linea.metodo,facturas:facturasMovLinea,grupoCobroId:grupoId,timestamp:Date.now()
-                  });
-                }
+                // Nota: para cobros por CAJA:: NO se crea un caja_movimientos aparte — BancoApp.jsx ya
+                // deriva el movimiento de caja directamente desde este registro de cobros_cxc
+                // (cuentaBancariaId con prefijo CAJA::), evitando duplicarlo en Movimientos de Caja.
                 // Si esta línea pagó más de lo que se aplicó a NE, el sobrante queda como saldo a favor del cliente (anticipo)
                 if(antId){
                   batch.set(getDocRef('cobros_cxc',antId),{
