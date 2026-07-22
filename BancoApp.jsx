@@ -1785,6 +1785,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const [submodulo, setSubmodulo] = useState(null); // null | 'banco' | 'caja'
   const [cuentas,    setCuentas]  = useState([]);
   const [cajas,      setCajas]    = useState([]);
+  const [tercerosRel, setTercerosRel] = useState([]);
+  const [pagosRel,    setPagosRel]    = useState([]);
   const [movBanco,   setMovBanco] = useState([]);
   const [movCaja,    setMovCaja]  = useState([]);
   const [arques,     setArques]   = useState([]);
@@ -1815,6 +1817,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       }),
       onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),,
+      onSnapshot(getColRef('cxp_terceros_relacionados'), s => setTercerosRel(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('cxp_pagos_relacionados'), s => setPagosRel(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>({_docId:d.id,...d.data()})))),
       onSnapshot(query(getColRef('caja_movimientos'), orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('caja_arques'), orderBy('fecha','desc')), s => setArques(s.docs.map(d=>d.data()))),
@@ -3705,7 +3709,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               </div>
             </div>
             {/* ══ COLUMNA DERECHA: RESUMEN BANCO + PREVIEW ASIENTO ══ */}
-            <div style={{width:260,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
+            <div style={{width:340,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
@@ -3721,9 +3725,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 </div>}
                 {/* Live accounting preview */}
                 {cuentaSel&&mNat>0&&<div className="rounded-xl overflow-hidden border border-slate-800">
-                  <div className="px-4 py-3 flex items-center gap-2" style={{background:'#0b1120'}}>
-                    <FileText size={13} className="text-blue-500"/>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">Comprobante Contable</p>
+                  <div className="px-4 py-3 flex items-center justify-between" style={{background:'#0b1120'}}>
+                    <div className="flex items-center gap-2">
+                      <FileText size={13} className="text-blue-500"/>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-300">Comprobante Contable</p>
+                    </div>
+                    <span className="flex items-center gap-1 text-[8px] font-black uppercase text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><CheckCircle size={10}/>Cuadrado</span>
                   </div>
                   <div className="p-3 overflow-x-auto" style={{background:'#0f172a'}}>
                     <p className="text-[9px] font-mono text-slate-500 italic mb-3 truncate">{form.concepto||'...'}</p>
@@ -3745,8 +3752,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           const bancoNom=cuentaSel.banco;
                           if(form.tipo==='Traslado de Fondo'&&cuentaDest){
                             const dCod=(cuentaDest?.cuentaContableCod||cuentaDest?.cuentaContable?.split('·')[0]||'').trim();
-                            lines.push({cod:dCod,nom:cuentaDest.banco,dBs:bsV,hBs:0,dU:usdV,hU:0,color:'text-amber-400'});
+                            const comUSD=(destinoEsCaja&&form.aplicaComision)?Number(form.comisionMonto||0)*(form.monedaOp==='BS'?(1/tasa):1):0;
+                            const comBs=comUSD*tasa;
+                            lines.push({cod:dCod,nom:cuentaDest.banco,dBs:bsV-comBs,hBs:0,dU:usdV-comUSD,hU:0,color:'text-amber-400'});
                             lines.push({cod:bancoCod,nom:bancoNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
+                            if(comUSD>0){
+                              const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId);
+                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Comisión/rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
+                            }
                           } else if(form.tipo==='Nota de Débito'){
                             const aj=contCuentas.find(c=>c.id===form.cuentaAjusteId);
                             if(aj)lines.push({cod:String(aj.codigo),nom:aj.nombre,dBs:bsV,hBs:0,dU:usdV,hU:0,color:'text-orange-400'});
@@ -4019,6 +4032,253 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 </button>
               </div>
             </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════════════════════════════
+  // CUENTAS POR PAGAR RELACIONADAS — Terceros (alquileres, servicios, etc.)
+  // ══════════════════════════════════════════════════════════════════════
+  const saldoTercero = (t) => {
+    const pagos = pagosRel.filter(p=>p.terceroId===t.id).reduce((s,p)=>s+Number(p.monto||0),0);
+    return Number(t.saldoInicial||0) - pagos;
+  };
+
+  const TercerosRelacionadosView = () => {
+    const [modal, setModal]   = useState(false);
+    const [editando, setEdit] = useState(null);
+    const [busy, setBusy]     = useState(false);
+    const [busqCta, setBusqCta] = useState('');
+    const initF = ()=>({nombre:'',cedulaRif:'',telefono:'',cuentaContableId:'',cuentaContableCod:'',cuentaContableNom:'',saldoInicial:'0'});
+    const [form, setForm] = useState(initF());
+
+    const openNew  = ()=>{ setEdit(null); setForm(initF()); setBusqCta(''); setModal(true); };
+    const openEdit = t  =>{ setEdit(t); setForm({nombre:t.nombre||'',cedulaRif:t.cedulaRif||'',telefono:t.telefono||'',cuentaContableId:t.cuentaContableId||'',cuentaContableCod:t.cuentaContableCod||'',cuentaContableNom:t.cuentaContableNom||'',saldoInicial:String(t.saldoInicial||0)}); setBusqCta(''); setModal(true); };
+
+    const save = async()=>{
+      if(!form.nombre.trim()) return alert('El nombre o razón social es requerido');
+      if(!form.cedulaRif.trim()) return alert('La cédula o RIF es requerida');
+      setBusy(true);
+      try {
+        const data = {nombre:form.nombre.trim(),cedulaRif:form.cedulaRif.trim().toUpperCase(),telefono:form.telefono.trim(),cuentaContableId:form.cuentaContableId,cuentaContableCod:form.cuentaContableCod,cuentaContableNom:form.cuentaContableNom,saldoInicial:Number(form.saldoInicial)||0,activo:true};
+        if(editando){ await updateDoc(getDocRef('cxp_terceros_relacionados',editando.id),data); }
+        else { const id=bancoGid(); await setDoc(getDocRef('cxp_terceros_relacionados',id),{...data,id,ts:serverTimestamp()}); }
+        setModal(false); setEdit(null); setForm(initF());
+      } catch(e){ alert('Error: '+e.message); } finally { setBusy(false); }
+    };
+
+    const ctasFiltradas=(contCuentas||[]).filter(c=>!busqCta||(c.codigo+' '+c.nombre).toUpperCase().includes(busqCta.toUpperCase())).sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-xl font-black uppercase text-slate-900">Terceros — Cuentas por Pagar Relacionadas</h2>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">Alquileres, servicios y otros compromisos recurrentes fuera de Procura</p>
+          </div>
+          <button onClick={openNew} className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase text-white shadow-lg transition-all hover:opacity-90" style={{background:'linear-gradient(135deg,#f97316,#c2410c)'}}>
+            <Plus size={14}/> Nuevo Tercero
+          </button>
+        </div>
+
+        {tercerosRel.length===0 ? (
+          <BEmptyState icon={Users} title="Sin terceros registrados" desc="Cree un tercero para llevar su cuenta por pagar relacionada"/>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+            {tercerosRel.map(t=>{
+              const saldo = saldoTercero(t);
+              return (
+                <div key={t.id} className="rounded-2xl border-2 border-slate-100 bg-white p-5 shadow-sm hover:shadow-md transition-all">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-orange-500"><Users size={18} className="text-white"/></div>
+                      <div>
+                        <p className="font-black text-sm text-slate-900">{t.nombre}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{t.cedulaRif}</p>
+                      </div>
+                    </div>
+                    <button onClick={()=>openEdit(t)} className="text-slate-300 hover:text-orange-500"><Edit3 size={14}/></button>
+                  </div>
+                  {t.telefono&&<p className="text-[10px] text-slate-400 mb-1">☎ {t.telefono}</p>}
+                  {t.cuentaContableCod&&<p className="text-[10px] text-slate-400 mb-3">{t.cuentaContableCod} · {t.cuentaContableNom}</p>}
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Saldo Actual</span>
+                    <span className={`font-mono font-black text-sm ${saldo>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {modal&&(
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setModal(false)}>
+            <div className="bg-white rounded-2xl max-w-lg w-full" onClick={e=>e.stopPropagation()}>
+              <div className="px-5 py-4 flex items-center justify-between" style={{background:'#0f172a'}}>
+                <p className="text-white font-black text-sm uppercase">{editando?'Editar Tercero':'Nuevo Tercero'}</p>
+                <button onClick={()=>setModal(false)} className="text-slate-400 hover:text-white"><X size={18}/></button>
+              </div>
+              <div className="p-5 space-y-3">
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Nombre o Razón Social</label>
+                  <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value})} placeholder="Ej: Inversiones El Local, C.A."/>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cédula o RIF</label>
+                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={form.cedulaRif} onChange={e=>setForm({...form,cedulaRif:e.target.value})} placeholder="J-12345678-9"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Teléfono</label>
+                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={form.telefono} onChange={e=>setForm({...form,telefono:e.target.value})} placeholder="0414-1234567"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Contable</label>
+                  {form.cuentaContableId?(
+                    <div className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-xl border-2 border-slate-200">
+                      <span className="text-xs font-bold">{form.cuentaContableCod} · {form.cuentaContableNom}</span>
+                      <button onClick={()=>setForm({...form,cuentaContableId:'',cuentaContableCod:'',cuentaContableNom:''})} className="text-slate-400 hover:text-red-500"><X size={12}/></button>
+                    </div>
+                  ):(
+                    <div className="relative">
+                      <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                      <input value={busqCta} onChange={e=>setBusqCta(e.target.value)} placeholder="Buscar cuenta por código o nombre..." className="w-full border-2 border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs outline-none focus:border-orange-400 mb-1.5"/>
+                      {busqCta&&(
+                        <div className="max-h-36 overflow-y-auto border-2 border-slate-200 rounded-xl">
+                          {ctasFiltradas.slice(0,40).map(c=>(
+                            <div key={c.id} onClick={()=>{setForm({...form,cuentaContableId:c.id,cuentaContableCod:String(c.codigo),cuentaContableNom:c.nombre});setBusqCta('');}} className="px-3 py-1.5 text-[11px] hover:bg-orange-50 cursor-pointer border-b border-slate-100 last:border-0">
+                              {c.codigo} · {c.nombre}
+                            </div>
+                          ))}
+                          {ctasFiltradas.length===0&&<div className="px-3 py-2 text-[11px] text-slate-400">Sin resultados</div>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Saldo Inicial (USD)</label>
+                  <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" value={form.saldoInicial} onChange={e=>setForm({...form,saldoInicial:e.target.value})}/>
+                </div>
+              </div>
+              <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+                <button onClick={()=>setModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-slate-500 bg-slate-100 hover:bg-slate-200">Cancelar</button>
+                <button onClick={save} disabled={busy} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white disabled:opacity-50" style={{background:'#f97316'}}>{busy?'Guardando...':'Guardar'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const CxPRelacionadasView = () => {
+    const total = tercerosRel.reduce((s,t)=>s+Math.max(0,saldoTercero(t)),0);
+    return (
+      <div>
+        <div className="mb-6">
+          <h2 className="text-xl font-black uppercase text-slate-900">Cuentas por Pagar Relacionadas</h2>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Saldo pendiente por tercero</p>
+        </div>
+        <div className="bg-slate-900 rounded-2xl p-5 mb-6 flex items-center justify-between">
+          <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Total Pendiente</span>
+          <span className="text-2xl font-black text-white font-mono">${bancoFmt(total)}</span>
+        </div>
+        {tercerosRel.length===0?(
+          <BEmptyState icon={FileText} title="Sin terceros registrados" desc="Registre terceros en el submódulo Terceros"/>
+        ):(
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-50"><tr>
+                <BTh>Tercero</BTh><BTh>Cuenta Contable</BTh><BTh right>Saldo Inicial</BTh><BTh right>Pagado</BTh><BTh right>Saldo Actual</BTh>
+              </tr></thead>
+              <tbody>
+                {tercerosRel.map(t=>{
+                  const pagado = pagosRel.filter(p=>p.terceroId===t.id).reduce((s,p)=>s+Number(p.monto||0),0);
+                  const saldo = Number(t.saldoInicial||0)-pagado;
+                  return (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <BTd><span className="font-black">{t.nombre}</span><br/><span className="text-[10px] text-slate-400">{t.cedulaRif}</span></BTd>
+                      <BTd>{t.cuentaContableCod?`${t.cuentaContableCod} · ${t.cuentaContableNom}`:'—'}</BTd>
+                      <BTd right mono>${bancoFmt(t.saldoInicial||0)}</BTd>
+                      <BTd right mono>${bancoFmt(pagado)}</BTd>
+                      <BTd right><span className={`font-mono font-black ${saldo>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span></BTd>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const HistorialPagoRelacionadosView = () => (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-xl font-black uppercase text-slate-900">Historial de Pago — Terceros Relacionados</h2>
+        <p className="text-xs text-slate-400 font-medium mt-0.5">Pagos registrados a terceros relacionados</p>
+      </div>
+      {pagosRel.length===0?(
+        <BEmptyState icon={Clock} title="Sin pagos registrados" desc="Los pagos vinculados a un tercero relacionado aparecerán aquí"/>
+      ):(
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Tercero</BTh><BTh>Concepto</BTh><BTh>Referencia</BTh><BTh right>Monto USD</BTh></tr></thead>
+            <tbody>
+              {[...pagosRel].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map((p,i)=>{
+                const t=tercerosRel.find(x=>x.id===p.terceroId);
+                return (<tr key={i} className="border-t border-slate-100">
+                  <BTd>{bancoDd(p.fecha)}</BTd><BTd>{t?.nombre||p.terceroNombre||'—'}</BTd><BTd>{p.concepto||'—'}</BTd><BTd>{p.referencia||'—'}</BTd>
+                  <BTd right mono>${bancoFmt(p.monto||0)}</BTd>
+                </tr>);
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
+  const EstadoCuentaRelacionadosView = () => {
+    const [terceroId, setTerceroId] = useState('');
+    const t = tercerosRel.find(x=>x.id===terceroId);
+    const pagos = t ? [...pagosRel].filter(p=>p.terceroId===terceroId).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')) : [];
+    let corrido = t ? Number(t.saldoInicial||0) : 0;
+    return (
+      <div>
+        <div className="mb-6">
+          <h2 className="text-xl font-black uppercase text-slate-900">Estado de Cuenta — Tercero Relacionado</h2>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Movimiento detallado por tercero</p>
+        </div>
+        <div className="max-w-sm mb-6">
+          <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400" value={terceroId} onChange={e=>setTerceroId(e.target.value)}>
+            <option value="">— Seleccione un tercero —</option>
+            {tercerosRel.map(x=><option key={x.id} value={x.id}>{x.nombre}</option>)}
+          </select>
+        </div>
+        {!t?(
+          <BEmptyState icon={Users} title="Seleccione un tercero" desc="Elija un tercero arriba para ver su estado de cuenta"/>
+        ):(
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Concepto</BTh><BTh right>Monto</BTh><BTh right>Saldo</BTh></tr></thead>
+              <tbody>
+                <tr className="border-t border-slate-100 bg-slate-50">
+                  <BTd>—</BTd><BTd><span className="font-black">Saldo Inicial</span></BTd><BTd right mono>—</BTd><BTd right mono>${bancoFmt(corrido)}</BTd>
+                </tr>
+                {pagos.map((p,i)=>{ corrido -= Number(p.monto||0); return (
+                  <tr key={i} className="border-t border-slate-100">
+                    <BTd>{bancoDd(p.fecha)}</BTd><BTd>{p.concepto||'Pago'}{p.referencia?` · ${p.referencia}`:''}</BTd>
+                    <BTd right mono className="text-red-500">-${bancoFmt(p.monto||0)}</BTd><BTd right mono>${bancoFmt(corrido)}</BTd>
+                  </tr>
+                );})}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -5445,7 +5705,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                                                     {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText}] },
     { group:'Config.',     color:'#64748b', items:[{id:'tasas',          label:'Tasas de Cambio',  icon:Globe}] },
   ];
-  const navGroups = submodulo==='caja' ? navGroupsCaja : navGroupsBanco;
+  const navGroupsCxP = [
+    { group:'Terceros',    color:'#f97316', items:[{id:'terceros_rel', label:'Terceros',            icon:Users},
+                                                    {id:'cxp_rel',      label:'Cuentas por Pagar',    icon:FileText},
+                                                    {id:'hist_pago_rel',label:'Historial de Pago',    icon:Clock},
+                                                    {id:'edo_cta_rel',  label:'Estado de Cuenta',     icon:BookOpen}] },
+  ];
+  const navGroups = submodulo==='caja' ? navGroupsCaja : submodulo==='cxp_relacionadas' ? navGroupsCxP : navGroupsBanco;
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
@@ -5457,7 +5723,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     rpt_comp_banco:<ComprobantesBancariosView tipo="banco"/>,
     rpt_comp_caja:<ComprobantesBancariosView tipo="caja"/>,
     rpt_libro:<RepLibroDiarioView/>,
-    tasas:<TasasView/>
+    tasas:<TasasView/>,
+    terceros_rel:<TercerosRelacionadosView/>, cxp_rel:<CxPRelacionadasView/>,
+    hist_pago_rel:<HistorialPagoRelacionadosView/>, edo_cta_rel:<EstadoCuentaRelacionadosView/>
   };
 
   // ── Portal selector — pantalla de bienvenida ──────────────────────
@@ -5480,7 +5748,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <h1 className="text-2xl font-black text-slate-900 uppercase tracking-wide mb-2">Seleccione un Módulo</h1>
           <p className="text-slate-400 text-sm">¿Con qué desea trabajar hoy?</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
           {/* BANCOS */}
           <button onClick={()=>{ setSubmodulo('banco'); setSec('dashboard'); }}
             className="group text-left rounded-2xl border-2 border-slate-200 bg-white p-8 hover:border-blue-400 hover:shadow-xl transition-all duration-200"
@@ -5519,6 +5787,26 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               ))}
             </div>
             <div className="mt-6 flex items-center gap-2 font-black text-xs uppercase" style={{color:'#10b981'}}>
+              Entrar al módulo <ArrowRight size={14}/>
+            </div>
+          </button>
+          {/* CUENTAS POR PAGAR RELACIONADAS */}
+          <button onClick={()=>{ setSubmodulo('cxp_relacionadas'); setSec('terceros_rel'); }}
+            className="group text-left rounded-2xl border-2 border-slate-200 bg-white p-8 hover:border-orange-400 hover:shadow-xl transition-all duration-200">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5 transition-all group-hover:scale-110" style={{background:'#fff7ed'}}>
+              <Users size={28} style={{color:'#f97316'}}/>
+            </div>
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-wide mb-2">📋 Cuentas por Pagar Relacionadas</h2>
+            <p className="text-sm text-slate-400 mb-5">Alquileres, servicios y otros terceros fuera de Procura</p>
+            <div className="space-y-1.5">
+              {['Terceros','Cuentas por Pagar','Historial de Pago','Estado de Cuenta'].map(m=>(
+                <div key={m} className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <div className="w-1.5 h-1.5 rounded-full" style={{background:'#f97316'}}/>
+                  {m}
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 flex items-center gap-2 font-black text-xs uppercase" style={{color:'#f97316'}}>
               Entrar al módulo <ArrowRight size={14}/>
             </div>
           </button>
