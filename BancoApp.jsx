@@ -4786,10 +4786,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <input type="month" value={cajFiltMes} onChange={e=>setCajFiltMes(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <BKPI label="Saldo Inicial" value={`Bs.${bancoFmt(saldoInicialBs)}`} accent="blue" Icon={Banknote} sub={`≈ $${bancoFmt(saldoInicialUSD)}`}/>
-          <BKPI label="Entradas" value={`Bs.${bancoFmt(entradasBs)}`} accent="green" Icon={ArrowUpCircle} sub={`≈ $${bancoFmt(entradasUSD)}`}/>
-          <BKPI label="Salidas" value={`Bs.${bancoFmt(salidasBs)}`} accent="red" Icon={ArrowDownCircle} sub={`≈ $${bancoFmt(salidasUSD)}`}/>
-          <BKPI label="Disponible" value={`Bs.${bancoFmt(disponibleBs)}`} accent={disponibleBs>=0?'green':'red'} Icon={PiggyBank} sub={`≈ $${bancoFmt(disponibleUSD)}`}/>
+          <BKPI label="Saldo Inicial" value={`$${bancoFmt(saldoInicialUSD)}`} accent="blue" Icon={Banknote}/>
+          <BKPI label="Entradas" value={`$${bancoFmt(entradasUSD)}`} accent="green" Icon={ArrowUpCircle}/>
+          <BKPI label="Salidas" value={`$${bancoFmt(salidasUSD)}`} accent="red" Icon={ArrowDownCircle}/>
+          <BKPI label="Disponible" value={`$${bancoFmt(disponibleUSD)}`} accent={disponibleUSD>=0?'green':'red'} Icon={PiggyBank}/>
         </div>
 
         <BCard title="Movimientos de Caja" subtitle="Efectivo Bs. y Divisas">
