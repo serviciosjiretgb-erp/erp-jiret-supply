@@ -4234,8 +4234,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const CxPRelacionadasView = () => {
     const [filtro,setFiltro]=useState('');
-    const filtrados=tercerosRel.filter(t=>!filtro||((t.nombre||'')+' '+(t.cedulaRif||'')).toUpperCase().includes(filtro.toUpperCase()));
+    const [abiertos,setAbiertos]=useState({});
+    const filtrados=tercerosRel.filter(t=>!filtro||((t.nombre||'')+' '+(t.cedulaRif||'')).toUpperCase().includes(filtro.toUpperCase()))
+      .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
     const total = filtrados.reduce((s,t)=>s+Math.max(0,saldoTercero(t)),0);
+    const toggle=(id)=>setAbiertos(p=>({...p,[id]:!p[id]}));
     const filasHtml=()=>filtrados.map((t,i)=>{
       const saldo=saldoTercero(t);
       return `<tr><td>${i+1}</td><td>${t.nombre}</td><td>${t.cedulaRif}</td><td>${t.cuentaContableCod?t.cuentaContableCod+' · '+t.cuentaContableNom:'—'}</td><td style="text-align:right;font-weight:bold;color:${saldo>0?'#dc2626':'#16a34a'}">$${bancoFmt(saldo)}</td></tr>`;
@@ -4259,7 +4262,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div>
         <div className="mb-6">
           <h2 className="text-xl font-black uppercase text-slate-900">Cuentas por Pagar Relacionadas</h2>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Saldo pendiente actual por tercero</p>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Saldo pendiente actual por tercero — orden alfabético</p>
         </div>
         <div className="bg-slate-900 rounded-2xl p-5 mb-6 flex items-center justify-between">
           <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Total Pendiente</span>
@@ -4276,24 +4279,53 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         {filtrados.length===0?(
           <BEmptyState icon={FileText} title="Sin terceros registrados" desc="Registre terceros en el submódulo Terceros"/>
         ):(
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-slate-50"><tr>
-                <BTh>Tercero</BTh><BTh>Cuenta Contable</BTh><BTh right>Saldo Actual</BTh>
-              </tr></thead>
-              <tbody>
-                {filtrados.map(t=>{
-                  const saldo = saldoTercero(t);
-                  return (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <BTd><span className="font-black">{t.nombre}</span><br/><span className="text-[10px] text-slate-400">{t.cedulaRif}</span></BTd>
-                      <BTd>{t.cuentaContableCod?`${t.cuentaContableCod} · ${t.cuentaContableNom}`:'—'}</BTd>
-                      <BTd right><span className={`font-mono font-black ${saldo>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span></BTd>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+            {filtrados.map(t=>{
+              const saldo=saldoTercero(t);
+              const movs=[...pagosRel].filter(p=>p.terceroId===t.id).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+              const abierto=!!abiertos[t.id];
+              const estado = saldo<=0.009 ? {label:'AL DÍA', cls:'bg-emerald-100 text-emerald-700'} : {label:'PENDIENTE', cls:'bg-orange-100 text-orange-700'};
+              let corrido=Number(t.saldoInicial||0);
+              return (
+                <div key={t.id}>
+                  <button onClick={()=>toggle(t.id)} className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 transition-colors text-left">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-orange-100 text-orange-600 font-black text-xs">{(t.nombre||'?').charAt(0).toUpperCase()}</div>
+                      <div className="min-w-0">
+                        <p className="font-black text-sm text-slate-900 truncate">{t.nombre}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{t.cedulaRif} · {movs.length} mov.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 flex-shrink-0">
+                      <span className={`font-mono font-black text-sm ${saldo>0.009?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</span>
+                      <span className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-full ${estado.cls}`}>{estado.label}</span>
+                      <ChevronDown size={16} className={`text-slate-400 transition-transform ${abierto?'rotate-180':''}`}/>
+                    </div>
+                  </button>
+                  {abierto&&(
+                    <div className="bg-slate-50 px-5 py-3">
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="text-slate-400 uppercase text-[9px] font-black">
+                          <td className="py-1">Fecha</td><td className="py-1">Concepto</td><td className="py-1">Tipo</td><td className="py-1 text-right">Monto</td><td className="py-1 text-right">Saldo</td>
+                        </tr></thead>
+                        <tbody>
+                          <tr className="text-slate-500"><td className="py-1">—</td><td className="py-1 font-bold">Saldo Inicial</td><td/><td className="py-1 text-right">—</td><td className="py-1 text-right font-bold">${bancoFmt(corrido)}</td></tr>
+                          {movs.map((p,i)=>{ corrido += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)); return (
+                            <tr key={i} className="border-t border-slate-200">
+                              <td className="py-1">{bancoDd(p.fecha)}</td><td className="py-1">{p.concepto}{p.referencia?` · ${p.referencia}`:''}</td>
+                              <td className="py-1"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo}</span></td>
+                              <td className={`py-1 text-right font-mono ${p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</td>
+                              <td className="py-1 text-right font-mono font-bold">${bancoFmt(corrido)}</td>
+                            </tr>
+                          );})}
+                          {movs.length===0&&<tr><td colSpan={5} className="py-2 text-center text-slate-400">Sin movimientos registrados aún</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -4329,90 +4361,140 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   );
 
   const EstadoCuentaRelacionadosView = () => {
-    const [terceroId, setTerceroId] = useState('');
-    const [modal, setModal] = useState(false);
+    const [filtro,setFiltro] = useState('');
+    const [desde,setDesde] = useState('');
+    const [hasta,setHasta] = useState('');
+    const [abiertos,setAbiertos] = useState({});
+    const [modalTercero, setModalTercero] = useState(null);
     const [busy, setBusy] = useState(false);
     const initMov = ()=>({tipo:'Egreso',monto:'',concepto:'',referencia:'',fecha:getTodayDate()});
     const [movForm, setMovForm] = useState(initMov());
-    const t = tercerosRel.find(x=>x.id===terceroId);
-    const movs = t ? [...pagosRel].filter(p=>p.terceroId===terceroId).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')) : [];
 
-    const openModal = ()=>{ setMovForm(initMov()); setModal(true); };
+    const toggle=(id)=>setAbiertos(p=>({...p,[id]:!p[id]}));
+    const openModal = (t)=>{ setModalTercero(t); setMovForm(initMov()); };
     const guardarMov = async()=>{
       if(!movForm.monto||Number(movForm.monto)<=0) return alert('Ingrese un monto válido');
       if(!movForm.concepto.trim()) return alert('Ingrese el concepto');
       setBusy(true);
       try{
         const id=bancoGid();
-        await setDoc(getDocRef('cxp_pagos_relacionados',id),{id,terceroId,terceroNombre:t.nombre,tipo:movForm.tipo,monto:Number(movForm.monto),concepto:movForm.concepto.trim(),referencia:movForm.referencia.trim(),fecha:movForm.fecha,ts:serverTimestamp()});
-        setModal(false);
+        await setDoc(getDocRef('cxp_pagos_relacionados',id),{id,terceroId:modalTercero.id,terceroNombre:modalTercero.nombre,tipo:movForm.tipo,monto:Number(movForm.monto),concepto:movForm.concepto.trim(),referencia:movForm.referencia.trim(),fecha:movForm.fecha,ts:serverTimestamp()});
+        setModalTercero(null);
       }catch(e){ alert('Error: '+e.message); } finally{ setBusy(false); }
     };
 
-    const filasHtml=(corridoIni)=>{
-      let c=corridoIni; const rows=[`<tr><td>—</td><td>Saldo Inicial</td><td>—</td><td style="text-align:right">—</td><td style="text-align:right;font-weight:bold">$${bancoFmt(c)}</td></tr>`];
-      movs.forEach(p=>{ c += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0));
-        rows.push(`<tr><td>${bancoDd(p.fecha)}</td><td>${p.concepto||''}${p.referencia?' · '+p.referencia:''}</td><td>${p.tipo}</td><td style="text-align:right;color:${p.tipo==='Ingreso'?'#16a34a':'#dc2626'}">${p.tipo==='Ingreso'?'+':'-'}$${bancoFmt(p.monto||0)}</td><td style="text-align:right;font-weight:bold">$${bancoFmt(c)}</td></tr>`);
-      });
-      return rows.join('');
-    };
+    const filtrados = tercerosRel.filter(t=>!filtro||((t.nombre||'')+' '+(t.cedulaRif||'')).toUpperCase().includes(filtro.toUpperCase()))
+      .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
+    const movsDe = (tid)=>[...pagosRel].filter(p=>p.terceroId===tid&&(!desde||p.fecha>=desde)&&(!hasta||p.fecha<=hasta)).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const totalGeneral = filtrados.reduce((s,t)=>s+saldoTercero(t),0);
+    const totalMovs = filtrados.reduce((s,t)=>s+movsDe(t.id).length,0);
+
+    const filasHtml=()=>filtrados.map(t=>{
+      let c=Number(t.saldoInicial||0);
+      const movs=movsDe(t.id);
+      const detalle=movs.map(p=>{ c+=(p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0));
+        return `<tr><td></td><td>${bancoDd(p.fecha)}</td><td>${p.concepto||''}${p.referencia?' · '+p.referencia:''}</td><td>${p.tipo}</td><td style="text-align:right">${p.tipo==='Ingreso'?'+':'-'}$${bancoFmt(p.monto||0)}</td><td style="text-align:right">$${bancoFmt(c)}</td></tr>`;
+      }).join('');
+      const saldo=saldoTercero(t);
+      return `<tr style="background:#0f172a;color:#fff"><td colspan="3"><strong>${t.nombre}</strong> · ${t.cedulaRif}</td><td></td><td></td><td style="text-align:right;color:#f97316;font-weight:bold">$${bancoFmt(saldo)}</td></tr>${detalle}`;
+    }).join('');
     const exportarPDF=()=>{
-      if(!t) return;
-      const saldoFinal=saldoTercero(t);
-      const html=bancoLetterheadOpen(`Estado de Cuenta — ${t.nombre}`,`RIF: ${t.cedulaRif} · Corte: ${getTodayDate()} · Saldo actual: $${bancoFmt(saldoFinal)}`)+
-        `<table><thead><tr><th>Fecha</th><th>Concepto</th><th>Tipo</th><th>Monto</th><th>Saldo</th></tr></thead><tbody>${filasHtml(Number(t.saldoInicial||0))}</tbody></table>`+
+      const html=bancoLetterheadOpen('Estado de Cuenta — Terceros Relacionados',`Corte: ${getTodayDate()} · ${filtrados.length} terceros · ${totalMovs} movimientos · Saldo total: $${bancoFmt(totalGeneral)}`)+
+        `<table><thead><tr><th></th><th>Fecha</th><th>Concepto</th><th>Tipo</th><th>Monto</th><th>Saldo</th></tr></thead><tbody>${filasHtml()}</tbody></table>`+
         bancoLetterheadClose(`Estado de Cuenta Relacionado · ${bancoDd(getTodayDate())}`);
       bancoPrintWindow(html);
+    };
+    const exportarExcel=()=>{
+      const html=bancoLetterheadOpen('Estado de Cuenta — Terceros Relacionados',`Corte: ${getTodayDate()}`)+
+        `<table><thead><tr><th></th><th>Fecha</th><th>Concepto</th><th>Tipo</th><th>Monto</th><th>Saldo</th></tr></thead><tbody>${filasHtml()}</tbody></table>`+
+        bancoLetterheadClose();
+      const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');
+      a.href=url;a.download=`estado_cuenta_relacionados_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
     };
 
     return (
       <div>
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-          <div>
-            <h2 className="text-xl font-black uppercase text-slate-900">Estado de Cuenta — Tercero Relacionado</h2>
-            <p className="text-xs text-slate-400 font-medium mt-0.5">Movimiento detallado, transacción por transacción</p>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-lg font-black uppercase text-slate-900 flex items-center gap-2"><BarChart3 size={18} className="text-orange-500"/> Estado de Cuenta — Terceros Relacionados</h2>
+              <p className="text-xs text-slate-400 font-medium mt-0.5">{filtrados.length} terceros · {totalMovs} movimientos · Saldo total: <span className={`font-black ${totalGeneral>0?'text-red-600':'text-emerald-600'}`}>${bancoFmt(totalGeneral)}</span></p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                <input value={filtro} onChange={e=>setFiltro(e.target.value)} placeholder="Buscar tercero..." className="border-2 border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs outline-none focus:border-orange-400 w-40"/>
+              </div>
+              <input type="date" value={desde} onChange={e=>setDesde(e.target.value)} className="border-2 border-slate-200 rounded-xl px-2 py-2 text-xs outline-none focus:border-orange-400"/>
+              <input type="date" value={hasta} onChange={e=>setHasta(e.target.value)} className="border-2 border-slate-200 rounded-xl px-2 py-2 text-xs outline-none focus:border-orange-400"/>
+              <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><FileText size={13}/> PDF</button>
+              <button onClick={exportarExcel} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><Download size={13}/> Excel</button>
+            </div>
           </div>
-          {t&&<div className="flex gap-2">
-            <button onClick={openModal} className="flex items-center gap-1.5 px-3 py-2.5 text-white rounded-xl text-[10px] font-black uppercase hover:opacity-90" style={{background:'#f97316'}}><Plus size={13}/> Registrar Movimiento</button>
-            <button onClick={exportarPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><FileText size={13}/> PDF</button>
-          </div>}
         </div>
-        <div className="max-w-sm mb-6">
-          <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400" value={terceroId} onChange={e=>setTerceroId(e.target.value)}>
-            <option value="">— Seleccione un tercero —</option>
-            {tercerosRel.map(x=><option key={x.id} value={x.id}>{x.nombre}</option>)}
-          </select>
-        </div>
-        {!t?(
-          <BEmptyState icon={Users} title="Seleccione un tercero" desc="Elija un tercero arriba para ver su estado de cuenta"/>
+
+        {filtrados.length===0?(
+          <BEmptyState icon={Users} title="Sin terceros registrados" desc="Registre terceros en el submódulo Terceros"/>
         ):(
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-slate-50"><tr><BTh>Fecha</BTh><BTh>Concepto</BTh><BTh>Tipo</BTh><BTh right>Monto</BTh><BTh right>Saldo</BTh></tr></thead>
-              <tbody>
-                {(()=>{ let corrido=Number(t.saldoInicial||0); return (<>
-                  <tr className="border-t border-slate-100 bg-slate-50">
-                    <BTd>—</BTd><BTd><span className="font-black">Saldo Inicial</span></BTd><BTd>—</BTd><BTd right mono>—</BTd><BTd right mono>${bancoFmt(corrido)}</BTd>
-                  </tr>
-                  {movs.map((p,i)=>{ corrido += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)); return (
-                    <tr key={i} className="border-t border-slate-100">
-                      <BTd>{bancoDd(p.fecha)}</BTd><BTd>{p.concepto||''}{p.referencia?` · ${p.referencia}`:''}</BTd>
-                      <BTd><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo}</span></BTd>
-                      <BTd right mono className={p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</BTd>
-                      <BTd right mono>${bancoFmt(corrido)}</BTd>
-                    </tr>
-                  );})}
-                </>); })()}
-              </tbody>
-            </table>
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+            {filtrados.map(t=>{
+              const saldo=saldoTercero(t);
+              const movs=movsDe(t.id);
+              const abierto=!!abiertos[t.id];
+              let corrido=Number(t.saldoInicial||0);
+              return (
+                <div key={t.id}>
+                  <div className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 transition-colors">
+                    <button onClick={()=>toggle(t.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-orange-100 text-orange-600 font-black text-xs">{(t.nombre||'?').charAt(0).toUpperCase()}</div>
+                      <div className="min-w-0">
+                        <p className="font-black text-sm text-slate-900 truncate">{t.nombre}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{t.cedulaRif} · {movs.length} doc(s)</p>
+                      </div>
+                    </button>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="text-right">
+                        <p className="text-[8px] font-black uppercase text-slate-400">Saldo</p>
+                        <p className={`font-mono font-black text-sm ${saldo>0.009?'text-red-600':'text-emerald-600'}`}>${bancoFmt(saldo)}</p>
+                      </div>
+                      <button onClick={()=>openModal(t)} className="p-2 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100" title="Registrar Movimiento"><Plus size={14}/></button>
+                      <button onClick={()=>toggle(t.id)}><ChevronDown size={16} className={`text-slate-400 transition-transform ${abierto?'rotate-180':''}`}/></button>
+                    </div>
+                  </div>
+                  {abierto&&(
+                    <div className="bg-slate-50 px-5 py-3">
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="text-slate-400 uppercase text-[9px] font-black">
+                          <td className="py-1">Fecha</td><td className="py-1">Concepto</td><td className="py-1">Tipo</td><td className="py-1 text-right">Monto</td><td className="py-1 text-right">Saldo</td>
+                        </tr></thead>
+                        <tbody>
+                          <tr className="text-slate-500"><td className="py-1">—</td><td className="py-1 font-bold">Saldo Inicial</td><td/><td className="py-1 text-right">—</td><td className="py-1 text-right font-bold">${bancoFmt(corrido)}</td></tr>
+                          {movs.map((p,i)=>{ corrido += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)); return (
+                            <tr key={i} className="border-t border-slate-200">
+                              <td className="py-1">{bancoDd(p.fecha)}</td><td className="py-1">{p.concepto}{p.referencia?` · ${p.referencia}`:''}</td>
+                              <td className="py-1"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo}</span></td>
+                              <td className={`py-1 text-right font-mono ${p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</td>
+                              <td className="py-1 text-right font-mono font-bold">${bancoFmt(corrido)}</td>
+                            </tr>
+                          );})}
+                          {movs.length===0&&<tr><td colSpan={5} className="py-2 text-center text-slate-400">Sin movimientos en el rango seleccionado</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
-        {modal&&(
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setModal(false)}>
+
+        {modalTercero&&(
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setModalTercero(null)}>
             <div className="bg-white rounded-2xl max-w-md w-full" onClick={e=>e.stopPropagation()}>
               <div className="px-5 py-4 flex items-center justify-between" style={{background:'#0f172a'}}>
-                <p className="text-white font-black text-sm uppercase">Registrar Movimiento — {t?.nombre}</p>
-                <button onClick={()=>setModal(false)} className="text-slate-400 hover:text-white"><X size={18}/></button>
+                <p className="text-white font-black text-sm uppercase">Registrar Movimiento — {modalTercero.nombre}</p>
+                <button onClick={()=>setModalTercero(null)} className="text-slate-400 hover:text-white"><X size={18}/></button>
               </div>
               <div className="p-5 space-y-3">
                 <div>
@@ -4442,7 +4524,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 </div>
               </div>
               <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
-                <button onClick={()=>setModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-slate-500 bg-slate-100 hover:bg-slate-200">Cancelar</button>
+                <button onClick={()=>setModalTercero(null)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-slate-500 bg-slate-100 hover:bg-slate-200">Cancelar</button>
                 <button onClick={guardarMov} disabled={busy} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white disabled:opacity-50" style={{background:'#f97316'}}>{busy?'Guardando...':'Guardar'}</button>
               </div>
             </div>
