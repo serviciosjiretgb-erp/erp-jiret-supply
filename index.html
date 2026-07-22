@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="es">
-<head>
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -9,9 +9,9 @@
     <meta name="apple-mobile-web-app-title" content="G&amp;B ERP" />
     <meta name="application-name" content="G&amp;B ERP" />
     <meta name="theme-color" content="#000000" />
-    <link rel="icon" type="image/png" href="/assets/icon-192-BDH5eWaL.png" />
-    <link rel="apple-touch-icon" href="/assets/icon-192-BDH5eWaL.png" />
-    <link rel="manifest" href="/assets/manifest-CrV-FhRO.json" />
+    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
     <title>G&amp;B Supply — ERP</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -19,7 +19,7 @@
     <!-- React + ReactDOM UMD (needed before App.jsx loads) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- prop-types UMD (Recharts/react-smooth read window.PropTypes — React 18 no longer bundles it) -->
+    <!-- prop-types UMD (Recharts/react-smooth reads window.PropTypes — React 18 no longer bundles it) -->
     <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.js"></script>
     <!-- Recharts UMD -->
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
@@ -30,10 +30,10 @@
       html, body { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
       body { padding-bottom: env(safe-area-inset-bottom); }
     </style>
-    <script type="module" crossorigin src="/assets/index-DqC6zbko.js"></script>
-</head>
-<body>
+  </head>
+  <body>
     <div id="root"></div>
+    <script type="module" src="/Aplicación.jsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
@@ -49,5 +49,5 @@
       });
       window.addEventListener('appinstalled', () => { window.__pwaInstallPrompt = null; });
     </script>
-</body>
+  </body>
 </html>
