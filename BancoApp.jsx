@@ -2467,6 +2467,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [monedaVista, setMonedaVista] = useState('USD');
     const [searchTercero, setSearchTercero] = useState('');
     const [searchBanco,   setSearchBanco]   = useState('');
+    const [searchDestino, setSearchDestino] = useState('');
     const [filtC,    setFiltC]   = useState('');
     const [filtDesde,setFiltD]   = useState(bancoMesActual()+'-01');
     const [filtHasta,setFiltH]   = useState(getTodayDate());
@@ -2514,6 +2515,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       );
     };
     const initF = ()=>({fecha:getTodayDate(),tipo:'Ingreso',cuentaId:'',cuentaDestinoId:'',
+      monedaOp:'BS',montoOp:'',
+      aplicaComision:false,comisionMonto:'',comisionCtaId:'',
       origenIngreso:'Venta',motivoEgreso:'Pago Proveedor',
       concepto:'',referencia:'',tasa:String(tasaActiva),montoNativo:'',
       aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',
@@ -2525,7 +2528,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [form, setForm] = useState(initF());
 
     const cuentaSel  = cuentas.find(c=>c.id===form.cuentaId);
-    const cuentaDest = cuentas.find(c=>c.id===form.cuentaDestinoId);
+    const cuentaDestBanco = cuentas.find(c=>c.id===form.cuentaDestinoId);
+    const cuentaDestCaja  = cajas.find(c=>c.id===form.cuentaDestinoId);
+    const destinoEsCaja   = !cuentaDestBanco && !!cuentaDestCaja;
+    // cuentaDest normalizado: mismos campos (banco/moneda/saldo/cuentaContableCod/cuentaContableNom) sin importar si es banco o caja
+    const cuentaDest = cuentaDestBanco ? cuentaDestBanco : (cuentaDestCaja ? {
+      id:cuentaDestCaja.id, banco:cuentaDestCaja.nombre, moneda:cuentaDestCaja.moneda,
+      saldo:cuentaDestCaja.saldoInicial, cuentaContableCod:cuentaDestCaja.cuentaContableCod, cuentaContableNom:cuentaDestCaja.cuentaContableNom
+    } : null);
     const bs         = cuentaSel?.moneda==='BS';
     const tasa       = Number(form.tasa)||tasaActiva;
     const mNat       = Number(form.montoNativo)||0;
@@ -2582,6 +2592,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const esNotaAjuste=form.tipo==='Nota de Débito'||form.tipo==='Nota de Crédito';
 
         let todasLineas=[];
+        let comisionUSD=0, comisionBs=0;
 
         if(esNotaAjuste) {
           // Nota de Débito: gasto/comisión → banco disminuye
@@ -2603,7 +2614,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             ];
           }
         } else if(esTransferencia && cuentaDest) {
-          // Transferencia/Traslado de Fondo banco a banco: banco origen→Haber, banco destino→Debe
+          // Transferencia/Traslado de Fondo banco a banco (o banco a caja): banco origen→Haber, destino→Debe
           const bsOrigen=esMonedaLocal?montoBs:montoUSD*tasa;
           const usdOrigen=esMonedaLocal?montoBs/tasa:montoUSD;
           // Leer cuenta contable con fallback al campo unificado 'cuentaContable' (cod · nom)
@@ -2613,10 +2624,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             alert('Error: El banco origen o destino no tiene cuenta contable asignada. Configúrela en Cuentas Bancarias.');
             setBusy(false); return;
           }
+          comisionUSD=(destinoEsCaja&&form.aplicaComision)?Number(form.comisionMonto||0)*(form.monedaOp==='BS'?(1/tasa):1):0;
+          comisionBs=comisionUSD*tasa;
+          if(comisionUSD>0&&!form.comisionCtaId){
+            alert('Seleccione la cuenta contable de la comisión/rebancarización.');
+            setBusy(false); return;
+          }
           todasLineas=[
-            {codigo:ctaDest.cod,cuenta:ctaDest.nom||`Banco ${cuentaDest.banco||'Destino'}`,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen,haberBs:0,debeUSD:usdOrigen,haberUSD:0},
+            {codigo:ctaDest.cod,cuenta:ctaDest.nom||`Banco ${cuentaDest.banco||'Destino'}`,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
             {codigo:ctaOrig.cod,cuenta:ctaOrig.nom||`Banco ${cuenta.banco}`,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:bsOrigen,debeUSD:0,haberUSD:usdOrigen},
           ];
+          if(comisionUSD>0){
+            const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId)||{};
+            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Gasto de rebancarización',tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs,haberBs:0,debeUSD:comisionUSD,haberUSD:0});
+          }
         } else {
           // Banco: Debe si Ingreso, Haber si Egreso o Traslado
           const bancoEnDebe = esIngreso && !esTraslado;
@@ -2676,9 +2697,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         });
         batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:nuevoSaldo});
         if((form.tipo==='Transferencia'||form.tipo==='Traslado de Fondo')&&cuentaDest) {
-          batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+mNat});
+          const comisionNativo=esMonedaLocal?comisionBs:comisionUSD;
+          const netoNativo=mNat-comisionNativo;
+          const netoBs=esMonedaLocal?montoBs-comisionBs:(montoBs-comisionBs);
+          const netoUSD=montoUSD-comisionUSD;
           const idDestino=bancoGid();
-          batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Transferencia',concepto:`Transferencia recibida desde ${cuenta.banco} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,montoNativo:mNat,montoBs,montoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+mNat,estatus:'No Conciliado',ts:serverTimestamp()});
+          if(destinoEsCaja){
+            batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativo});
+            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:`Traslado recibido desde ${cuenta.banco} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,estatus:'No Conciliado',ts:serverTimestamp()});
+          } else {
+            batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativo});
+            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Transferencia',concepto:`Transferencia recibida desde ${cuenta.banco} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,montoNativo:netoNativo,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativo,estatus:'No Conciliado',ts:serverTimestamp()});
+          }
         }
         if(factura&&form.cerrarCxC){
           const ns=Math.max(0,factura.saldoUSD-montoUSD);
@@ -3401,15 +3431,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 <div className="grid grid-cols-12 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-100">
     {/* ── Fila 1: Datos Básicos ── */}
   <div className="col-span-12 md:col-span-3">
-    <BFG label="Cuenta Bancaria">
-      <CuentaSelector value={form.cuentaId} onChange={v=>setForm({...form,cuentaId:v})} label="Cuenta Bancaria"/>
-    </BFG>
+    <CuentaSelector value={form.cuentaId} onChange={v=>{
+        const nuevaCuenta=cuentas.find(c=>c.id===v);
+        const nuevoBs=nuevaCuenta?.moneda==='BS';
+        const usdNum=Number(form.montoUSD)||0;
+        const nativo=nuevoBs?(usdNum*(Number(form.tasa)||tasaActiva)):usdNum;
+        setForm({...form,cuentaId:v,montoNativo:String(nativo)});
+      }} label={form.tipo==='Traslado de Fondo'?'Banco Origen':'Cuenta Bancaria'}/>
   </div>
     <div className="col-span-12 md:col-span-3">
     <BFG label="Tipo de Operación">
       <select className={sel} value={form.tipo} onChange={e=>setForm({...form,tipo:e.target.value})}>
         <option value="Ingreso">Ingreso</option>
         <option value="Egreso">Egreso</option>
+        <option value="Traslado de Fondo">Traslado de Fondos</option>
       </select>
     </BFG>
   </div>
@@ -3421,48 +3456,106 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   </div>
 
   <div className="col-span-12 md:col-span-4">
-    <BFG label="Tercero / Referencia">
+    <BFG label="Referencia">
       <input className={inp} value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})} placeholder="Ej: Juan Pérez / REF-123"/>
     </BFG>
   </div>
   {/* ── Fila 2: Contabilidad, Monto y Tasa ── */}
+  {form.tipo==='Traslado de Fondo'&&(
   <div className="col-span-12 md:col-span-4 mt-2">
-    <BFG label="Cuenta Contable (Contrapartida)">
-      <select className={sel} value={form.cuentaContable} onChange={e=>setForm({...form,cuentaContable:e.target.value})}>
-        <option value="">— Seleccione Cuenta —</option>
-        {cuentasContables && cuentasContables.map(cc => (
-          <option key={cc.id} value={cc.id}>{cc.codigo} - {cc.nombre}</option>
+      <BFG label="Banco o Caja Destino">
+        <div className="space-y-2">
+          <div className="relative">
+            <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input value={searchDestino} onChange={e=>setSearchDestino(e.target.value)} placeholder="Buscar banco o caja..." className={`${inp} pl-8`}/>
+          </div>
+          <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,comisionMonto:'',aplicaComision:false})}>
+            <option value="">— Seleccione destino —</option>
+            <optgroup label="🏦 Bancos">
+              {cuentas.filter(c=>c.id!==form.cuentaId&&esBancario(c)&&(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase()))).map(c=>(
+                <option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldo)}</option>
+              ))}
+            </optgroup>
+            <optgroup label="💰 Cajas">
+              {cajas.filter(c=>!searchDestino||c.nombre.toUpperCase().includes(searchDestino.toUpperCase())).map(c=>(
+                <option key={c.id} value={c.id}>{c.nombre} · {c.moneda==='BS'?'Bs.':'$'}</option>
+              ))}
+            </optgroup>
+          </select>
+        </div>
+      </BFG>
+  </div>
+  )}
+  <div className={`col-span-12 ${form.tipo==='Traslado de Fondo'?'md:col-span-8':''} mt-2 bg-white rounded-xl border border-slate-200 p-3`}>
+    <div className="flex items-center justify-between mb-2">
+      <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Moneda de la Operación</span>
+      <div className="flex gap-1.5">
+        {['BS','USD'].map(m=>(
+          <button key={m} onClick={()=>{
+            const tasaN=Number(form.tasa)||tasaActiva; const montoOpN=Number(form.montoOp)||0;
+            const usdEq=m==='USD'?montoOpN:(montoOpN/tasaN);
+            const nativo=bs?(usdEq*tasaN):usdEq;
+            setForm({...form,monedaOp:m,montoUSD:String(usdEq),montoNativo:String(nativo)});
+          }} className={`px-3 py-1 rounded-full text-[10px] font-black uppercase transition-all ${form.monedaOp===m?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{m==='BS'?'Bs':'USD'}</button>
         ))}
-      </select>
-    </BFG>
-  </div>
-    <div className="col-span-12 md:col-span-4 mt-2">
-    <BFG label="Monto Divisas (USD)">
-      <div className="relative">
-        <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">$</span>
-        <input type="number" step="0.01" min="0.01" className={`${inp} pl-8 font-black text-emerald-600 bg-white`} value={form.montoUSD} onChange={e=>setForm({...form,montoUSD:e.target.value})} placeholder="0.00"/>
       </div>
-    </BFG>
-  </div>
-
-  <div className="col-span-12 md:col-span-4 mt-2 flex gap-2">
-    <div className="flex-1">
-      <BFG label="Tasa BCV">
+    </div>
+    <div className="grid grid-cols-3 gap-2">
+      <div>
+        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto ({form.monedaOp==='BS'?'Bs':'USD'})</label>
+        <input type="number" step="0.01" min="0.01" className={`${inp} font-black text-emerald-600 bg-white`} value={form.montoOp} onChange={e=>{
+          const v=e.target.value; const montoOpN=Number(v)||0; const tasaN=Number(form.tasa)||tasaActiva;
+          const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
+          const nativo=bs?(usdEq*tasaN):usdEq;
+          setForm({...form,montoOp:v,montoUSD:String(usdEq),montoNativo:String(nativo)});
+        }} placeholder="0.00"/>
+      </div>
+      <div>
+        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV</label>
         <div className="relative">
-          <input type="number" step="0.01" className={`${inp} bg-white`} value={form.tasa} onChange={e=>setForm({...form,tasa:e.target.value})}/>
+          <input type="number" step="0.01" className={`${inp} bg-white`} value={form.tasa} onChange={e=>{
+            const v=e.target.value; const tasaN=Number(v)||tasaActiva; const montoOpN=Number(form.montoOp)||0;
+            const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
+            const nativo=bs?(usdEq*tasaN):usdEq;
+            setForm({...form,tasa:v,montoUSD:String(usdEq),montoNativo:String(nativo)});
+          }}/>
           <RefreshCw size={14} className="absolute right-3 top-2.5 text-blue-400"/>
         </div>
-      </BFG>
-    </div>
-    <div className="flex-1">
-      <BFG label="Equiv. (Bs)">
+      </div>
+      <div>
+        <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Equivalente ({form.monedaOp==='BS'?'USD':'Bs'})</label>
         <div className="w-full bg-slate-900 text-white rounded-lg p-2 flex items-center justify-center h-[38px] shadow-inner">
-           <span className="font-mono font-bold text-sm">Bs. {bancoFmt((form.montoUSD || 0) * (form.tasa || 1))}</span>
+          <span className="font-mono font-bold text-sm">{form.monedaOp==='BS'?'$ '+bancoFmt(Number(form.montoUSD)||0):'Bs. '+bancoFmt((Number(form.montoUSD)||0)*(Number(form.tasa)||1))}</span>
         </div>
-      </BFG>
+      </div>
     </div>
   </div>
 </div>
+{form.tipo==='Traslado de Fondo'&&destinoEsCaja&&(
+  <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 mt-3">
+    <label className="flex items-center gap-2 text-[10px] font-black uppercase text-amber-800 mb-2 cursor-pointer">
+      <input type="checkbox" checked={form.aplicaComision} onChange={e=>setForm({...form,aplicaComision:e.target.checked,comisionMonto:e.target.checked?form.comisionMonto:''})} className="accent-amber-600"/>
+      Hubo comisión o gasto de rebancarización
+    </label>
+    {form.aplicaComision&&(
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Monto Comisión ({form.monedaOp==='BS'?'Bs':'USD'})</label>
+          <input type="number" step="0.01" className={`${inp} bg-white`} value={form.comisionMonto} onChange={e=>setForm({...form,comisionMonto:e.target.value})}/>
+        </div>
+        <div>
+          <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Cuenta Contable del Gasto</label>
+          <select className={`${sel} bg-white`} value={form.comisionCtaId} onChange={e=>setForm({...form,comisionCtaId:e.target.value})}>
+            <option value="">— Seleccione cuenta —</option>
+            {contCuentas.filter(c=>c.nombre?.toUpperCase().includes('COMIS')||c.nombre?.toUpperCase().includes('BANCARI')||c.nombre?.toUpperCase().includes('FINANC')).map(c=>(
+              <option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    )}
+  </div>
+)}
                 {/* ── Concepto ── */}
                 <BFG label="Concepto / Descripción" full>
                   <input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})} placeholder="Describa el motivo del movimiento..."/>
