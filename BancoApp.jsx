@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   LayoutDashboard, Building2, TrendingUp, List, BookOpen,
   ArrowLeftRight, Wallet, ArrowRightLeft, Scale, Calculator,
@@ -5002,6 +5002,118 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     );
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  // 5a-bis. LIMPIAR DUPLICADOS DE CAJA (cobros/pagos que quedaron registrados
+  // dos veces por el bug ya corregido en Aplicación.jsx)
+  // ══════════════════════════════════════════════════════════════════════
+  const LimpiarDuplicadosCajaView = () => {
+    const [selec, setSelec] = useState({});
+    const [busy, setBusy] = useState(false);
+    const [pwd, setPwd] = useState('');
+    const [pwdErr, setPwdErr] = useState(false);
+    const [confirmando, setConfirmando] = useState(false);
+    const [hecho, setHecho] = useState(0);
+
+    // Un caja_movimientos es el duplicado del bug si: (a) su id tiene el prefijo que generaba
+    // el código ya corregido (MVC- para cobros, MOVC-PAGCXP-/MOVC-ANTCXP- para pagos), Y
+    // (b) existe un cobro/pago real (cobros_cxc / procura_pagos_cxp) con ese mismo grupo —
+    // esa es la fuente de verdad que BancoApp ya usa para armar el movimiento automáticamente.
+    const gruposCobro = useMemo(()=>new Set((cobrosCajaCxc||[]).map(c=>c.grupoCobroId).filter(Boolean)),[cobrosCajaCxc]);
+    const gruposPago  = useMemo(()=>new Set((pagosCajaCxP ||[]).map(p=>p.grupoPagoId ).filter(Boolean)),[pagosCajaCxP]);
+    const duplicados = useMemo(()=>{
+      return (movCaja||[]).filter(m=>{
+        if(/^MVC-/.test(m.id||''))              return !!m.grupoCobroId && gruposCobro.has(m.grupoCobroId);
+        if(/^MOVC-(PAGCXP|ANTCXP)-/.test(m.id||'')) return !!m.grupoPagoId  && gruposPago.has(m.grupoPagoId);
+        return false;
+      }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+    },[movCaja,gruposCobro,gruposPago]);
+
+    useEffect(()=>{
+      const init={}; duplicados.forEach(d=>{init[d.id]=true;}); setSelec(init);
+      // eslint-disable-next-line
+    },[duplicados.map(d=>d.id).join(',')]);
+
+    const seleccionados = duplicados.filter(d=>selec[d.id]);
+    const totalUSD = seleccionados.reduce((s,d)=>s+Number(d.montoUSD||0),0);
+    const cajaNom = (id)=>cajas.find(c=>c.id===id)?.nombre||id||'—';
+
+    const ejecutarBorrado = async()=>{
+      if(!await validarClaveAdmin(pwd)){ setPwdErr(true); setTimeout(()=>setPwdErr(false),1500); return; }
+      setBusy(true);
+      try{
+        const batch=writeBatch(_bancoDB);
+        seleccionados.forEach(d=>batch.delete(getDocRef('caja_movimientos',d.id)));
+        await batch.commit();
+        setHecho(seleccionados.length); setConfirmando(false); setPwd('');
+      } finally { setBusy(false); }
+    };
+
+    return (
+      <div>
+        <div className="mb-6">
+          <h2 className="text-xl font-black uppercase text-slate-900 flex items-center gap-2"><AlertTriangle size={18} className="text-amber-500"/> Limpiar Duplicados de Caja</h2>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Cobros y pagos que quedaron registrados dos veces por un bug ya corregido — revisa y confirma antes de borrar.</p>
+        </div>
+
+        {hecho>0&&(
+          <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 mb-5 flex items-center gap-3">
+            <CheckCircle size={20} className="text-emerald-500"/>
+            <p className="text-sm font-black text-emerald-700">{hecho} duplicado(s) eliminado(s) correctamente.</p>
+          </div>
+        )}
+
+        {duplicados.length===0?(
+          <BEmptyState icon={CheckCircle} title="No se encontraron duplicados" desc="No hay movimientos de caja que coincidan con el patrón del bug ya corregido."/>
+        ):(<>
+          <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 mb-4 flex items-center justify-between flex-wrap gap-3">
+            <p className="text-xs font-bold text-amber-800">{duplicados.length} posible(s) duplicado(s) encontrado(s) · {seleccionados.length} seleccionado(s) · Total: ${bancoFmt(totalUSD)}</p>
+            <div className="flex gap-2">
+              <button onClick={()=>setSelec(Object.fromEntries(duplicados.map(d=>[d.id,true])))} className="text-[10px] font-black uppercase text-blue-600 hover:underline">Marcar todos</button>
+              <button onClick={()=>setSelec({})} className="text-[10px] font-black uppercase text-slate-500 hover:underline">Desmarcar todos</button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden mb-5">
+            <table className="w-full text-[11px]">
+              <thead className="bg-slate-50"><tr>
+                <BTh></BTh><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Caja</BTh><BTh>Concepto / Tercero</BTh><BTh right>Monto USD</BTh><BTh>ID (patrón detectado)</BTh>
+              </tr></thead>
+              <tbody>
+                {duplicados.map(d=>(
+                  <tr key={d.id} className={`border-t border-slate-100 ${selec[d.id]?'bg-amber-50/40':''}`}>
+                    <BTd><input type="checkbox" checked={!!selec[d.id]} onChange={e=>setSelec(p=>({...p,[d.id]:e.target.checked}))}/></BTd>
+                    <BTd>{bancoDd(d.fecha)}</BTd>
+                    <BTd><BBadge v={d.tipo==='Ingreso'?'green':'red'}>{d.tipo}</BBadge></BTd>
+                    <BTd>{cajaNom(d.cajaId)}</BTd>
+                    <BTd className="max-w-[220px] truncate">{d.concepto}{d.terceroNombre?` · ${d.terceroNombre}`:''}</BTd>
+                    <BTd right mono>${bancoFmt(d.montoUSD||0)}</BTd>
+                    <BTd className="font-mono text-[9px] text-slate-400">{d.id}</BTd>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {!confirmando?(
+            <button disabled={seleccionados.length===0} onClick={()=>setConfirmando(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded-xl text-xs font-black uppercase hover:bg-red-700 disabled:opacity-40">
+              <Trash2 size={14}/> Eliminar {seleccionados.length} seleccionado(s)
+            </button>
+          ):(
+            <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 max-w-md">
+              <p className="text-xs font-black text-red-700 mb-2">Esta acción no se puede deshacer. Ingresa la clave de administrador para confirmar.</p>
+              <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} placeholder="Clave admin"
+                className={`w-full border-2 rounded-xl px-3 py-2 text-xs font-bold outline-none mb-3 ${pwdErr?'border-red-500':'border-slate-200 focus:border-red-400'}`}/>
+              <div className="flex gap-2">
+                <button onClick={()=>{setConfirmando(false);setPwd('');}} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-slate-500 bg-slate-100 hover:bg-slate-200">Cancelar</button>
+                <button onClick={ejecutarBorrado} disabled={busy} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">{busy?'Eliminando...':'Confirmar Eliminación'}</button>
+              </div>
+            </div>
+          )}
+        </>)}
+      </div>
+    );
+  };
 
   // ══════════════════════════════════════════════════════════════════════
   // 5b. RELACIÓN DE VALES (dinero en caja aún no recibido físicamente)
@@ -6012,7 +6124,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                                                     {id:'arqueo',        label:'Arqueo de Caja',   icon:Calculator}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_caja',  label:'General de Caja',  icon:PiggyBank},
                                                     {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText}] },
-    { group:'Config.',     color:'#64748b', items:[{id:'tasas',          label:'Tasas de Cambio',  icon:Globe}] },
+    { group:'Config.',     color:'#64748b', items:[{id:'tasas',          label:'Tasas de Cambio',  icon:Globe},
+                                                    {id:'limpiar_dup',   label:'Limpiar Duplicados',icon:AlertTriangle}] },
   ];
   const navGroupsCxP = [
     { group:'Terceros',    color:'#f97316', items:[{id:'terceros_rel', label:'Terceros',            icon:Users},
@@ -6034,7 +6147,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     rpt_libro:<RepLibroDiarioView/>,
     tasas:<TasasView/>,
     terceros_rel:<TercerosRelacionadosView/>, cxp_rel:<CxPRelacionadasView/>,
-    hist_pago_rel:<HistorialPagoRelacionadosView/>, edo_cta_rel:<EstadoCuentaRelacionadosView/>
+    hist_pago_rel:<HistorialPagoRelacionadosView/>, edo_cta_rel:<EstadoCuentaRelacionadosView/>,
+    limpiar_dup:<LimpiarDuplicadosCajaView/>
   };
 
   // ── Portal selector — pantalla de bienvenida ──────────────────────
