@@ -7446,11 +7446,14 @@ const HistorialPagosView = ({
   const [editAplicaciones, setEditAplicaciones] = useState([]);
   const [editFacBusq, setEditFacBusq] = useState('');
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
+  const [cajasEfectivo, setCajasEfectivo] = useState([]);
+  const [histFiltCuenta, setHistFiltCuenta] = useState('');
   const HIST_PER_PAGE = 50;
 
   useEffect(()=>{
-    const u = onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancarias(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return u;
+    const u1 = onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancarias(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2 = onSnapshot(getColRef('caja_cuentas'), s=>setCajasEfectivo(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();};
   }, []);
 
   const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
@@ -7479,6 +7482,7 @@ const HistorialPagosView = ({
     }
     if(histFiltMes && !(p.fecha||'').startsWith(histFiltMes)) return false;
     if(histFiltMetodo!=='TODOS' && (p.metodo||'')!==histFiltMetodo) return false;
+    if(histFiltCuenta && (p.cuentaId||'')!==histFiltCuenta) return false;
     return true;
   });
 
@@ -7736,7 +7740,17 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
               className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
               {metodos.map(m=><option key={m} value={m}>{m==='TODOS'?'Todos los métodos':m}</option>)}
             </select>
-            {(histSearch||histFiltMes||histFiltMetodo!=='TODOS')&&<button onClick={()=>{setHistSearch('');setHistFiltMes('');setHistFiltMetodo('TODOS');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+            <select value={histFiltCuenta} onChange={e=>{setHistFiltCuenta(e.target.value);setHistPage(0);}}
+              className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
+              <option value="">Todos los bancos/cajas</option>
+              {cuentasBancarias.length>0&&<optgroup label="Bancos">
+                {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+              </optgroup>}
+              {cajasEfectivo.length>0&&<optgroup label="Cajas">
+                {cajasEfectivo.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
+              </optgroup>}
+            </select>
+            {(histSearch||histFiltMes||histFiltMetodo!=='TODOS'||histFiltCuenta)&&<button onClick={()=>{setHistSearch('');setHistFiltMes('');setHistFiltMetodo('TODOS');setHistFiltCuenta('');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
           </div>
         </div>
 
@@ -10054,6 +10068,7 @@ function App() {
   const [histSearch, setHistSearch] = useState('');
   const [histFiltFecha, setHistFiltFecha] = useState('');
   const [histFiltMetodo, setHistFiltMetodo] = useState('TODOS');
+  const [histFiltCuenta, setHistFiltCuenta] = useState('');
   const HIST_PER_PAGE = 25;
   // Estado de Cuenta states
   const [ecSearch, setEcSearch] = useState('');
@@ -26886,6 +26901,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   if(histSearch && !((cb.neDocumento||cb.neId||'').toLowerCase().includes(histSearch.toLowerCase()) || (cb.clientName||'').toLowerCase().includes(histSearch.toLowerCase()) || (cb.referencia||'').toLowerCase().includes(histSearch.toLowerCase()))) return false;
                   if(histFiltFecha && !(cb.fecha||'').startsWith(histFiltFecha)) return false;
                   if(histFiltMetodo!=='TODOS' && (cb.metodo||'')!==histFiltMetodo) return false;
+                  if(histFiltCuenta && (cb.cuentaBancariaId||'')!==histFiltCuenta) return false;
                   return true;
                 });
                 const totalPages = Math.ceil(histFiltered.length / HIST_PER_PAGE);
@@ -26947,7 +26963,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
                         {metodos.map(m=><option key={m} value={m}>{m==='TODOS'?'Todos los métodos':m}</option>)}
                       </select>
-                      {(histSearch||histFiltFecha||histFiltMetodo!=='TODOS')&&<button onClick={()=>{setHistSearch('');setHistFiltFecha('');setHistFiltMetodo('TODOS');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+                      <select value={histFiltCuenta} onChange={e=>{setHistFiltCuenta(e.target.value);setHistPage(0);}}
+                        className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
+                        <option value="">Todos los bancos/cajas</option>
+                        {cuentasBanco.length>0&&<optgroup label="Bancos">
+                          {cuentasBanco.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                        </optgroup>}
+                        {cajasCuentas.length>0&&<optgroup label="Cajas">
+                          {cajasCuentas.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
+                        </optgroup>}
+                      </select>
+                      {(histSearch||histFiltFecha||histFiltMetodo!=='TODOS'||histFiltCuenta)&&<button onClick={()=>{setHistSearch('');setHistFiltFecha('');setHistFiltMetodo('TODOS');setHistFiltCuenta('');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
                     </div>
                   </div>
                   {/* Tabla */}
