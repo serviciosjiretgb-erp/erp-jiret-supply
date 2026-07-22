@@ -4544,6 +4544,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // Filtros
     const [cajFiltMoneda, setCajFiltMoneda] = useState('USD');  // 'BS'|'USD'|'AMBAS'
     const [cajFiltCaja,   setCajFiltCaja]   = useState('');     // cajaId o ''
+    const [cajFiltMes,    setCajFiltMes]    = useState(getTodayDate().substring(0,7));
     const [cajFiltDesde,  setCajFiltDesde]  = useState('');
     const [cajFiltHasta,  setCajFiltHasta]  = useState('');
     const [cajBusqCli,    setCajBusqCli]    = useState('');
@@ -4630,7 +4631,31 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(cajBusqRef && !(m.referencia||'').toUpperCase().includes(cajBusqRef.toUpperCase())) return false;
       return true;
     });
-    // Saldo: suma manual caja + cobros caja CxC + pagos caja CxP
+    // Balance del mes filtrado, respetando la caja filtrada — el saldo inicial de un mes
+    // es el saldo inicial de la(s) caja(s) más todo lo acumulado ANTES de ese mes, así que
+    // el disponible de un mes queda automáticamente como el inicial del mes siguiente.
+    const cajasEnFiltro = cajFiltCaja ? cajas.filter(c=>c.id===cajFiltCaja) : cajas;
+    const saldoInicialCajasBs  = cajasEnFiltro.filter(c=>c.moneda==='BS').reduce((s,c)=>s+Number(c.saldoInicial||0),0);
+    const saldoInicialCajasUSD = cajasEnFiltro.filter(c=>c.moneda!=='BS').reduce((s,c)=>s+Number(c.saldoInicial||0),0);
+    const perteneceCajaFiltro = (m) => {
+      if(!cajFiltCaja) return true;
+      const mid = m._cajaId||m.cajaId||'';
+      if(mid) return mid===cajFiltCaja;
+      return !m._fromBanco;
+    };
+    const primerDiaMes   = `${cajFiltMes}-01`;
+    const movsAntesDelMes = allMovsCajaBase.filter(m=>perteneceCajaFiltro(m)&&(m.fecha||'')<primerDiaMes);
+    const movsDelMes      = allMovsCajaBase.filter(m=>perteneceCajaFiltro(m)&&(m.fecha||'').startsWith(cajFiltMes));
+    const acumMoneda=(lista,moneda)=>lista.filter(m=>m.moneda===moneda).reduce((s,m)=>s+(m.tipo==='Ingreso'?1:-1)*Number((moneda==='BS'?m.montoBs:m.montoUSD)||0),0);
+    const saldoInicialBs  = saldoInicialCajasBs  + acumMoneda(movsAntesDelMes,'BS');
+    const saldoInicialUSD = saldoInicialCajasUSD + acumMoneda(movsAntesDelMes,'USD');
+    const entradasBs  = movsDelMes.filter(m=>m.moneda==='BS'&&m.tipo==='Ingreso').reduce((s,m)=>s+Number(m.montoBs||0),0);
+    const entradasUSD = movsDelMes.filter(m=>m.moneda==='USD'&&m.tipo==='Ingreso').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+    const salidasBs  = movsDelMes.filter(m=>m.moneda==='BS'&&m.tipo==='Egreso').reduce((s,m)=>s+Number(m.montoBs||0),0);
+    const salidasUSD = movsDelMes.filter(m=>m.moneda==='USD'&&m.tipo==='Egreso').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+    const disponibleBs  = saldoInicialBs + entradasBs - salidasBs;
+    const disponibleUSD = saldoInicialUSD + entradasUSD - salidasUSD;
+    // Se mantienen por compatibilidad con el resto de la vista (saldo global, sin filtro de mes/caja)
     const saldoBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0)
                    + movDesdeCobrosCaja.filter(m=>m.moneda==='BS').reduce((a,m)=>a+Number(m.montoBs||0),0)
                    - movDesdePagosCaja.filter(m=>m.moneda==='BS').reduce((a,m)=>a+Number(m.montoBs||0),0);
@@ -4739,11 +4764,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     return (
       <div className="space-y-5">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
+            Balance de {cajFiltCaja?(cajas.find(c=>c.id===cajFiltCaja)?.nombre||'la caja'):'todas las cajas'} — mes seleccionado
+          </p>
+          <input type="month" value={cajFiltMes} onChange={e=>setCajFiltMes(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <BKPI label="Saldo Caja Bs." value={`Bs.${bancoFmt(saldoBs)}`} accent={saldoBs>=0?'green':'red'} Icon={Banknote} sub={`≈ $${bancoFmt(saldoBs/tasaActiva)}`}/>
-          <BKPI label="Saldo Caja USD" value={`$${bancoFmt(saldoUSD)}`} accent={saldoUSD>=0?'green':'red'} Icon={DollarSign}/>
-          <BKPI label="Movimientos Hoy" value={allMovsCaja.filter(m=>m.fecha===getTodayDate()).length} accent="blue" Icon={ArrowLeftRight}/>
-          <BKPI label="Total Movimientos" value={allMovsCaja.length} accent="purple" Icon={FileText}/>
+          <BKPI label="Saldo Inicial" value={`Bs.${bancoFmt(saldoInicialBs)}`} accent="blue" Icon={Banknote} sub={`≈ $${bancoFmt(saldoInicialUSD)}`}/>
+          <BKPI label="Entradas" value={`Bs.${bancoFmt(entradasBs)}`} accent="green" Icon={ArrowUpCircle} sub={`≈ $${bancoFmt(entradasUSD)}`}/>
+          <BKPI label="Salidas" value={`Bs.${bancoFmt(salidasBs)}`} accent="red" Icon={ArrowDownCircle} sub={`≈ $${bancoFmt(salidasUSD)}`}/>
+          <BKPI label="Disponible" value={`Bs.${bancoFmt(disponibleBs)}`} accent={disponibleBs>=0?'green':'red'} Icon={PiggyBank} sub={`≈ $${bancoFmt(disponibleUSD)}`}/>
         </div>
 
         <BCard title="Movimientos de Caja" subtitle="Efectivo Bs. y Divisas">
@@ -6078,10 +6109,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">Módulo Bancos — Vista Ventas</p>
             </div>
           </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-full px-3 py-1 flex items-center gap-1.5">
-            <DollarSign size={11} className="text-blue-500"/>
-            <span className="text-[9px] font-black text-blue-700 font-mono">BCV: {tasaActiva} Bs/$</span>
-          </div>
         </div>
         <div className="p-6 max-w-3xl mx-auto">
           <MovimientosView ventasOnlyIngreso={true}/>
@@ -6115,12 +6142,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               </button>
             );
           })}
-          {/* BCV indicator + Nuevo button */}
+          {/* Nuevo button */}
           <div className="ml-auto flex items-center gap-3 pl-4 flex-shrink-0 py-2">
-            <div className="bg-blue-50 border border-blue-200 rounded-full px-3 py-1 flex items-center gap-1.5">
-              <DollarSign size={11} className="text-blue-500"/>
-              <span className="text-[9px] font-black text-blue-700 font-mono">BCV: {tasaActiva} Bs/$</span>
-            </div>
             <button onClick={() => setSec(sec.startsWith('caja') || sec === 'arqueo' ? 'caja_op' : 'movimientos')}
               className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[9px] font-black uppercase transition-all">
               <Plus size={12}/> Nuevo
