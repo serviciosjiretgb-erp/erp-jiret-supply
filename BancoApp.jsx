@@ -5014,24 +5014,23 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [confirmando, setConfirmando] = useState(false);
     const [hecho, setHecho] = useState(0);
 
-    // Un caja_movimientos es el duplicado del bug si: (a) su id tiene el prefijo que generaba
-    // el código ya corregido (MVC- para cobros, MOVC-PAGCXP-/MOVC-ANTCXP- para pagos), Y
-    // (b) existe un cobro/pago real (cobros_cxc / procura_pagos_cxp) con ese mismo grupo —
-    // esa es la fuente de verdad que BancoApp ya usa para armar el movimiento automáticamente.
-    const gruposCobro = useMemo(()=>new Set((cobrosCajaCxc||[]).map(c=>c.grupoCobroId).filter(Boolean)),[cobrosCajaCxc]);
-    const gruposPago  = useMemo(()=>new Set((pagosCajaCxP ||[]).map(p=>p.grupoPagoId ).filter(Boolean)),[pagosCajaCxP]);
+    // Un caja_movimientos es CANDIDATO a duplicado si su id tiene el prefijo que generaba el
+    // código ya corregido (MVC- para cobros, MOVC-PAGCXP-/MOVC-ANTCXP- para pagos) y existe un
+    // cobro/pago real (cobros_cxc / procura_pagos_cxp) con ese mismo grupo. Para cada candidato
+    // se adjunta el registro con el que coincide, para poder comparar antes de decidir.
+    const cobroPorGrupo = useMemo(()=>{ const m=new Map(); (cobrosCajaCxc||[]).forEach(c=>{if(c.grupoCobroId) m.set(c.grupoCobroId,c);}); return m; },[cobrosCajaCxc]);
+    const pagoPorGrupo  = useMemo(()=>{ const m=new Map(); (pagosCajaCxP ||[]).forEach(p=>{if(p.grupoPagoId ) m.set(p.grupoPagoId ,p);}); return m; },[pagosCajaCxP]);
     const duplicados = useMemo(()=>{
-      return (movCaja||[]).filter(m=>{
-        if(/^MVC-/.test(m.id||''))              return !!m.grupoCobroId && gruposCobro.has(m.grupoCobroId);
-        if(/^MOVC-(PAGCXP|ANTCXP)-/.test(m.id||'')) return !!m.grupoPagoId  && gruposPago.has(m.grupoPagoId);
-        return false;
-      }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-    },[movCaja,gruposCobro,gruposPago]);
-
-    useEffect(()=>{
-      const init={}; duplicados.forEach(d=>{init[d.id]=true;}); setSelec(init);
-      // eslint-disable-next-line
-    },[duplicados.map(d=>d.id).join(',')]);
+      return (movCaja||[]).map(m=>{
+        let match=null;
+        if(/^MVC-/.test(m.id||'') && m.grupoCobroId) match=cobroPorGrupo.get(m.grupoCobroId);
+        else if(/^MOVC-(PAGCXP|ANTCXP)-/.test(m.id||'') && m.grupoPagoId) match=pagoPorGrupo.get(m.grupoPagoId);
+        if(!match) return null;
+        const montoMatch=Number(match.monto??match.montoUSD??0);
+        const coincideMonto=Math.abs(montoMatch-Number(m.montoUSD||0))<0.05;
+        return {...m, _match:match, _coincideMonto:coincideMonto};
+      }).filter(Boolean).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+    },[movCaja,cobroPorGrupo,pagoPorGrupo]);
 
     const seleccionados = duplicados.filter(d=>selec[d.id]);
     const totalUSD = seleccionados.reduce((s,d)=>s+Number(d.montoUSD||0),0);
@@ -5044,7 +5043,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const batch=writeBatch(_bancoDB);
         seleccionados.forEach(d=>batch.delete(getDocRef('caja_movimientos',d.id)));
         await batch.commit();
-        setHecho(seleccionados.length); setConfirmando(false); setPwd('');
+        setHecho(seleccionados.length); setConfirmando(false); setPwd(''); setSelec({});
       } finally { setBusy(false); }
     };
 
@@ -5052,7 +5051,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div>
         <div className="mb-6">
           <h2 className="text-xl font-black uppercase text-slate-900 flex items-center gap-2"><AlertTriangle size={18} className="text-amber-500"/> Limpiar Duplicados de Caja</h2>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Cobros y pagos que quedaron registrados dos veces por un bug ya corregido — revisa y confirma antes de borrar.</p>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Compara cada movimiento de caja con el cobro/pago que supuestamente lo generó dos veces. Nada viene marcado por defecto — revisa y marca tú.</p>
         </div>
 
         {hecho>0&&(
@@ -5066,32 +5065,41 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <BEmptyState icon={CheckCircle} title="No se encontraron duplicados" desc="No hay movimientos de caja que coincidan con el patrón del bug ya corregido."/>
         ):(<>
           <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 mb-4 flex items-center justify-between flex-wrap gap-3">
-            <p className="text-xs font-bold text-amber-800">{duplicados.length} posible(s) duplicado(s) encontrado(s) · {seleccionados.length} seleccionado(s) · Total: ${bancoFmt(totalUSD)}</p>
-            <div className="flex gap-2">
-              <button onClick={()=>setSelec(Object.fromEntries(duplicados.map(d=>[d.id,true])))} className="text-[10px] font-black uppercase text-blue-600 hover:underline">Marcar todos</button>
-              <button onClick={()=>setSelec({})} className="text-[10px] font-black uppercase text-slate-500 hover:underline">Desmarcar todos</button>
-            </div>
+            <p className="text-xs font-bold text-amber-800">{duplicados.length} candidato(s) encontrado(s) · {seleccionados.length} seleccionado(s) · Total: ${bancoFmt(totalUSD)}</p>
+            <button onClick={()=>setSelec({})} className="text-[10px] font-black uppercase text-slate-500 hover:underline">Desmarcar todos</button>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden mb-5">
-            <table className="w-full text-[11px]">
-              <thead className="bg-slate-50"><tr>
-                <BTh></BTh><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Caja</BTh><BTh>Concepto / Tercero</BTh><BTh right>Monto USD</BTh><BTh>ID (patrón detectado)</BTh>
-              </tr></thead>
-              <tbody>
-                {duplicados.map(d=>(
-                  <tr key={d.id} className={`border-t border-slate-100 ${selec[d.id]?'bg-amber-50/40':''}`}>
-                    <BTd><input type="checkbox" checked={!!selec[d.id]} onChange={e=>setSelec(p=>({...p,[d.id]:e.target.checked}))}/></BTd>
-                    <BTd>{bancoDd(d.fecha)}</BTd>
-                    <BTd><BBadge v={d.tipo==='Ingreso'?'green':'red'}>{d.tipo}</BBadge></BTd>
-                    <BTd>{cajaNom(d.cajaId)}</BTd>
-                    <BTd className="max-w-[220px] truncate">{d.concepto}{d.terceroNombre?` · ${d.terceroNombre}`:''}</BTd>
-                    <BTd right mono>${bancoFmt(d.montoUSD||0)}</BTd>
-                    <BTd className="font-mono text-[9px] text-slate-400">{d.id}</BTd>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-3 mb-5">
+            {duplicados.map(d=>(
+              <div key={d.id} className={`rounded-2xl border-2 p-4 transition-all ${selec[d.id]?'border-red-300 bg-red-50/40':'border-slate-200 bg-white'}`}>
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input type="checkbox" className="mt-1" checked={!!selec[d.id]} onChange={e=>setSelec(p=>({...p,[d.id]:e.target.checked}))}/>
+                  <div className="flex-1 min-w-0">
+                    {!d._coincideMonto&&(
+                      <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-700 bg-amber-100 px-2 py-1 rounded-lg mb-2 w-fit">
+                        <AlertTriangle size={11}/> Los montos no coinciden exactamente — revisa con más cuidado
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="border-2 border-slate-200 rounded-xl p-3">
+                        <p className="text-[9px] font-black uppercase text-slate-400 mb-1.5">Movimiento de Caja (candidato a borrar)</p>
+                        <p className="text-[10px] font-mono text-slate-400 mb-1">{d.id}</p>
+                        <p className="text-xs font-bold text-slate-800 truncate">{bancoDd(d.fecha)} · {d.tipo} · {cajaNom(d.cajaId)}</p>
+                        <p className="text-[11px] text-slate-600 truncate">{d.concepto}{d.terceroNombre?` · ${d.terceroNombre}`:''}</p>
+                        <p className="font-mono font-black text-sm mt-1">${bancoFmt(d.montoUSD||0)}</p>
+                      </div>
+                      <div className="border-2 border-blue-200 bg-blue-50/40 rounded-xl p-3">
+                        <p className="text-[9px] font-black uppercase text-blue-500 mb-1.5">Cobro/Pago con el que coincide (este SÍ se conserva)</p>
+                        <p className="text-[10px] font-mono text-slate-400 mb-1">{d._match.id}</p>
+                        <p className="text-xs font-bold text-slate-800 truncate">{bancoDd(d._match.fecha)} · {d._match.clientName||d._match.proveedor||'—'}</p>
+                        <p className="text-[11px] text-slate-600 truncate">{d._match.concepto||d._match.neDocumento||'—'}{d._match.referencia?` · Ref: ${d._match.referencia}`:''}</p>
+                        <p className="font-mono font-black text-sm mt-1">${bancoFmt(Number(d._match.monto??d._match.montoUSD??0))}</p>
+                      </div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            ))}
           </div>
 
           {!confirmando?(
