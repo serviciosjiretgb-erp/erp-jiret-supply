@@ -7624,6 +7624,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const metodoF = editForm.metodo||editPago.metodo;
       const referenciaF = editForm.referencia||'';
       const bancoF = editForm.banco||editPago.banco||'';
+      const tasaF = pN(editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0))||1;
+      const montoBsF  = editPago.moneda==='Bs'?totalPago:parseFloat((totalPago*tasaF).toFixed(2));
+      const montoUSDF = editPago.moneda==='Bs'?parseFloat((totalPago/tasaF).toFixed(2)):totalPago;
 
       // 1) Revertir el efecto anterior: si este pago ya estaba aplicado a una factura, restaurar su saldo
       if(editPago.facturaId){
@@ -7646,7 +7649,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
           monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
           concepto:editPago.concepto||'Pago CxP',cuentaId:editPago.cuentaId||'',moneda:editPago.moneda||'USD',
-          tasa:editPago.tasa||0,cuentaContableNombre:editPago.cuentaContableNombre||'',
+          tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
           saldoInicialImportado:editPago.saldoInicialImportado||false,
           timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
         });
@@ -7667,7 +7670,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
           monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
           concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:editPago.cuentaId||'',moneda:editPago.moneda||'USD',
-          tasa:editPago.tasa||0,cuentaContableNombre:editPago.cuentaContableNombre||'',
+          tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
           saldoInicialImportado:editPago.saldoInicialImportado||false,
           timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
         });
@@ -7679,7 +7682,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           getDocs(query(getColRef('caja_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
         ]);
         [...bSnap.docs,...kSnap.docs].forEach(d=>{
-          batch.update(d.ref,{facturas:nuevasFacturasMv,fecha:fechaF,referencia:referenciaF,metodo:metodoF});
+          batch.update(d.ref,{facturas:nuevasFacturasMv,fecha:fechaF,referencia:referenciaF,metodo:metodoF,monto:montoUSDF,montoBs:montoBsF,montoUSD:montoUSDF,tasa:tasaF});
         });
       }
       await batch.commit();
@@ -7842,10 +7845,26 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
               </div>
               <div>
-                <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto ({editPago.esAnticipo?'Anticipo':'Pago'}, USD)</label>
+                <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto ({editPago.esAnticipo?'Anticipo':'Pago'}, {editPago.moneda==='Bs'?'Bs':'USD'})</label>
                 <input type="number" step="0.01" value={editForm.monto!=null?editForm.monto:(editPago.monto||0)}
                   onChange={e=>setEditForm(f=>({...f,monto:parseFloat(e.target.value)||0}))}
                   className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa (Bs/$)</label>
+                <input type="number" step="0.01" value={editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0)}
+                  onChange={e=>setEditForm(f=>({...f,tasa:parseFloat(e.target.value)||0}))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-blue-500 uppercase block mb-1">Equivalente ({editPago.moneda==='Bs'?'USD':'Bs'})</label>
+                <div className="w-full bg-gray-900 text-white rounded-xl px-3 py-2 text-xs font-black flex items-center">
+                  {(()=>{
+                    const m=pN(editForm.monto!=null?editForm.monto:editPago.monto);
+                    const t=pN(editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0))||1;
+                    return editPago.moneda==='Bs'?`$${fN(m/t)}`:`Bs.${fN(m*t)}`;
+                  })()}
+                </div>
               </div>
             </div>
 
