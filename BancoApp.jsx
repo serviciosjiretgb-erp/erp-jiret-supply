@@ -2070,12 +2070,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [editando, setEdit]   = useState(null);
     const [certCuenta, setCert] = useState(null);
     const [busy, setBusy]       = useState(false);
-    const initF = ()=>({banco:'',numeroCuenta:'',tipoCuenta:'Corriente',tipoBanco:'Nacional-Bs',saldo:'0',titular:'',cuentaContableCod:'',cuentaContableNom:'',logoUrl:''});
+    const initF = ()=>({banco:'',numeroCuenta:'',tipoCuenta:'Corriente',tipoBanco:'Nacional-Bs',saldo:'0',mesSaldoInicial:getTodayDate().substring(0,7),titular:'',cuentaContableCod:'',cuentaContableNom:'',logoUrl:''});
     const [form, setForm] = useState(initF());
     const monedaDe = tb => TIPO_BANCO.find(t=>t.id===tb)?.moneda||'BS';
 
     const openNew  = ()=>{ setEdit(null); setForm(initF()); setModal(true); };
-    const openEdit = c  =>{ setEdit(c); setForm({banco:c.banco,numeroCuenta:c.numeroCuenta,tipoCuenta:c.tipoCuenta,tipoBanco:c.tipoBanco||'Nacional-Bs',saldo:String(c.saldo),titular:c.titular||'',cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',logoUrl:c.logoUrl||''}); setModal(true); };
+    const openEdit = c  =>{ setEdit(c); setForm({banco:c.banco,numeroCuenta:c.numeroCuenta,tipoCuenta:c.tipoCuenta,tipoBanco:c.tipoBanco||'Nacional-Bs',saldo:String(c.saldo),mesSaldoInicial:c.mesSaldoInicial||getTodayDate().substring(0,7),titular:c.titular||'',cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',logoUrl:c.logoUrl||''}); setModal(true); };
 
     const save = async()=>{
       if(!form.banco||!form.numeroCuenta) return alert('Banco y número requeridos');
@@ -2272,6 +2272,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <BFG label="Tipo de Cuenta"><select className={sel} value={form.tipoCuenta} onChange={e=>setForm({...form,tipoCuenta:e.target.value})}><option>Corriente</option><option>Ahorros</option><option>Nómina</option><option>Divisas</option><option>Custodia</option><option>Swift</option></select></BFG>
             <BFG label="Titular de la Cuenta" full><input className={inp} value={form.titular} onChange={e=>setForm({...form,titular:e.target.value.toUpperCase()})} placeholder="SERVICIOS JIRET G&B C.A."/></BFG>
             <BFG label={`Saldo ${editando?'Actual':'Inicial'} (${monedaDe(form.tipoBanco)})`}><input type="number" step="0.01" className={inp} value={form.saldo} onChange={e=>setForm({...form,saldo:e.target.value})}/></BFG>
+            <BFG label="Mes al que corresponde el Saldo"><input type="month" className={inp} value={form.mesSaldoInicial} onChange={e=>setForm({...form,mesSaldoInicial:e.target.value})}/></BFG>
             <BFG label="Cuenta Contable Asociada (PUC)">
               <select className={sel} value={form.cuentaContableCod} onChange={e=>{const c=contCuentas.find(x=>x.codigo===e.target.value);setForm({...form,cuentaContableCod:e.target.value,cuentaContableNom:c?.nombre||''})}}>
                 <option value="">— Sin vincular al PUC —</option>
@@ -2484,6 +2485,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [busqCtas, setBusqCtas]= useState({});
     const [busy,     setBusy]    = useState(false);
     const [comprobante, setComprobante] = useState(null); // modal de comprobante imprimible
+    const [filtMesBalance, setFiltMesBalance] = useState(getTodayDate().substring(0,7));
 
     // Helper: cuenta selector con grupos Bs/USD — excluye Pago Móvil
     const esBancario = c => c.tipoBanco!=='Pago-Movil' && c.tipoBanco!=='Pago Móvil';
@@ -2946,8 +2948,47 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return c?.moneda!=='BS'&&c?.tipoBanco!=='Nacional-Bs';
     });
 
+    // Balance del mes seleccionado, respetando la cuenta filtrada (o todas). A diferencia de Caja,
+    // el saldo de banco_cuentas se actualiza en vivo con cada movimiento, así que el saldo inicial
+    // de un mes se calcula "hacia atrás": saldo actual menos todo lo ocurrido desde el inicio de ese
+    // mes hasta hoy. Matemáticamente el disponible de un mes coincide con el inicial del siguiente.
+    const cuentasBalanceFiltro = filtC ? cuentas.filter(c=>c.id===filtC) : cuentas;
+    const primerDiaMesBalance = `${filtMesBalance}-01`;
+    const calcCuentaBalance = (c) => {
+      const movsCta = movBanco.filter(m=>m.cuentaId===c.id);
+      const netoDesde = (desde) => movsCta.filter(m=>(m.fecha||'')>=desde).reduce((s,m)=>{
+        if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+Number(m.montoUSD||0);
+        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-Number(m.montoUSD||0);
+        return s;
+      },0);
+      const saldoInicial = Number(c.saldo||0) - netoDesde(primerDiaMesBalance);
+      const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
+      const entradas = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const salidas  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      return {saldoInicial, entradas, salidas};
+    };
+    const balanceTotal = cuentasBalanceFiltro.map(calcCuentaBalance).reduce((a,r)=>({
+      saldoInicial:a.saldoInicial+r.saldoInicial, entradas:a.entradas+r.entradas, salidas:a.salidas+r.salidas
+    }),{saldoInicial:0,entradas:0,salidas:0});
+    const disponibleBalance = balanceTotal.saldoInicial+balanceTotal.entradas-balanceTotal.salidas;
+
     return (
       <div>
+        {/* ── BALANCE DE BANCOS POR MES ── */}
+        <div className="mb-5">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
+              Balance de {filtC?(cuentas.find(c=>c.id===filtC)?.banco||'la cuenta'):'todas las cuentas'} — mes seleccionado
+            </p>
+            <input type="month" value={filtMesBalance} onChange={e=>setFiltMesBalance(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <BKPI label="Saldo Inicial" value={`$${bancoFmt(balanceTotal.saldoInicial)}`} accent="blue" Icon={Banknote}/>
+            <BKPI label="Entradas" value={`$${bancoFmt(balanceTotal.entradas)}`} accent="green" Icon={ArrowUpCircle}/>
+            <BKPI label="Salidas" value={`$${bancoFmt(balanceTotal.salidas)}`} accent="red" Icon={ArrowDownCircle}/>
+            <BKPI label="Disponible" value={`$${bancoFmt(disponibleBalance)}`} accent={disponibleBalance>=0?'green':'red'} Icon={PiggyBank}/>
+          </div>
+        </div>
         {/* ── MODAL DETALLE / EDICIÓN ── */}
         {movDetalle && (
           <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} {...(editId?{xlwide:true}:{wide:true})}
@@ -5423,15 +5464,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   const ConciliacionView = () => {
     const [cuentaId,setCuentaId]=useState('');const [desde,setDesde]=useState(bancoMesActual()+'-01');const [hasta,setHasta]=useState(getTodayDate());
-    const [saldoBanco,setSaldoBco]=useState('');const [marcados,setMarcados]=useState({});const [ajustes,setAjustes]=useState([]);const [busy,setBusy]=useState(false);
+    const [saldoBanco,setSaldoBco]=useState('');const [marcados,setMarcados]=useState({});const [busy,setBusy]=useState(false);
     const cuenta=cuentas.find(c=>c.id===cuentaId);
     const esCuentaBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
-    const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado');
+    const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado'&&(!desde||m.fecha>=desde)&&(!hasta||m.fecha<=hasta));
     const toggle=id=>setMarcados(p=>({...p,[id]:!p[id]}));
     const egTrans=todos.filter(m=>m.tipo==='Egreso' &&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
     const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
-    const cargos=ajustes.filter(a=>a.tipo==='Cargo' ).reduce((a,x)=>a+Number(x.monto||0),0);
-    const abonos=ajustes.filter(a=>a.tipo==='Abono' ).reduce((a,x)=>a+Number(x.monto||0),0);
+    const cargos=0;const abonos=0;
     const saldoLibrosUSD=cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo)/tasaActiva:cuenta.saldo):0;
     const saldoLibrosBs =cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo):Number(cuenta.saldo)*tasaActiva):0;
     const saldoLibros=saldoLibrosUSD; // alias para compatibilidad con lógica de cuadre
@@ -5441,11 +5481,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(!OK)return alert('Diferencia debe ser $0.00');
       if(!window.confirm('¿Aprobar conciliación? Acción IRREVERSIBLE.'))return;
       setBusy(true);
-      try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,cargos,abonos,saldoConcil,diff,count:ids.length,ajustes,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');setAjustes([]);alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
+      try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
     };
     return(<div className="space-y-5">
       <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
-        <BFG label="Cuenta" full><select className={sel} value={cuentaId} onChange={e=>{setCuentaId(e.target.value);setMarcados({});setAjustes([]);setSaldoBco('');}}>
+        <BFG label="Cuenta" full><select className={sel} value={cuentaId} onChange={e=>{setCuentaId(e.target.value);setMarcados({});setSaldoBco('');}}>
           <option value="">— Seleccione cuenta a conciliar —</option>
           {[{label:'Cuentas Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
             {label:'Cuentas Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs')}
@@ -5468,24 +5508,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 </label>
               ))}</div>}
           </BCard>
-          <BCard title="Ajustes Bancarios (NC / ND)" subtitle="Comisiones, intereses no contabilizados"
-            action={<button onClick={()=>setAjustes([...ajustes,{tipo:'Cargo',concepto:'',monto:''}])} className="text-[10px] font-black uppercase text-blue-500 flex items-center gap-1 hover:bg-blue-50 px-2 py-1 rounded-lg"><Plus size={12}/> Ajuste</button>}>
-            {ajustes.length===0?<p className="text-xs text-slate-400 text-center py-3">Sin ajustes bancarios</p>:
-              <div className="space-y-2">{ajustes.map((a,i)=>(
-                <div key={i} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
-                  <select className={`${sel} w-28`} value={a.tipo} onChange={e=>{const n=[...ajustes];n[i].tipo=e.target.value;setAjustes(n);}}><option value="Cargo">N. Débito</option><option value="Abono">N. Crédito</option></select>
-                  <input className={`${inp} flex-1`} placeholder="Comisión, intereses..." value={a.concepto} onChange={e=>{const n=[...ajustes];n[i].concepto=e.target.value;setAjustes(n);}}/>
-                  <input type="number" step="0.01" className={`${inp} w-28 text-right`} value={a.monto} onChange={e=>{const n=[...ajustes];n[i].monto=e.target.value;setAjustes(n);}}/>
-                  <button onClick={()=>setAjustes(ajustes.filter((_,j)=>j!==i))} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
-                </div>
-              ))}</div>}
-          </BCard>
         </div>
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden shadow-sm sticky top-4">
             <div className="px-5 py-4" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}><p className="font-black text-white text-sm uppercase tracking-widest">Panel de Cuadre</p></div>
             <div className="p-5 space-y-3">
-              {[{l:'Saldo en Libros (Sistema)',v:saldoLibros,vbs:saldoLibrosBs,c:'text-slate-900',b:true},{l:'(+) Cargos NC',v:cargos,vbs:cargos*tasaActiva,c:'text-red-600'},{l:'(−) Abonos NC',v:abonos,vbs:abonos*tasaActiva,c:'text-emerald-600'},{l:'(+) Egresos Tránsito',v:egTrans,vbs:egTrans*tasaActiva,c:'text-red-500'},{l:'(−) Ingresos Tránsito',v:ingTrans,vbs:ingTrans*tasaActiva,c:'text-emerald-500'}].map(({l,v,vbs,c,b})=>(
+              {[{l:'Saldo en Libros (Sistema)',v:saldoLibros,vbs:saldoLibrosBs,c:'text-slate-900',b:true},{l:'(+) Egresos Tránsito',v:egTrans,vbs:egTrans*tasaActiva,c:'text-red-500'},{l:'(−) Ingresos Tránsito',v:ingTrans,vbs:ingTrans*tasaActiva,c:'text-emerald-500'}].map(({l,v,vbs,c,b})=>(
                 <div key={l} className="flex items-center justify-between"><p className={`text-[10px] ${b?'font-black text-slate-700':'font-medium text-slate-500'} leading-tight max-w-[150px]`}>{l}</p>
                   <div className="text-right"><p className={`font-mono font-black text-sm ${c}`}>{esCuentaBs?'Bs.'+bancoFmt(vbs):'$'+bancoFmt(v)}</p><p className="text-[9px] text-slate-400 font-mono">{esCuentaBs?'≈$'+bancoFmt(v):'≈Bs.'+bancoFmt(vbs)}</p></div>
                 </div>
