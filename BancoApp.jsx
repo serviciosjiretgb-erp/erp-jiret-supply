@@ -1783,9 +1783,11 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 // estado local (cuenta seleccionada, fechas, movimientos marcados) no se pierda cada vez que
 // BancoApp se re-renderiza por una actualización de Firestore (cosa que puede pasar cada pocos
 // segundos). Recibe como props únicamente lo que antes tomaba por cierre (closure).
-function ConciliacionView({ cuentas, movBanco, tasaActiva }) {
+function ConciliacionView({ cuentas, movBanco, tasaActiva, concils }) {
   const [cuentaId,setCuentaId]=useState('');const [desde,setDesde]=useState(bancoMesActual()+'-01');const [hasta,setHasta]=useState(getTodayDate());
   const [saldoBanco,setSaldoBco]=useState('');const [marcados,setMarcados]=useState({});const [busy,setBusy]=useState(false);
+  const [histEdit,setHistEdit]=useState(null);
+  const [histEditForm,setHistEditForm]=useState({fecha:'',saldoBanco:''});
   const cuenta=cuentas.find(c=>c.id===cuentaId);
   const esCuentaBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
   const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado'&&(!desde||m.fecha>=desde)&&(!hasta||m.fecha<=hasta));
@@ -1797,12 +1799,43 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva }) {
   const saldoLibrosBs =cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo):Number(cuenta.saldo)*tasaActiva):0;
   const saldoLibros=saldoLibrosUSD; // alias para compatibilidad con lógica de cuadre
   const saldoConcil=saldoLibros+cargos-abonos+egTrans-ingTrans;
-  const sbNum=Number(saldoBanco)||0;const diff=sbNum-saldoConcil;const OK=Math.abs(diff)<0.01&&sbNum>0;
+  const sbNum=Number(saldoBanco)||0;const saldoConcilMonedaCta=esCuentaBs?saldoConcil*tasaActiva:saldoConcil;const diff=sbNum-saldoConcilMonedaCta;const OK=Math.abs(diff)<0.01&&sbNum>0;
   const aprobar=async()=>{
     if(!OK)return alert('Diferencia debe ser $0.00');
     if(!window.confirm('¿Aprobar conciliación? Acción IRREVERSIBLE.'))return;
     setBusy(true);
-    try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
+    try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,movimientoIds:ids,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
+  };
+  const historialCta = concils.filter(c=>c.cuentaId===cuentaId).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const exportarConcilPDF=(c)=>{
+    const esBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
+    const html=bancoLetterheadOpen(`Conciliación Bancaria — ${c.cuentaNombre}`,`Del ${bancoDd(c.desde)} al ${bancoDd(c.hasta)} · ${c.count} mov. conciliados`)+
+      `<table><thead><tr><th>Concepto</th><th>Monto</th></tr></thead><tbody>
+        <tr><td>Saldo en Libros (Sistema)</td><td style="text-align:right">${esBs?'Bs.'+bancoFmt(c.saldoLibros*tasaActiva):'$'+bancoFmt(c.saldoLibros)}</td></tr>
+        <tr><td>(+) Egresos en Tránsito</td><td style="text-align:right">${esBs?'Bs.'+bancoFmt(c.egTrans*tasaActiva):'$'+bancoFmt(c.egTrans)}</td></tr>
+        <tr><td>(−) Ingresos en Tránsito</td><td style="text-align:right">${esBs?'Bs.'+bancoFmt(c.ingTrans*tasaActiva):'$'+bancoFmt(c.ingTrans)}</td></tr>
+        <tr><td><strong>= Saldo Conciliado</strong></td><td style="text-align:right"><strong>${esBs?'Bs.'+bancoFmt(c.saldoConcil*tasaActiva):'$'+bancoFmt(c.saldoConcil)}</strong></td></tr>
+        <tr><td>Saldo según Banco</td><td style="text-align:right">${esBs?'Bs.':'$'}${bancoFmt(c.saldoBanco)}</td></tr>
+        <tr><td><strong>Diferencia</strong></td><td style="text-align:right"><strong>${esBs?'Bs.':'$'}${bancoFmt(c.diff)}</strong></td></tr>
+      </tbody></table>`+
+      bancoLetterheadClose(`Conciliación aprobada el ${bancoDd(c.fecha)}`);
+    bancoPrintWindow(html);
+  };
+  const abrirEditConcil=(c)=>{ setHistEdit(c); setHistEditForm({fecha:c.fecha||'',saldoBanco:String(c.saldoBanco||'')}); };
+  const guardarEditConcil=async()=>{
+    await updateDoc(getDocRef('banco_conciliaciones',histEdit.id),{fecha:histEditForm.fecha,saldoBanco:Number(histEditForm.saldoBanco)});
+    setHistEdit(null);
+  };
+  const eliminarConcil=async(c)=>{
+    const tieneIds=Array.isArray(c.movimientoIds)&&c.movimientoIds.length>0;
+    const msg=tieneIds
+      ? `¿Eliminar esta conciliación del ${bancoDd(c.fecha)}? Los ${c.movimientoIds.length} movimiento(s) volverán a estar "No Conciliado". Esta acción no se puede deshacer.`
+      : `¿Eliminar esta conciliación del ${bancoDd(c.fecha)}? Este registro es antiguo y no guarda cuáles movimientos incluía, así que ESOS MOVIMIENTOS SEGUIRÁN BLOQUEADOS como Conciliado — tendrías que desbloquearlos manualmente. Esta acción no se puede deshacer.`;
+    if(!window.confirm(msg))return;
+    const batch=writeBatch(_bancoDB);
+    if(tieneIds) c.movimientoIds.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'No Conciliado'}));
+    batch.delete(getDocRef('banco_conciliaciones',c.id));
+    await batch.commit();
   };
   return(<div className="space-y-5">
     <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
@@ -1824,7 +1857,10 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva }) {
               <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]?'bg-emerald-50/60':''}`}>
                 <input type="checkbox" checked={!!marcados[m.id]} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
                 <div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-0.5"><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':'blue'}>{m.tipo}</BBadge><span className="text-[10px] text-slate-400">{bancoDd(m.fecha)}</span></div><p className="text-xs font-semibold text-slate-700 truncate">{m.concepto}</p></div>
-                <div className="text-right flex-shrink-0"><p className={`font-mono font-black text-sm ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{'$'+bancoFmt(m.montoUSD)}</p><p className="text-[10px] text-slate-400">Bs.{bancoFmt(m.montoBs)}</p></div>
+                <div className="text-right flex-shrink-0">
+                  <p className={`font-mono font-black text-sm ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{esCuentaBs?'Bs.'+bancoFmt(m.montoBs):'$'+bancoFmt(m.montoUSD)}</p>
+                  <p className="text-[10px] text-slate-400">{esCuentaBs?'≈$'+bancoFmt(m.montoUSD):'Bs.'+bancoFmt(m.montoBs)}</p>
+                </div>
                 {marcados[m.id]&&<CheckCircle size={16} className="text-emerald-500 flex-shrink-0"/>}
               </label>
             ))}</div>}
@@ -1845,7 +1881,7 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva }) {
             </div>
             <div className={`rounded-xl p-4 text-center border-2 ${OK?'border-emerald-400 bg-emerald-50':'border-amber-400 bg-amber-50'}`}>
               <p className="text-[9px] font-black uppercase tracking-widest mb-1 text-slate-500">Diferencia</p>
-              <p className={`font-mono font-black text-2xl ${OK?'text-emerald-600':'text-amber-600'}`}>{'$'+bancoFmt(diff)}</p>
+              <p className={`font-mono font-black text-2xl ${OK?'text-emerald-600':'text-amber-600'}`}>{esCuentaBs?'Bs.'+bancoFmt(diff):'$'+bancoFmt(diff)}</p>
               {OK?<p className="text-[10px] text-emerald-600 font-black mt-1">✓ Cuadrado</p>:<p className="text-[10px] text-amber-600 font-black mt-1">Pendiente</p>}
             </div>
             <BBg onClick={aprobar} disabled={!OK||busy}>{busy?<><RefreshCw size={13} className="animate-spin"/> Procesando...</>:<><CheckCircle size={13}/> Aprobar</>}</BBg>
@@ -1854,7 +1890,44 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva }) {
         </div>
       </div>
     </div>}
+    {cuentaId&&historialCta.length>0&&(
+      <BCard title="Historial de Conciliaciones" subtitle={`${historialCta.length} conciliación(es) aprobada(s) para esta cuenta`}>
+        <table className="w-full"><thead><tr><BTh>Fecha</BTh><BTh>Período</BTh><BTh right>Mov.</BTh><BTh right>Saldo Conciliado</BTh><BTh right>Diferencia</BTh><BTh></BTh></tr></thead>
+          <tbody>{historialCta.map(c=>{
+            const esBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
+            return(<tr key={c.id} className="hover:bg-slate-50">
+              <BTd>{bancoDd(c.fecha)}</BTd>
+              <BTd className="text-[10px] text-slate-500">{bancoDd(c.desde)} — {bancoDd(c.hasta)}</BTd>
+              <BTd right mono>{c.count}</BTd>
+              <BTd right mono className="font-black">{esBs?'Bs.'+bancoFmt(c.saldoConcil*tasaActiva):'$'+bancoFmt(c.saldoConcil)}</BTd>
+              <BTd right mono className={Math.abs(c.diff)<0.01?'text-emerald-600':'text-amber-600'}>{esBs?'Bs.':'$'}{bancoFmt(c.diff)}</BTd>
+              <BTd>
+                <div className="flex gap-1">
+                  <button onClick={()=>exportarConcilPDF(c)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="PDF"><FileText size={12}/></button>
+                  <button onClick={()=>abrirEditConcil(c)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
+                  <button onClick={()=>eliminarConcil(c)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>
+                </div>
+              </BTd>
+            </tr>);
+          })}</tbody>
+        </table>
+      </BCard>
+    )}
     {!cuentaId&&<BEmptyState icon={Building2} title="Seleccione una cuenta bancaria" desc="Elija la cuenta para iniciar la conciliación"/>}
+    {histEdit&&(
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setHistEdit(null)}>
+        <div className="bg-white rounded-2xl max-w-sm w-full" onClick={e=>e.stopPropagation()}>
+          <div className="px-5 py-4" style={{background:'#0f172a'}}><p className="text-white font-black text-sm uppercase">Editar Conciliación</p></div>
+          <div className="p-5 space-y-3">
+            <BFG label="Fecha"><input type="date" className={inp} value={histEditForm.fecha} onChange={e=>setHistEditForm(f=>({...f,fecha:e.target.value}))}/></BFG>
+            <BFG label={`Saldo según Banco (${(cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS')?'Bs.':'$'})`}><input type="number" step="0.01" className={inp} value={histEditForm.saldoBanco} onChange={e=>setHistEditForm(f=>({...f,saldoBanco:e.target.value}))}/></BFG>
+          </div>
+          <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+            <BBo onClick={()=>setHistEdit(null)}>Cancelar</BBo><BBg onClick={guardarEditConcil}>Guardar</BBg>
+          </div>
+        </div>
+      </div>
+    )}
   </div>);
 }
 
@@ -6226,7 +6299,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
-    conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva}/>, reciprocidad:<ReciprocidadView/>,
+    conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva} concils={concils}/>, reciprocidad:<ReciprocidadView/>,
     cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
     caja_dashboard:<CajaOpView/>,
     rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
