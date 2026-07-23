@@ -3108,13 +3108,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const primerDiaMesBalance = `${filtMesBalance}-01`;
     const calcCuentaBalance = (c) => {
       const movsCta = movBanco.filter(m=>m.cuentaId===c.id);
-      const netoDesde = (desde) => movsCta.filter(m=>(m.fecha||'')>=desde).reduce((s,m)=>{
+      const inicioCuenta = `${c.mesSaldoInicial||'2000-01'}-01`;
+      const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/(tasaActiva||1) : Number(c.saldo||0);
+      if(primerDiaMesBalance<inicioCuenta) return {saldoInicial:0, entradas:0, salidas:0}; // mes anterior al de partida de esta cuenta
+      const netoEntre = (desde,hasta) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
         if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+Number(m.montoUSD||0);
         if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-Number(m.montoUSD||0);
         return s;
       },0);
-      const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/(tasaActiva||1) : Number(c.saldo||0);
-      const saldoInicial = saldoBaseUSD - netoDesde(primerDiaMesBalance);
+      const saldoInicial = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance);
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
       const entradas = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
       const salidas  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
