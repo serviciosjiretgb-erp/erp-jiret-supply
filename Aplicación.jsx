@@ -4791,7 +4791,14 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
       if(tasa<=0) return null;
       const items=f.itemsOC||f.items||[];
       if(items.length===0) return null;
-      const sumaBs=items.reduce((s,it)=>s+pNum(it._totalBsOriginal!=null?it._totalBsOriginal:it.total||0),0);
+      // Recalculado con la misma lógica de calcTotalesFC (base + IVA 16%/8% por ítem) — antes
+      // solo sumaba la base de los ítems SIN el IVA y por eso marcaba como "error" facturas que
+      // en realidad estaban bien (la diferencia era el IVA, no un bug de moneda).
+      const val=it=>pNum(it._totalBsOriginal!=null?it._totalBsOriginal:it.total||0);
+      const sub=items.reduce((s,it)=>s+val(it),0);
+      const base16=items.filter(it=>it.iva==='GRAVADO').reduce((s,it)=>s+val(it),0);
+      const base8=items.filter(it=>it.iva==='GRAVADO8').reduce((s,it)=>s+val(it),0);
+      const sumaBs=parseFloat((sub+base16*0.16+base8*0.08).toFixed(2));
       const correcto=parseFloat((sumaBs/tasa).toFixed(2));
       const actual=pNum(f.total||f.montoBase||0);
       if(Math.abs(actual-correcto)<0.05) return null; // ya está bien, no se toca
@@ -6730,7 +6737,25 @@ ${body}
                                       <td className="py-2 px-3 text-right font-mono text-red-600">{retIVA>0.001?'-$'+fN(retIVA):'—'}</td>
                                       <td className="py-2 px-3 text-right font-mono text-purple-600">{retISLR>0.001?'-$'+fN(retISLR):'—'}</td>
                                       <td className="py-2 px-3 text-right font-mono font-black text-orange-600">${fN(saldo)}</td>
-                                      <td className="py-2 px-3 text-[8px] text-gray-500 italic">{f.observaciones||'—'}</td>
+                                      <td className="py-2 px-3">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[8px] text-gray-500 italic">{f.observaciones||'—'}</span>
+                                          <button onClick={()=>{
+                                            const tienePagos=totalPag>0.001||rets.length>0||retISLR>0.001;
+                                            setDialog({
+                                              title:'¿Eliminar factura?',
+                                              text:`Se eliminará la factura ${f.nroFactura||f.id} de ${g.nombre||''} (${f.moneda==='Bs'?'Bs.':'$'}${fN(f.total||0)}).${tienePagos?' ⚠️ Esta factura YA TIENE pagos o retenciones registrados — se quedarán huérfanos, sin factura a la cual referenciar.':''} Esta acción no se puede deshacer.`,
+                                              type:'confirm',
+                                              onConfirm: async()=>{
+                                                await deleteDoc(getDocRef('procura_facturas_compra',f.id));
+                                                setDialog({title:'✅ Eliminada',text:'La factura fue eliminada.',type:'alert'});
+                                              }
+                                            });
+                                          }} className="text-red-400 hover:text-red-600 flex-shrink-0" title="Eliminar factura">
+                                            <Trash2 size={11}/>
+                                          </button>
+                                        </div>
+                                      </td>
                                     </tr>
                                     {pagosF.map((p,pi)=>(
                                       <tr key={pi} className="bg-green-50 border-b border-green-100">
