@@ -2784,7 +2784,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             setBusy(false); return;
           }
           const tasaDestinoF=Number(form.tasaDestino)||tasa;
-          comisionBs=bsOrigen-(usdOrigen*tasaDestinoF);
+          comisionBs=Math.abs(bsOrigen-(usdOrigen*tasaDestinoF));
           comisionUSD=tasa>0?comisionBs/tasa:0;
           if(Math.abs(comisionUSD)>0.005&&!form.comisionCtaId){
             alert('Seleccione la cuenta contable de la rebancarización (la tasa destino es distinta de la tasa origen, así que hay una diferencia que registrar).');
@@ -2794,10 +2794,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             {codigo:ctaDest.cod,cuenta:ctaDest.nom||`Banco ${cuentaDest.banco||'Destino'}`,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
             {codigo:ctaOrig.cod,cuenta:ctaOrig.nom||`Banco ${cuenta.banco}`,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:bsOrigen,debeUSD:0,haberUSD:usdOrigen},
           ];
-          if(Math.abs(comisionUSD)>0.005){
+          if(comisionUSD>0.005){
             const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId)||{};
-            const comisionBsAbs=Math.abs(comisionBs), comisionUSDAbs=Math.abs(comisionUSD);
-            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Rebancarización',tipoLinea:comisionBs>=0?'D':'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs>=0?comisionBsAbs:0,haberBs:comisionBs<0?comisionBsAbs:0,debeUSD:comisionBs>=0?comisionUSDAbs:0,haberUSD:comisionBs<0?comisionUSDAbs:0});
+            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Rebancarización',tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs,haberBs:0,debeUSD:comisionUSD,haberUSD:0});
           }
         } else {
           // Banco: Debe si Ingreso, Haber si Egreso o Traslado
@@ -4026,14 +4025,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           if(form.tipo==='Traslado de Fondo'&&cuentaDest){
                             const dCod=(cuentaDest?.cuentaContableCod||cuentaDest?.cuentaContable?.split('·')[0]||'').trim();
                             const tasaDestinoPrev=Number(form.tasaDestino)||tasa;
-                            const comBs=bsV-(usdV*tasaDestinoPrev);
+                            const comBs=Math.abs(bsV-(usdV*tasaDestinoPrev));
                             const comUSD=tasa>0?comBs/tasa:0;
                             lines.push({cod:dCod,nom:cuentaDest.banco,dBs:bsV-comBs,hBs:0,dU:usdV-comUSD,hU:0,color:'text-amber-400'});
                             lines.push({cod:bancoCod,nom:bancoNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
-                            if(Math.abs(comUSD)>0.005){
+                            if(comUSD>0.005){
                               const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId);
-                              const comBsAbs=Math.abs(comBs), comUSDAbs=Math.abs(comUSD);
-                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs>=0?comBsAbs:0,hBs:comBs<0?comBsAbs:0,dU:comBs>=0?comUSDAbs:0,hU:comBs<0?comUSDAbs:0,color:'text-orange-300'});
+                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
                             }
                           } else if(form.tipo==='Nota de Débito'){
                             const aj=contCuentas.find(c=>c.id===form.cuentaAjusteId);
