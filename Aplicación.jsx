@@ -10465,9 +10465,10 @@ function App() {
   const initialReqForm = { fecha: getTodayDate(), client: '', tipoProducto: 'BOLSAS', categoria: '', desc: '', ancho: '', fuelles: '', largo: '', micras: '', pesoMillar: '', presentacion: 'MILLAR', cantidad: '', requestedKg: '', color: 'NATURAL', tratamiento: 'LISO', vendedor: '', productoDestinoId: '' };
   const [newReqForm, setNewReqForm] = useState(initialReqForm);
   const [editingReqId, setEditingReqId] = useState(null);
-  const initialInvoiceForm = { fecha: getTodayDate(), fechaFactura: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', nroControl: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, fgId: '', fgCantidad: '', ncAsignada: '', neOrigen: '',
+  const initialInvoiceForm = { fecha: getTodayDate(), fechaFactura: getTodayDate(), clientRif: '', clientName: '', clientAddress: '', documento: '', nroFiscal: '', nroControl: '', tasa: '', productoMaquilado: '', vendedor: '', montoBase: '', iva: '', total: '', aplicaIva: 'SI', opAsignada: '', opData: null, opsAsignadas: [], fgId: '', fgCantidad: '', ncAsignada: '', neOrigen: '', nesAdicionales: [],
     baseGravableBs: '', ivaBs: '', totalBs: '' };
   const [newInvoiceForm, setNewInvoiceForm] = useState(initialInvoiceForm);
+  const [neBuscarTexto, setNeBuscarTexto] = useState('');
   // ── Cálculos de totales en tiempo real (usados en el formulario de factura) ──
   const _invBase = fgItems&&fgItems.length>0 ? fgItems.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0) : parseNum(newInvoiceForm?.montoBase||0);
   const _invDv   = parseNum(descuentoVal||0);
@@ -12850,13 +12851,16 @@ function App() {
         fgCantidad: fgItems[0]?.cantidad||0
       });
 
-      // ── Si la factura proviene de una Nota de Entrega, actualizar la NE con el facturaId ──
+      // ── Si la factura proviene de una o más Notas de Entrega, actualizar cada una con el facturaId ──
       if (!editingInvoiceId && newInvoiceForm.neOrigen) {
-        try {
-          await updateDoc(getDocRef('notasEntrega', newInvoiceForm.neOrigen), {
-            facturaId: id, status: 'PROCESADA', updatedAt: Date.now()
-          });
-        } catch(e) { console.error('Error actualizando NE:', e); }
+        const todasLasNE = [newInvoiceForm.neOrigen, ...(newInvoiceForm.nesAdicionales||[])].filter(Boolean);
+        for (const neId of todasLasNE) {
+          try {
+            await updateDoc(getDocRef('notasEntrega', neId), {
+              facturaId: id, status: 'PROCESADA', updatedAt: Date.now()
+            });
+          } catch(e) { console.error('Error actualizando NE:', neId, e); }
+        }
       }
 
       // ── Edición: si el vínculo NE Origen cambió, sincronizar ambas notas de entrega ──
@@ -23494,25 +23498,78 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
                     </div>
 
-                    {/* ── SELECTOR DE NOTA DE ENTREGA ── */}
-                    {!editingInvoiceId && (
+                    {/* ── SELECTOR DE NOTA DE ENTREGA (multi-selección) ── */}
+                    {!editingInvoiceId && (()=>{
+                      const nesSeleccionadas = [newInvoiceForm.neOrigen, ...(newInvoiceForm.nesAdicionales||[])].filter(Boolean);
+                      const recalcular = (idsSeleccionados) => {
+                        const nesObj = idsSeleccionados.map(id=>(notasEntrega||[]).find(n=>n.id===id)).filter(Boolean);
+                        if(nesObj.length===0){
+                          setNewInvoiceForm(f=>({...f,neOrigen:'',nesAdicionales:[],clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:'',opsAsignadas:[]}));
+                          setFgItems([]);
+                          return;
+                        }
+                        const items = nesObj.flatMap(ne=>(ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true,_neOrigenItem:ne.id})));
+                        setFgItems(items);
+                        const primera = nesObj[0];
+                        const opsUnicas = [...new Set(nesObj.map(ne=>ne.opRelacionada).filter(Boolean))];
+                        setNewInvoiceForm(f=>({...f,neOrigen:idsSeleccionados[0]||'',nesAdicionales:idsSeleccionados.slice(1),
+                          fecha:primera.fecha||f.fecha,clientRif:primera.clientRif||'',clientName:primera.clientName||'',clientAddress:primera.clientAddress||'',
+                          vendedor:primera.vendedor||'',opAsignada:primera.opRelacionada||'',opsAsignadas:opsUnicas,aplicaIva:primera.aplicaIva||'SI'}));
+                      };
+                      const toggleNE = (neId) => {
+                        const ne = (notasEntrega||[]).find(n=>n.id===neId);
+                        const yaEsta = nesSeleccionadas.includes(neId);
+                        if(yaEsta){ recalcular(nesSeleccionadas.filter(id=>id!==neId)); return; }
+                        if(nesSeleccionadas.length>0){
+                          const clienteActual = newInvoiceForm.clientRif;
+                          if(clienteActual && ne?.clientRif && ne.clientRif!==clienteActual){
+                            alert('Esa NE es de un cliente distinto a las ya seleccionadas — una factura fiscal es para un solo cliente.');
+                            return;
+                          }
+                        }
+                        recalcular([...nesSeleccionadas, neId]);
+                      };
+                      const disponibles = (notasEntrega||[])
+                        .filter(ne=>nesSeleccionadas.includes(ne.id)||!ne.facturaId&&(ne.status==='TRANSITO'||ne.status==='TRÁNSITO'||!ne.status)||ne.facturaId===newInvoiceForm.documento)
+                        .filter(ne=>!neBuscarTexto||`${ne.id} ${ne.clientName}`.toUpperCase().includes(neBuscarTexto.toUpperCase()))
+                        .sort((a,b)=>b.id.localeCompare(a.id));
+                      const opsDistintas = new Set(nesSeleccionadas.map(id=>(notasEntrega||[]).find(n=>n.id===id)?.opRelacionada).filter(Boolean));
+                      return (
                     <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-2">
-                      <label className="text-[10px] font-black text-blue-700 uppercase block mb-2 tracking-widest">📋 Seleccionar Nota de Entrega a Facturar</label>
+                      <label className="text-[10px] font-black text-blue-700 uppercase block mb-2 tracking-widest">📋 Seleccionar Nota(s) de Entrega a Facturar</label>
+                      {nesSeleccionadas.length>0 && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {nesSeleccionadas.map(id=>(
+                            <span key={id} className="flex items-center gap-1.5 bg-blue-600 text-white px-2.5 py-1 rounded-lg text-[10px] font-black">
+                              {id}
+                              <button type="button" onClick={()=>toggleNE(id)} className="hover:text-red-200"><X size={11}/></button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {opsDistintas.size>1 && (
+                        <div className="text-[9px] text-amber-700 bg-amber-100 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
+                          ⚠ Estas NE vienen de {opsDistintas.size} OP distintas: {[...opsDistintas].join(', ')}
+                        </div>
+                      )}
                       <div className="flex gap-3 items-end">
                         <div className="flex-1 space-y-2">
-                          <input type="text" placeholder="🔍 Buscar NE..." onChange={e=>{const v=e.target.value.toUpperCase();document.querySelectorAll('#_ne_inv option').forEach(o=>{o.style.display=(!v||o.value===''||o.text.toUpperCase().includes(v))?'':'none';});}} className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500"/>
-                          <select id="_ne_inv" value={newInvoiceForm.neOrigen||''} onChange={e=>{const neId=e.target.value;if(!neId){setNewInvoiceForm(f=>({...f,neOrigen:'',clientRif:'',clientName:'',clientAddress:'',vendedor:'',opAsignada:''}));setFgItems([]);return;}const ne=(notasEntrega||[]).find(n=>n.id===neId);if(ne){setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));setNewInvoiceForm(f=>({...f,neOrigen:neId,fecha:ne.fecha||f.fecha,clientRif:ne.clientRif||'',clientName:ne.clientName||'',clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',opAsignada:ne.opRelacionada||'',aplicaIva:ne.aplicaIva||'SI'}));}}} size={5} className="w-full border-2 border-blue-300 rounded-xl p-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
-                            <option value="">— Sin NE (factura directa) —</option>
-                            {(notasEntrega||[]).filter(ne=>!ne.facturaId&&(ne.status==='TRANSITO'||ne.status==='TRÁNSITO'||!ne.status)).sort((a,b)=>b.id.localeCompare(a.id)).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}</option>))}
-                            {/* Incluye también la NE ya vinculada a esta factura (si existía) para no perderla del listado */}
-                            {(notasEntrega||[]).filter(ne=>ne.facturaId===newInvoiceForm.documento).map(ne=>(<option key={ne.id} value={ne.id}>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)} (ya vinculada)</option>))}
-                          </select>
+                          <input type="text" value={neBuscarTexto} onChange={e=>setNeBuscarTexto(e.target.value)} placeholder="🔍 Buscar NE..." className="w-full border-2 border-blue-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                          <div className="w-full border-2 border-blue-300 rounded-xl bg-white max-h-40 overflow-y-auto">
+                            {disponibles.length===0 && <div className="p-2 text-[10px] text-slate-400">Sin NEs disponibles</div>}
+                            {disponibles.map(ne=>(
+                              <label key={ne.id} className="flex items-center gap-2 px-2 py-1.5 text-xs font-bold hover:bg-blue-50 cursor-pointer border-b border-blue-50 last:border-0">
+                                <input type="checkbox" checked={nesSeleccionadas.includes(ne.id)} onChange={()=>toggleNE(ne.id)}/>
+                                <span>{ne.id} · {ne.clientName} · {ne.fecha} · ${formatNum(ne.total||0)}{ne.facturaId===newInvoiceForm.documento&&ne.facturaId?' (ya vinculada)':''}</span>
+                              </label>
+                            ))}
+                          </div>
                         </div>
-                        {newInvoiceForm.neOrigen && <div className="text-[10px] text-blue-700 font-bold bg-blue-100 px-3 py-2.5 rounded-xl whitespace-nowrap">✅ {newInvoiceForm.neOrigen}</div>}
                       </div>
-                      <p className="text-[9px] text-blue-500 mt-1">Solo NEs sin factura. Al guardar, la NE se marcará PROCESADA.</p>
+                      <p className="text-[9px] text-blue-500 mt-1">Solo NEs sin factura. Al guardar, cada NE seleccionada se marcará PROCESADA. Puedes marcar varias si van en una sola factura fiscal.</p>
                     </div>
-                    )}
+                      );
+                    })()}
 
                     {editingInvoiceId && (
                     <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 mb-2">
