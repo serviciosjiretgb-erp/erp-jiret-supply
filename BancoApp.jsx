@@ -3110,28 +3110,36 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const movsCta = movBanco.filter(m=>m.cuentaId===c.id);
       const inicioCuenta = `${c.mesSaldoInicial||'2000-01'}-01`;
       const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/(tasaActiva||1) : Number(c.saldo||0);
-      if(primerDiaMesBalance<inicioCuenta) return {saldoInicial:0, entradas:0, salidas:0}; // mes anterior al de partida de esta cuenta
-      const netoEntre = (desde,hasta) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
-        if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+Number(m.montoUSD||0);
-        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-Number(m.montoUSD||0);
+      const saldoBaseBs  = c.moneda==='BS' ? Number(c.saldo||0) : Number(c.saldo||0)*(tasaActiva||1);
+      if(primerDiaMesBalance<inicioCuenta) return {saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0}; // mes anterior al de partida
+      const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
+        const v=Number(m[campo]||0);
+        if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+v;
+        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-v;
         return s;
       },0);
-      const saldoInicial = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance);
+      const saldoInicialUSD = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoUSD');
+      const saldoInicialBs  = saldoBaseBs  + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoBs');
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
-      const entradas = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      const salidas  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      return {saldoInicial, entradas, salidas};
+      const entradasUSD = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const entradasBs  = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      const salidasUSD  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      return {saldoInicialUSD,saldoInicialBs,entradasUSD,entradasBs,salidasUSD,salidasBs};
     };
     const balanceTotal = cuentasBalanceFiltro.map(calcCuentaBalance).reduce((a,r)=>({
-      saldoInicial:a.saldoInicial+r.saldoInicial, entradas:a.entradas+r.entradas, salidas:a.salidas+r.salidas
-    }),{saldoInicial:0,entradas:0,salidas:0});
-    const disponibleBalance = balanceTotal.saldoInicial+balanceTotal.entradas-balanceTotal.salidas;
-    // Si se filtró una única cuenta y es en Bs., se muestra Bs. como principal (con el equivalente
-    // en USD) — igual que en Conciliación. Si son varias cuentas mezcladas, se muestra en USD.
+      saldoInicialUSD:a.saldoInicialUSD+r.saldoInicialUSD, saldoInicialBs:a.saldoInicialBs+r.saldoInicialBs,
+      entradasUSD:a.entradasUSD+r.entradasUSD, entradasBs:a.entradasBs+r.entradasBs,
+      salidasUSD:a.salidasUSD+r.salidasUSD, salidasBs:a.salidasBs+r.salidasBs,
+    }),{saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0});
+    const disponibleUSD = balanceTotal.saldoInicialUSD+balanceTotal.entradasUSD-balanceTotal.salidasUSD;
+    const disponibleBs  = balanceTotal.saldoInicialBs +balanceTotal.entradasBs -balanceTotal.salidasBs;
+    // Si se filtró una única cuenta y es en Bs., se muestra Bs. (sumado directo de cada movimiento,
+    // no re-derivado con la tasa actual) como principal, con el USD como equivalente.
     const cuentaFiltrada = filtC ? cuentas.find(c=>c.id===filtC) : null;
     const balanceEsBs = cuentaFiltrada && (cuentaFiltrada.moneda==='BS'||cuentaFiltrada.tipoBanco==='Nacional-Bs');
-    const fmtBal = (usd) => balanceEsBs ? `Bs.${bancoFmt(usd*tasaActiva)}` : `$${bancoFmt(usd)}`;
-    const fmtBalSub = (usd) => balanceEsBs ? `≈$${bancoFmt(usd)}` : '';
+    const fmtBal    = (usd,bs) => balanceEsBs ? `Bs.${bancoFmt(bs)}` : `$${bancoFmt(usd)}`;
+    const fmtBalSub = (usd,bs) => balanceEsBs ? `≈$${bancoFmt(usd)}` : '';
 
     return (
       <div>
@@ -3144,10 +3152,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <input type="month" value={filtMesBalance} onChange={e=>setFiltMesBalance(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <BKPI label="Saldo Inicial" value={fmtBal(balanceTotal.saldoInicial)} sub={fmtBalSub(balanceTotal.saldoInicial)} accent="blue" Icon={Banknote}/>
-            <BKPI label="Entradas" value={fmtBal(balanceTotal.entradas)} sub={fmtBalSub(balanceTotal.entradas)} accent="green" Icon={ArrowUpCircle}/>
-            <BKPI label="Salidas" value={fmtBal(balanceTotal.salidas)} sub={fmtBalSub(balanceTotal.salidas)} accent="red" Icon={ArrowDownCircle}/>
-            <BKPI label="Disponible" value={fmtBal(disponibleBalance)} sub={fmtBalSub(disponibleBalance)} accent={disponibleBalance>=0?'green':'red'} Icon={PiggyBank}/>
+            <BKPI label="Saldo Inicial" value={fmtBal(balanceTotal.saldoInicialUSD,balanceTotal.saldoInicialBs)} sub={fmtBalSub(balanceTotal.saldoInicialUSD,balanceTotal.saldoInicialBs)} accent="blue" Icon={Banknote}/>
+            <BKPI label="Entradas" value={fmtBal(balanceTotal.entradasUSD,balanceTotal.entradasBs)} sub={fmtBalSub(balanceTotal.entradasUSD,balanceTotal.entradasBs)} accent="green" Icon={ArrowUpCircle}/>
+            <BKPI label="Salidas" value={fmtBal(balanceTotal.salidasUSD,balanceTotal.salidasBs)} sub={fmtBalSub(balanceTotal.salidasUSD,balanceTotal.salidasBs)} accent="red" Icon={ArrowDownCircle}/>
+            <BKPI label="Disponible" value={fmtBal(disponibleUSD,disponibleBs)} sub={fmtBalSub(disponibleUSD,disponibleBs)} accent={disponibleUSD>=0?'green':'red'} Icon={PiggyBank}/>
           </div>
         </div>
         {/* ── MODAL DETALLE / EDICIÓN ── */}
