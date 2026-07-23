@@ -7640,6 +7640,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const metodoF = editForm.metodo||editPago.metodo;
       const referenciaF = editForm.referencia||'';
       const bancoF = editForm.banco||editPago.banco||'';
+      const cuentaIdF = editForm.cuentaId!=null?editForm.cuentaId:(editPago.cuentaId||'');
       const tasaF = pN(editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0))||1;
       const monedaF = editForm.moneda!=null?editForm.moneda:editPago.moneda;
       const montoBsF  = monedaF==='Bs'?totalPago:parseFloat((totalPago*tasaF).toFixed(2));
@@ -7665,7 +7666,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           id:pid,esAnticipo:false,montoAplicado:0,facturaId:a.facturaId,
           proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
           monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
-          concepto:editPago.concepto||'Pago CxP',cuentaId:editPago.cuentaId||'',moneda:monedaF||'USD',
+          concepto:editPago.concepto||'Pago CxP',cuentaId:cuentaIdF,moneda:monedaF||'USD',
           tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
           saldoInicialImportado:editPago.saldoInicialImportado||false,
           timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
@@ -7686,20 +7687,41 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
           proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
           monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
-          concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:editPago.cuentaId||'',moneda:monedaF||'USD',
+          concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:cuentaIdF,moneda:monedaF||'USD',
           tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
           saldoInicialImportado:editPago.saldoInicialImportado||false,
           timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
         });
       }
-      // 4) Si el pago tenía un movimiento de banco/caja vinculado, actualizar su desglose de facturas y fecha/referencia
+      // 4) Si el pago tenía un movimiento de banco/caja vinculado, actualizar su desglose de facturas,
+      //    fecha/referencia y — si la cuenta cambió — moverlo a la cuenta/colección correcta.
       if(editPago.grupoPagoId){
         const [bSnap,kSnap]=await Promise.all([
           getDocs(query(getColRef('banco_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
           getDocs(query(getColRef('caja_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
         ]);
-        [...bSnap.docs,...kSnap.docs].forEach(d=>{
-          batch.update(d.ref,{facturas:nuevasFacturasMv,fecha:fechaF,referencia:referenciaF,metodo:metodoF,monto:montoUSDF,montoBs:montoBsF,montoUSD:montoUSDF,tasa:tasaF});
+        const nuevaEsCaja = cuentaIdF.startsWith('CAJA::');
+        const camposComunes = {facturas:nuevasFacturasMv,fecha:fechaF,referencia:referenciaF,metodo:metodoF,montoUSD:montoUSDF,montoBs:montoBsF,tasa:tasaF};
+        bSnap.docs.forEach(d=>{
+          if(nuevaEsCaja){
+            // Banco → Caja: mover el movimiento de colección
+            const cajaId=cuentaIdF.replace('CAJA::','');
+            const cajaObj=cajasEfectivo.find(c=>c.id===cajaId);
+            batch.delete(d.ref);
+            batch.set(getDocRef('caja_movimientos',d.id),{...d.data(),...camposComunes,cajaId,moneda:cajaObj?.moneda||d.data().moneda,monto:montoUSDF});
+          } else {
+            batch.update(d.ref,{...camposComunes,cuentaId:cuentaIdF});
+          }
+        });
+        kSnap.docs.forEach(d=>{
+          if(!nuevaEsCaja){
+            // Caja → Banco: mover el movimiento de colección
+            const ctaObj=cuentasBancarias.find(c=>c.id===cuentaIdF);
+            batch.delete(d.ref);
+            batch.set(getDocRef('banco_movimientos',d.id),{...d.data(),...camposComunes,cuentaId:cuentaIdF,cuentaNombre:ctaObj?.banco||''});
+          } else {
+            batch.update(d.ref,{...camposComunes,monto:montoUSDF,cajaId:cuentaIdF.replace('CAJA::','')});
+          }
         });
       }
       await batch.commit();
@@ -7858,8 +7880,21 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
               </div>
               <div>
                 <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Banco / Cuenta</label>
-                <input value={editForm.banco||''} onChange={e=>setEditForm(f=>({...f,banco:e.target.value}))}
-                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                <select value={editForm.cuentaId!=null?editForm.cuentaId:(editPago.cuentaId||'')} onChange={e=>{
+                    const v=e.target.value;
+                    const esCaja=v.startsWith('CAJA::');
+                    const cta=esCaja?cajasEfectivo.find(c=>c.id===v.replace('CAJA::','')):cuentasBancarias.find(c=>c.id===v);
+                    setEditForm(f=>({...f,cuentaId:v,banco:esCaja?(cta?.nombre||''):(cta?.banco||cta?.nombre||'')}));
+                  }}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                  <option value="">— Sin cuenta —</option>
+                  {cuentasBancarias.length>0&&<optgroup label="Bancos">
+                    {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                  </optgroup>}
+                  {cajasEfectivo.length>0&&<optgroup label="Cajas">
+                    {cajasEfectivo.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
+                  </optgroup>}
+                </select>
               </div>
               <div className="col-span-2">
                 <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Moneda del monto (corrige aquí si está al revés)</label>
@@ -28158,8 +28193,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div className="col-span-2">
                   <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta / Banco</label>
-                  <input className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
-                    value={cxcEditForm.cuentaBancoNombre||''} onChange={e=>setCxcEditForm(f=>({...f,cuentaBancoNombre:e.target.value}))}/>
+                  <select className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-orange-400"
+                    value={cxcEditForm.cuentaBancariaId!=null?cxcEditForm.cuentaBancariaId:(cxcEditCobro.cuentaBancariaId||'')}
+                    onChange={e=>{
+                      const v=e.target.value;
+                      const esCaja=v.startsWith('CAJA::');
+                      const cta=esCaja?cajasCuentas.find(c=>c.id===v.replace('CAJA::','')):cuentasBanco.find(c=>c.id===v);
+                      setCxcEditForm(f=>({...f,cuentaBancariaId:v,cuentaBancoNombre:esCaja?(cta?.nombre||''):(cta?.banco||cta?.nombre||'')}));
+                    }}>
+                    <option value="">— Sin cuenta —</option>
+                    {cuentasBanco.length>0&&<optgroup label="Bancos">
+                      {cuentasBanco.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                    </optgroup>}
+                    {cajasCuentas.length>0&&<optgroup label="Cajas">
+                      {cajasCuentas.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
+                    </optgroup>}
+                  </select>
                 </div>
               </div>
               <div className="px-6 pb-5 flex justify-end gap-3">
@@ -28172,17 +28221,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     const batch=writeBatch(db);
                     const tasaEdit=parseNum(cxcEditForm.tasa||0);
                     const montoBsEdit=parseNum(cxcEditForm.montoBs||0)||(tasaEdit>0?montoNuevo*tasaEdit:0);
+                    const cuentaIdF=cxcEditForm.cuentaBancariaId!=null?cxcEditForm.cuentaBancariaId:(cxcEditCobro.cuentaBancariaId||'');
+                    const cuentaCambio = cuentaIdF !== (cxcEditCobro.cuentaBancariaId||'');
                     batch.update(getDocRef('cobros_cxc',cxcEditCobro.id),{
                       fecha:cxcEditForm.fecha||cxcEditCobro.fecha,
                       metodo:cxcEditForm.metodo||cxcEditCobro.metodo,
                       referencia:(cxcEditForm.referencia||'').toUpperCase(),
                       cuentaBancoNombre:cxcEditForm.cuentaBancoNombre||'',
+                      cuentaBancariaId:cuentaIdF,
                       monto:montoNuevo,montoBs:montoBsEdit,
                       tasa:tasaEdit||cxcEditCobro.tasa||0,
                       moneda:cxcEditForm.moneda||'USD',tipo:cxcEditForm.tipo||'Pago',
                       updatedAt:Date.now()
                     });
-                    if(Math.abs(montoNuevo-montoAnterior)>0.001 || Math.abs(tasaEdit-parseNum(cxcEditCobro.tasa||0))>0.0001 || Math.abs(montoBsEdit-parseNum(cxcEditCobro.montoBs||0))>0.01){
+                    if(Math.abs(montoNuevo-montoAnterior)>0.001 || Math.abs(tasaEdit-parseNum(cxcEditCobro.tasa||0))>0.0001 || Math.abs(montoBsEdit-parseNum(cxcEditCobro.montoBs||0))>0.01 || cuentaCambio){
                       const ne=(notasEntrega||[]).find(n=>n.id===cxcEditCobro.neId);
                       if(ne){
                         const cobrosRest=(cobrosCxc||[]).filter(c=>c.neId===cxcEditCobro.neId&&c.id!==cxcEditCobro.id);
@@ -28196,34 +28248,55 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         batch.update(getDocRef('notasEntrega',ne.id),{statusCxC:st,montoCobrado:totCob,saldoPendiente:nuevoSaldo,updatedAt:Date.now()});
                       }
                       // Propagar el cambio al movimiento de banco/caja vinculado (mismo grupoCobroId), si existe,
-                      // y ajustar el saldo de la cuenta por la diferencia — para que banco/caja no queden desfasados.
+                      // moverlo de colección si la cuenta cambió de tipo, y ajustar los saldos correctamente.
                       const deltaUSD=montoNuevo-montoAnterior;
                       if(cxcEditCobro.grupoCobroId){
                         const [bSnapEdit,kSnapEdit]=await Promise.all([
                           getDocs(query(getColRef('banco_movimientos'),where('grupoCobroId','==',cxcEditCobro.grupoCobroId))),
                           getDocs(query(getColRef('caja_movimientos'),where('grupoCobroId','==',cxcEditCobro.grupoCobroId))),
                         ]);
-                        const mvBanco=bSnapEdit.docs[0]?.data();
-                        if(mvBanco){
-                          const nuevoMontoUSD=parseFloat((parseNum(mvBanco.montoUSD||0)+deltaUSD).toFixed(2));
-                          const nuevoMontoBs=montoBsEdit>0?montoBsEdit:parseFloat((parseNum(mvBanco.montoBs||0)+deltaUSD*(tasaEdit||parseNum(mvBanco.tasa||0))).toFixed(2));
-                          batch.update(getDocRef('banco_movimientos',mvBanco.id||bSnapEdit.docs[0].id),{
-                            montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,tasa:tasaEdit||mvBanco.tasa||0,
-                            fecha:cxcEditForm.fecha||mvBanco.fecha,referencia:(cxcEditForm.referencia||mvBanco.referencia||'').toUpperCase(),
-                            updatedAt:Date.now(),
-                          });
-                          const ctaBanco=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
-                          if(ctaBanco) batch.update(getDocRef('banco_cuentas',ctaBanco.id),{saldo:parseFloat((parseNum(ctaBanco.saldo||0)+deltaUSD).toFixed(2))});
+                        const nuevaEsCaja=cuentaIdF.startsWith('CAJA::');
+                        const camposComunes={fecha:cxcEditForm.fecha||cxcEditCobro.fecha,referencia:(cxcEditForm.referencia||'').toUpperCase(),montoUSD:montoNuevo,montoBs:montoBsEdit,tasa:tasaEdit||0,updatedAt:Date.now()};
+                        const mvBancoDoc=bSnapEdit.docs[0];
+                        if(mvBancoDoc){
+                          const mvBanco=mvBancoDoc.data();
+                          if(cuentaCambio){
+                            // Revertir el efecto en el banco viejo (se resta el monto que tenía)
+                            const ctaVieja=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
+                            if(ctaVieja) batch.update(getDocRef('banco_cuentas',ctaVieja.id),{saldo:parseFloat((parseNum(ctaVieja.saldo||0)-parseNum(mvBanco.montoUSD||0)).toFixed(2))});
+                            batch.delete(mvBancoDoc.ref);
+                            if(nuevaEsCaja){
+                              const cajaId=cuentaIdF.replace('CAJA::','');
+                              const cajaObj=cajasCuentas.find(c=>c.id===cajaId);
+                              batch.set(getDocRef('caja_movimientos',mvBancoDoc.id),{...mvBanco,...camposComunes,monto:montoNuevo,cajaId,moneda:cajaObj?.moneda||mvBanco.moneda});
+                            } else {
+                              const ctaNueva=(cuentasBanco||[]).find(c=>c.id===cuentaIdF);
+                              batch.set(getDocRef('banco_movimientos',mvBancoDoc.id),{...mvBanco,...camposComunes,cuentaId:cuentaIdF,cuentaNombre:ctaNueva?.banco||''});
+                              if(ctaNueva) batch.update(getDocRef('banco_cuentas',ctaNueva.id),{saldo:parseFloat((parseNum(ctaNueva.saldo||0)+montoNuevo).toFixed(2))});
+                            }
+                          } else {
+                            batch.update(mvBancoDoc.ref,camposComunes);
+                            const ctaBanco=(cuentasBanco||[]).find(c=>c.id===mvBanco.cuentaId);
+                            if(ctaBanco) batch.update(getDocRef('banco_cuentas',ctaBanco.id),{saldo:parseFloat((parseNum(ctaBanco.saldo||0)+deltaUSD).toFixed(2))});
+                          }
                         }
-                        const mvCaja=kSnapEdit.docs[0]?.data();
-                        if(mvCaja){
-                          const nuevoMontoUSDCaja=parseFloat((parseNum(mvCaja.montoUSD||0)+deltaUSD).toFixed(2));
-                          const nuevoMontoBsCaja=montoBsEdit>0?montoBsEdit:parseFloat((parseNum(mvCaja.montoBs||0)+deltaUSD*(tasaEdit||parseNum(mvCaja.tasa||0))).toFixed(2));
-                          batch.update(getDocRef('caja_movimientos',mvCaja.id||kSnapEdit.docs[0].id),{
-                            monto:nuevoMontoUSDCaja,montoUSD:nuevoMontoUSDCaja,montoBs:nuevoMontoBsCaja,tasa:tasaEdit||mvCaja.tasa||0,
-                            fecha:cxcEditForm.fecha||mvCaja.fecha,referencia:(cxcEditForm.referencia||mvCaja.referencia||'').toUpperCase(),
-                            updatedAt:Date.now(),
-                          });
+                        const mvCajaDoc=kSnapEdit.docs[0];
+                        if(mvCajaDoc){
+                          const mvCaja=mvCajaDoc.data();
+                          if(cuentaCambio){
+                            batch.delete(mvCajaDoc.ref);
+                            if(!nuevaEsCaja){
+                              const ctaNueva=(cuentasBanco||[]).find(c=>c.id===cuentaIdF);
+                              batch.set(getDocRef('banco_movimientos',mvCajaDoc.id),{...mvCaja,...camposComunes,cuentaId:cuentaIdF,cuentaNombre:ctaNueva?.banco||''});
+                              if(ctaNueva) batch.update(getDocRef('banco_cuentas',ctaNueva.id),{saldo:parseFloat((parseNum(ctaNueva.saldo||0)+montoNuevo).toFixed(2))});
+                            } else {
+                              const cajaId=cuentaIdF.replace('CAJA::','');
+                              const cajaObj=cajasCuentas.find(c=>c.id===cajaId);
+                              batch.set(getDocRef('caja_movimientos',mvCajaDoc.id),{...mvCaja,...camposComunes,monto:montoNuevo,cajaId,moneda:cajaObj?.moneda||mvCaja.moneda});
+                            }
+                          } else {
+                            batch.update(mvCajaDoc.ref,{...camposComunes,monto:montoNuevo});
+                          }
                         }
                       }
                     }
