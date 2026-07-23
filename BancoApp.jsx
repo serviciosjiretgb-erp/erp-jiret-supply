@@ -3109,8 +3109,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const calcCuentaBalance = (c) => {
       const movsCta = movBanco.filter(m=>m.cuentaId===c.id);
       const inicioCuenta = `${c.mesSaldoInicial||'2000-01'}-01`;
-      const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/(tasaActiva||1) : Number(c.saldo||0);
-      const saldoBaseBs  = c.moneda==='BS' ? Number(c.saldo||0) : Number(c.saldo||0)*(tasaActiva||1);
+      const finMesBalance = `${filtMesBalance}-32`; // cualquier fecha después del último día del mes
+      // Tasa promedio ponderada, calculada con los movimientos reales de esta cuenta (hasta el mes
+      // visto) — evita depender de una "tasa global" que puede no estar registrada o quedar vieja.
+      const movsParaProm = movsCta.filter(m=>(m.fecha||'')<finMesBalance);
+      const sumBsProm  = movsParaProm.reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      const sumUsdProm = movsParaProm.reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const tasaProm = sumUsdProm>0 ? sumBsProm/sumUsdProm : (tasaActiva||1);
+      const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/tasaProm : Number(c.saldo||0);
+      const saldoBaseBs  = c.moneda==='BS' ? Number(c.saldo||0) : Number(c.saldo||0)*tasaProm;
       if(primerDiaMesBalance<inicioCuenta) return {saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0}; // mes anterior al de partida
       const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
         const v=Number(m[campo]||0);
