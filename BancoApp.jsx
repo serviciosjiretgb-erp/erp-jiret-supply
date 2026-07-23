@@ -2473,6 +2473,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [searchBanco,   setSearchBanco]   = useState('');
     const [searchDestino, setSearchDestino] = useState('');
     const [filtC,    setFiltC]   = useState('');
+    const [filtTipo, setFiltTipo] = useState('');
     const [filtDesde,setFiltD]   = useState(bancoMesActual()+'-01');
     const [filtHasta,setFiltH]   = useState(getTodayDate());
     const [busqCli,  setBusqCli] = useState('');
@@ -2520,7 +2521,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
     const initF = ()=>({fecha:getTodayDate(),tipo:'Ingreso',cuentaId:'',cuentaDestinoId:'',
       monedaOp:'BS',montoOp:'',
-      aplicaComision:false,comisionMonto:'',comisionCtaId:'',
+      aplicaComision:false,tasaDestino:'',comisionCtaId:'',
       origenIngreso:'Venta',motivoEgreso:'Pago Proveedor',
       concepto:'',referencia:'',tasa:String(tasaActiva),montoNativo:'',
       aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',
@@ -2628,19 +2629,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             alert('Error: El banco origen o destino no tiene cuenta contable asignada. Configúrela en Cuentas Bancarias.');
             setBusy(false); return;
           }
-          comisionUSD=(destinoEsCaja&&form.aplicaComision)?Number(form.comisionMonto||0)*(form.monedaOp==='BS'?(1/tasa):1):0;
-          comisionBs=comisionUSD*tasa;
-          if(comisionUSD>0&&!form.comisionCtaId){
-            alert('Seleccione la cuenta contable de la comisión/rebancarización.');
+          const tasaDestinoF=Number(form.tasaDestino)||tasa;
+          comisionBs=bsOrigen-(usdOrigen*tasaDestinoF);
+          comisionUSD=tasa>0?comisionBs/tasa:0;
+          if(Math.abs(comisionUSD)>0.005&&!form.comisionCtaId){
+            alert('Seleccione la cuenta contable de la rebancarización (la tasa destino es distinta de la tasa origen, así que hay una diferencia que registrar).');
             setBusy(false); return;
           }
           todasLineas=[
             {codigo:ctaDest.cod,cuenta:ctaDest.nom||`Banco ${cuentaDest.banco||'Destino'}`,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
             {codigo:ctaOrig.cod,cuenta:ctaOrig.nom||`Banco ${cuenta.banco}`,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:bsOrigen,debeUSD:0,haberUSD:usdOrigen},
           ];
-          if(comisionUSD>0){
+          if(Math.abs(comisionUSD)>0.005){
             const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId)||{};
-            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Gasto de rebancarización',tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs,haberBs:0,debeUSD:comisionUSD,haberUSD:0});
+            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Rebancarización',tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs,haberBs:0,debeUSD:comisionUSD,haberUSD:0});
           }
         } else {
           // Banco: Debe si Ingreso, Haber si Egreso o Traslado
@@ -2926,6 +2928,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const movFiltAll = movBanco.filter(m=>{
       if(filtC     && m.cuentaId!==filtC)   return false;
+      if(filtTipo  && m.tipo!==filtTipo)    return false;
       if(filtDesde && m.fecha<filtDesde)     return false;
       if(filtHasta && m.fecha>filtHasta)     return false;
       if(busqCli && !(m.terceroNombre||m.clientName||m.proveedor||m.concepto||'').toUpperCase().includes(busqCli.toUpperCase())) return false;
@@ -3213,6 +3216,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               {cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs').map(c=><option key={c.id} value={c.id}>{c.banco} ({c.moneda})</option>)}
             </optgroup>}
           </select>
+          <select className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500 text-slate-700" value={filtTipo} onChange={e=>setFiltTipo(e.target.value)}>
+            <option value="">Ingresos y Egresos</option>
+            <option value="Ingreso">Solo Ingresos</option>
+            <option value="Egreso">Solo Egresos</option>
+          </select>
           <div className="flex items-center gap-1.5">
             <input type="date" className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500" value={filtDesde} onChange={e=>setFiltD(e.target.value)} title="Desde"/>
             <span className="text-slate-400 text-xs font-bold">—</span>
@@ -3227,7 +3235,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
             <input value={busqRef} onChange={e=>setBusqRef(e.target.value)} placeholder="Referencia..." className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
           </div>
-          {(filtC||filtDesde||filtHasta||busqCli||busqRef)&&<button onClick={()=>{setFiltC('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
+          {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
           <BBg onClick={()=>{setForm(initF());setModal(true);}}><Plus size={13}/> Nuevo</BBg>
         </div>
@@ -3482,7 +3490,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
             <input value={searchDestino} onChange={e=>setSearchDestino(e.target.value)} placeholder="Buscar banco o caja..." className={`${inp} pl-8`}/>
           </div>
-          <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,comisionMonto:'',aplicaComision:false})}>
+          <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,tasaDestino:''})}>
             <option value="">— Seleccione destino —</option>
             <optgroup label="🏦 Bancos">
               {cuentas.filter(c=>c.id!==form.cuentaId&&esBancario(c)&&(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase()))).map(c=>(
@@ -3544,31 +3552,39 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     </div>
   </div>
 </div>
-{form.tipo==='Traslado de Fondo'&&destinoEsCaja&&(
+{form.tipo==='Traslado de Fondo'&&form.cuentaDestinoId&&(()=>{
+  const tasaOrigenF=Number(form.tasa)||tasaActiva;
+  const usdOrigenPrev=Number(form.montoUSD)||0;
+  const bsOrigenPrev=usdOrigenPrev*tasaOrigenF;
+  const tasaDestinoF=Number(form.tasaDestino)||tasaOrigenF;
+  const comisionBsPrev=bsOrigenPrev-(usdOrigenPrev*tasaDestinoF);
+  const comisionUSDPrev=tasaOrigenF>0?comisionBsPrev/tasaOrigenF:0;
+  return (
   <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 mt-3">
-    <label className="flex items-center gap-2 text-[10px] font-black uppercase text-amber-800 mb-2 cursor-pointer">
-      <input type="checkbox" checked={form.aplicaComision} onChange={e=>setForm({...form,aplicaComision:e.target.checked,comisionMonto:e.target.checked?form.comisionMonto:''})} className="accent-amber-600"/>
-      Hubo comisión o gasto de rebancarización
-    </label>
-    {form.aplicaComision&&(
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Monto Comisión ({form.monedaOp==='BS'?'Bs':'USD'})</label>
-          <input type="number" step="0.01" className={`${inp} bg-white`} value={form.comisionMonto} onChange={e=>setForm({...form,comisionMonto:e.target.value})}/>
-        </div>
-        <div>
-          <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Cuenta Contable del Gasto</label>
-          <select className={`${sel} bg-white`} value={form.comisionCtaId} onChange={e=>setForm({...form,comisionCtaId:e.target.value})}>
-            <option value="">— Seleccione cuenta —</option>
-            {contCuentas.filter(c=>c.nombre?.toUpperCase().includes('COMIS')||c.nombre?.toUpperCase().includes('BANCARI')||c.nombre?.toUpperCase().includes('FINANC')).map(c=>(
-              <option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>
-            ))}
-          </select>
+    <p className="text-[10px] font-black uppercase text-amber-800 mb-2">Tasa destino (si es distinta a la de origen, la diferencia es la rebancarización)</p>
+    <div className="grid grid-cols-3 gap-3 items-end">
+      <div>
+        <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Tasa Destino (Bs/$)</label>
+        <input type="number" step="0.01" className={`${inp} bg-white`} placeholder={String(tasaOrigenF)} value={form.tasaDestino} onChange={e=>setForm({...form,tasaDestino:e.target.value})}/>
+      </div>
+      <div>
+        <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Rebancarización (auto)</label>
+        <div className="w-full bg-slate-900 text-white rounded-lg p-2 flex items-center justify-center h-[38px] shadow-inner">
+          <span className="font-mono font-bold text-sm">${bancoFmt(comisionUSDPrev)}</span>
         </div>
       </div>
-    )}
+      <div>
+        <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Cuenta Contable</label>
+        <select className={`${sel} bg-white`} value={form.comisionCtaId} onChange={e=>setForm({...form,comisionCtaId:e.target.value})}>
+          <option value="">— Seleccione cuenta —</option>
+          {contCuentas.filter(c=>c.nombre?.toUpperCase().includes('COMIS')||c.nombre?.toUpperCase().includes('BANCARI')||c.nombre?.toUpperCase().includes('FINANC')).map(c=>(
+            <option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>
+          ))}
+        </select>
+      </div>
+    </div>
   </div>
-)}
+  );})()}
                 {/* ── Concepto ── */}
                 <BFG label="Concepto / Descripción" full>
                   <input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})} placeholder="Describa el motivo del movimiento..."/>
@@ -3771,13 +3787,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           const bancoNom=cuentaSel.banco;
                           if(form.tipo==='Traslado de Fondo'&&cuentaDest){
                             const dCod=(cuentaDest?.cuentaContableCod||cuentaDest?.cuentaContable?.split('·')[0]||'').trim();
-                            const comUSD=(destinoEsCaja&&form.aplicaComision)?Number(form.comisionMonto||0)*(form.monedaOp==='BS'?(1/tasa):1):0;
-                            const comBs=comUSD*tasa;
+                            const tasaDestinoPrev=Number(form.tasaDestino)||tasa;
+                            const comBs=bsV-(usdV*tasaDestinoPrev);
+                            const comUSD=tasa>0?comBs/tasa:0;
                             lines.push({cod:dCod,nom:cuentaDest.banco,dBs:bsV-comBs,hBs:0,dU:usdV-comUSD,hU:0,color:'text-amber-400'});
                             lines.push({cod:bancoCod,nom:bancoNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
-                            if(comUSD>0){
+                            if(Math.abs(comUSD)>0.005){
                               const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId);
-                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Comisión/rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
+                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
                             }
                           } else if(form.tipo==='Nota de Débito'){
                             const aj=contCuentas.find(c=>c.id===form.cuentaAjusteId);
@@ -5573,20 +5590,49 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   const TasasView = () => {
     const [modal,setModal]=useState(false);const [busy,setBusy]=useState(false);
-    const [form,setForm]=useState({fecha:getTodayDate(),modulo:'Todos',moneda:'USD',tasaRef:'',fuente:'Oficial / BCV'});
-    const save=async()=>{if(!form.tasaRef)return;setBusy(true);try{const id=bancoGid();await setDoc(getDocRef('banco_tasas',id),{...form,tasaRef:Number(form.tasaRef),id,ts:serverTimestamp()});setModal(false);setForm({fecha:getTodayDate(),modulo:'Todos',moneda:'USD',tasaRef:'',fuente:'Oficial / BCV'});}finally{setBusy(false);}};
+    const [editando,setEditando]=useState(null);
+    const initTF=()=>({fecha:getTodayDate(),modulo:'Todos',moneda:'USD',tasaRef:'',fuente:'Oficial / BCV'});
+    const [form,setForm]=useState(initTF());
+    const openNew=()=>{setEditando(null);setForm(initTF());setModal(true);};
+    const openEdit=(t)=>{setEditando(t);setForm({fecha:t.fecha||getTodayDate(),modulo:t.modulo||'Todos',moneda:t.moneda||'USD',tasaRef:String(t.tasaRef||''),fuente:t.fuente||''});setModal(true);};
+    const save=async()=>{
+      if(!form.tasaRef)return;
+      setBusy(true);
+      try{
+        if(editando){
+          await updateDoc(getDocRef('banco_tasas',editando.id),{...form,tasaRef:Number(form.tasaRef)});
+        } else {
+          const id=bancoGid();
+          await setDoc(getDocRef('banco_tasas',id),{...form,tasaRef:Number(form.tasaRef),id,ts:serverTimestamp()});
+        }
+        setModal(false);setEditando(null);setForm(initTF());
+      }finally{setBusy(false);}
+    };
+    const eliminar=async(t)=>{
+      if(!window.confirm(`¿Eliminar la tasa ${t.tasaRef} Bs/$ del ${bancoDd(t.fecha)}? Esta acción no se puede deshacer.`))return;
+      await deleteDoc(getDocRef('banco_tasas',t.id));
+    };
     return(<div>
       <div className="grid grid-cols-3 gap-4 mb-5">
         <BKPI label="Tasa Global" value={`${tasas.find(t=>t.modulo==='Todos')?.tasaRef||'—'} Bs/$`} accent="gold" Icon={Globe}/>
         <BKPI label="Registros" value={tasas.length} accent="blue" Icon={TrendingUp}/>
         <BKPI label="Última Actualización" value={bancoDd(tasas[0]?.fecha||'')} accent="green" Icon={CalendarDays}/>
       </div>
-      <BCard title="Historial de Tasas" action={<BBg onClick={()=>setModal(true)} sm><Plus size={12}/> Nueva</BBg>}>
-        <table className="w-full"><thead><tr><BTh>Fecha</BTh><BTh>Módulo</BTh><BTh>Moneda</BTh><BTh right>Tasa Bs/$</BTh><BTh>Fuente</BTh></tr></thead>
-          <tbody>{tasas.length===0&&<tr><td colSpan={5}><BEmptyState icon={Globe} title="Sin tasas" desc="Registre la tasa actual"/></td></tr>}{tasas.map(t=><tr key={t.id} className="hover:bg-slate-50"><BTd>{bancoDd(t.fecha)}</BTd><BTd><BBadge v={t.modulo==='Todos'?'gray':'blue'}>{t.modulo}</BBadge></BTd><BTd><BPill usd={t.moneda==='USD'}>{t.moneda}</BPill></BTd><BTd right mono className="font-black text-slate-900 text-base">{t.tasaRef}</BTd><BTd className="text-slate-400 text-[10px] uppercase font-semibold">{t.fuente}</BTd></tr>)}</tbody>
+      <BCard title="Historial de Tasas" action={<BBg onClick={openNew} sm><Plus size={12}/> Nueva</BBg>}>
+        <table className="w-full"><thead><tr><BTh>Fecha</BTh><BTh>Módulo</BTh><BTh>Moneda</BTh><BTh right>Tasa Bs/$</BTh><BTh>Fuente</BTh><BTh></BTh></tr></thead>
+          <tbody>{tasas.length===0&&<tr><td colSpan={6}><BEmptyState icon={Globe} title="Sin tasas" desc="Registre la tasa actual"/></td></tr>}{tasas.map(t=><tr key={t.id} className="hover:bg-slate-50">
+            <BTd>{bancoDd(t.fecha)}</BTd><BTd><BBadge v={t.modulo==='Todos'?'gray':'blue'}>{t.modulo}</BBadge></BTd><BTd><BPill usd={t.moneda==='USD'}>{t.moneda}</BPill></BTd>
+            <BTd right mono className="font-black text-slate-900 text-base">{t.tasaRef}</BTd><BTd className="text-slate-400 text-[10px] uppercase font-semibold">{t.fuente}</BTd>
+            <BTd>
+              <div className="flex gap-1">
+                <button onClick={()=>openEdit(t)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Editar"><Settings size={12}/></button>
+                <button onClick={()=>eliminar(t)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>
+              </div>
+            </BTd>
+          </tr>)}</tbody>
         </table>
       </BCard>
-      <BModal open={modal} onClose={()=>setModal(false)} title="Registrar Tasa" footer={<><BBo onClick={()=>setModal(false)}>Cancelar</BBo><BBg onClick={save} disabled={busy}>{busy?'Guardando...':'Guardar'}</BBg></>}>
+      <BModal open={modal} onClose={()=>{setModal(false);setEditando(null);}} title={editando?'Editar Tasa':'Registrar Tasa'} footer={<><BBo onClick={()=>{setModal(false);setEditando(null);}}>Cancelar</BBo><BBg onClick={save} disabled={busy}>{busy?'Guardando...':'Guardar'}</BBg></>}>
         <div className="grid grid-cols-2 gap-4">
           <BFG label="Fecha"><input type="date" className={inp} value={form.fecha} onChange={e=>setForm({...form,fecha:e.target.value})}/></BFG>
           <BFG label="Moneda"><select className={sel} value={form.moneda} onChange={e=>setForm({...form,moneda:e.target.value})}><option>USD</option><option>EUR</option></select></BFG>
