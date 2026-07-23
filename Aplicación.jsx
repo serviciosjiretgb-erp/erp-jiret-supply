@@ -5430,10 +5430,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const fTot=calcTotalesFC(form);
   // Cuentas de tipo Gasto para clasificar facturas manuales de Servicio — filtra por grupo/subgrupo/nombre
   // que contengan "GASTO"; si el plan de cuentas no usa esa palabra, muestra el plan completo como respaldo.
-  const cuentasGasto=(()=>{
-    const filtradas=planDeCuentas.filter(c=>/gasto/i.test(`${c.grupo||''} ${c.subGrupo||''} ${c.nombre||''}`));
-    return filtradas.length>0?filtradas:planDeCuentas;
-  })();
+  const cuentasGasto=planDeCuentas;
   const fRetIVA=calcRetIVA(form,fTot);
   const fRetISLRLista=calcRetISLRLista(form,fTot);
   const fRetISLRTotal=fRetISLRLista.reduce((s,r)=>s+pNum(r.monto),0);
