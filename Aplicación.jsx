@@ -23729,15 +23729,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <div className="text-[7px] text-gray-400 mt-0.5 text-center">BCV: {formatNum(settings?.tasaBCV||0)}</div>
                       </div>
                       <div className="md:col-span-1">
-                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada</label>
+                        <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">OP Relacionada{(newInvoiceForm.opsAsignadas||[]).length>1?'(s)':''}</label>
+                        {(newInvoiceForm.opsAsignadas||[]).length>1?(
+                          <div className="w-full bg-orange-50 border-2 border-orange-200 rounded-2xl p-3 flex flex-wrap gap-1.5">
+                            {newInvoiceForm.opsAsignadas.map(opId=>{
+                              const r=(requirements||[]).find(rq=>rq.id===opId);
+                              return <span key={opId} className="bg-orange-500 text-white px-2 py-1 rounded-lg text-[9px] font-black">#{String(opId).replace('OP-','').padStart(5,'0')}{r?` — ${r.desc}`:''}</span>;
+                            })}
+                          </div>
+                        ):(
                         <select value={newInvoiceForm.opAsignada} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">— No aplica —</option>
                           {(requirements || []).map(r=><option key={r.id} value={r.id}>#{String(r.id).replace('OP-','').padStart(5,'0')} — {r.client} | {r.desc}</option>)}
                         </select>
+                        )}
                       </div>
 
                       {/* Preview de datos OP */}
-                      {newInvoiceForm.opData && (
+                      {newInvoiceForm.opData && (newInvoiceForm.opsAsignadas||[]).length<=1 && (
                         <div className="md:col-span-4 bg-orange-50 border-2 border-orange-200 rounded-2xl p-4">
                           <div className="text-[10px] font-black text-orange-700 uppercase mb-3">Datos de la OP Seleccionada</div>
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
