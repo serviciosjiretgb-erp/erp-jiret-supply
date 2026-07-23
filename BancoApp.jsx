@@ -2796,7 +2796,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           ];
           if(Math.abs(comisionUSD)>0.005){
             const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId)||{};
-            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Rebancarización',tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs,haberBs:0,debeUSD:comisionUSD,haberUSD:0});
+            const comisionBsAbs=Math.abs(comisionBs), comisionUSDAbs=Math.abs(comisionUSD);
+            todasLineas.push({codigo:ctaCom.codigo||'',cuenta:ctaCom.nombre||'Rebancarización',tipoLinea:comisionBs>=0?'D':'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:comisionBs>=0?comisionBsAbs:0,haberBs:comisionBs<0?comisionBsAbs:0,debeUSD:comisionBs>=0?comisionUSDAbs:0,haberUSD:comisionBs<0?comisionUSDAbs:0});
           }
         } else {
           // Banco: Debe si Ingreso, Haber si Egreso o Traslado
@@ -4031,7 +4032,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                             lines.push({cod:bancoCod,nom:bancoNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
                             if(Math.abs(comUSD)>0.005){
                               const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId);
-                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
+                              const comBsAbs=Math.abs(comBs), comUSDAbs=Math.abs(comUSD);
+                              lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs>=0?comBsAbs:0,hBs:comBs<0?comBsAbs:0,dU:comBs>=0?comUSDAbs:0,hU:comBs<0?comUSDAbs:0,color:'text-orange-300'});
                             }
                           } else if(form.tipo==='Nota de Débito'){
                             const aj=contCuentas.find(c=>c.id===form.cuentaAjusteId);
