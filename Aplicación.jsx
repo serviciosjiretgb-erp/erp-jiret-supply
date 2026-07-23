@@ -5444,12 +5444,6 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 
   return(
     <div>
-      {facturasBsRevisar.length>0 && (
-        <div className="mb-3 bg-red-50 border-2 border-red-300 rounded-xl p-3 flex items-center justify-between flex-wrap gap-2">
-          <p className="text-[11px] font-black text-red-700 uppercase">⚠ {facturasBsRevisar.length} factura(s) en Bs. registrada(s) con el monto viejo incorrecto (antes de la corrección)</p>
-          <button onClick={()=>setRevisarBsOpen(true)} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700">Revisar y Corregir</button>
-        </div>
-      )}
       {/* Toolbar */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="flex-1 relative min-w-48">
@@ -28134,7 +28128,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       moneda:cxcEditForm.moneda||'USD',tipo:cxcEditForm.tipo||'Pago',
                       updatedAt:Date.now()
                     });
-                    if(Math.abs(montoNuevo-montoAnterior)>0.001){
+                    if(Math.abs(montoNuevo-montoAnterior)>0.001 || Math.abs(tasaEdit-parseNum(cxcEditCobro.tasa||0))>0.0001 || Math.abs(montoBsEdit-parseNum(cxcEditCobro.montoBs||0))>0.01){
                       const ne=(notasEntrega||[]).find(n=>n.id===cxcEditCobro.neId);
                       if(ne){
                         const cobrosRest=(cobrosCxc||[]).filter(c=>c.neId===cxcEditCobro.neId&&c.id!==cxcEditCobro.id);
@@ -28160,7 +28154,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           const nuevoMontoUSD=parseFloat((parseNum(mvBanco.montoUSD||0)+deltaUSD).toFixed(2));
                           const nuevoMontoBs=montoBsEdit>0?montoBsEdit:parseFloat((parseNum(mvBanco.montoBs||0)+deltaUSD*(tasaEdit||parseNum(mvBanco.tasa||0))).toFixed(2));
                           batch.update(getDocRef('banco_movimientos',mvBanco.id||bSnapEdit.docs[0].id),{
-                            montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,
+                            montoUSD:nuevoMontoUSD,montoBs:nuevoMontoBs,tasa:tasaEdit||mvBanco.tasa||0,
                             fecha:cxcEditForm.fecha||mvBanco.fecha,referencia:(cxcEditForm.referencia||mvBanco.referencia||'').toUpperCase(),
                             updatedAt:Date.now(),
                           });
@@ -28172,7 +28166,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           const nuevoMontoUSDCaja=parseFloat((parseNum(mvCaja.montoUSD||0)+deltaUSD).toFixed(2));
                           const nuevoMontoBsCaja=montoBsEdit>0?montoBsEdit:parseFloat((parseNum(mvCaja.montoBs||0)+deltaUSD*(tasaEdit||parseNum(mvCaja.tasa||0))).toFixed(2));
                           batch.update(getDocRef('caja_movimientos',mvCaja.id||kSnapEdit.docs[0].id),{
-                            monto:nuevoMontoUSDCaja,montoUSD:nuevoMontoUSDCaja,montoBs:nuevoMontoBsCaja,
+                            monto:nuevoMontoUSDCaja,montoUSD:nuevoMontoUSDCaja,montoBs:nuevoMontoBsCaja,tasa:tasaEdit||mvCaja.tasa||0,
                             fecha:cxcEditForm.fecha||mvCaja.fecha,referencia:(cxcEditForm.referencia||mvCaja.referencia||'').toUpperCase(),
                             updatedAt:Date.now(),
                           });
