@@ -3134,37 +3134,57 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
       return {saldoInicialUSD,saldoInicialBs,entradasUSD,entradasBs,salidasUSD,salidasBs};
     };
-    const balanceTotal = cuentasBalanceFiltro.map(calcCuentaBalance).reduce((a,r)=>({
+    const esBsCuenta = (c) => c.moneda==='BS'||c.tipoBanco==='Nacional-Bs';
+    const cuentasBsGrp  = cuentasBalanceFiltro.filter(esBsCuenta);
+    const cuentasUsdGrp = cuentasBalanceFiltro.filter(c=>!esBsCuenta(c));
+    const sumarGrupo = (lista) => lista.map(calcCuentaBalance).reduce((a,r)=>({
       saldoInicialUSD:a.saldoInicialUSD+r.saldoInicialUSD, saldoInicialBs:a.saldoInicialBs+r.saldoInicialBs,
       entradasUSD:a.entradasUSD+r.entradasUSD, entradasBs:a.entradasBs+r.entradasBs,
       salidasUSD:a.salidasUSD+r.salidasUSD, salidasBs:a.salidasBs+r.salidasBs,
     }),{saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0});
-    const disponibleUSD = balanceTotal.saldoInicialUSD+balanceTotal.entradasUSD-balanceTotal.salidasUSD;
-    const disponibleBs  = balanceTotal.saldoInicialBs +balanceTotal.entradasBs -balanceTotal.salidasBs;
-    // Si se filtró una única cuenta y es en Bs., se muestra Bs. (sumado directo de cada movimiento,
-    // no re-derivado con la tasa actual) como principal, con el USD como equivalente.
-    const cuentaFiltrada = filtC ? cuentas.find(c=>c.id===filtC) : null;
-    const balanceEsBs = cuentaFiltrada && (cuentaFiltrada.moneda==='BS'||cuentaFiltrada.tipoBanco==='Nacional-Bs');
-    const fmtBal    = (usd,bs) => balanceEsBs ? `Bs.${bancoFmt(bs)}` : `$${bancoFmt(usd)}`;
-    const fmtBalSub = (usd,bs) => balanceEsBs ? `≈$${bancoFmt(usd)}` : '';
+    const balBs  = sumarGrupo(cuentasBsGrp);
+    const balUsd = sumarGrupo(cuentasUsdGrp);
+    const dispBs  = {usd:balBs.saldoInicialUSD+balBs.entradasUSD-balBs.salidasUSD,  bs:balBs.saldoInicialBs+balBs.entradasBs-balBs.salidasBs};
+    const dispUsd = {usd:balUsd.saldoInicialUSD+balUsd.entradasUSD-balUsd.salidasUSD, bs:balUsd.saldoInicialBs+balUsd.entradasBs-balUsd.salidasBs};
+    const fmtBs  = (usd,bs) => `Bs.${bancoFmt(bs)}`;
+    const fmtBsSub  = (usd,bs) => `≈$${bancoFmt(usd)}`;
+    const fmtUsd = (usd,bs) => `$${bancoFmt(usd)}`;
+    const fmtUsdSub = () => '';
+
+    const PanelBalance = ({titulo,cards,fmt,fmtSub,accentIcon}) => (
+      <div className="mb-5">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{titulo}</p>
+          {accentIcon}
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <BKPI label="Saldo Inicial" value={fmt(cards.si.usd,cards.si.bs)} sub={fmtSub(cards.si.usd,cards.si.bs)} accent="blue" Icon={Banknote}/>
+          <BKPI label="Entradas" value={fmt(cards.ent.usd,cards.ent.bs)} sub={fmtSub(cards.ent.usd,cards.ent.bs)} accent="green" Icon={ArrowUpCircle}/>
+          <BKPI label="Salidas" value={fmt(cards.sal.usd,cards.sal.bs)} sub={fmtSub(cards.sal.usd,cards.sal.bs)} accent="red" Icon={ArrowDownCircle}/>
+          <BKPI label="Disponible" value={fmt(cards.disp.usd,cards.disp.bs)} sub={fmtSub(cards.disp.usd,cards.disp.bs)} accent={cards.disp.usd>=0?'green':'red'} Icon={PiggyBank}/>
+        </div>
+      </div>
+    );
 
     return (
       <div>
-        {/* ── BALANCE DE BANCOS POR MES ── */}
-        <div className="mb-5">
-          <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
-            <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              Balance de {filtC?(cuentas.find(c=>c.id===filtC)?.banco||'la cuenta'):'todas las cuentas'} — mes seleccionado
-            </p>
-            <input type="month" value={filtMesBalance} onChange={e=>setFiltMesBalance(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
-          </div>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <BKPI label="Saldo Inicial" value={fmtBal(balanceTotal.saldoInicialUSD,balanceTotal.saldoInicialBs)} sub={fmtBalSub(balanceTotal.saldoInicialUSD,balanceTotal.saldoInicialBs)} accent="blue" Icon={Banknote}/>
-            <BKPI label="Entradas" value={fmtBal(balanceTotal.entradasUSD,balanceTotal.entradasBs)} sub={fmtBalSub(balanceTotal.entradasUSD,balanceTotal.entradasBs)} accent="green" Icon={ArrowUpCircle}/>
-            <BKPI label="Salidas" value={fmtBal(balanceTotal.salidasUSD,balanceTotal.salidasBs)} sub={fmtBalSub(balanceTotal.salidasUSD,balanceTotal.salidasBs)} accent="red" Icon={ArrowDownCircle}/>
-            <BKPI label="Disponible" value={fmtBal(disponibleUSD,disponibleBs)} sub={fmtBalSub(disponibleUSD,disponibleBs)} accent={disponibleUSD>=0?'green':'red'} Icon={PiggyBank}/>
-          </div>
+        {/* ── BALANCE DE BANCOS POR MES — separado Nacionales (Bs) / Internacionales (USD) ── */}
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <p className="text-xs font-black uppercase text-slate-500 tracking-widest">
+            Balance de {filtC?(cuentas.find(c=>c.id===filtC)?.banco||'la cuenta'):'todas las cuentas'} — mes seleccionado
+          </p>
+          <input type="month" value={filtMesBalance} onChange={e=>setFiltMesBalance(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
         </div>
+        {cuentasBsGrp.length>0 && (
+          <PanelBalance titulo="🇻🇪 Cuentas Nacionales — Bolívares"
+            cards={{si:{usd:balBs.saldoInicialUSD,bs:balBs.saldoInicialBs},ent:{usd:balBs.entradasUSD,bs:balBs.entradasBs},sal:{usd:balBs.salidasUSD,bs:balBs.salidasBs},disp:dispBs}}
+            fmt={fmtBs} fmtSub={fmtBsSub}/>
+        )}
+        {cuentasUsdGrp.length>0 && (
+          <PanelBalance titulo="🌐 Cuentas Internacionales — Dólares"
+            cards={{si:{usd:balUsd.saldoInicialUSD,bs:balUsd.saldoInicialBs},ent:{usd:balUsd.entradasUSD,bs:balUsd.entradasBs},sal:{usd:balUsd.salidasUSD,bs:balUsd.salidasBs},disp:dispUsd}}
+            fmt={fmtUsd} fmtSub={fmtUsdSub}/>
+        )}
         {/* ── MODAL DETALLE / EDICIÓN ── */}
         {movDetalle && (
           <BModal open={!!movDetalle} onClose={()=>{setDetalle(null);setEditId(null);setForm(initF());}} title={editId?`✏ Editando — ${movDetalle.concepto}`:`Movimiento — ${movDetalle.concepto}`} {...(editId?{xlwide:true}:{wide:true})}
