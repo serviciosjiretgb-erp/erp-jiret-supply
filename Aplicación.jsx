@@ -7650,8 +7650,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const referenciaF = editForm.referencia||'';
       const bancoF = editForm.banco||editPago.banco||'';
       const tasaF = pN(editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0))||1;
-      const montoBsF  = editPago.moneda==='Bs'?totalPago:parseFloat((totalPago*tasaF).toFixed(2));
-      const montoUSDF = editPago.moneda==='Bs'?parseFloat((totalPago/tasaF).toFixed(2)):totalPago;
+      const monedaF = editForm.moneda!=null?editForm.moneda:editPago.moneda;
+      const montoBsF  = monedaF==='Bs'?totalPago:parseFloat((totalPago*tasaF).toFixed(2));
+      const montoUSDF = monedaF==='Bs'?parseFloat((totalPago/tasaF).toFixed(2)):totalPago;
 
       // 1) Revertir el efecto anterior: si este pago ya estaba aplicado a una factura, restaurar su saldo
       if(editPago.facturaId){
@@ -7673,7 +7674,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           id:pid,esAnticipo:false,montoAplicado:0,facturaId:a.facturaId,
           proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
           monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
-          concepto:editPago.concepto||'Pago CxP',cuentaId:editPago.cuentaId||'',moneda:editPago.moneda||'USD',
+          concepto:editPago.concepto||'Pago CxP',cuentaId:editPago.cuentaId||'',moneda:monedaF||'USD',
           tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
           saldoInicialImportado:editPago.saldoInicialImportado||false,
           timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
@@ -7694,7 +7695,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
           proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
           monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
-          concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:editPago.cuentaId||'',moneda:editPago.moneda||'USD',
+          concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:editPago.cuentaId||'',moneda:monedaF||'USD',
           tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
           saldoInicialImportado:editPago.saldoInicialImportado||false,
           timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
@@ -7869,8 +7870,17 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                 <input value={editForm.banco||''} onChange={e=>setEditForm(f=>({...f,banco:e.target.value}))}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
               </div>
+              <div className="col-span-2">
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Moneda del monto (corrige aquí si está al revés)</label>
+                <div className="flex gap-2">
+                  {['Bs','USD'].map(mo=>(
+                    <button key={mo} type="button" onClick={()=>setEditForm(f=>({...f,moneda:mo}))}
+                      className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all ${(editForm.moneda!=null?editForm.moneda:editPago.moneda)===mo?'bg-orange-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{mo}</button>
+                  ))}
+                </div>
+              </div>
               <div>
-                <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto ({editPago.esAnticipo?'Anticipo':'Pago'}, {editPago.moneda==='Bs'?'Bs':'USD'})</label>
+                <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Monto ({editPago.esAnticipo?'Anticipo':'Pago'}, {(editForm.moneda!=null?editForm.moneda:editPago.moneda)==='Bs'?'Bs':'USD'})</label>
                 <input type="number" step="0.01" value={editForm.monto!=null?editForm.monto:(editPago.monto||0)}
                   onChange={e=>setEditForm(f=>({...f,monto:parseFloat(e.target.value)||0}))}
                   className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
@@ -7882,12 +7892,13 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
               </div>
               <div>
-                <label className="text-[9px] font-black text-blue-500 uppercase block mb-1">Equivalente ({editPago.moneda==='Bs'?'USD':'Bs'})</label>
+                <label className="text-[9px] font-black text-blue-500 uppercase block mb-1">Equivalente ({(editForm.moneda!=null?editForm.moneda:editPago.moneda)==='Bs'?'USD':'Bs'})</label>
                 <div className="w-full bg-gray-900 text-white rounded-xl px-3 py-2 text-xs font-black flex items-center">
                   {(()=>{
                     const m=pN(editForm.monto!=null?editForm.monto:editPago.monto);
                     const t=pN(editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0))||1;
-                    return editPago.moneda==='Bs'?`$${fN(m/t)}`:`Bs.${fN(m*t)}`;
+                    const monedaAct=editForm.moneda!=null?editForm.moneda:editPago.moneda;
+                    return monedaAct==='Bs'?`$${fN(m/t)}`:`Bs.${fN(m*t)}`;
                   })()}
                 </div>
               </div>
