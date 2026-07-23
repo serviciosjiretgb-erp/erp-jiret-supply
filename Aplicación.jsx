@@ -7488,7 +7488,7 @@ const HistorialPagosView = ({
     const rows = histFiltered.map(p=>{
       const f=_factMap.get(p.facturaId);
       const tasa=pN(p.tasa||tasaBCV||1);
-      const montoBs=p.moneda==='Bs'?pN(p.monto||0):pN(p.monto||0)*tasa;
+      const montoBs=pN(p.montoBs||0)>0?pN(p.montoBs):pN(p.monto||0)*tasa;
       return `<tr style="border-bottom:1px solid #f3f4f6">
 <td style="padding:6px 10px;color:#64748b">${p.fecha||'—'}</td>
 <td style="padding:6px 10px;font-weight:700;color:#f97316">${f?.nroFactura||'—'}</td>
@@ -7790,7 +7790,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
               {paginated.map(p=>{
                 const f = _factMap.get(p.facturaId);
                 const tasa = pN(p.tasa||tasaBCV||1);
-                const montoBs = p.moneda==='Bs'?pN(p.monto||0):pN(p.monto||0)*tasa;
+                const montoBs = pN(p.montoBs||0)>0 ? pN(p.montoBs) : pN(p.monto||0)*tasa;
                 return(
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-orange-50/30">
                     <td className="py-2.5 px-4 text-gray-500 whitespace-nowrap">{p.fecha||'—'}</td>
