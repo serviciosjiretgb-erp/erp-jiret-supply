@@ -1779,6 +1779,85 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 
 // --- FIN CONSTANTES ---
 
+// ConciliacionView — componente de nivel superior (NO anidado dentro de BancoApp) para que su
+// estado local (cuenta seleccionada, fechas, movimientos marcados) no se pierda cada vez que
+// BancoApp se re-renderiza por una actualización de Firestore (cosa que puede pasar cada pocos
+// segundos). Recibe como props únicamente lo que antes tomaba por cierre (closure).
+function ConciliacionView({ cuentas, movBanco, tasaActiva }) {
+  const [cuentaId,setCuentaId]=useState('');const [desde,setDesde]=useState(bancoMesActual()+'-01');const [hasta,setHasta]=useState(getTodayDate());
+  const [saldoBanco,setSaldoBco]=useState('');const [marcados,setMarcados]=useState({});const [busy,setBusy]=useState(false);
+  const cuenta=cuentas.find(c=>c.id===cuentaId);
+  const esCuentaBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
+  const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado'&&(!desde||m.fecha>=desde)&&(!hasta||m.fecha<=hasta));
+  const toggle=id=>setMarcados(p=>({...p,[id]:!p[id]}));
+  const egTrans=todos.filter(m=>m.tipo==='Egreso' &&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+  const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+  const cargos=0;const abonos=0;
+  const saldoLibrosUSD=cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo)/tasaActiva:cuenta.saldo):0;
+  const saldoLibrosBs =cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo):Number(cuenta.saldo)*tasaActiva):0;
+  const saldoLibros=saldoLibrosUSD; // alias para compatibilidad con lógica de cuadre
+  const saldoConcil=saldoLibros+cargos-abonos+egTrans-ingTrans;
+  const sbNum=Number(saldoBanco)||0;const diff=sbNum-saldoConcil;const OK=Math.abs(diff)<0.01&&sbNum>0;
+  const aprobar=async()=>{
+    if(!OK)return alert('Diferencia debe ser $0.00');
+    if(!window.confirm('¿Aprobar conciliación? Acción IRREVERSIBLE.'))return;
+    setBusy(true);
+    try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
+  };
+  return(<div className="space-y-5">
+    <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
+      <BFG label="Cuenta" full><select className={sel} value={cuentaId} onChange={e=>{setCuentaId(e.target.value);setMarcados({});setSaldoBco('');}}>
+        <option value="">— Seleccione cuenta a conciliar —</option>
+        {[{label:'Cuentas Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
+          {label:'Cuentas Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs')}
+        ].map(g=>g.items.length>0&&(<optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldo)}</option>)}</optgroup>))}
+      </select></BFG>
+      <BFG label="Desde"><input type="date" className={inp} value={desde} onChange={e=>setDesde(e.target.value)}/></BFG>
+      <BFG label="Hasta"><input type="date" className={inp} value={hasta} onChange={e=>setHasta(e.target.value)}/></BFG>
+      <BFG label={esCuentaBs?'Saldo según Banco (Bs.)':'Saldo según Banco ($)'}><input type="number" step="0.01" className={`${inp} font-black ${OK?'border-emerald-400 bg-emerald-50':sbNum>0?'border-amber-300':''}`} value={saldoBanco} onChange={e=>setSaldoBco(e.target.value)} placeholder={esCuentaBs?'0,00 Bs.':'0.00'}/></BFG>
+    </div></BCard>
+    {cuentaId&&<div className="grid lg:grid-cols-3 gap-5">
+      <div className="lg:col-span-2 space-y-3">
+        <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle="Marque los que aparecen en el estado de cuenta">
+          {todos.length===0?<BEmptyState icon={CheckCircle} title="Sin movimientos pendientes" desc=""/>:
+            <div className="divide-y divide-slate-100">{todos.map(m=>(
+              <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]?'bg-emerald-50/60':''}`}>
+                <input type="checkbox" checked={!!marcados[m.id]} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
+                <div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-0.5"><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':'blue'}>{m.tipo}</BBadge><span className="text-[10px] text-slate-400">{bancoDd(m.fecha)}</span></div><p className="text-xs font-semibold text-slate-700 truncate">{m.concepto}</p></div>
+                <div className="text-right flex-shrink-0"><p className={`font-mono font-black text-sm ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{'$'+bancoFmt(m.montoUSD)}</p><p className="text-[10px] text-slate-400">Bs.{bancoFmt(m.montoBs)}</p></div>
+                {marcados[m.id]&&<CheckCircle size={16} className="text-emerald-500 flex-shrink-0"/>}
+              </label>
+            ))}</div>}
+        </BCard>
+      </div>
+      <div className="space-y-4">
+        <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden shadow-sm sticky top-4">
+          <div className="px-5 py-4" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}><p className="font-black text-white text-sm uppercase tracking-widest">Panel de Cuadre</p></div>
+          <div className="p-5 space-y-3">
+            {[{l:'Saldo en Libros (Sistema)',v:saldoLibros,vbs:saldoLibrosBs,c:'text-slate-900',b:true},{l:'(+) Egresos Tránsito',v:egTrans,vbs:egTrans*tasaActiva,c:'text-red-500'},{l:'(−) Ingresos Tránsito',v:ingTrans,vbs:ingTrans*tasaActiva,c:'text-emerald-500'}].map(({l,v,vbs,c,b})=>(
+              <div key={l} className="flex items-center justify-between"><p className={`text-[10px] ${b?'font-black text-slate-700':'font-medium text-slate-500'} leading-tight max-w-[150px]`}>{l}</p>
+                <div className="text-right"><p className={`font-mono font-black text-sm ${c}`}>{esCuentaBs?'Bs.'+bancoFmt(vbs):'$'+bancoFmt(v)}</p><p className="text-[9px] text-slate-400 font-mono">{esCuentaBs?'≈$'+bancoFmt(v):'≈Bs.'+bancoFmt(vbs)}</p></div>
+              </div>
+            ))}
+            <div className="border-t-2 border-slate-200 pt-3 space-y-1">
+              <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-700 uppercase">= Saldo Conciliado</p><p className="font-mono font-black text-blue-600">{esCuentaBs?'Bs.'+bancoFmt(saldoConcil*tasaActiva):'$'+bancoFmt(saldoConcil)}</p></div>
+              <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-500 uppercase">Saldo según Banco</p><p className="font-mono font-black text-slate-900">{esCuentaBs?'Bs.'+bancoFmt(sbNum):'$'+bancoFmt(sbNum)}</p></div>
+            </div>
+            <div className={`rounded-xl p-4 text-center border-2 ${OK?'border-emerald-400 bg-emerald-50':'border-amber-400 bg-amber-50'}`}>
+              <p className="text-[9px] font-black uppercase tracking-widest mb-1 text-slate-500">Diferencia</p>
+              <p className={`font-mono font-black text-2xl ${OK?'text-emerald-600':'text-amber-600'}`}>{'$'+bancoFmt(diff)}</p>
+              {OK?<p className="text-[10px] text-emerald-600 font-black mt-1">✓ Cuadrado</p>:<p className="text-[10px] text-amber-600 font-black mt-1">Pendiente</p>}
+            </div>
+            <BBg onClick={aprobar} disabled={!OK||busy}>{busy?<><RefreshCw size={13} className="animate-spin"/> Procesando...</>:<><CheckCircle size={13}/> Aprobar</>}</BBg>
+            <p className="text-[9px] text-slate-400 text-center">Al aprobar los movimientos quedan bloqueados.</p>
+          </div>
+        </div>
+      </div>
+    </div>}
+    {!cuentaId&&<BEmptyState icon={Building2} title="Seleccione una cuenta bancaria" desc="Elija la cuenta para iniciar la conciliación"/>}
+  </div>);
+}
+
 function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [] }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
@@ -5462,80 +5541,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // 6. CONCILIACIÓN BANCARIA
   // ══════════════════════════════════════════════════════════════════════
-  const ConciliacionView = () => {
-    const [cuentaId,setCuentaId]=useState('');const [desde,setDesde]=useState(bancoMesActual()+'-01');const [hasta,setHasta]=useState(getTodayDate());
-    const [saldoBanco,setSaldoBco]=useState('');const [marcados,setMarcados]=useState({});const [busy,setBusy]=useState(false);
-    const cuenta=cuentas.find(c=>c.id===cuentaId);
-    const esCuentaBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
-    const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado'&&(!desde||m.fecha>=desde)&&(!hasta||m.fecha<=hasta));
-    const toggle=id=>setMarcados(p=>({...p,[id]:!p[id]}));
-    const egTrans=todos.filter(m=>m.tipo==='Egreso' &&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
-    const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
-    const cargos=0;const abonos=0;
-    const saldoLibrosUSD=cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo)/tasaActiva:cuenta.saldo):0;
-    const saldoLibrosBs =cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo):Number(cuenta.saldo)*tasaActiva):0;
-    const saldoLibros=saldoLibrosUSD; // alias para compatibilidad con lógica de cuadre
-    const saldoConcil=saldoLibros+cargos-abonos+egTrans-ingTrans;
-    const sbNum=Number(saldoBanco)||0;const diff=sbNum-saldoConcil;const OK=Math.abs(diff)<0.01&&sbNum>0;
-    const aprobar=async()=>{
-      if(!OK)return alert('Diferencia debe ser $0.00');
-      if(!window.confirm('¿Aprobar conciliación? Acción IRREVERSIBLE.'))return;
-      setBusy(true);
-      try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
-    };
-    return(<div className="space-y-5">
-      <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
-        <BFG label="Cuenta" full><select className={sel} value={cuentaId} onChange={e=>{setCuentaId(e.target.value);setMarcados({});setSaldoBco('');}}>
-          <option value="">— Seleccione cuenta a conciliar —</option>
-          {[{label:'Cuentas Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-            {label:'Cuentas Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs')}
-          ].map(g=>g.items.length>0&&(<optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldo)}</option>)}</optgroup>))}
-        </select></BFG>
-        <BFG label="Desde"><input type="date" className={inp} value={desde} onChange={e=>setDesde(e.target.value)}/></BFG>
-        <BFG label="Hasta"><input type="date" className={inp} value={hasta} onChange={e=>setHasta(e.target.value)}/></BFG>
-        <BFG label={esCuentaBs?'Saldo según Banco (Bs.)':'Saldo según Banco ($)'}><input type="number" step="0.01" className={`${inp} font-black ${OK?'border-emerald-400 bg-emerald-50':sbNum>0?'border-amber-300':''}`} value={saldoBanco} onChange={e=>setSaldoBco(e.target.value)} placeholder={esCuentaBs?'0,00 Bs.':'0.00'}/></BFG>
-      </div></BCard>
-      {cuentaId&&<div className="grid lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2 space-y-3">
-          <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle="Marque los que aparecen en el estado de cuenta">
-            {todos.length===0?<BEmptyState icon={CheckCircle} title="Sin movimientos pendientes" desc=""/>:
-              <div className="divide-y divide-slate-100">{todos.map(m=>(
-                <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]?'bg-emerald-50/60':''}`}>
-                  <input type="checkbox" checked={!!marcados[m.id]} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
-                  <div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-0.5"><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':'blue'}>{m.tipo}</BBadge><span className="text-[10px] text-slate-400">{bancoDd(m.fecha)}</span></div><p className="text-xs font-semibold text-slate-700 truncate">{m.concepto}</p></div>
-                  <div className="text-right flex-shrink-0"><p className={`font-mono font-black text-sm ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{'$'+bancoFmt(m.montoUSD)}</p><p className="text-[10px] text-slate-400">Bs.{bancoFmt(m.montoBs)}</p></div>
-                  {marcados[m.id]&&<CheckCircle size={16} className="text-emerald-500 flex-shrink-0"/>}
-                </label>
-              ))}</div>}
-          </BCard>
-        </div>
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden shadow-sm sticky top-4">
-            <div className="px-5 py-4" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}><p className="font-black text-white text-sm uppercase tracking-widest">Panel de Cuadre</p></div>
-            <div className="p-5 space-y-3">
-              {[{l:'Saldo en Libros (Sistema)',v:saldoLibros,vbs:saldoLibrosBs,c:'text-slate-900',b:true},{l:'(+) Egresos Tránsito',v:egTrans,vbs:egTrans*tasaActiva,c:'text-red-500'},{l:'(−) Ingresos Tránsito',v:ingTrans,vbs:ingTrans*tasaActiva,c:'text-emerald-500'}].map(({l,v,vbs,c,b})=>(
-                <div key={l} className="flex items-center justify-between"><p className={`text-[10px] ${b?'font-black text-slate-700':'font-medium text-slate-500'} leading-tight max-w-[150px]`}>{l}</p>
-                  <div className="text-right"><p className={`font-mono font-black text-sm ${c}`}>{esCuentaBs?'Bs.'+bancoFmt(vbs):'$'+bancoFmt(v)}</p><p className="text-[9px] text-slate-400 font-mono">{esCuentaBs?'≈$'+bancoFmt(v):'≈Bs.'+bancoFmt(vbs)}</p></div>
-                </div>
-              ))}
-              <div className="border-t-2 border-slate-200 pt-3 space-y-1">
-                <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-700 uppercase">= Saldo Conciliado</p><p className="font-mono font-black text-blue-600">{esCuentaBs?'Bs.'+bancoFmt(saldoConcil*tasaActiva):'$'+bancoFmt(saldoConcil)}</p></div>
-                <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-500 uppercase">Saldo según Banco</p><p className="font-mono font-black text-slate-900">{esCuentaBs?'Bs.'+bancoFmt(sbNum):'$'+bancoFmt(sbNum)}</p></div>
-              </div>
-              <div className={`rounded-xl p-4 text-center border-2 ${OK?'border-emerald-400 bg-emerald-50':'border-amber-400 bg-amber-50'}`}>
-                <p className="text-[9px] font-black uppercase tracking-widest mb-1 text-slate-500">Diferencia</p>
-                <p className={`font-mono font-black text-2xl ${OK?'text-emerald-600':'text-amber-600'}`}>{'$'+bancoFmt(diff)}</p>
-                {OK?<p className="text-[10px] text-emerald-600 font-black mt-1">✓ Cuadrado</p>:<p className="text-[10px] text-amber-600 font-black mt-1">Pendiente</p>}
-              </div>
-              <BBg onClick={aprobar} disabled={!OK||busy}>{busy?<><RefreshCw size={13} className="animate-spin"/> Procesando...</>:<><CheckCircle size={13}/> Aprobar</>}</BBg>
-              <p className="text-[9px] text-slate-400 text-center">Al aprobar los movimientos quedan bloqueados.</p>
-            </div>
-          </div>
-        </div>
-      </div>}
-      {!cuentaId&&<BEmptyState icon={Building2} title="Seleccione una cuenta bancaria" desc="Elija la cuenta para iniciar la conciliación"/>}
-    </div>);
-  };
+  // ConciliacionView movida a componente de nivel superior (ver arriba de BancoApp) para que no
+  // pierda su estado (cuenta/fecha/marcados) cada vez que BancoApp se re-renderiza por Firestore.
 
   // ══════════════════════════════════════════════════════════════════════
   // 7. PROVEEDORES
@@ -6219,7 +6226,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
-    conciliacion:<ConciliacionView/>, reciprocidad:<ReciprocidadView/>,
+    conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva}/>, reciprocidad:<ReciprocidadView/>,
     cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
     caja_dashboard:<CajaOpView/>,
     rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
