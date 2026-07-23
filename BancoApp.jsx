@@ -3113,7 +3113,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-Number(m.montoUSD||0);
         return s;
       },0);
-      const saldoInicial = Number(c.saldo||0) - netoDesde(primerDiaMesBalance);
+      const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/(tasaActiva||1) : Number(c.saldo||0);
+      const saldoInicial = saldoBaseUSD - netoDesde(primerDiaMesBalance);
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
       const entradas = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
       const salidas  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
@@ -3123,6 +3124,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       saldoInicial:a.saldoInicial+r.saldoInicial, entradas:a.entradas+r.entradas, salidas:a.salidas+r.salidas
     }),{saldoInicial:0,entradas:0,salidas:0});
     const disponibleBalance = balanceTotal.saldoInicial+balanceTotal.entradas-balanceTotal.salidas;
+    // Si se filtró una única cuenta y es en Bs., se muestra Bs. como principal (con el equivalente
+    // en USD) — igual que en Conciliación. Si son varias cuentas mezcladas, se muestra en USD.
+    const cuentaFiltrada = filtC ? cuentas.find(c=>c.id===filtC) : null;
+    const balanceEsBs = cuentaFiltrada && (cuentaFiltrada.moneda==='BS'||cuentaFiltrada.tipoBanco==='Nacional-Bs');
+    const fmtBal = (usd) => balanceEsBs ? `Bs.${bancoFmt(usd*tasaActiva)}` : `$${bancoFmt(usd)}`;
+    const fmtBalSub = (usd) => balanceEsBs ? `≈$${bancoFmt(usd)}` : '';
 
     return (
       <div>
@@ -3135,10 +3142,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <input type="month" value={filtMesBalance} onChange={e=>setFiltMesBalance(e.target.value)} className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <BKPI label="Saldo Inicial" value={`$${bancoFmt(balanceTotal.saldoInicial)}`} accent="blue" Icon={Banknote}/>
-            <BKPI label="Entradas" value={`$${bancoFmt(balanceTotal.entradas)}`} accent="green" Icon={ArrowUpCircle}/>
-            <BKPI label="Salidas" value={`$${bancoFmt(balanceTotal.salidas)}`} accent="red" Icon={ArrowDownCircle}/>
-            <BKPI label="Disponible" value={`$${bancoFmt(disponibleBalance)}`} accent={disponibleBalance>=0?'green':'red'} Icon={PiggyBank}/>
+            <BKPI label="Saldo Inicial" value={fmtBal(balanceTotal.saldoInicial)} sub={fmtBalSub(balanceTotal.saldoInicial)} accent="blue" Icon={Banknote}/>
+            <BKPI label="Entradas" value={fmtBal(balanceTotal.entradas)} sub={fmtBalSub(balanceTotal.entradas)} accent="green" Icon={ArrowUpCircle}/>
+            <BKPI label="Salidas" value={fmtBal(balanceTotal.salidas)} sub={fmtBalSub(balanceTotal.salidas)} accent="red" Icon={ArrowDownCircle}/>
+            <BKPI label="Disponible" value={fmtBal(disponibleBalance)} sub={fmtBalSub(disponibleBalance)} accent={disponibleBalance>=0?'green':'red'} Icon={PiggyBank}/>
           </div>
         </div>
         {/* ── MODAL DETALLE / EDICIÓN ── */}
