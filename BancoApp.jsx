@@ -5902,11 +5902,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const ctaP=cuentas.find(c=>c.id===m.cuentaId);if(!ctaP)return;
       const isIng=m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';const tasa=Number(m.tasa)||1;const mNat=Number(m.montoNativo)||Number(m.monto)||0;
       const valBs=ctaP.moneda==='BS'?mNat:mNat*tasa;const valUSD=ctaP.moneda==='BS'?mNat/tasa:mNat;
-      const comp=ctaP.banco||'BANCO';
+      const comp=`${ctaP.banco||'BANCO'}-${String(m.id||'').slice(-6).toUpperCase()}`;
       const mesL=m.fecha.substring(5,7)+'/'+m.fecha.substring(0,4);const doc=m.referencia||'—';const conc=m.esVale?`[VALE] ${m.concepto}`:m.concepto;
       let sub=[{comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:ctaP.banco,tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
       if(m.lineasContra&&m.lineasContra.length>0){m.lineasContra.forEach(l=>sub.push({comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?l.ctaNom.split('·')[1]?.trim():l.ctaNom,tipo:Number(l.debeBs||0)>0?'D':'H',dBs:Number(l.debeBs||0),hBs:Number(l.haberBs||0),dUSD:Number(l.debeUSD||0),hUSD:Number(l.haberUSD||0)}));}
       else if(m.asientoDebito||m.asientoCredito){sub.push({comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});}
+      else {
+        // Movimiento originado en CxC/CxP (cobro o pago) sin lineasContra ni asientoDebito/Crédito
+        // propios — se infiere la contrapartida por el origen, para que siempre haya partida doble.
+        const contraNombre=m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)';
+        sub.push({comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
+      }
       if(filtCta){const ok=sub.some(sl=>(sl.codigo+' '+sl.cuenta).toLowerCase().includes(filtCta.toLowerCase()));if(!ok)return;}
       sub.forEach(sl=>{sBs+=sl.dBs-sl.hBs;sUSD+=sl.dUSD-sl.hUSD;lineasPlanas.push({...sl,sBs,sUSD});});
     });
@@ -6141,8 +6147,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // para no duplicarlos al agregar los que todavía no tienen asiento generado.
     const movsYaConAsiento = new Set(asientosLocal.map(a=>a.movimientoBancoId).filter(Boolean));
     const movsSinAsiento = movBanco.filter(m=>{
-      const tieneAsiento=(m.asientoDebito||m.asientoCredito)||(m.lineasContra&&m.lineasContra.length>0);
-      if(!tieneAsiento) return false;
       if(movsYaConAsiento.has(m.id)) return false; // ya viene por cont_asientos, evitar duplicado
       return applyFiltros(m, true);
     }).map(m=>{
@@ -6153,11 +6157,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       let lineasContra;
       if(m.lineasContra&&m.lineasContra.length>0){
         lineasContra=m.lineasContra.map(l=>({codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'',tipoLinea:Number(l.debeBs||0)>0?'D':'H',debeBs:Number(l.debeBs||0),haberBs:Number(l.haberBs||0),debeUSD:Number(l.debeUSD||0),haberUSD:Number(l.haberUSD||0)}));
-      } else {
+      } else if(m.asientoDebito||m.asientoCredito){
         lineasContra=[{codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
+      } else {
+        // Cobro/pago de CxC/CxP sin lineasContra ni asientoDebito/Crédito propios — se infiere
+        // la contrapartida por el origen, para que siempre haya partida doble que mostrar.
+        const contraNombre=m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)';
+        lineasContra=[{codigo:'',cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
       return {
-        id:m.id, comprobante:m.asientoContableId||m.id, cuentaId:m.cuentaId,
+        id:m.id, comprobante:`${cta?.banco||'BANCO'}-${String(m.id||'').slice(-6).toUpperCase()}`, cuentaId:m.cuentaId,
         fecha:m.fecha, descripcion:m.concepto, nroDocumento:m.referencia||'',
         tasa:m.tasa, cuentaNombre:m.cuentaNombre,
         lineas:[lineaPropia,...lineasContra],
