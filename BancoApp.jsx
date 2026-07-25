@@ -5675,6 +5675,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
     const [cantidades, setCants] = useState({});
+    const [arqEdit, setArqEdit] = useState(null);
+    const [pwdArq, setPwdArq] = useState(null); // {accion, a}
+    const [pwdArqInput, setPwdArqInput] = useState('');
+    const [pwdArqError, setPwdArqError] = useState(false);
     const denoms = DENOM_USD;
     const totalArqueo = denoms.reduce((a,d)=>a+(Number(cantidades[d]||0)*d),0);
     // Saldo esperado en caja USD según movimientos registrados
@@ -5689,6 +5693,36 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         setModal(false); setCants({});
       } finally { setBusy(false); }
     };
+    const abrirEditar=(a)=>{ setArqEdit(a); setCants(a.cantidades||{}); };
+    const guardarEdicionArqueo=()=>setPwdArq({accion:'editar',a:arqEdit});
+    const eliminarArqueo=(a)=>{
+      if(!window.confirm(`¿Eliminar el arqueo del ${bancoDd(a.fecha)} ($${bancoFmt(a.totalArqueo)})?`))return;
+      setPwdArq({accion:'eliminar',a});
+    };
+    const confirmarPwdArq=async()=>{
+      const ok=await validarClaveAdmin(pwdArqInput);
+      if(!ok){ setPwdArqError(true); setPwdArqInput(''); return; }
+      if(pwdArq.accion==='editar'){
+        const totalNuevo=denoms.reduce((s,d)=>s+(Number(cantidades[d]||0)*d),0);
+        await updateDoc(getDocRef('caja_arques',arqEdit.id),{cantidades,totalArqueo:totalNuevo});
+        setArqEdit(null);setCants({});
+      } else if(pwdArq.accion==='eliminar'){
+        await deleteDoc(getDocRef('caja_arques',pwdArq.a.id));
+      }
+      setPwdArq(null); setPwdArqInput(''); setPwdArqError(false);
+    };
+    const imprimirArqueo=(a)=>{
+      const filas=denoms.map(d=>{
+        const cant=Number((a.cantidades||{})[d]||0);
+        if(cant===0) return '';
+        return `<tr><td>Billete de $${d}</td><td style="text-align:right">${cant}</td><td style="text-align:right">$${bancoFmt(cant*d)}</td></tr>`;
+      }).join('');
+      const html=bancoLetterheadOpen('Arqueo de Caja — Dólares (USD)',`Fecha: ${bancoDd(a.fecha)}`)+
+        `<table><thead><tr><th>Denominación</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>${filas}</tbody></table>
+        <div style="margin-top:20px;padding:10px;background:#0f172a;color:#fff;text-align:right;font-weight:bold;font-size:12px;">TOTAL CONTADO: $${bancoFmt(a.totalArqueo)}</div>`+
+        bancoLetterheadClose('Módulo: Tesorería & Caja');
+      bancoPrintWindow(html);
+    };
 
     return (
       <div className="space-y-5">
@@ -5700,13 +5734,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         <BCard title="Historial de Arqueos" subtitle="Conteos físicos de caja USD" action={<BBg onClick={()=>{setCants({});setModal(true);}} sm><Plus size={12}/> Nuevo Arqueo</BBg>}>
           {arques.length===0?<BEmptyState icon={Coins} title="Sin arqueos" desc="Realice el primer arqueo de caja"/>:
             <div className="overflow-x-auto"><table className="w-full">
-              <thead><tr><BTh>Fecha</BTh><BTh>Moneda</BTh><BTh right>Total Contado</BTh></tr></thead>
+              <thead><tr><BTh>Fecha</BTh><BTh>Moneda</BTh><BTh right>Total Contado</BTh><BTh></BTh></tr></thead>
               <tbody>{arques.map(a=><tr key={a.id} className="hover:bg-slate-50">
                 <BTd>{bancoDd(a.fecha)}</BTd><BTd><BPill usd>USD</BPill></BTd>
                 <BTd right mono className="font-black text-slate-900">$ {bancoFmt(a.totalArqueo)}</BTd>
+                <BTd>
+                  <div className="flex gap-1 justify-end">
+                    <button onClick={()=>imprimirArqueo(a)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="PDF"><FileText size={12}/></button>
+                    <button onClick={()=>abrirEditar(a)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
+                    <button onClick={()=>eliminarArqueo(a)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>
+                  </div>
+                </BTd>
               </tr>)}</tbody>
               <tfoot><tr style={{background:'#0f172a'}}>
-                <td className="px-4 py-4 text-[10px] font-black uppercase text-slate-400 text-left">RESULTADO DEL ARQUEO</td>
+                <td className="px-4 py-4 text-[10px] font-black uppercase text-slate-400 text-left" colSpan={2}>RESULTADO DEL ARQUEO</td>
                 <td className="px-4 py-4 text-center border-l border-slate-800 text-white">
                   <span className="block text-[9px] uppercase text-slate-500">Total Físico</span>
                   <span className="font-mono font-black text-sm">${bancoFmt(arques[0]?.totalArqueo||0)}</span>
@@ -5719,8 +5760,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </table></div>}
         </BCard>
 
-        <BModal open={modal} onClose={()=>setModal(false)} title="Arqueo de Caja — Dólares (USD)" wide
-          footer={<><BBo onClick={()=>setModal(false)}>Cancelar</BBo><BBg onClick={save} disabled={busy}>{busy?'Guardando...':'Guardar Arqueo'}</BBg></>}>
+        <BModal open={modal||!!arqEdit} onClose={()=>{setModal(false);setArqEdit(null);setCants({});}} title={arqEdit?`Editar Arqueo — ${bancoDd(arqEdit.fecha)}`:"Arqueo de Caja — Dólares (USD)"} wide
+          footer={<><BBo onClick={()=>{setModal(false);setArqEdit(null);setCants({});}}>Cancelar</BBo><BBg onClick={arqEdit?guardarEdicionArqueo:save} disabled={busy}>{busy?'Guardando...':(arqEdit?'Guardar Cambios':'Guardar Arqueo')}</BBg></>}>
           <div className="space-y-5">
             <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
               <DollarSign size={16} className="text-blue-600"/>
@@ -5746,6 +5787,22 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </div>
           </div>
         </BModal>
+        {pwdArq&&(
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>{setPwdArq(null);setPwdArqInput('');setPwdArqError(false);}}>
+            <div className="bg-white rounded-2xl max-w-sm w-full" onClick={e=>e.stopPropagation()}>
+              <div className="px-5 py-4" style={{background:'#0f172a'}}><p className="text-white font-black text-sm uppercase">Clave de Administrador</p></div>
+              <div className="p-5 space-y-3">
+                <p className="text-xs text-slate-500">Para {pwdArq.accion==='editar'?'editar':'eliminar'} este arqueo, ingresa la clave de administrador.</p>
+                <input type="password" autoFocus value={pwdArqInput} onChange={e=>{setPwdArqInput(e.target.value);setPwdArqError(false);}} onKeyDown={e=>e.key==='Enter'&&confirmarPwdArq()}
+                  className={`w-full border-2 rounded-xl px-3 py-2 text-xs font-bold outline-none ${pwdArqError?'border-red-400 bg-red-50':'border-gray-200 focus:border-orange-400'}`} placeholder="Clave"/>
+                {pwdArqError&&<p className="text-[10px] text-red-500 font-bold">Clave incorrecta.</p>}
+              </div>
+              <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+                <BBo onClick={()=>{setPwdArq(null);setPwdArqInput('');setPwdArqError(false);}}>Cancelar</BBo><BBg onClick={confirmarPwdArq}>Confirmar</BBg>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -5892,32 +5949,38 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   };
 
   // ── NAV ────────────────────────────────────────────────────────────────────
-  const RepLibroDiarioView = () => {
+  const RepLibroDiarioView = ({ tipo = 'banco' }) => {
+    const isBanco = tipo === 'banco';
+    const movsFuente = isBanco ? movBanco : movCaja;
+    const cuentasFuente = isBanco ? cuentas : cajas;
+    const nombreCta = (c) => isBanco ? c?.banco : c?.nombre;
+    const idField = isBanco ? 'cuentaId' : 'cajaId';
     const [filtDesde,setFiltDesde]=useState(bancoMesActual()+'-01'); const [filtHasta,setFiltHasta]=useState(getTodayDate());
     const [filtOrigen,setFiltOrigen]=useState(''); const [filtCta,setFiltCta]=useState('');
-    let allMovs=movBanco.map(m=>({...m,origen:'Banco'}));
-    allMovs=allMovs.filter(m=>{if(m.fecha<filtDesde||m.fecha>filtHasta)return false;if(filtOrigen&&m.cuentaId!==filtOrigen)return false;return true;});
+    let allMovs=movsFuente.map(m=>({...m,origen:isBanco?'Banco':'Caja'}));
+    allMovs=allMovs.filter(m=>{if(m.fecha<filtDesde||m.fecha>filtHasta)return false;if(filtOrigen&&m[idField]!==filtOrigen)return false;return true;});
     allMovs.sort((a,b)=>a.fecha.localeCompare(b.fecha));
     let lineasPlanas=[],sBs=0,sUSD=0;
     allMovs.forEach(m=>{
-      const ctaP=cuentas.find(c=>c.id===m.cuentaId);if(!ctaP)return;
+      const ctaP=cuentasFuente.find(c=>c.id===m[idField]);if(!ctaP)return;
       const isIng=m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';const tasa=Number(m.tasa)||1;
       const mNat=Number(m.montoNativo)||Number(m.monto)||(ctaP.moneda==='BS'?Number(m.montoBs):Number(m.montoUSD))||0;
       const valBs=ctaP.moneda==='BS'?mNat:mNat*tasa;const valUSD=ctaP.moneda==='BS'?mNat/tasa:mNat;
-      const comp=ctaP.banco||'BANCO';
-      const grupoKey=m.id; // clave interna única por transacción — separada de "comp" para no fusionar movimientos del mismo banco
+      const comp=nombreCta(ctaP)||(isBanco?'BANCO':'CAJA');
+      const grupoKey=m.id; // clave interna única por transacción — separada de "comp" para no fusionar movimientos del mismo banco/caja
       const mesL=m.fecha.substring(5,7)+'/'+m.fecha.substring(0,4);const doc=m.referencia||'—';const conc=m.esVale?`[VALE] ${m.concepto}`:m.concepto;
-      let sub=[{comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:ctaP.banco,tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
+      let sub=[{comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:nombreCta(ctaP),tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
       // Se intenta SIEMPRE identificar primero al cliente/proveedor y su cuenta contable YA
       // asignada (misma cuenta de operación) — porque lineasContra/asientoDebito a veces quedaron
       // guardados con el nombre del cliente/proveedor en vez de su cuenta contable real.
-      // El concepto usa dos formatos distintos según el origen: "PAGO FAC X — NOMBRE — NE-Y" o
-      // "ANTICIPO CxP · NOMBRE · detalle" — se intentan ambos.
+      // Los distintos flujos de guardado usan nombres de campo distintos para el tercero
+      // (terceroNombre, clientName, proveedor) — se revisan todos antes de recurrir al concepto.
+      const nombreDirecto=m.terceroNombre||m.clientName||m.proveedor||'';
       const partesGuion=(m.concepto||'').split('—').map(s=>s.trim());
       const partesPunto=(m.concepto||'').split('·').map(s=>s.trim());
-      const nombreEnConcepto=partesGuion[1]||partesPunto[1]||'';
+      const nombreEnConcepto=nombreDirecto||partesGuion[1]||partesPunto[1]||'';
       const nombreNorm=bancoNormNombre(nombreEnConcepto);
-      const esProveedorMov=m.tipoTercero==='Proveedor'||!!m.grupoPagoId;
+      const esProveedorMov=m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
       const tercero=(esProveedorMov?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
         || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.name||c.nombre)===nombreNorm)
         || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.name||p.nombre)===nombreNorm);
@@ -5948,19 +6011,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     return(
       <div className="space-y-5 flex flex-col min-w-0 w-full">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
-          <div><h2 className="text-lg font-black text-slate-800 uppercase tracking-wide">Libro Diario General Bimonetario</h2><p className="text-xs text-slate-500 font-medium mt-1">Todos los asientos de Banco integrados en un solo comprobante maestro.</p></div>
+          <div><h2 className="text-lg font-black text-slate-800 uppercase tracking-wide">Libro Diario General Bimonetario</h2><p className="text-xs text-slate-500 font-medium mt-1">Todos los asientos de {isBanco?'Banco':'Caja'} integrados en un solo comprobante maestro.</p></div>
           <div className="flex flex-wrap gap-4 items-end bg-slate-50 p-4 rounded-xl border border-slate-100">
             <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Desde</label><input type="date" className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Hasta</label><input type="date" className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
-            <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Banco</label><select className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none min-w-[200px]" value={filtOrigen} onChange={e=>setFiltOrigen(e.target.value)}>
-              <option value="">TODOS LOS BANCOS</option>
-              {[{label:'🇻🇪 Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-                {label:'💵 Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
-                {label:'🌐 Internacionales',items:cuentas.filter(c=>c.tipoBanco==='Internacional')},
-                {label:'💳 Electrónicas',items:cuentas.filter(c=>c.tipoBanco==='Electronica')},
-                {label:'🪪 Tarjetas Débito Intl.',items:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
-                {label:'📱 Pago Móvil',items:cuentas.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')}
-              ].map(g=>g.items.length>0&&(<optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}</optgroup>))}
+            <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">{isBanco?'Banco':'Caja'}</label><select className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none min-w-[200px]" value={filtOrigen} onChange={e=>setFiltOrigen(e.target.value)}>
+              <option value="">{isBanco?'TODOS LOS BANCOS':'TODAS LAS CAJAS'}</option>
+              {isBanco?[{label:'🇻🇪 Nacionales Bs.',items:cuentasFuente.filter(c=>c.tipoBanco==='Nacional-Bs')},
+                {label:'💵 Moneda Extranjera',items:cuentasFuente.filter(c=>c.tipoBanco==='Nacional-Ext')},
+                {label:'🌐 Internacionales',items:cuentasFuente.filter(c=>c.tipoBanco==='Internacional')},
+                {label:'💳 Electrónicas',items:cuentasFuente.filter(c=>c.tipoBanco==='Electronica')},
+                {label:'🪪 Tarjetas Débito Intl.',items:cuentasFuente.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
+                {label:'📱 Pago Móvil',items:cuentasFuente.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')}
+              ].map(g=>g.items.length>0&&(<optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{nombreCta(c)}</option>)}</optgroup>)):cuentasFuente.map(c=><option key={c.id} value={c.id}>{nombreCta(c)}</option>)}
             </select></div>
             <div className="flex-1"><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Cuenta Contable</label><div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input type="text" className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2 text-xs font-semibold outline-none" placeholder="Ej: 1.1.01..." value={filtCta} onChange={e=>setFiltCta(e.target.value)}/></div></div>
             {(filtOrigen||filtCta||filtDesde!==bancoMesActual()+'-01'||filtHasta!==getTodayDate())&&<button onClick={()=>{setFiltDesde(bancoMesActual()+'-01');setFiltHasta(getTodayDate());setFiltOrigen('');setFiltCta('');}} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase hover:bg-red-100">Limpiar</button>}
@@ -6154,6 +6217,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const ComprobantesBancariosView = ({ tipo = 'banco' }) => {
     const isBanco = tipo === 'banco';
+    const movsFuente = isBanco ? movBanco : movCaja;
+    const cuentasFuente = isBanco ? cuentas : cajas;
+    const nombreCta = (c) => isBanco ? c?.banco : c?.nombre;
+    const idField = isBanco ? 'cuentaId' : 'cajaId';
     const [filtBanco,  setFiltBanco]  = useState('');
     const [filtDesde,  setFiltDesde]  = useState(bancoMesActual()+'-01');
     const [filtHasta,  setFiltHasta]  = useState(getTodayDate());
@@ -6164,10 +6231,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return()=>u();
     },[]);
     const applyFiltros = (a, isMov=false) => {
-      if(!isMov && a.modulo!=='Bancos') return false;
+      if(!isMov && a.modulo!==(isBanco?'Bancos':'Caja')) return false;
       if(filtDesde && a.fecha < filtDesde) return false;
       if(filtHasta && a.fecha > filtHasta) return false;
-      const bancoId = isMov ? a.cuentaId : (a.cuentaId || movBanco.find(m=>m.id===a.movimientoBancoId)?.cuentaId);
+      const bancoId = isMov ? a[idField] : (a[idField] || movsFuente.find(m=>m.id===a.movimientoBancoId)?.[idField]);
       if(filtBanco && bancoId!==filtBanco) return false;
       return true;
     };
@@ -6175,29 +6242,31 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // IDs de movimientos que YA están representados por un asiento formal en cont_asientos —
     // para no duplicarlos al agregar los que todavía no tienen asiento generado.
     const movsYaConAsiento = new Set(asientosLocal.map(a=>a.movimientoBancoId).filter(Boolean));
-    const movsSinAsiento = movBanco.filter(m=>{
+    const movsSinAsiento = movsFuente.filter(m=>{
       if(movsYaConAsiento.has(m.id)) return false; // ya viene por cont_asientos, evitar duplicado
       return applyFiltros(m, true);
     }).map(m=>{
-      const cta=cuentas.find(c=>c.id===m.cuentaId);
+      const cta=cuentasFuente.find(c=>c.id===m[idField]);
       const isIng=m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
       const codigoPropio=cta?.cuentaContableCod||'';
-      const lineaPropia={codigo:codigoPropio,cuenta:m.cuentaNombre||cta?.banco||'',tipoLinea:isIng?'D':'H',debeBs:isIng?m.montoBs:0,haberBs:isIng?0:m.montoBs,debeUSD:isIng?m.montoUSD:0,haberUSD:isIng?0:m.montoUSD};
+      const lineaPropia={codigo:codigoPropio,cuenta:m.cuentaNombre||nombreCta(cta)||'',tipoLinea:isIng?'D':'H',debeBs:isIng?m.montoBs:0,haberBs:isIng?0:m.montoBs,debeUSD:isIng?m.montoUSD:0,haberUSD:isIng?0:m.montoUSD};
       let lineasContra;
       // Se intenta SIEMPRE identificar primero al cliente/proveedor y su cuenta contable YA
       // asignada — porque lineasContra/asientoDebito a veces quedaron guardados con el nombre
-      // del cliente/proveedor en vez de su cuenta contable real. El concepto usa dos formatos
-      // distintos según el origen: "PAGO FAC X — NOMBRE — NE-Y" o "ANTICIPO CxP · NOMBRE · detalle".
+      // del cliente/proveedor en vez de su cuenta contable real. Los distintos flujos de guardado
+      // usan nombres de campo distintos para el tercero (terceroNombre, clientName, proveedor) —
+      // se revisan todos antes de recurrir al concepto.
+      const nombreDirecto=m.terceroNombre||m.clientName||m.proveedor||'';
       const partesGuion=(m.concepto||'').split('—').map(s=>s.trim());
       const partesPunto=(m.concepto||'').split('·').map(s=>s.trim());
-      const nombreEnConcepto=partesGuion[1]||partesPunto[1]||'';
+      const nombreEnConcepto=nombreDirecto||partesGuion[1]||partesPunto[1]||'';
       const nombreNorm=bancoNormNombre(nombreEnConcepto);
-      const esProveedorMov=m.tipoTercero==='Proveedor'||!!m.grupoPagoId;
+      const esProveedorMov=m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
       const tercero=(esProveedorMov?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
         || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.name||c.nombre)===nombreNorm)
         || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.name||p.nombre)===nombreNorm);
       const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
-      const cuentaGenerica=(patron)=>{const cta=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta?{codigo:String(cta.codigo||cta.id||''),nombre:cta.nombre||''}:null;};
+      const cuentaGenerica=(patron)=>{const cta2=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta2?{codigo:String(cta2.codigo||cta2.id||''),nombre:cta2.nombre||''}:null;};
       if(tercero&&(codTercero||nomTercero)){
         lineasContra=[{codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
@@ -6217,7 +6286,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         lineasContra=[{codigo:contraCodigo,cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
       return {
-        id:m.id, comprobante:cta?.banco||'BANCO', cuentaId:m.cuentaId,
+        id:m.id, comprobante:nombreCta(cta)||(isBanco?'BANCO':'CAJA'), cuentaId:m[idField],
         fecha:m.fecha, descripcion:m.concepto, nroDocumento:m.referencia||'',
         tasa:m.tasa, cuentaNombre:m.cuentaNombre,
         lineas:[lineaPropia,...lineasContra],
@@ -6226,7 +6295,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // Combina AMBAS fuentes (antes se usaba solo una u otra con un ternario, así que en cuanto
     // existía UN asiento formal, se dejaban de mostrar todos los movimientos sin asiento).
     const rows = [...asientosMes, ...movsSinAsiento].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-    const getMovCuentaId = r => r.cuentaId || movBanco.find(m=>m.id===r.movimientoBancoId)?.cuentaId||null;
+    const getMovCuentaId = r => r.cuentaId || movsFuente.find(m=>m.id===r.movimientoBancoId)?.[idField]||null;
 
     // ── PDF / XLS generator ──────────────────────────────────────────────────
     const buildHTML = (tableRows, titleLabel) => {
@@ -6259,18 +6328,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div className="space-y-3">
         {/* Filtros */}
         <div className="bg-white rounded-xl border border-slate-100 p-3 flex flex-wrap items-end gap-3">
-          <BFG label="Banco">
+          <BFG label={isBanco?'Banco':'Caja'}>
             <select className={`${sel} min-w-[160px]`} value={filtBanco} onChange={e=>setFiltBanco(e.target.value)}>
-              <option value="">Todos los bancos</option>
-              {[{label:'🇻🇪 Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-                {label:'💵 Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
-                {label:'🌐 Internacionales',items:cuentas.filter(c=>c.tipoBanco==='Internacional')},
-                {label:'💳 Electrónicas',items:cuentas.filter(c=>c.tipoBanco==='Electronica')},
-                {label:'🪪 Tarjetas Débito Intl.',items:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
-                {label:'📱 Pago Móvil',items:cuentas.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')}
+              <option value="">{isBanco?'Todos los bancos':'Todas las cajas'}</option>
+              {isBanco?[{label:'🇻🇪 Nacionales Bs.',items:cuentasFuente.filter(c=>c.tipoBanco==='Nacional-Bs')},
+                {label:'💵 Moneda Extranjera',items:cuentasFuente.filter(c=>c.tipoBanco==='Nacional-Ext')},
+                {label:'🌐 Internacionales',items:cuentasFuente.filter(c=>c.tipoBanco==='Internacional')},
+                {label:'💳 Electrónicas',items:cuentasFuente.filter(c=>c.tipoBanco==='Electronica')},
+                {label:'🪪 Tarjetas Débito Intl.',items:cuentasFuente.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
+                {label:'📱 Pago Móvil',items:cuentasFuente.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')}
               ].map(g=>g.items.length>0&&(
-                <optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}</optgroup>
-              ))}
+                <optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{nombreCta(c)}</option>)}</optgroup>
+              )):cuentasFuente.map(c=><option key={c.id} value={c.id}>{nombreCta(c)}</option>)}
             </select>
           </BFG>
           <BFG label="Desde"><input type="date" className={inp} value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></BFG>
@@ -6279,24 +6348,25 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <button onClick={()=>{setFiltBanco('');setFiltDesde(bancoMesActual()+'-01');setFiltHasta(getTodayDate());}} className="self-end mb-0.5 text-[9px] font-black text-slate-400 hover:text-red-500 px-2 py-1.5 rounded-lg border border-slate-200 hover:bg-red-50">✕</button>
           )}
           <div className="ml-auto self-end flex gap-2">
-            <button onClick={()=>imprimirPDF(rows, filtBanco?cuentas.find(c=>c.id===filtBanco)?.banco||'Banco':`${mes}`)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><Download size={10}/> PDF</button>
-            <button onClick={()=>imprimirXLS(rows, filtBanco?cuentas.find(c=>c.id===filtBanco)?.banco||'Banco':`${mes}`)} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={10}/> Excel</button>
+            <button onClick={()=>imprimirPDF(rows, filtBanco?nombreCta(cuentasFuente.find(c=>c.id===filtBanco))||'Banco':`${mes}`)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><Download size={10}/> PDF</button>
+            <button onClick={()=>imprimirXLS(rows, filtBanco?nombreCta(cuentasFuente.find(c=>c.id===filtBanco))||'Banco':`${mes}`)} className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={10}/> Excel</button>
           </div>
-          <p className="w-full text-[9px] text-slate-400">{filtBanco?cuentas.find(c=>c.id===filtBanco)?.banco||'Banco':'Todos los bancos'} · {bancoDd(filtDesde)} al {bancoDd(filtHasta)} · <strong className="text-slate-700">{rows.length} resultado(s)</strong></p>
+          <p className="w-full text-[9px] text-slate-400">{filtBanco?nombreCta(cuentasFuente.find(c=>c.id===filtBanco))||(isBanco?'Banco':'Caja'):(isBanco?'Todos los bancos':'Todas las cajas')} · {bancoDd(filtDesde)} al {bancoDd(filtHasta)} · <strong className="text-slate-700">{rows.length} resultado(s)</strong></p>
         </div>
 
-        {/* Tablas por banco */}
-        {rows.length===0&&<div className="bg-white rounded-xl border border-slate-100 p-8"><BEmptyState icon={BookOpen} title="Sin asientos" desc="Los asientos se generan automáticamente al registrar movimientos bancarios"/></div>}
+        {/* Tablas por banco/caja */}
+        {rows.length===0&&<div className="bg-white rounded-xl border border-slate-100 p-8"><BEmptyState icon={BookOpen} title="Sin asientos" desc={`Los asientos se generan automáticamente al registrar movimientos ${isBanco?'bancarios':'de caja'}`}/></div>}
         {filtBanco
-          ? <BancoTable title={cuentas.find(c=>c.id===filtBanco)?.banco||'Banco'} tableRows={rows} onPDF={()=>imprimirPDF(rows,cuentas.find(c=>c.id===filtBanco)?.banco||'Banco')} onXLS={()=>imprimirXLS(rows,cuentas.find(c=>c.id===filtBanco)?.banco||'Banco')}/>
-          : (()=>{
+          ? <BancoTable title={nombreCta(cuentasFuente.find(c=>c.id===filtBanco))||(isBanco?'Banco':'Caja')} tableRows={rows} onPDF={()=>imprimirPDF(rows,nombreCta(cuentasFuente.find(c=>c.id===filtBanco))||'Banco')} onXLS={()=>imprimirXLS(rows,nombreCta(cuentasFuente.find(c=>c.id===filtBanco))||'Banco')}/>
+          : isBanco
+          ? (()=>{
               const grupos=[
-                {label:'🇻🇪 Cuentas Nacionales — Bolívares', bancos:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-                {label:'💵 Cuentas Moneda Extranjera', bancos:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
-                {label:'🌐 Cuentas Internacionales', bancos:cuentas.filter(c=>c.tipoBanco==='Internacional')},
-                {label:'💳 Cuentas Electrónicas', bancos:cuentas.filter(c=>c.tipoBanco==='Electronica')},
-                {label:'🪪 Tarjetas de Débito Internacionales', bancos:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
-                {label:'📱 Pago Móvil', bancos:cuentas.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')},
+                {label:'🇻🇪 Cuentas Nacionales — Bolívares', bancos:cuentasFuente.filter(c=>c.tipoBanco==='Nacional-Bs')},
+                {label:'💵 Cuentas Moneda Extranjera', bancos:cuentasFuente.filter(c=>c.tipoBanco==='Nacional-Ext')},
+                {label:'🌐 Cuentas Internacionales', bancos:cuentasFuente.filter(c=>c.tipoBanco==='Internacional')},
+                {label:'💳 Cuentas Electrónicas', bancos:cuentasFuente.filter(c=>c.tipoBanco==='Electronica')},
+                {label:'🪪 Tarjetas de Débito Internacionales', bancos:cuentasFuente.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
+                {label:'📱 Pago Móvil', bancos:cuentasFuente.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')},
               ];
               return grupos.map(g=>{
                 const bancosConMovs=g.bancos.filter(c=>rows.some(r=>getMovCuentaId(r)===c.id));
@@ -6315,9 +6385,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 );
               });
             })()
+          : cuentasFuente.filter(c=>rows.some(r=>getMovCuentaId(r)===c.id)).map(c=>{
+              const cajaRows=rows.filter(r=>getMovCuentaId(r)===c.id);
+              return <BancoTable key={c.id} title={c.nombre} tableRows={cajaRows} onPDF={()=>imprimirPDF(cajaRows,c.nombre)} onXLS={()=>imprimirXLS(cajaRows,c.nombre)}/>;
+            })
         }
         {!filtBanco&&rows.filter(r=>!getMovCuentaId(r)).length>0&&(
-          <BancoTable title="Sin banco identificado" tableRows={rows.filter(r=>!getMovCuentaId(r))} onPDF={()=>imprimirPDF(rows.filter(r=>!getMovCuentaId(r)),'Sin banco')} onXLS={()=>imprimirXLS(rows.filter(r=>!getMovCuentaId(r)),'Sin banco')}/>
+          <BancoTable title={isBanco?'Sin banco identificado':'Sin caja identificada'} tableRows={rows.filter(r=>!getMovCuentaId(r))} onPDF={()=>imprimirPDF(rows.filter(r=>!getMovCuentaId(r)),'Sin identificar')} onXLS={()=>imprimirXLS(rows.filter(r=>!getMovCuentaId(r)),'Sin identificar')}/>
         )}
       </div>
     );
@@ -6536,9 +6610,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                                                     {id:'vales',         label:'Relación de Vales',icon:FileText},
                                                     {id:'arqueo',        label:'Arqueo de Caja',   icon:Calculator}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_caja',  label:'General de Caja',  icon:PiggyBank},
-                                                    {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText}] },
-    { group:'Config.',     color:'#64748b', items:[{id:'tasas',          label:'Tasas de Cambio',  icon:Globe},
-                                                    {id:'limpiar_dup',   label:'Limpiar Duplicados',icon:AlertTriangle}] },
+                                                    {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText},
+                                                    {id:'rpt_libro_caja',label:'Libro Diario General',icon:BookOpen}] },
+    { group:'Config.',     color:'#64748b', items:[{id:'limpiar_dup',   label:'Limpiar Duplicados',icon:AlertTriangle}] },
   ];
   const navGroupsCxP = [
     { group:'Terceros',    color:'#f97316', items:[{id:'terceros_rel', label:'Terceros',            icon:Users},
@@ -6557,6 +6631,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     rpt_gral_caja:<ReportesGeneralView tipo="caja"/>,
     rpt_comp_banco:<ComprobantesBancariosView tipo="banco"/>,
     rpt_comp_caja:<ComprobantesBancariosView tipo="caja"/>,
+    rpt_libro_caja:<RepLibroDiarioView tipo="caja"/>,
     rpt_libro:<RepLibroDiarioView/>,
     tasas:<TasasView/>,
     terceros_rel:<TercerosRelacionadosView/>, cxp_rel:<CxPRelacionadasView/>,
