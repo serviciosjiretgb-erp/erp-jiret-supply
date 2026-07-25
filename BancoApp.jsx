@@ -5917,7 +5917,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <div className="flex flex-wrap gap-4 items-end bg-slate-50 p-4 rounded-xl border border-slate-100">
             <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Desde</label><input type="date" className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Hasta</label><input type="date" className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
-            <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Banco</label><select className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none min-w-[200px]" value={filtOrigen} onChange={e=>setFiltOrigen(e.target.value)}><option value="">TODOS LOS BANCOS</option>{cuentas.map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}</select></div>
+            <div><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Banco</label><select className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold outline-none min-w-[200px]" value={filtOrigen} onChange={e=>setFiltOrigen(e.target.value)}>
+              <option value="">TODOS LOS BANCOS</option>
+              {[{label:'🇻🇪 Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
+                {label:'💵 Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
+                {label:'🌐 Internacionales',items:cuentas.filter(c=>c.tipoBanco==='Internacional')},
+                {label:'💳 Electrónicas',items:cuentas.filter(c=>c.tipoBanco==='Electronica')},
+                {label:'🪪 Tarjetas Débito Intl.',items:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
+                {label:'📱 Pago Móvil',items:cuentas.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')}
+              ].map(g=>g.items.length>0&&(<optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}</optgroup>))}
+            </select></div>
             <div className="flex-1"><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Cuenta Contable</label><div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input type="text" className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2 text-xs font-semibold outline-none" placeholder="Ej: 1.1.01..." value={filtCta} onChange={e=>setFiltCta(e.target.value)}/></div></div>
             {(filtOrigen||filtCta||filtDesde!==bancoMesActual()+'-01'||filtHasta!==getTodayDate())&&<button onClick={()=>{setFiltDesde(bancoMesActual()+'-01');setFiltHasta(getTodayDate());setFiltOrigen('');setFiltCta('');}} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase hover:bg-red-100">Limpiar</button>}
           </div>
@@ -6014,10 +6023,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <div key={g.titulo} className="mb-4">
               <p className="text-xs font-black uppercase text-slate-500 mb-2">{g.titulo}</p>
               <div className="overflow-x-auto w-full min-w-0"><table className="w-full min-w-[700px]">
-                <thead><tr><BTh>Banco</BTh><BTh>Nro.</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh right>Saldo</BTh><BTh right>En USD</BTh><BTh right>En Bs.</BTh></tr></thead>
+                <thead><tr><BTh>Banco</BTh><BTh>Nro.</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh right>Saldo</BTh><BTh right>Equivalente</BTh></tr></thead>
                 <tbody>{cuentas.filter(c=>g.tipos.includes(c.tipoBanco||'Nacional-Bs')).map(c=>{
                   const bs=c.moneda==='BS';const usd=bs?Number(c.saldo)/tasaDia:Number(c.saldo);const bsEq=bs?Number(c.saldo):Number(c.saldo)*tasaDia;
-                  return<tr key={c.id} className="hover:bg-slate-50"><BTd className="font-black"><div className="flex items-center gap-2"><BBankLogo banco={c.banco} logoUrl={c.logoUrl} className="w-6 h-6 rounded shadow-sm object-contain border border-slate-200"/><span>{c.banco}</span></div></BTd><BTd mono className="text-[10px]">{c.numeroCuenta}</BTd><BTd className="text-[10px]">{c.tipoCuenta}</BTd><BTd><BPill usd={!bs}>{c.moneda}</BPill></BTd><BTd right mono className="font-black">{bs?'Bs.':'$'} {bancoFmt(c.saldo)}</BTd><BTd right mono className="text-emerald-600 font-black">{'$'+bancoFmt(usd)}</BTd><BTd right mono className="text-blue-600">Bs.{bancoFmt(bsEq)}</BTd></tr>;
+                  return<tr key={c.id} className="hover:bg-slate-50"><BTd className="font-black"><div className="flex items-center gap-2"><BBankLogo banco={c.banco} logoUrl={c.logoUrl} className="w-6 h-6 rounded shadow-sm object-contain border border-slate-200"/><span>{c.banco}</span></div></BTd><BTd mono className="text-[10px]">{c.numeroCuenta}</BTd><BTd className="text-[10px]">{c.tipoCuenta}</BTd><BTd><BPill usd={!bs}>{c.moneda}</BPill></BTd><BTd right mono className="font-black">{bs?'Bs.':'$'} {bancoFmt(c.saldo)}</BTd><BTd right mono className="text-emerald-600 font-black">{bs?'$'+bancoFmt(usd):'Bs.'+bancoFmt(bsEq)}</BTd></tr>;
                 })}</tbody>
               </table></div>
             </div>
@@ -6132,19 +6141,32 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // para no duplicarlos al agregar los que todavía no tienen asiento generado.
     const movsYaConAsiento = new Set(asientosLocal.map(a=>a.movimientoBancoId).filter(Boolean));
     const movsSinAsiento = movBanco.filter(m=>{
-      if(!(m.asientoDebito||m.asientoCredito)) return false;
+      const tieneAsiento=(m.asientoDebito||m.asientoCredito)||(m.lineasContra&&m.lineasContra.length>0);
+      if(!tieneAsiento) return false;
       if(movsYaConAsiento.has(m.id)) return false; // ya viene por cont_asientos, evitar duplicado
       return applyFiltros(m, true);
-    }).map(m=>({
-      id:m.id, comprobante:m.asientoContableId||m.id,
-      fecha:m.fecha, descripcion:m.concepto, nroDocumento:m.referencia||'',
-      tasa:m.tasa, cuentaNombre:m.cuentaNombre,
-      lineas:[{codigo:'',cuenta:m.asientoDebito,tipoLinea:'D',debeBs:m.montoBs,haberBs:0,debeUSD:m.montoUSD,haberUSD:0},{codigo:'',cuenta:m.asientoCredito,tipoLinea:'H',debeBs:0,haberBs:m.montoBs,debeUSD:0,haberUSD:m.montoUSD}],
-    }));
+    }).map(m=>{
+      const cta=cuentas.find(c=>c.id===m.cuentaId);
+      const isIng=m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
+      const codigoPropio=cta?.cuentaContableCod||'';
+      const lineaPropia={codigo:codigoPropio,cuenta:m.cuentaNombre||cta?.banco||'',tipoLinea:isIng?'D':'H',debeBs:isIng?m.montoBs:0,haberBs:isIng?0:m.montoBs,debeUSD:isIng?m.montoUSD:0,haberUSD:isIng?0:m.montoUSD};
+      let lineasContra;
+      if(m.lineasContra&&m.lineasContra.length>0){
+        lineasContra=m.lineasContra.map(l=>({codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'',tipoLinea:Number(l.debeBs||0)>0?'D':'H',debeBs:Number(l.debeBs||0),haberBs:Number(l.haberBs||0),debeUSD:Number(l.debeUSD||0),haberUSD:Number(l.haberUSD||0)}));
+      } else {
+        lineasContra=[{codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
+      }
+      return {
+        id:m.id, comprobante:m.asientoContableId||m.id, cuentaId:m.cuentaId,
+        fecha:m.fecha, descripcion:m.concepto, nroDocumento:m.referencia||'',
+        tasa:m.tasa, cuentaNombre:m.cuentaNombre,
+        lineas:[lineaPropia,...lineasContra],
+      };
+    });
     // Combina AMBAS fuentes (antes se usaba solo una u otra con un ternario, así que en cuanto
     // existía UN asiento formal, se dejaban de mostrar todos los movimientos sin asiento).
     const rows = [...asientosMes, ...movsSinAsiento].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-    const getMovCuentaId = r => movBanco.find(m=>m.id===r.movimientoBancoId)?.cuentaId||null;
+    const getMovCuentaId = r => r.cuentaId || movBanco.find(m=>m.id===r.movimientoBancoId)?.cuentaId||null;
 
     // ── PDF / XLS generator ──────────────────────────────────────────────────
     const buildHTML = (tableRows, titleLabel) => {
@@ -6446,7 +6468,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_banco',label:'General de Banco',   icon:Building2},
                                                     {id:'rpt_comp_banco',label:'Comprobante Bancario',icon:FileText},
                                                     {id:'rpt_libro',    label:'Libro Diario General',icon:BookOpen}] },
-    { group:'Config.',     color:'#64748b', items:[{id:'tasas',        label:'Tasas de Cambio',    icon:Globe}] },
   ];
   const navGroupsCaja = [
     { group:'Analítica',   color:'#10b981', items:[{id:'caja_dashboard', label:'Panel General',    icon:LayoutDashboard}] },
