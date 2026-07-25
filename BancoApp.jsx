@@ -1771,6 +1771,8 @@ const TIPO_BANCO = [
   { id:'Nacional-Ext',  label:'Banco Nacional — USD (ME)',     moneda:'USD', flag:'🏦' },
   { id:'Internacional', label:'Banco Internacional — USD',     moneda:'USD', flag:'🌐' },
   { id:'Pago-Movil',    label:'Pago Móvil (no bancario)',      moneda:'BS',  flag:'📱' },
+  { id:'Electronica',   label:'Cuenta Electrónica',            moneda:'USD', flag:'💳' },
+  { id:'Tarjeta-Debito-Intl', label:'Tarjeta de Débito Internacional', moneda:'USD', flag:'🪪' },
 ];
 
 // Denominaciones VES para arqueo
@@ -1841,8 +1843,11 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils }) {
     <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
       <BFG label="Cuenta" full><select className={sel} value={cuentaId} onChange={e=>{setCuentaId(e.target.value);setMarcados({});setSaldoBco('');}}>
         <option value="">— Seleccione cuenta a conciliar —</option>
-        {[{label:'Cuentas Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-          {label:'Cuentas Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs')}
+        {[{label:'🇻🇪 Cuentas Nacionales — Bolívares',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
+          {label:'💵 Cuentas Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
+          {label:'🌐 Cuentas Internacionales',items:cuentas.filter(c=>c.tipoBanco==='Internacional')},
+          {label:'💳 Cuentas Electrónicas',items:cuentas.filter(c=>c.tipoBanco==='Electronica')},
+          {label:'🪪 Tarjetas de Débito Internacionales',items:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')}
         ].map(g=>g.items.length>0&&(<optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldo)}</option>)}</optgroup>))}
       </select></BFG>
       <BFG label="Desde"><input type="date" className={inp} value={desde} onChange={e=>setDesde(e.target.value)}/></BFG>
@@ -2641,9 +2646,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     // Helper: cuenta selector con grupos Bs/USD — excluye Pago Móvil
     const esBancario = c => c.tipoBanco!=='Pago-Movil' && c.tipoBanco!=='Pago Móvil';
+    const GRUPOS_CUENTA = [
+      {label:'🇻🇪 Cuentas Nacionales — Bolívares', tipos:['Nacional-Bs']},
+      {label:'💵 Cuentas Moneda Extranjera',        tipos:['Nacional-Ext']},
+      {label:'🌐 Cuentas Internacionales',          tipos:['Internacional']},
+      {label:'💳 Cuentas Electrónicas',             tipos:['Electronica']},
+      {label:'🪪 Tarjetas de Débito Internacionales', tipos:['Tarjeta-Debito-Intl']},
+    ];
     const CuentaSelector = ({value, onChange, label, excluirId}) => {
-      const nacBs=cuentas.filter(c=>c.tipoBanco==='Nacional-Bs'&&c.id!==excluirId&&esBancario(c));
-      const ext  =cuentas.filter(c=>(c.tipoBanco==='Nacional-Ext'||c.tipoBanco==='Internacional')&&c.id!==excluirId&&esBancario(c));
+      const matchBusca = c => !searchBanco||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchBanco.toUpperCase());
+      const gruposConCuentas = GRUPOS_CUENTA.map(g=>({
+        ...g, items: cuentas.filter(c=>g.tipos.includes(c.tipoBanco)&&c.id!==excluirId&&esBancario(c)&&matchBusca(c))
+      })).filter(g=>g.items.length>0);
       return (
         <BFG label={label||'Cuenta Bancaria'} full>
           <div className="space-y-2">
@@ -2654,20 +2668,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </div>
             <select className={`${sel} border-orange-400`} value={value} onChange={e=>{onChange(e.target.value);setSearchBanco('');}}>
               <option value="">— Seleccione la cuenta —</option>
-              {nacBs.filter(c=>!searchBanco||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchBanco.toUpperCase())).length>0&&(
-                <optgroup label="🇻🇪 Cuentas Nacionales — Bolívares">
-                  {nacBs.filter(c=>!searchBanco||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchBanco.toUpperCase())).map(c=>(
-                    <option key={c.id} value={c.id}>VE {c.banco} · {c.numeroCuenta} · Bs. {bancoFmt(c.saldo)}</option>
+              {gruposConCuentas.map(g=>(
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map(c=>(
+                    <option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldo)}</option>
                   ))}
                 </optgroup>
-              )}
-              {ext.filter(c=>!searchBanco||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchBanco.toUpperCase())).length>0&&(
-                <optgroup label="💵 Cuentas Moneda Extranjera">
-                  {ext.filter(c=>!searchBanco||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchBanco.toUpperCase())).map(c=>(
-                    <option key={c.id} value={c.id}>🏦 {c.banco} · {c.numeroCuenta} · {c.moneda==='USD'?'$':'€'} {bancoFmt(c.saldo)}</option>
-                  ))}
-                </optgroup>
-              )}
+              ))}
             </select>
           </div>
         </BFG>
@@ -3446,12 +3453,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
           <select className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500 text-slate-700" value={filtC} onChange={e=>setFiltC(e.target.value)}>
             <option value="">Todos los bancos</option>
-            {cuentas.filter(c=>c.tipoBanco==='Nacional-Bs').length>0&&<optgroup label="🇻🇪 Bolívares">
-              {cuentas.filter(c=>c.tipoBanco==='Nacional-Bs').map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}
-            </optgroup>}
-            {cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs').length>0&&<optgroup label="💵 Moneda Extranjera">
-              {cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs').map(c=><option key={c.id} value={c.id}>{c.banco} ({c.moneda})</option>)}
-            </optgroup>}
+            {[{label:'🇻🇪 Bolívares',tipo:'Nacional-Bs'},{label:'💵 Moneda Extranjera',tipo:'Nacional-Ext'},{label:'🌐 Internacionales',tipo:'Internacional'},{label:'💳 Electrónicas',tipo:'Electronica'},{label:'🪪 Tarjetas Débito Intl.',tipo:'Tarjeta-Debito-Intl'}].map(g=>{
+              const items=cuentas.filter(c=>c.tipoBanco===g.tipo);
+              return items.length>0&&<optgroup key={g.label} label={g.label}>{items.map(c=><option key={c.id} value={c.id}>{c.banco} ({c.moneda})</option>)}</optgroup>;
+            })}
           </select>
           <select className="border-2 border-slate-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-blue-500 text-slate-700" value={filtTipo} onChange={e=>setFiltTipo(e.target.value)}>
             <option value="">Ingresos y Egresos</option>
