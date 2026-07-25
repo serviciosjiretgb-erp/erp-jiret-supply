@@ -1785,11 +1785,14 @@ const DENOM_USD = [100,50,20,10,5,2,1];
 // estado local (cuenta seleccionada, fechas, movimientos marcados) no se pierda cada vez que
 // BancoApp se re-renderiza por una actualización de Firestore (cosa que puede pasar cada pocos
 // segundos). Recibe como props únicamente lo que antes tomaba por cierre (closure).
-function ConciliacionView({ cuentas, movBanco, tasaActiva, concils }) {
+function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClaveAdmin }) {
   const [cuentaId,setCuentaId]=useState('');const [desde,setDesde]=useState(bancoMesActual()+'-01');const [hasta,setHasta]=useState(getTodayDate());
   const [saldoBanco,setSaldoBco]=useState('');const [marcados,setMarcados]=useState({});const [busy,setBusy]=useState(false);
   const [histEdit,setHistEdit]=useState(null);
   const [histEditForm,setHistEditForm]=useState({fecha:'',saldoBanco:''});
+  const [pwdPrompt,setPwdPrompt]=useState(null); // {accion:'editar'|'eliminar', c}
+  const [pwdInput,setPwdInput]=useState('');
+  const [pwdError,setPwdError]=useState(false);
   const cuenta=cuentas.find(c=>c.id===cuentaId);
   const esCuentaBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
   const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado'&&(!desde||m.fecha>=desde)&&(!hasta||m.fecha<=hasta));
@@ -1804,7 +1807,7 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils }) {
   const sbNum=Number(saldoBanco)||0;const saldoConcilMonedaCta=esCuentaBs?saldoConcil*tasaActiva:saldoConcil;const diff=sbNum-saldoConcilMonedaCta;const OK=Math.abs(diff)<0.01&&sbNum>0;
   const aprobar=async()=>{
     if(!OK)return alert('Diferencia debe ser $0.00');
-    if(!window.confirm('¿Aprobar conciliación? Acción IRREVERSIBLE.'))return;
+    if(!window.confirm('¿Aprobar conciliación? Podrás editarla o eliminarla luego con la clave de administrador si necesitas corregir algo.'))return;
     setBusy(true);
     try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,movimientoIds:ids,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
   };
@@ -1824,20 +1827,32 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils }) {
     bancoPrintWindow(html);
   };
   const abrirEditConcil=(c)=>{ setHistEdit(c); setHistEditForm({fecha:c.fecha||'',saldoBanco:String(c.saldoBanco||'')}); };
-  const guardarEditConcil=async()=>{
+  const guardarEditConcilReal=async()=>{
     await updateDoc(getDocRef('banco_conciliaciones',histEdit.id),{fecha:histEditForm.fecha,saldoBanco:Number(histEditForm.saldoBanco)});
     setHistEdit(null);
   };
-  const eliminarConcil=async(c)=>{
+  const guardarEditConcil=()=>setPwdPrompt({accion:'editar'});
+  const eliminarConcilReal=async(c)=>{
     const tieneIds=Array.isArray(c.movimientoIds)&&c.movimientoIds.length>0;
-    const msg=tieneIds
-      ? `¿Eliminar esta conciliación del ${bancoDd(c.fecha)}? Los ${c.movimientoIds.length} movimiento(s) volverán a estar "No Conciliado". Esta acción no se puede deshacer.`
-      : `¿Eliminar esta conciliación del ${bancoDd(c.fecha)}? Este registro es antiguo y no guarda cuáles movimientos incluía, así que ESOS MOVIMIENTOS SEGUIRÁN BLOQUEADOS como Conciliado — tendrías que desbloquearlos manualmente. Esta acción no se puede deshacer.`;
-    if(!window.confirm(msg))return;
     const batch=writeBatch(_bancoDB);
     if(tieneIds) c.movimientoIds.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'No Conciliado'}));
     batch.delete(getDocRef('banco_conciliaciones',c.id));
     await batch.commit();
+  };
+  const eliminarConcil=(c)=>{
+    const tieneIds=Array.isArray(c.movimientoIds)&&c.movimientoIds.length>0;
+    const msg=tieneIds
+      ? `¿Eliminar esta conciliación del ${bancoDd(c.fecha)}? Los ${c.movimientoIds.length} movimiento(s) volverán a estar "No Conciliado".`
+      : `¿Eliminar esta conciliación del ${bancoDd(c.fecha)}? Este registro es antiguo y no guarda cuáles movimientos incluía, así que ESOS MOVIMIENTOS SEGUIRÁN BLOQUEADOS como Conciliado — tendrías que desbloquearlos manualmente.`;
+    if(!window.confirm(msg))return;
+    setPwdPrompt({accion:'eliminar',c});
+  };
+  const confirmarPwdPrompt=async()=>{
+    const ok=await validarClaveAdmin(pwdInput);
+    if(!ok){ setPwdError(true); setPwdInput(''); return; }
+    if(pwdPrompt.accion==='editar') await guardarEditConcilReal();
+    if(pwdPrompt.accion==='eliminar') await eliminarConcilReal(pwdPrompt.c);
+    setPwdPrompt(null); setPwdInput(''); setPwdError(false);
   };
   return(<div className="space-y-5">
     <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
@@ -1929,6 +1944,22 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils }) {
           </div>
           <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
             <BBo onClick={()=>setHistEdit(null)}>Cancelar</BBo><BBg onClick={guardarEditConcil}>Guardar</BBg>
+          </div>
+        </div>
+      </div>
+    )}
+    {pwdPrompt&&(
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>{setPwdPrompt(null);setPwdInput('');setPwdError(false);}}>
+        <div className="bg-white rounded-2xl max-w-sm w-full" onClick={e=>e.stopPropagation()}>
+          <div className="px-5 py-4" style={{background:'#0f172a'}}><p className="text-white font-black text-sm uppercase">Clave de Administrador</p></div>
+          <div className="p-5 space-y-3">
+            <p className="text-xs text-slate-500">Para {pwdPrompt.accion==='editar'?'editar':'eliminar'} esta conciliación aprobada, ingresa la clave de administrador.</p>
+            <input type="password" autoFocus value={pwdInput} onChange={e=>{setPwdInput(e.target.value);setPwdError(false);}} onKeyDown={e=>e.key==='Enter'&&confirmarPwdPrompt()}
+              className={`w-full border-2 rounded-xl px-3 py-2 text-xs font-bold outline-none ${pwdError?'border-red-400 bg-red-50':'border-gray-200 focus:border-orange-400'}`} placeholder="Clave"/>
+            {pwdError&&<p className="text-[10px] text-red-500 font-bold">Clave incorrecta.</p>}
+          </div>
+          <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+            <BBo onClick={()=>{setPwdPrompt(null);setPwdInput('');setPwdError(false);}}>Cancelar</BBo><BBg onClick={confirmarPwdPrompt}>Confirmar</BBg>
           </div>
         </div>
       </div>
@@ -6385,7 +6416,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
-    conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva} concils={concils}/>, reciprocidad:<ReciprocidadView/>,
+    conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva} concils={concils} validarClaveAdmin={validarClaveAdmin}/>, reciprocidad:<ReciprocidadView/>,
     cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
     caja_dashboard:<CajaOpView/>,
     rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
