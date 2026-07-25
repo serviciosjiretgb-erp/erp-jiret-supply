@@ -5917,18 +5917,30 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const partesPunto=(m.concepto||'').split('·').map(s=>s.trim());
       const nombreEnConcepto=partesGuion[1]||partesPunto[1]||'';
       const nombreNorm=bancoNormNombre(nombreEnConcepto);
-      const tercero=(m.tipoTercero==='Proveedor'?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
-        || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.nombre)===nombreNorm)
-        || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.nombre)===nombreNorm);
+      const esProveedorMov=m.tipoTercero==='Proveedor'||!!m.grupoPagoId;
+      const tercero=(esProveedorMov?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
+        || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.name||c.nombre)===nombreNorm)
+        || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.name||p.nombre)===nombreNorm);
       const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+      // Si el cliente/proveedor no tiene su PROPIA cuenta contable asignada, se usa la cuenta
+      // genérica del plan de cuentas (misma lógica que Directorio de Clientes/Proveedores),
+      // en vez de dejarlo sin código.
+      const cuentaGenerica=(patron)=>{const cta=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta?{codigo:String(cta.codigo||cta.id||''),nombre:cta.nombre||''}:null;};
       if(tercero&&(codTercero||nomTercero)){
         sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
+      }
+      else if(tercero && cuentaGenerica(esProveedorMov?/(cuentas?\s+por\s+pagar|cxp|proveedor)/i:/(cuentas?\s+por\s+cobrar|cxc|client)/i)){
+        const g=cuentaGenerica(esProveedorMov?/(cuentas?\s+por\s+pagar|cxp|proveedor)/i:/(cuentas?\s+por\s+cobrar|cxc|client)/i);
+        sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:g.codigo,cuenta:g.nombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
       else if(m.lineasContra&&m.lineasContra.length>0){m.lineasContra.forEach(l=>sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?l.ctaNom.split('·')[1]?.trim():l.ctaNom,tipo:Number(l.debeBs||0)>0?'D':'H',dBs:Number(l.debeBs||0),hBs:Number(l.haberBs||0),dUSD:Number(l.debeUSD||0),hUSD:Number(l.haberUSD||0)}));}
       else if(m.asientoDebito||m.asientoCredito){sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});}
       else {
-        const contraNombre=m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)';
-        sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
+        const esCobro=!!m.grupoCobroId, esPago=!!m.grupoPagoId;
+        const g=esCobro?cuentaGenerica(/(cuentas?\s+por\s+cobrar|cxc|client)/i):esPago?cuentaGenerica(/(cuentas?\s+por\s+pagar|cxp|proveedor)/i):null;
+        const contraCodigo=g?g.codigo:'';
+        const contraNombre=g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
+        sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:contraCodigo,cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
       if(filtCta){const ok=sub.some(sl=>(sl.codigo+' '+sl.cuenta).toLowerCase().includes(filtCta.toLowerCase()));if(!ok)return;}
       sub.forEach(sl=>{sBs+=sl.dBs-sl.hBs;sUSD+=sl.dUSD-sl.hUSD;lineasPlanas.push({...sl,sBs,sUSD});});
@@ -6180,20 +6192,29 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const partesPunto=(m.concepto||'').split('·').map(s=>s.trim());
       const nombreEnConcepto=partesGuion[1]||partesPunto[1]||'';
       const nombreNorm=bancoNormNombre(nombreEnConcepto);
-      const tercero=(m.tipoTercero==='Proveedor'?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
-        || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.nombre)===nombreNorm)
-        || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.nombre)===nombreNorm);
+      const esProveedorMov=m.tipoTercero==='Proveedor'||!!m.grupoPagoId;
+      const tercero=(esProveedorMov?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
+        || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.name||c.nombre)===nombreNorm)
+        || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.name||p.nombre)===nombreNorm);
       const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+      const cuentaGenerica=(patron)=>{const cta=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta?{codigo:String(cta.codigo||cta.id||''),nombre:cta.nombre||''}:null;};
       if(tercero&&(codTercero||nomTercero)){
         lineasContra=[{codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
+      }
+      else if(tercero && cuentaGenerica(esProveedorMov?/(cuentas?\s+por\s+pagar|cxp|proveedor)/i:/(cuentas?\s+por\s+cobrar|cxc|client)/i)){
+        const g=cuentaGenerica(esProveedorMov?/(cuentas?\s+por\s+pagar|cxp|proveedor)/i:/(cuentas?\s+por\s+cobrar|cxc|client)/i);
+        lineasContra=[{codigo:g.codigo,cuenta:g.nombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
       else if(m.lineasContra&&m.lineasContra.length>0){
         lineasContra=m.lineasContra.map(l=>({codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'',tipoLinea:Number(l.debeBs||0)>0?'D':'H',debeBs:Number(l.debeBs||0),haberBs:Number(l.haberBs||0),debeUSD:Number(l.debeUSD||0),haberUSD:Number(l.haberUSD||0)}));
       } else if(m.asientoDebito||m.asientoCredito){
         lineasContra=[{codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       } else {
-        const contraNombre=m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)';
-        lineasContra=[{codigo:'',cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
+        const esCobro=!!m.grupoCobroId, esPago=!!m.grupoPagoId;
+        const g=esCobro?cuentaGenerica(/(cuentas?\s+por\s+cobrar|cxc|client)/i):esPago?cuentaGenerica(/(cuentas?\s+por\s+pagar|cxp|proveedor)/i):null;
+        const contraCodigo=g?g.codigo:'';
+        const contraNombre=g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
+        lineasContra=[{codigo:contraCodigo,cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
       return {
         id:m.id, comprobante:cta?.banco||'BANCO', cuentaId:m.cuentaId,
