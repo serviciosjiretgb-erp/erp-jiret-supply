@@ -10059,6 +10059,167 @@ const generateDefaultPermissions = () => {
 
 
 // ============================================================================
+const contFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+const contDd = (s) => { if (!s) return '—'; const [y, m, d] = String(s).split('-'); return `${d}/${m}/${y}`; };
+const contNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
+
+function ComprobantesContablesApp({ onBack }) {
+  const [sub, setSub] = useState(''); // '', 'banco', 'caja'
+  const [movBanco, setMovBanco] = useState([]);
+  const [movCaja, setMovCaja] = useState([]);
+  const [cuentasBanco, setCuentasBanco] = useState([]);
+  const [cuentasCaja, setCuentasCaja] = useState([]);
+  const [clientesC, setClientesC] = useState([]);
+  const [provsC, setProvsC] = useState([]);
+  const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
+  const [filtHasta, setFiltHasta] = useState(getTodayDate());
+  const [filtCuenta, setFiltCuenta] = useState('');
+
+  useEffect(() => {
+    const subs = [
+      onSnapshot(getColRef('banco_movimientos'), s => setMovBanco(s.docs.map(d => d.data()))),
+      onSnapshot(getColRef('caja_movimientos'), s => setMovCaja(s.docs.map(d => d.data()))),
+      onSnapshot(getColRef('banco_cuentas'), s => setCuentasBanco(s.docs.map(d => d.data()))),
+      onSnapshot(getColRef('caja_cuentas'), s => setCuentasCaja(s.docs.map(d => d.data()))),
+      onSnapshot(getColRef('clientes'), s => setClientesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('procura_proveedores'), s => setProvsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+    ];
+    return () => subs.forEach(u => u());
+  }, []);
+
+  const construirLineas = (esBanco) => {
+    const movs = esBanco ? movBanco : movCaja;
+    const cuentas = esBanco ? cuentasBanco : cuentasCaja;
+    const idField = esBanco ? 'cuentaId' : 'cajaId';
+    const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
+    const filtrados = movs.filter(m => {
+      if (m.fecha < filtDesde || m.fecha > filtHasta) return false;
+      if (filtCuenta && m[idField] !== filtCuenta) return false;
+      return true;
+    }).sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
+    return filtrados.map(m => {
+      const cta = cuentas.find(c => c.id === m[idField]);
+      if (!cta) return null;
+      const isIng = m.tipo === 'Ingreso' || m.tipo === 'Nota de Crédito';
+      const tasa = Number(m.tasa) || 1;
+      const montoBs = Number(m.montoBs || 0), montoUSD = Number(m.montoUSD || 0);
+      const lineaPropia = { codigo: cta.cuentaContableCod || '—', cuenta: nombreCta(cta), tipo: isIng?'D':'H', dBs: isIng?montoBs:0, hBs: isIng?0:montoBs, dUSD: isIng?montoUSD:0, hUSD: isIng?0:montoUSD };
+      const nombreDirecto = m.terceroNombre || m.clientName || m.proveedor || '';
+      const partesGuion = (m.concepto||'').split('—').map(s=>s.trim());
+      const partesPunto = (m.concepto||'').split('·').map(s=>s.trim());
+      const nombreEnConcepto = nombreDirecto || partesGuion[1] || partesPunto[1] || '';
+      const nombreNorm = contNormNombre(nombreEnConcepto);
+      const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
+      const tercero = (esProveedorMov ? provsC.find(p=>p.id===m.terceroId) : clientesC.find(c=>c.id===m.terceroId))
+        || clientesC.find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
+        || provsC.find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
+      const [codTercero, nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+      let contra;
+      if (tercero && (codTercero||nomTercero)) {
+        contra = { codigo: codTercero||tercero.cuentaContableId||'', cuenta: nomTercero||tercero.razonSocial||tercero.nombre||'' };
+      } else if (m.lineasContra && m.lineasContra.length>0) {
+        const l = m.lineasContra[0];
+        contra = { codigo: l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta: l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'' };
+      } else {
+        contra = { codigo:'', cuenta: m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)' };
+      }
+      const lineaContra = { codigo: contra.codigo, cuenta: contra.cuenta, tipo: isIng?'H':'D', dBs: isIng?0:montoBs, hBs: isIng?montoBs:0, dUSD: isIng?0:montoUSD, hUSD: isIng?montoUSD:0 };
+      return { id: m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas: [lineaPropia, lineaContra] };
+    }).filter(Boolean);
+  };
+
+  if (!sub) {
+    const tarjetas = [
+      { id:'banco', label:'Comprobante de banco', desc:'Todo lo de Bancos', icon:'🏦', color:'#3b82f6', activo:true },
+      { id:'caja', label:'Comprobante de caja', desc:'Todo lo de Caja', icon:'💵', color:'#10b981', activo:true },
+      { id:'ret_prov', label:'Retenciones a proveedores', desc:'Próximamente', icon:'📋', color:'#f59e0b', activo:false },
+      { id:'ret_cli', label:'Retenciones a clientes', desc:'Próximamente', icon:'📋', color:'#a855f7', activo:false },
+      { id:'deprec', label:'Depreciaciones', desc:'Próximamente', icon:'📉', color:'#ec4899', activo:false },
+    ];
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div style={{background:'#0f172a'}} className="px-6 py-4 flex items-center gap-3">
+          <button onClick={onBack} className="text-white/70 hover:text-white text-xs font-black uppercase flex items-center gap-1"><ArrowLeft size={16}/> Volver</button>
+          <div className="w-px h-5 bg-white/20"/>
+          <BookOpen size={20} className="text-cyan-400"/>
+          <span className="text-white font-black uppercase tracking-wide text-sm">Contabilidad — Comprobantes Contables</span>
+        </div>
+        <div className="p-6 grid grid-cols-3 gap-4 max-w-4xl">
+          {tarjetas.map(t => (
+            <button key={t.id} disabled={!t.activo} onClick={()=>t.activo&&setSub(t.id)}
+              className={`text-left bg-white rounded-2xl border-2 p-4 transition-all ${t.activo?'border-gray-200 hover:shadow-lg hover:-translate-y-0.5 cursor-pointer':'border-dashed border-gray-200 opacity-60 cursor-not-allowed'}`}
+              style={{borderLeftWidth:4, borderLeftColor:t.color}}>
+              <span className="text-2xl">{t.icon}</span>
+              <p className="font-black text-sm text-gray-800 mt-2 uppercase">{t.label}</p>
+              <p className="text-[11px] text-gray-400 font-bold mt-0.5">{t.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const esBanco = sub === 'banco';
+  const cuentasFuente = esBanco ? cuentasBanco : cuentasCaja;
+  const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
+  const lineasPorComprobante = construirLineas(esBanco);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div style={{background:'#0f172a'}} className="px-6 py-4 flex items-center gap-3">
+        <button onClick={()=>setSub('')} className="text-white/70 hover:text-white text-xs font-black uppercase flex items-center gap-1"><ArrowLeft size={16}/> Volver</button>
+        <div className="w-px h-5 bg-white/20"/>
+        <span className="text-white font-black uppercase tracking-wide text-sm">Comprobante de {esBanco?'Banco':'Caja'} — Contabilidad</span>
+      </div>
+      <div className="p-6 space-y-4">
+        <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">{esBanco?'Banco':'Caja'}</label>
+            <select className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none min-w-[180px]" value={filtCuenta} onChange={e=>setFiltCuenta(e.target.value)}>
+              <option value="">{esBanco?'Todos los bancos':'Todas las cajas'}</option>
+              {cuentasFuente.map(c=><option key={c.id} value={c.id}>{nombreCta(c)}</option>)}
+            </select>
+          </div>
+          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+          <p className="text-[10px] text-gray-400 ml-auto">{lineasPorComprobante.length} comprobante(s)</p>
+        </div>
+        {lineasPorComprobante.length===0?(
+          <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+            <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+            <p className="text-xs font-black uppercase">Sin comprobantes para este período</p>
+          </div>
+        ):(
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
+              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+              ))}</tr></thead>
+              <tbody>
+                {lineasPorComprobante.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                  <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                    <td className="px-3 py-2 font-mono font-black text-blue-600">{li===0?r.comprobante:''}</td>
+                    <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                    <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
+                    <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                    <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                    <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
+                    <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                    <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                  </tr>
+                )))}
+              </tbody>
+            </table></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
@@ -14351,6 +14512,10 @@ function App() {
         stats: ()=>({ s1:'Presentación corporativa', s2:'Empresa · Planta · Maquinaria · Proyección'}),
         chart:null
       },
+      hasPerm('banco') && { tab:'comprobantes_contables', icon:<BookOpen size={20}/>, title:'Comprobantes Contables', color:'#06b6d4',
+        stats: ()=>({ s1:'Banco, Caja y más', s2:'Consolidado contable'}),
+        chart:null
+      },
       hasPerm('banco') && { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
         chart:null
@@ -14373,7 +14538,7 @@ function App() {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
       administracion:      ['ventas','banco','procura','impuestos'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
-      contabilidad:        [],
+      contabilidad:        ['comprobantes_contables'],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
       redes_portal:        [],
@@ -39370,16 +39535,35 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta</label>
                    <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo</label>
-                   <input value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value.toUpperCase()}))} placeholder="ACTIVOS" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                   {pdcForm.grupo==='__nuevo__'?(
+                     <input autoFocus value={pdcForm._grupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_grupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,grupo:f._grupoNuevo||''}))} placeholder="Escriba el grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
+                   ):(
+                     <select value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value,_grupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                       <option value="">— Seleccione grupo —</option>
+                       {[...new Set((planDeCuentas||[]).map(p=>p.grupo).filter(Boolean))].sort().map(g=><option key={g} value={g}>{g}</option>)}
+                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
+                     </select>
+                   )}
+                 </div>
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Sub-grupo</label>
-                   <input value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value.toUpperCase()}))} placeholder="ACTIVO CIRCULANTE" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                   {pdcForm.subGrupo==='__nuevo__'?(
+                     <input autoFocus value={pdcForm._subGrupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_subGrupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,subGrupo:f._subGrupoNuevo||''}))} placeholder="Escriba el sub-grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
+                   ):(
+                     <select value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value,_subGrupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                       <option value="">— Seleccione sub-grupo —</option>
+                       {[...new Set((planDeCuentas||[]).filter(p=>!pdcForm.grupo||p.grupo===pdcForm.grupo).map(p=>p.subGrupo).filter(Boolean))].sort().map(sg=><option key={sg} value={sg}>{sg}</option>)}
+                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
+                     </select>
+                   )}
+                 </div>
                </div>
                <div className="flex gap-2 mt-4">
                  <button onClick={()=>setShowPDCForm(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
                  <button onClick={async()=>{
                    if(!pdcForm.codigo||!pdcForm.nombre) return setDialog({title:'Aviso',text:'Código y Nombre son obligatorios.',type:'alert'});
                    const id=pdcEditando?pdcEditando.id:pdcForm.codigo.replace(/\./g,'-');
-                   await setDoc(getDocRef('planDeCuentas',id),{...pdcForm,id});
+                   const {_grupoNuevo,_subGrupoNuevo,...pdcClean}=pdcForm;
+                   await setDoc(getDocRef('planDeCuentas',id),{...pdcClean,id});
                    setShowPDCForm(false);setPdcEditando(null);
                  }} className="bg-emerald-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700">{pdcEditando?'Guardar Cambios':'Agregar'}</button>
                </div>
@@ -43253,6 +43437,9 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                </div>{/* /p-6 content */}
              </div>;
            })()}
+
+          {/* ── CONTABILIDAD — COMPROBANTES CONTABLES ── */}
+           {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')}/>}
 
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
