@@ -36674,8 +36674,14 @@ ${resumenHtml}
     const totalIngresosNE = totalIngresosItems;
     const totalIngresosInv = 0;
 
-    // NC/ND del período
-    const notasPeriodo = (notasVentaCD||[]).filter(nc => (nc.fecha||'').startsWith(ym));
+    // NC/ND del período — SOLO las que están ligadas a una NE con OP relacionada, ya que este
+    // reporte es específicamente de Producción y no debe mezclarse con ajustes que no afectan
+    // ninguna orden de producción (a menos que la propia NC/ND lo indique explícitamente).
+    const notasPeriodo = (notasVentaCD||[]).filter(nc => {
+      if(!(nc.fecha||'').startsWith(ym)) return false;
+      const neNC = (notasEntrega||[]).find(e=>e.id===nc.neId);
+      return !!(neNC && neNC.opRelacionada);
+    });
     const ncRows = []; // para mostrar en el desglose
     const ajusteNotasUsd = notasPeriodo.reduce((s,nc) => {
       const ne = (notasEntrega||[]).find(e=>e.id===nc.neId);
