@@ -10481,6 +10481,9 @@ function App() {
 
   // Estados Plan de Cuentas
   const [showPDCImport, setShowPDCImport] = useState(false);
+  const [showPDCForm, setShowPDCForm] = useState(false);
+  const [pdcEditando, setPdcEditando] = useState(null);
+  const [pdcForm, setPdcForm] = useState({codigo:'',nombre:'',grupo:'',subGrupo:''});
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
   // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
@@ -39352,10 +39355,36 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                <FileText className="text-blue-500"/> Plan de Cuentas
              </h2>
              <div className="flex gap-2">
+               <button onClick={()=>{setPdcEditando(null);setPdcForm({codigo:'',nombre:'',grupo:'',subGrupo:''});setShowPDCForm(true);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-700"><Plus size={14}/> Agregar Cuenta</button>
                <button onClick={()=>setShowPDCImport(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700"><ArrowDownToLine size={14}/> IMPORTAR TXT</button>
                {planDeCuentas.length > 0 && <button onClick={()=>setDialog({title:'Limpiar Plan',text:'Eliminar TODAS las cuentas del plan? Esta accion es irreversible.',type:'confirm',onConfirm:async()=>{const b=writeBatch(db);planDeCuentas.forEach(p=>b.delete(getDocRef('planDeCuentas',p.id)));await b.commit();}})} className="bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><Trash2 size={14}/></button>}
              </div>
            </div>
+
+           {showPDCForm && (
+             <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 mb-6">
+               <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">{pdcEditando?'Editar Cuenta':'Agregar Cuenta'}</h3>
+               <div className="grid grid-cols-2 gap-3">
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Código</label>
+                   <input value={pdcForm.codigo} onChange={e=>setPdcForm(f=>({...f,codigo:e.target.value}))} placeholder="1.1.01.04.002" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta</label>
+                   <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo</label>
+                   <input value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value.toUpperCase()}))} placeholder="ACTIVOS" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Sub-grupo</label>
+                   <input value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value.toUpperCase()}))} placeholder="ACTIVO CIRCULANTE" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+               </div>
+               <div className="flex gap-2 mt-4">
+                 <button onClick={()=>setShowPDCForm(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                 <button onClick={async()=>{
+                   if(!pdcForm.codigo||!pdcForm.nombre) return setDialog({title:'Aviso',text:'Código y Nombre son obligatorios.',type:'alert'});
+                   const id=pdcEditando?pdcEditando.id:pdcForm.codigo.replace(/\./g,'-');
+                   await setDoc(getDocRef('planDeCuentas',id),{...pdcForm,id});
+                   setShowPDCForm(false);setPdcEditando(null);
+                 }} className="bg-emerald-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700">{pdcEditando?'Guardar Cambios':'Agregar'}</button>
+               </div>
+             </div>
+           )}
 
            {showPDCImport && (
              <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6 mb-6">
@@ -39382,15 +39411,15 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                <p className="text-xs mt-2">Importe un archivo TXT con el formato indicado</p>
              </div>
            ) : (
-             <div className="overflow-x-auto rounded-xl border border-gray-200 max-h-[500px] overflow-y-auto">
-               <table className="w-full text-xs text-left">
+             <div className="rounded-xl border border-gray-200 max-h-[500px] overflow-y-auto">
+               <table className="w-full text-xs text-left table-fixed">
                  <thead className="bg-gray-100 border-b-2 border-gray-200 sticky top-0">
                    <tr className="uppercase font-black text-[9px] text-gray-600 tracking-widest">
-                     <th className="py-2 px-3 border-r">Codigo</th>
-                     <th className="py-2 px-3 border-r">Nombre / Cuenta</th>
-                     <th className="py-2 px-3 border-r">Grupo</th>
-                     <th className="py-2 px-3 border-r">Sub-grupo</th>
-                     <th className="py-2 px-3 text-center">Accion</th>
+                     <th className="py-2 px-3 border-r w-[14%]">Codigo</th>
+                     <th className="py-2 px-3 border-r w-[38%]">Nombre / Cuenta</th>
+                     <th className="py-2 px-3 border-r w-[18%]">Grupo</th>
+                     <th className="py-2 px-3 border-r w-[18%]">Sub-grupo</th>
+                     <th className="py-2 px-3 text-center w-[12%]">Accion</th>
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-gray-100">
@@ -39399,12 +39428,15 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                      return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q);
                    }).map(p => (
                      <tr key={p.id} className="hover:bg-gray-50">
-                       <td className="py-2 px-3 border-r font-black text-blue-600 font-mono text-[10px]">{p.codigo}</td>
-                       <td className="py-2 px-3 border-r font-bold uppercase text-[10px]">{p.nombre}</td>
-                       <td className="py-2 px-3 border-r font-bold text-[9px]">{p.grupo}</td>
-                       <td className="py-2 px-3 border-r font-bold text-[9px]">{p.subGrupo}</td>
+                       <td className="py-2 px-3 border-r font-black text-blue-600 font-mono text-[10px] break-words">{p.codigo}</td>
+                       <td className="py-2 px-3 border-r font-bold uppercase text-[10px] break-words whitespace-normal">{p.nombre}</td>
+                       <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.grupo}</td>
+                       <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.subGrupo}</td>
                        <td className="py-2 px-3 text-center">
-                         <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                         <div className="flex justify-center gap-1">
+                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||''});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
+                           <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                         </div>
                        </td>
                      </tr>
                    ))}
