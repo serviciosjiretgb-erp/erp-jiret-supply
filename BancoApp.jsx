@@ -5919,7 +5919,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           || (clientes||[]).find(c=>nombreEnConcepto && (c.razonSocial||c.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase())
           || (provs||[]).find(p=>nombreEnConcepto && (p.razonSocial||p.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase());
         const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
-        const contraCodigo=tercero?(tercero.cuentaContableId||codTercero||''):'';
+        const contraCodigo=tercero?(codTercero||tercero.cuentaContableId||''):'';
         const contraNombre=tercero?(nomTercero||tercero.razonSocial||tercero.nombre||''):(m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
         sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:contraCodigo,cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
@@ -5961,7 +5961,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <td className="px-4 py-2.5 font-bold text-slate-700 text-[10px] uppercase truncate max-w-[200px]" style={{paddingLeft:!isD?'20px':'16px'}} title={l.cuenta}>{l.cuenta||'—'}</td>
                     <td className="px-4 py-2.5 text-center font-black text-[11px]"><span className={isD?'text-emerald-600':'text-red-500'}>{l.tipo}</span></td>
                     <td className="px-4 py-2.5 font-mono text-slate-400 text-[10px] truncate max-w-[100px]">{esInicio?l.doc:''}</td>
-                    <td className="px-4 py-2.5 text-slate-600 text-[10px] truncate max-w-[180px] font-medium uppercase" title={l.conc}>{esInicio?l.conc:''}</td>
+                    <td className="px-4 py-2.5 text-slate-600 text-[10px] max-w-[380px] whitespace-normal break-words font-medium uppercase">{esInicio?l.conc:''}</td>
                     <td className="px-4 py-2.5 text-right font-mono text-slate-400 text-[10px]">{esInicio?bancoFmt(l.tasa):''}</td>
                     <td className="px-4 py-2.5 text-right font-mono font-black text-emerald-600 text-[10px] whitespace-nowrap bg-emerald-50/10">{l.dBs>0?'Bs.'+bancoFmt(l.dBs):''}</td>
                     <td className="px-4 py-2.5 text-right font-mono font-black text-red-500 text-[10px] whitespace-nowrap bg-red-50/10">{l.hBs>0?'Bs.'+bancoFmt(l.hBs):''}</td>
@@ -6066,11 +6066,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full" style={{fontSize:'9px', tableLayout:'fixed', minWidth:'900px'}}>
+          <table className="w-full" style={{fontSize:'9px', tableLayout:'fixed', minWidth:'1050px'}}>
             <colgroup>
               <col style={{width:'90px'}}/><col style={{width:'45px'}}/><col style={{width:'60px'}}/>
               <col style={{width:'60px'}}/><col style={{width:'130px'}}/><col style={{width:'28px'}}/>
-              <col style={{width:'70px'}}/><col style={{width:'130px'}}/><col style={{width:'45px'}}/>
+              <col style={{width:'70px'}}/><col style={{width:'280px'}}/><col style={{width:'45px'}}/>
               <col style={{width:'70px'}}/><col style={{width:'70px'}}/><col style={{width:'70px'}}/>
               <col style={{width:'60px'}}/><col style={{width:'60px'}}/><col style={{width:'60px'}}/>
             </colgroup>
@@ -6103,7 +6103,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       <td className="px-2 py-1.5 font-semibold text-slate-800 truncate" style={{paddingLeft:isD?'6px':'14px'}} title={l.cuenta}>{l.cuenta||'—'}</td>
                       <td className="px-2 py-1.5 text-center"><span className={`font-black ${isD?'text-emerald-600':'text-red-500'}`}>{l.tipoLinea}</span></td>
                       <td className="px-2 py-1.5 font-mono text-slate-400 truncate">{li===0?nroDoc:''}</td>
-                      <td className="px-2 py-1.5 text-slate-600 truncate" title={conc}>{li===0?conc:''}</td>
+                      <td className="px-2 py-1.5 text-slate-600 whitespace-normal break-words">{li===0?conc:''}</td>
                       <td className="px-2 py-1.5 text-right font-mono text-slate-400">{li===0?bancoFmt(tasa):''}</td>
                       <td className="px-2 py-1.5 text-right font-mono font-black text-emerald-700 whitespace-nowrap">{dBs>0?'Bs.'+bancoFmt(dBs):''}</td>
                       <td className="px-2 py-1.5 text-right font-mono font-black text-red-500 whitespace-nowrap">{hBs>0?'Bs.'+bancoFmt(hBs):''}</td>
@@ -6177,7 +6177,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           || (clientes||[]).find(c=>nombreEnConcepto && (c.razonSocial||c.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase())
           || (provs||[]).find(p=>nombreEnConcepto && (p.razonSocial||p.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase());
         const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
-        const contraCodigo=tercero?(tercero.cuentaContableId||codTercero||''):'';
+        const contraCodigo=tercero?(codTercero||tercero.cuentaContableId||''):'';
         const contraNombre=tercero?(nomTercero||tercero.razonSocial||tercero.nombre||''):(m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
         lineasContra=[{codigo:contraCodigo,cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
