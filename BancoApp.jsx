@@ -5900,18 +5900,28 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     let lineasPlanas=[],sBs=0,sUSD=0;
     allMovs.forEach(m=>{
       const ctaP=cuentas.find(c=>c.id===m.cuentaId);if(!ctaP)return;
-      const isIng=m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';const tasa=Number(m.tasa)||1;const mNat=Number(m.montoNativo)||Number(m.monto)||0;
+      const isIng=m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';const tasa=Number(m.tasa)||1;
+      const mNat=Number(m.montoNativo)||Number(m.monto)||(ctaP.moneda==='BS'?Number(m.montoBs):Number(m.montoUSD))||0;
       const valBs=ctaP.moneda==='BS'?mNat:mNat*tasa;const valUSD=ctaP.moneda==='BS'?mNat/tasa:mNat;
-      const comp=`${ctaP.banco||'BANCO'}-${String(m.id||'').slice(-6).toUpperCase()}`;
+      const comp=ctaP.banco||'BANCO';
+      const grupoKey=m.id; // clave interna única por transacción — separada de "comp" para no fusionar movimientos del mismo banco
       const mesL=m.fecha.substring(5,7)+'/'+m.fecha.substring(0,4);const doc=m.referencia||'—';const conc=m.esVale?`[VALE] ${m.concepto}`:m.concepto;
-      let sub=[{comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:ctaP.banco,tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
-      if(m.lineasContra&&m.lineasContra.length>0){m.lineasContra.forEach(l=>sub.push({comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?l.ctaNom.split('·')[1]?.trim():l.ctaNom,tipo:Number(l.debeBs||0)>0?'D':'H',dBs:Number(l.debeBs||0),hBs:Number(l.haberBs||0),dUSD:Number(l.debeUSD||0),hUSD:Number(l.haberUSD||0)}));}
-      else if(m.asientoDebito||m.asientoCredito){sub.push({comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});}
+      let sub=[{comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:ctaP.banco,tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
+      if(m.lineasContra&&m.lineasContra.length>0){m.lineasContra.forEach(l=>sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'',cuenta:l.ctaNom?l.ctaNom.split('·')[1]?.trim():l.ctaNom,tipo:Number(l.debeBs||0)>0?'D':'H',dBs:Number(l.debeBs||0),hBs:Number(l.haberBs||0),dUSD:Number(l.debeUSD||0),hUSD:Number(l.haberUSD||0)}));}
+      else if(m.asientoDebito||m.asientoCredito){sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});}
       else {
         // Movimiento originado en CxC/CxP (cobro o pago) sin lineasContra ni asientoDebito/Crédito
-        // propios — se infiere la contrapartida por el origen, para que siempre haya partida doble.
-        const contraNombre=m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)';
-        sub.push({comp,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:'',cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
+        // propios — se usa la cuenta contable YA asignada al cliente/proveedor (misma cuenta de
+        // operación). terceroId no siempre viene guardado en el movimiento, así que si falta se
+        // intenta reconocer el nombre del cliente/proveedor dentro del propio concepto.
+        const nombreEnConcepto=(m.concepto||'').split('—').map(s=>s.trim())[1]||'';
+        const tercero=(m.tipoTercero==='Proveedor'?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
+          || (clientes||[]).find(c=>nombreEnConcepto && (c.razonSocial||c.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase())
+          || (provs||[]).find(p=>nombreEnConcepto && (p.razonSocial||p.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase());
+        const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const contraCodigo=tercero?(tercero.cuentaContableId||codTercero||''):'';
+        const contraNombre=tercero?(nomTercero||tercero.razonSocial||tercero.nombre||''):(m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
+        sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:contraCodigo,cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
       if(filtCta){const ok=sub.some(sl=>(sl.codigo+' '+sl.cuenta).toLowerCase().includes(filtCta.toLowerCase()));if(!ok)return;}
       sub.forEach(sl=>{sBs+=sl.dBs-sl.hBs;sUSD+=sl.dUSD-sl.hUSD;lineasPlanas.push({...sl,sBs,sUSD});});
@@ -5942,7 +5952,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <div className="overflow-x-auto w-full min-w-0 pb-2"><table className="w-full text-left min-w-[1400px]">
               <thead><tr className="bg-slate-900 border-b border-slate-800">{['Comprobante','Mes','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Saldo Bs.','Debe $','Haber $','Saldo $'].map((h,hi)=>(<th key={hi} className={`px-4 py-3 font-black uppercase text-white/90 whitespace-nowrap text-[10px] tracking-wider ${hi>=9?'text-right':hi===5?'text-center':'text-left'}`}>{h}</th>))}</tr></thead>
               <tbody className="divide-y divide-slate-100 bg-white">
-                {lineasPlanas.map((l,idx)=>{const isD=l.tipo==='D';const esInicio=idx===0||lineasPlanas[idx-1].comp!==l.comp;return(
+                {lineasPlanas.map((l,idx)=>{const isD=l.tipo==='D';const esInicio=idx===0||lineasPlanas[idx-1].grupoKey!==l.grupoKey;return(
                   <tr key={idx} className={`hover:bg-slate-50 transition-colors ${esInicio&&idx>0?'border-t-2 border-slate-200':''}`}>
                     <td className="px-4 py-2.5 font-mono font-black text-blue-600 text-[11px] whitespace-nowrap">{esInicio?l.comp:''}</td>
                     <td className="px-4 py-2.5 text-slate-400 text-[10px] whitespace-nowrap">{esInicio?l.mes:''}</td>
@@ -6160,13 +6170,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       } else if(m.asientoDebito||m.asientoCredito){
         lineasContra=[{codigo:'',cuenta:isIng?m.asientoCredito:m.asientoDebito,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       } else {
-        // Cobro/pago de CxC/CxP sin lineasContra ni asientoDebito/Crédito propios — se infiere
-        // la contrapartida por el origen, para que siempre haya partida doble que mostrar.
-        const contraNombre=m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)';
-        lineasContra=[{codigo:'',cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
+        // Cobro/pago de CxC/CxP sin lineasContra ni asientoDebito/Crédito propios — se usa la
+        // cuenta contable YA asignada al cliente/proveedor (misma cuenta de operación).
+        const nombreEnConcepto=(m.concepto||'').split('—').map(s=>s.trim())[1]||'';
+        const tercero=(m.tipoTercero==='Proveedor'?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
+          || (clientes||[]).find(c=>nombreEnConcepto && (c.razonSocial||c.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase())
+          || (provs||[]).find(p=>nombreEnConcepto && (p.razonSocial||p.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase());
+        const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const contraCodigo=tercero?(tercero.cuentaContableId||codTercero||''):'';
+        const contraNombre=tercero?(nomTercero||tercero.razonSocial||tercero.nombre||''):(m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
+        lineasContra=[{codigo:contraCodigo,cuenta:contraNombre,tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
       return {
-        id:m.id, comprobante:`${cta?.banco||'BANCO'}-${String(m.id||'').slice(-6).toUpperCase()}`, cuentaId:m.cuentaId,
+        id:m.id, comprobante:cta?.banco||'BANCO', cuentaId:m.cuentaId,
         fecha:m.fecha, descripcion:m.concepto, nroDocumento:m.referencia||'',
         tasa:m.tasa, cuentaNombre:m.cuentaNombre,
         lineas:[lineaPropia,...lineasContra],
