@@ -1809,20 +1809,56 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
     if(!OK)return alert('Diferencia debe ser $0.00');
     if(!window.confirm('¿Aprobar conciliación? Podrás editarla o eliminarla luego con la clave de administrador si necesitas corregir algo.'))return;
     setBusy(true);
-    try{const batch=writeBatch(_bancoDB);const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));const id=bancoGid();batch.set(getDocRef('banco_conciliaciones',id),{id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,movimientoIds:ids,fecha:getTodayDate(),ts:serverTimestamp()});await batch.commit();setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);}finally{setBusy(false);}
+    try{
+      const batch=writeBatch(_bancoDB);
+      const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);
+      ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));
+      const movsConciliados=todos.filter(m=>marcados[m.id]);
+      const movimientosDetalle=movsConciliados.map(m=>({fecha:m.fecha||'',tipo:m.tipo||'',concepto:m.concepto||'',referencia:m.referencia||'',montoUSD:Number(m.montoUSD||0),montoBs:Number(m.montoBs||0)})).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      const entradasReconc=movsConciliados.filter(m=>m.tipo==='Ingreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0});
+      const salidasReconc =movsConciliados.filter(m=>m.tipo==='Egreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0});
+      const saldoInicialReconcUSD=saldoLibros-(entradasReconc.usd-salidasReconc.usd);
+      const saldoInicialReconcBs=saldoLibrosBs-(entradasReconc.bs-salidasReconc.bs);
+      const id=bancoGid();
+      batch.set(getDocRef('banco_conciliaciones',id),{
+        id,cuentaId,cuentaNombre:cuenta.banco,desde,hasta,saldoBanco:sbNum,saldoLibros,egTrans,ingTrans,saldoConcil,diff,count:ids.length,movimientoIds:ids,
+        movimientosDetalle,entradasReconcUSD:entradasReconc.usd,entradasReconcBs:entradasReconc.bs,salidasReconcUSD:salidasReconc.usd,salidasReconcBs:salidasReconc.bs,
+        saldoInicialReconcUSD,saldoInicialReconcBs,
+        fecha:getTodayDate(),ts:serverTimestamp()
+      });
+      await batch.commit();
+      setMarcados({});setSaldoBco('');alert(`✅ ${ids.length} movimiento(s) conciliados.`);
+    }finally{setBusy(false);}
   };
   const historialCta = concils.filter(c=>c.cuentaId===cuentaId).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   const exportarConcilPDF=(c)=>{
     const esBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
-    const html=bancoLetterheadOpen(`Conciliación Bancaria — ${c.cuentaNombre}`,`Del ${bancoDd(c.desde)} al ${bancoDd(c.hasta)} · ${c.count} mov. conciliados`)+
+    const fmt=(usd,bs)=>esBs?'Bs.'+bancoFmt(bs):'$'+bancoFmt(usd);
+    const detalle=c.movimientosDetalle||[];
+    const filasDetalle=detalle.length>0?detalle.map(m=>`
+        <tr><td>${bancoDd(m.fecha)}</td><td>${m.tipo}</td><td>${m.concepto}${m.referencia?' · Ref. '+m.referencia:''}</td>
+        <td style="text-align:right;color:${m.tipo==='Ingreso'?'#16a34a':'#dc2626'}">${m.tipo==='Egreso'?'-':''}${fmt(m.montoUSD,m.montoBs)}</td></tr>`).join('')
+      :'<tr><td colspan="4" style="text-align:center;color:#94a3b8">Este registro es anterior a que se guardara el detalle de movimientos.</td></tr>';
+    const html=bancoLetterheadOpen(`Conciliación Bancaria — ${c.cuentaNombre}`,`Conciliación realizada el ${bancoDd(c.fecha)} · Período del ${bancoDd(c.desde)} al ${bancoDd(c.hasta)}`)+
       `<table><thead><tr><th>Concepto</th><th>Monto</th></tr></thead><tbody>
-        <tr><td>Saldo en Libros (Sistema)</td><td style="text-align:right">${esBs?'Bs.'+bancoFmt(c.saldoLibros*tasaActiva):'$'+bancoFmt(c.saldoLibros)}</td></tr>
-        <tr><td>(+) Egresos en Tránsito</td><td style="text-align:right">${esBs?'Bs.'+bancoFmt(c.egTrans*tasaActiva):'$'+bancoFmt(c.egTrans)}</td></tr>
-        <tr><td>(−) Ingresos en Tránsito</td><td style="text-align:right">${esBs?'Bs.'+bancoFmt(c.ingTrans*tasaActiva):'$'+bancoFmt(c.ingTrans)}</td></tr>
-        <tr><td><strong>= Saldo Conciliado</strong></td><td style="text-align:right"><strong>${esBs?'Bs.'+bancoFmt(c.saldoConcil*tasaActiva):'$'+bancoFmt(c.saldoConcil)}</strong></td></tr>
+        <tr><td>Saldo en Libros (Sistema)</td><td style="text-align:right">${fmt(c.saldoLibros,c.saldoLibros*tasaActiva)}</td></tr>
+        <tr><td>(+) Egresos en Tránsito</td><td style="text-align:right">${fmt(c.egTrans,c.egTrans*tasaActiva)}</td></tr>
+        <tr><td>(−) Ingresos en Tránsito</td><td style="text-align:right">${fmt(c.ingTrans,c.ingTrans*tasaActiva)}</td></tr>
+        <tr><td><strong>= Saldo Conciliado</strong></td><td style="text-align:right"><strong>${fmt(c.saldoConcil,c.saldoConcil*tasaActiva)}</strong></td></tr>
         <tr><td>Saldo según Banco</td><td style="text-align:right">${esBs?'Bs.':'$'}${bancoFmt(c.saldoBanco)}</td></tr>
         <tr><td><strong>Diferencia</strong></td><td style="text-align:right"><strong>${esBs?'Bs.':'$'}${bancoFmt(c.diff)}</strong></td></tr>
-      </tbody></table>`+
+      </tbody></table>
+      <h3 style="margin-top:20px;font-size:11px;color:#1e3a5f;text-transform:uppercase;letter-spacing:2px">Resumen del Período Conciliado</h3>
+      <table><thead><tr><th>Saldo Inicial</th><th>Entradas</th><th>Salidas</th><th>Saldo Final</th></tr></thead><tbody>
+        <tr>
+          <td>${fmt(c.saldoInicialReconcUSD||0,c.saldoInicialReconcBs||0)}</td>
+          <td style="color:#16a34a">${fmt(c.entradasReconcUSD||0,c.entradasReconcBs||0)}</td>
+          <td style="color:#dc2626">${fmt(c.salidasReconcUSD||0,c.salidasReconcBs||0)}</td>
+          <td><strong>${fmt((c.saldoInicialReconcUSD||0)+(c.entradasReconcUSD||0)-(c.salidasReconcUSD||0),(c.saldoInicialReconcBs||0)+(c.entradasReconcBs||0)-(c.salidasReconcBs||0))}</strong></td>
+        </tr>
+      </tbody></table>
+      <h3 style="margin-top:20px;font-size:11px;color:#1e3a5f;text-transform:uppercase;letter-spacing:2px">Detalle de Movimientos Conciliados (${c.count})</h3>
+      <table><thead><tr><th>Fecha</th><th>Tipo</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>${filasDetalle}</tbody></table>`+
       bancoLetterheadClose(`Conciliación aprobada el ${bancoDd(c.fecha)}`);
     bancoPrintWindow(html);
   };
