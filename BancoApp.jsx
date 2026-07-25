@@ -2021,7 +2021,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   const DashboardView = () => {
     const cuentasNacBs = cuentas.filter(c=>c.tipoBanco==='Nacional-Bs');
-    const cuentasExt   = cuentas.filter(c=>c.tipoBanco==='Nacional-Ext'||c.tipoBanco==='Internacional');
+    const cuentasExt   = cuentas.filter(c=>c.tipoBanco==='Nacional-Ext');
+    const cuentasIntl  = cuentas.filter(c=>c.tipoBanco==='Internacional');
+    const cuentasElec  = cuentas.filter(c=>c.tipoBanco==='Electronica');
+    const cuentasTarjIntl = cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl');
     const totBs   = cuentasNacBs.reduce((a,c)=>a+Number(c.saldo||0),0);
     const totUSD  = cuentasExt.filter(c=>c.moneda==='USD').reduce((a,c)=>a+Number(c.saldo||0),0);
     const totConsolUSD = totBs/tasaActiva + totUSD;
@@ -2030,7 +2033,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const pctUSD = totConsolUSD>0?100-pctBs:0;
     const [tabExplorer, setTabExplorer] = useState('nacionales');
     const [tabSub,      setTabSub]      = useState('All');
-    const cuentasMostrar = tabExplorer==='nacionales' ? cuentasNacBs : cuentasExt;
+    const cuentasMostrar = {nacionales:cuentasNacBs, extranjeras:cuentasExt, internacionales:cuentasIntl, electronicas:cuentasElec, 'tarjetas-intl':cuentasTarjIntl}[tabExplorer] || cuentasNacBs;
 
     return(
       <div className="space-y-6">
@@ -2090,7 +2093,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             {/* Tabs */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-0">
               <div className="flex gap-6">
-                {[{id:'nacionales',label:'NACIONALES (BS)'},{id:'extranjeras',label:'MONEDA EXTRANJERA (USD)'}].map(t=>(
+                {[{id:'nacionales',label:'NACIONALES (BS)'},{id:'extranjeras',label:'MONEDA EXTRANJERA (USD)'},{id:'internacionales',label:'INTERNACIONALES'},{id:'electronicas',label:'ELECTRÓNICAS'},{id:'tarjetas-intl',label:'TARJETAS DÉBITO INTL.'}].map(t=>(
                   <button key={t.id} onClick={()=>setTabExplorer(t.id)}
                     className={`text-[11px] font-black uppercase pb-3 -mb-px border-b-2 transition-colors ${tabExplorer===t.id?'border-blue-600 text-blue-700':'border-transparent text-slate-500 hover:text-slate-800'}`}>{t.label}</button>
                 ))}
@@ -2314,9 +2317,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
 
     const exportarCuentas = (formato) => {
-      const [nacBs, ext] = [
-        cuentas.filter(c=>c.tipoBanco==='Nacional-Bs'),
-        cuentas.filter(c=>c.tipoBanco==='Nacional-Ext'||c.tipoBanco==='Internacional'),
+      const grupos = [
+        {tipo:'Nacional-Bs', titulo:'🇻🇪 Cuentas Nacionales — Bolívares', color:'#1e3a5f'},
+        {tipo:'Nacional-Ext', titulo:'💵 Cuentas Moneda Extranjera', color:'#065f46'},
+        {tipo:'Internacional', titulo:'🌐 Cuentas Internacionales', color:'#0c4a6e'},
+        {tipo:'Electronica', titulo:'💳 Cuentas Electrónicas', color:'#4c1d95'},
+        {tipo:'Tarjeta-Debito-Intl', titulo:'🪪 Tarjetas de Débito Internacionales', color:'#831843'},
+        {tipo:'Pago-Movil', titulo:'📱 Pago Móvil', color:'#78350f'},
       ];
       const mkRows = (lista) => lista.map(c=>{
         return `<tr>
@@ -2328,11 +2335,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </tr>`;
       }).join('');
       const thead=`<thead><tr><th>Banco</th><th>Nro. Cuenta</th><th>Tipo</th><th>Moneda</th><th>Titular</th></tr></thead>`;
+      const secciones = grupos.map(g=>{
+        const lista = cuentas.filter(c=>c.tipoBanco===g.tipo);
+        if(lista.length===0) return '';
+        return `<h3 style="color:${g.color};font-size:11px;text-transform:uppercase;letter-spacing:2px;margin:20px 0 8px">${g.titulo}</h3>
+        <table>${thead}<tbody>${mkRows(lista)}</tbody></table>`;
+      }).join('');
       const content=bancoLetterheadOpen('Reporte de Cuentas Bancarias',`Servicios Jiret G&B, C.A. · RIF: J-412309374 · ${bancoDd(getTodayDate())}`)+
-        `<h3 style="color:#1e3a5f;font-size:11px;text-transform:uppercase;letter-spacing:2px;margin:16px 0 8px">🇻🇪 Cuentas Nacionales — Bolívares</h3>
-        <table>${thead}<tbody>${mkRows(nacBs)}</tbody></table>
-        <h3 style="color:#065f46;font-size:11px;text-transform:uppercase;letter-spacing:2px;margin:20px 0 8px">💵 Cuentas Moneda Extranjera</h3>
-        <table>${thead}<tbody>${mkRows(ext)}</tbody></table>`+
+        secciones+
         bancoLetterheadClose(`${cuentas.length} cuenta(s) registrada(s)`);
       if(formato==='pdf'){ bancoPrintWindow(content); return; }
       const blob=new Blob([content],{type:'application/vnd.ms-excel;charset=utf-8'});
@@ -2350,7 +2360,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </div>
         {[
           {label:'🇻🇪 Cuentas Nacionales — Bolívares',  tipos:['Nacional-Bs'],  colorHeader:'#1e3a5f', accent:'#3b82f6'},
-          {label:'💵 Cuentas Moneda Extranjera / Internacional', tipos:['Nacional-Ext','Internacional'], colorHeader:'#1a3a2a', accent:'#10b981'},
+          {label:'💵 Cuentas Moneda Extranjera', tipos:['Nacional-Ext'], colorHeader:'#1a3a2a', accent:'#10b981'},
+          {label:'🌐 Cuentas Internacionales', tipos:['Internacional'], colorHeader:'#0c4a6e', accent:'#0ea5e9'},
+          {label:'💳 Cuentas Electrónicas', tipos:['Electronica'], colorHeader:'#4c1d95', accent:'#a855f7'},
+          {label:'🪪 Tarjetas de Débito Internacionales', tipos:['Tarjeta-Debito-Intl'], colorHeader:'#831843', accent:'#ec4899'},
+          {label:'📱 Pago Móvil', tipos:['Pago-Movil','Pago Móvil'], colorHeader:'#78350f', accent:'#f59e0b'},
         ].map(grupo=>{
           const lista=cuentas.filter(c=>grupo.tipos.includes(c.tipoBanco||'Nacional-Bs'));
           const totUSD=lista.reduce((a,c)=>{const bs=c.moneda==='BS';return a+(bs?Number(c.saldo)/tasaActiva:Number(c.saldo));},0);
@@ -2360,7 +2374,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <div className="px-5 py-3 flex items-center justify-between" style={{background:grupo.colorHeader}}>
                 <p className="font-black text-white text-xs uppercase tracking-widest">{grupo.label}</p>
                 <div className="text-right">
-                  <p className="font-mono font-black text-sm" style={{color:grupo.accent==='#3b82f6'?'#93c5fd':'#6ee7b7'}}>Bs. {bancoFmt(totBs)}</p>
+                  <p className="font-mono font-black text-sm text-white">Bs. {bancoFmt(totBs)}</p>
                   <p className="font-mono text-white text-[10px] opacity-70">≈ ${bancoFmt(totUSD)} USD</p>
                 </div>
               </div>
@@ -2415,10 +2429,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <BFG label="Clasificación de Banco" full>
               <div className="grid grid-cols-3 gap-2">
                 {TIPO_BANCO.map(t=>(
-                  <label key={t.id} className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 cursor-pointer transition-all ${form.tipoBanco===t.id?'border-blue-500 bg-blue-50':'border-slate-200 hover:border-slate-300'}`}>
+                  <label key={t.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition-all ${form.tipoBanco===t.id?'border-blue-500 bg-blue-50':'border-slate-200 hover:border-slate-300'}`}>
                     <input type="radio" name="tipoBancoEdit" value={t.id} checked={form.tipoBanco===t.id} onChange={e=>setForm({...form,tipoBanco:e.target.value})} className="sr-only"/>
-                    <span className="text-2xl">{t.flag}</span>
-                    <p className="text-[9px] font-black text-slate-700 uppercase text-center leading-tight">{t.id}</p>
+                    <span className="text-lg flex-shrink-0">{t.flag}</span>
+                    <p className="text-[9px] font-black text-slate-700 uppercase leading-tight flex-1">{t.id}</p>
                     <BPill usd={t.moneda!=='BS'}>{t.moneda}</BPill>
                   </label>
                 ))}
@@ -2426,7 +2440,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </BFG>
             <BFG label="Banco / Entidad"><input className={inp} value={form.banco} onChange={e=>setForm({...form,banco:e.target.value.toUpperCase()})} placeholder="BANESCO UNIVERSAL"/></BFG>
             <BFG label="Número de Cuenta"><input className={inp} value={form.numeroCuenta} onChange={e=>setForm({...form,numeroCuenta:e.target.value})} placeholder="0134-0000-00-0000000000"/></BFG>
-            <BFG label="Tipo de Cuenta"><select className={sel} value={form.tipoCuenta} onChange={e=>setForm({...form,tipoCuenta:e.target.value})}><option>Corriente</option><option>Ahorros</option><option>Nómina</option><option>Divisas</option><option>Custodia</option><option>Swift</option></select></BFG>
+            <BFG label="Tipo de Cuenta"><select className={sel} value={form.tipoCuenta} onChange={e=>setForm({...form,tipoCuenta:e.target.value})}><option>Corriente</option><option>Ahorros</option><option>Nómina</option><option>Divisas</option><option>Custodia</option><option>Swift</option><option>Electrónica</option><option>Tarjeta de Débito Internacional</option></select></BFG>
             <BFG label="Titular de la Cuenta" full><input className={inp} value={form.titular} onChange={e=>setForm({...form,titular:e.target.value.toUpperCase()})} placeholder="SERVICIOS JIRET G&B C.A."/></BFG>
             <BFG label={`Saldo Inicial (${monedaDe(form.tipoBanco)})`}><input type="number" step="0.01" className={inp} value={form.saldo} onChange={e=>setForm({...form,saldo:e.target.value})}/></BFG>
             <BFG label="Mes al que corresponde el Saldo"><input type="month" className={inp} value={form.mesSaldoInicial} onChange={e=>setForm({...form,mesSaldoInicial:e.target.value})}/></BFG>
@@ -3529,15 +3543,22 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </BCard>
         );})()}
 
-        {/* ── TABLA INTERNACIONALES — USD/ME ── */}
-        {!filtC&&(()=>{const movRows=movFiltUSD; return(
-          <BCard title={`🌐 Cuentas Internacionales & Moneda Extranjera`} subtitle={`${movRows.length} movimiento(s)`}>
+        {/* ── TABLAS POR CATEGORÍA (Moneda Extranjera / Internacionales / Electrónicas / Tarjetas Débito Intl.) ── */}
+        {!filtC&&[
+          {tipo:'Nacional-Ext', titulo:'💵 Cuentas Moneda Extranjera', vacio:'Sin movimientos en moneda extranjera'},
+          {tipo:'Internacional', titulo:'🌐 Cuentas Internacionales', vacio:'Sin movimientos internacionales'},
+          {tipo:'Electronica', titulo:'💳 Cuentas Electrónicas', vacio:'Sin movimientos en cuentas electrónicas'},
+          {tipo:'Tarjeta-Debito-Intl', titulo:'🪪 Tarjetas de Débito Internacionales', vacio:'Sin movimientos en tarjetas de débito internacionales'},
+        ].map(grp=>{
+          const movRows=movFiltUSD.filter(m=>{const c=cuentas.find(x=>x.id===m.cuentaId);return c?.tipoBanco===grp.tipo;});
+          if(movRows.length===0) return null;
+          return (
+          <BCard key={grp.tipo} title={grp.titulo} subtitle={`${movRows.length} movimiento(s)`}>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>$</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
                 <tbody>
-                  {movRows.length===0&&<tr><td colSpan={9}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos internacionales" desc="Registre transacciones en cuentas USD"/></td></tr>}
-                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
+                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
@@ -3558,7 +3579,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   </BTd>
                 </tr>)}
                 </tbody>
-                              {movRows.length>0&&<tfoot><tr style={{background:'#0f172a'}}>
+                <tfoot><tr style={{background:'#0f172a'}}>
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
@@ -3570,11 +3591,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   },0))}
                 </td>
                 <td colSpan={3}></td>
-              </tr></tfoot>}
+              </tr></tfoot>
               </table>
             </div>
           </BCard>
-        );})()}
+          );
+        })}
 
         {/* ── COMPROBANTE IMPRIMIBLE ── */}
         {comprobante&&(
@@ -5873,10 +5895,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const saldoCajaUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
     const totBsEqCaja = saldoCajaBs + (saldoCajaUSD * tasaActiva);
     const imprimir=()=>{
-      const nacBs=cuentas.filter(c=>c.tipoBanco==='Nacional-Bs');
-      const ext=cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs');
+      const gruposImp = [
+        {tipo:'Nacional-Bs', titulo:'🇻🇪 Cuentas Nacionales — Bolívares'},
+        {tipo:'Nacional-Ext', titulo:'💵 Cuentas Moneda Extranjera'},
+        {tipo:'Internacional', titulo:'🌐 Cuentas Internacionales'},
+        {tipo:'Electronica', titulo:'💳 Cuentas Electrónicas'},
+        {tipo:'Tarjeta-Debito-Intl', titulo:'🪪 Tarjetas de Débito Internacionales'},
+        {tipo:'Pago-Movil', titulo:'📱 Pago Móvil'},
+      ];
       const renderTabla=(lista,titulo)=>{if(lista.length===0)return '';const rows=lista.map(c=>{const bs=c.moneda==='BS';const usd=bs?Number(c.saldo)/tasaActiva:Number(c.saldo);const bsEq=bs?Number(c.saldo):Number(c.saldo)*tasaActiva;return`<tr><td>${c.banco}</td><td>${c.numeroCuenta}</td><td>${c.tipoCuenta||'—'}</td><td>${c.moneda}</td><td style="text-align:right;font-weight:bold">Bs.${bancoFmt(bsEq)}</td><td style="text-align:right;color:#16a34a;font-weight:bold">$${bancoFmt(usd)}</td></tr>`;}).join('');return`<h3 style="margin-top:20px;font-size:12px;color:#1e3a8a;text-transform:uppercase;">${titulo}</h3><table><thead><tr><th>Banco</th><th>Nro. Cuenta</th><th>Tipo</th><th>Moneda</th><th>Saldo Bs.</th><th>Equiv. USD</th></tr></thead><tbody>${rows}</tbody></table>`;};
-      bancoPrintWindow(bancoLetterheadOpen('Reporte General Bancario',`RIF: J-412309374 · ${bancoDd(getTodayDate())} · ${cuentas.length} cuentas`)+renderTabla(nacBs,'🇻🇪 Cuentas Nacionales — Bolívares')+renderTabla(ext,'💵 Cuentas Moneda Extranjera e Internacionales')+`<div style="margin-top:20px;padding:10px;background:#0f172a;color:#fff;text-align:right;font-weight:bold;font-size:12px;">TOTAL CONSOLIDADO: Bs.${bancoFmt(totBsEqBanco)} | $${bancoFmt(totBsEqBanco/tasaActiva)}</div>`+bancoLetterheadClose(`${cuentas.length} cuenta(s)`));
+      const secciones = gruposImp.map(g=>renderTabla(cuentas.filter(c=>c.tipoBanco===g.tipo),g.titulo)).join('');
+      bancoPrintWindow(bancoLetterheadOpen('Reporte General Bancario',`RIF: J-412309374 · ${bancoDd(getTodayDate())} · ${cuentas.length} cuentas`)+secciones+`<div style="margin-top:20px;padding:10px;background:#0f172a;color:#fff;text-align:right;font-weight:bold;font-size:12px;">TOTAL CONSOLIDADO: Bs.${bancoFmt(totBsEqBanco)} | $${bancoFmt(totBsEqBanco/tasaActiva)}</div>`+bancoLetterheadClose(`${cuentas.length} cuenta(s)`));
     };
     if(!isBanco) return(
       <div className="space-y-5 w-full min-w-0">
@@ -5904,7 +5933,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <BKPI label="Consolidado USD" value={`$${bancoFmt(totBsEqBanco/tasaActiva)}`} accent="gold" Icon={TrendingUp} sub="Todas las cuentas"/>
         </div>
         <BCard title="Resumen General Bancario" action={<button onClick={imprimir} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 shadow-sm"><Download size={12}/> PDF Membretado</button>}>
-          {[{titulo:'Cuentas Nacionales Bs.',tipos:['Nacional-Bs']},{titulo:'Cuentas Moneda Extranjera',tipos:['Nacional-Ext','Internacional']}].map(g=>(
+          {[{titulo:'Cuentas Nacionales Bs.',tipos:['Nacional-Bs']},{titulo:'Cuentas Moneda Extranjera',tipos:['Nacional-Ext']},{titulo:'Cuentas Internacionales',tipos:['Internacional']},{titulo:'Cuentas Electrónicas',tipos:['Electronica']},{titulo:'Tarjetas de Débito Internacionales',tipos:['Tarjeta-Debito-Intl']},{titulo:'Pago Móvil',tipos:['Pago-Movil','Pago Móvil']}].filter(g=>cuentas.some(c=>g.tipos.includes(c.tipoBanco))).map(g=>(
             <div key={g.titulo} className="mb-4">
               <p className="text-xs font-black uppercase text-slate-500 mb-2">{g.titulo}</p>
               <div className="overflow-x-auto w-full min-w-0"><table className="w-full min-w-[700px]">
@@ -6068,7 +6097,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <select className={`${sel} min-w-[160px]`} value={filtBanco} onChange={e=>setFiltBanco(e.target.value)}>
               <option value="">Todos los bancos</option>
               {[{label:'🇻🇪 Nacionales Bs.',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-                {label:'💵 Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs')}
+                {label:'💵 Moneda Extranjera',items:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
+                {label:'🌐 Internacionales',items:cuentas.filter(c=>c.tipoBanco==='Internacional')},
+                {label:'💳 Electrónicas',items:cuentas.filter(c=>c.tipoBanco==='Electronica')},
+                {label:'🪪 Tarjetas Débito Intl.',items:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
+                {label:'📱 Pago Móvil',items:cuentas.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')}
               ].map(g=>g.items.length>0&&(
                 <optgroup key={g.label} label={g.label}>{g.items.map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}</optgroup>
               ))}
@@ -6093,7 +6126,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           : (()=>{
               const grupos=[
                 {label:'🇻🇪 Cuentas Nacionales — Bolívares', bancos:cuentas.filter(c=>c.tipoBanco==='Nacional-Bs')},
-                {label:'🌐 Bancos Internacionales & ME',      bancos:cuentas.filter(c=>c.tipoBanco!=='Nacional-Bs')},
+                {label:'💵 Cuentas Moneda Extranjera', bancos:cuentas.filter(c=>c.tipoBanco==='Nacional-Ext')},
+                {label:'🌐 Cuentas Internacionales', bancos:cuentas.filter(c=>c.tipoBanco==='Internacional')},
+                {label:'💳 Cuentas Electrónicas', bancos:cuentas.filter(c=>c.tipoBanco==='Electronica')},
+                {label:'🪪 Tarjetas de Débito Internacionales', bancos:cuentas.filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl')},
+                {label:'📱 Pago Móvil', bancos:cuentas.filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil')},
               ];
               return grupos.map(g=>{
                 const bancosConMovs=g.bancos.filter(c=>rows.some(r=>getMovCuentaId(r)===c.id));
