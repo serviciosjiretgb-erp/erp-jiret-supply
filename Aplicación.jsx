@@ -6862,8 +6862,12 @@ ${body}
         const totalDistribuidoCxp=Object.values(distMap).reduce((s,v)=>s+v,0);
 
         // Bancos
-        const bancosBS=(cuentasBancarias||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT'&&c.moneda!=='$');
-        const bancosUSD=(cuentasBancarias||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT'||c.moneda==='$');
+        const bancosBS=(cuentasBancarias||[]).filter(c=>c.tipoBanco==='Nacional-Bs');
+        const bancosUSD=(cuentasBancarias||[]).filter(c=>c.tipoBanco==='Nacional-Ext');
+        const bancosIntl=(cuentasBancarias||[]).filter(c=>c.tipoBanco==='Internacional');
+        const bancosElectronicos=(cuentasBancarias||[]).filter(c=>c.tipoBanco==='Electronica');
+        const bancosTarjetasIntl=(cuentasBancarias||[]).filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl');
+        const bancosPagoMovil=(cuentasBancarias||[]).filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil');
         const cajasDisponiblesCxp=(cajasCuentasCxp||[]).filter(c=>c.activo!==false);
 
         // Guardar pago con múltiples líneas
@@ -7338,7 +7342,7 @@ ${body}
                     </div>
                   </div>}
                   {bancosUSD.length>0&&<div style={{marginBottom:16}}>
-                    <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Internacionales / USD</div>
+                    <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Moneda Extranjera</div>
                     <div style={{display:'flex',flexDirection:'column',gap:6}}>
                       {bancosUSD.map(ct=>(
                         <button key={ct.id} onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta||ct.numero||''}`}}))}
@@ -7352,6 +7356,23 @@ ${body}
                       ))}
                     </div>
                   </div>}
+                  {[{list:bancosIntl,label:'🌐 Cuentas Internacionales',color:'#0ea5e9'},{list:bancosElectronicos,label:'💳 Cuentas Electrónicas',color:'#a855f7'},{list:bancosTarjetasIntl,label:'🪪 Tarjetas Débito Intl.',color:'#ec4899'},{list:bancosPagoMovil,label:'📱 Pago Móvil',color:'#f59e0b'}].map(grp=>grp.list.length>0&&(
+                    <div key={grp.label} style={{marginBottom:16}}>
+                      <div style={{fontSize:9,fontWeight:900,color:grp.color,textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>{grp.label}</div>
+                      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                        {grp.list.map(ct=>(
+                          <button key={ct.id} onClick={()=>setPM(m=>({lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta||ct.numero||''}`}}))}
+                            style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8}}>
+                            <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                              <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta||ct.numero||''}</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                   {cajasDisponiblesCxp.length>0&&<div>
                     <div style={{fontSize:9,fontWeight:900,color:'#10b981',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💰 Cajas de Efectivo</div>
                     <div style={{display:'flex',flexDirection:'column',gap:6}}>
@@ -26010,8 +26031,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const saldoRestanteCliente=saldoTotalCliente-montoUSD;
 
             // Bancos por moneda
-            const bancosBS=(cuentasBanco||[]).filter(c=>c.moneda!=='USD'&&c.moneda!=='USDT');
-            const bancosUSD=(cuentasBanco||[]).filter(c=>c.moneda==='USD'||c.moneda==='USDT');
+            const bancosBS=(cuentasBanco||[]).filter(c=>c.tipoBanco==='Nacional-Bs');
+            const bancosUSD=(cuentasBanco||[]).filter(c=>c.tipoBanco==='Nacional-Ext');
+            const bancosIntl=(cuentasBanco||[]).filter(c=>c.tipoBanco==='Internacional');
+            const bancosElectronicos=(cuentasBanco||[]).filter(c=>c.tipoBanco==='Electronica');
+            const bancosTarjetasIntl=(cuentasBanco||[]).filter(c=>c.tipoBanco==='Tarjeta-Debito-Intl');
+            const bancosPagoMovil=(cuentasBanco||[]).filter(c=>c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil');
             const cajasDisponibles=(cajasCuentas||[]).filter(c=>c.activo!==false);
 
             return(
@@ -26407,7 +26432,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </div>
                       </div>}
                       {bancosUSD.length>0&&<div>
-                        <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Internacionales / USD</div>
+                        <div style={{fontSize:9,fontWeight:900,color:'#16a34a',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💵 Moneda Extranjera</div>
                         <div style={{display:'flex',flexDirection:'column',gap:6}}>
                           {bancosUSD.map(ct=>(
                             <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}}))}
@@ -26421,6 +26446,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           ))}
                         </div>
                       </div>}
+                      {[{list:bancosIntl,label:'🌐 Cuentas Internacionales',color:'#0ea5e9'},{list:bancosElectronicos,label:'💳 Cuentas Electrónicas',color:'#a855f7'},{list:bancosTarjetasIntl,label:'🪪 Tarjetas Débito Intl.',color:'#ec4899'},{list:bancosPagoMovil,label:'📱 Pago Móvil',color:'#f59e0b'}].map(grp=>grp.list.length>0&&(
+                        <div key={grp.label} style={{marginTop:12}}>
+                          <div style={{fontSize:9,fontWeight:900,color:grp.color,textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>{grp.label}</div>
+                          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                            {grp.list.map(ct=>(
+                              <button key={ct.id} onClick={()=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,cuentaId:ct.id,cuentaNombre:`${ct.banco} · ${ct.numeroCuenta}`}}))}
+                                style={{padding:'9px 12px',borderRadius:10,border:`2px solid ${pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#e5e7eb'}`,background:pm.lineaActual?.cuentaId===ct.id?'#fff7ed':'#fff',cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:8,transition:'all .15s'}}>
+                                <div style={{width:8,height:8,borderRadius:'50%',background:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#d1d5db',flexShrink:0}}/>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{fontSize:11,fontWeight:900,color:pm.lineaActual?.cuentaId===ct.id?'#E8541A':'#111',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{ct.banco}</div>
+                                  <div style={{fontSize:9,color:'#9ca3af'}}>{ct.numeroCuenta}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
                       {cajasDisponibles.length>0&&<div style={{marginTop:12}}>
                         <div style={{fontSize:9,fontWeight:900,color:'#10b981',textTransform:'uppercase',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>💰 Cajas de Efectivo</div>
                         <div style={{display:'flex',flexDirection:'column',gap:6}}>
