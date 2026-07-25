@@ -54,6 +54,7 @@ const BG     = '#ffffff';
 const bancoFmt   = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
 const bancoDd    = (s) => { if (!s) return '—'; const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
 const bancoGid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const bancoNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const bancoMesActual = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
 const BANCO_LETTERHEAD_CSS = `
   body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px}
@@ -5910,10 +5911,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       // Se intenta SIEMPRE identificar primero al cliente/proveedor y su cuenta contable YA
       // asignada (misma cuenta de operación) — porque lineasContra/asientoDebito a veces quedaron
       // guardados con el nombre del cliente/proveedor en vez de su cuenta contable real.
-      const nombreEnConcepto=(m.concepto||'').split('—').map(s=>s.trim())[1]||'';
+      // El concepto usa dos formatos distintos según el origen: "PAGO FAC X — NOMBRE — NE-Y" o
+      // "ANTICIPO CxP · NOMBRE · detalle" — se intentan ambos.
+      const partesGuion=(m.concepto||'').split('—').map(s=>s.trim());
+      const partesPunto=(m.concepto||'').split('·').map(s=>s.trim());
+      const nombreEnConcepto=partesGuion[1]||partesPunto[1]||'';
+      const nombreNorm=bancoNormNombre(nombreEnConcepto);
       const tercero=(m.tipoTercero==='Proveedor'?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
-        || (clientes||[]).find(c=>nombreEnConcepto && (c.razonSocial||c.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase())
-        || (provs||[]).find(p=>nombreEnConcepto && (p.razonSocial||p.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase());
+        || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.nombre)===nombreNorm)
+        || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.nombre)===nombreNorm);
       const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
       if(tercero&&(codTercero||nomTercero)){
         sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
@@ -6168,11 +6174,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       let lineasContra;
       // Se intenta SIEMPRE identificar primero al cliente/proveedor y su cuenta contable YA
       // asignada — porque lineasContra/asientoDebito a veces quedaron guardados con el nombre
-      // del cliente/proveedor en vez de su cuenta contable real.
-      const nombreEnConcepto=(m.concepto||'').split('—').map(s=>s.trim())[1]||'';
+      // del cliente/proveedor en vez de su cuenta contable real. El concepto usa dos formatos
+      // distintos según el origen: "PAGO FAC X — NOMBRE — NE-Y" o "ANTICIPO CxP · NOMBRE · detalle".
+      const partesGuion=(m.concepto||'').split('—').map(s=>s.trim());
+      const partesPunto=(m.concepto||'').split('·').map(s=>s.trim());
+      const nombreEnConcepto=partesGuion[1]||partesPunto[1]||'';
+      const nombreNorm=bancoNormNombre(nombreEnConcepto);
       const tercero=(m.tipoTercero==='Proveedor'?(provs||[]).find(p=>p.id===m.terceroId):(clientes||[]).find(c=>c.id===m.terceroId))
-        || (clientes||[]).find(c=>nombreEnConcepto && (c.razonSocial||c.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase())
-        || (provs||[]).find(p=>nombreEnConcepto && (p.razonSocial||p.nombre||'').toUpperCase()===nombreEnConcepto.toUpperCase());
+        || (clientes||[]).find(c=>nombreNorm && bancoNormNombre(c.razonSocial||c.nombre)===nombreNorm)
+        || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.nombre)===nombreNorm);
       const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
       if(tercero&&(codTercero||nomTercero)){
         lineasContra=[{codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
