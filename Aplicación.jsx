@@ -10294,6 +10294,9 @@ function App() {
     });
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
+  const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
+  const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
   const [retClientSearch, setRetClientSearch] = useState('');
@@ -28839,9 +28842,96 @@ ${resumenHtml}
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
                 <button onClick={()=>{setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
+                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
+
+              {showAnulFiscalModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setShowAnulFiscalModal(false)}>
+                  <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                    <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
+                      <Ban size={18} className="text-orange-400"/>
+                      <p className="text-white font-black text-sm uppercase">Registrar Anulación Fiscal</p>
+                    </div>
+                    <div className="p-5 space-y-4">
+                      <div className="flex gap-2 flex-wrap">
+                        <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta inventario</span>
+                        <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta contabilidad</span>
+                        <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta reporte financiero</span>
+                      </div>
+                      <div className="bg-gray-50 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.)</p>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control</label>
+                            <input value={anulFiscalForm.nroControl} onChange={e=>setAnulFiscalForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-001234" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Fiscal</label>
+                            <input value={anulFiscalForm.nroFiscal} onChange={e=>setAnulFiscalForm(f=>({...f,nroFiscal:e.target.value}))} placeholder="00001234" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                            <input type="date" value={anulFiscalForm.fecha} onChange={e=>setAnulFiscalForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        </div>
+                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (RIF)</label>
+                          <input value={anulFiscalForm.clientRif} onChange={e=>setAnulFiscalForm(f=>({...f,clientRif:e.target.value}))} placeholder="J-12345678-9" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (Razón Social)</label>
+                          <input value={anulFiscalForm.clientName} onChange={e=>setAnulFiscalForm(f=>({...f,clientName:e.target.value}))} placeholder="Nombre del cliente" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        <div className="grid grid-cols-3 gap-3 mt-3">
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Base Bs.</label>
+                            <input type="number" value={anulFiscalForm.baseImponible} onChange={e=>setAnulFiscalForm(f=>({...f,baseImponible:e.target.value,iva:String((parseNum(e.target.value)*0.16).toFixed(2))}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA Bs. (16%)</label>
+                            <input type="number" value={anulFiscalForm.iva} onChange={e=>setAnulFiscalForm(f=>({...f,iva:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total Bs.</label>
+                            <input disabled value={formatNum((parseNum(anulFiscalForm.baseImponible)+parseNum(anulFiscalForm.iva)))} className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 text-xs font-black bg-gray-100 text-gray-500"/></div>
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Nota de crédito de anulación (Bs.)</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control NC</label>
+                            <input value={anulFiscalForm.ncNroControl} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroControl:e.target.value}))} placeholder="00-000045" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Crédito</label>
+                            <input value={anulFiscalForm.ncNroCredito} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroCredito:e.target.value}))} placeholder="0000028" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        </div>
+                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha NC</label>
+                          <input type="date" value={anulFiscalForm.ncFecha} onChange={e=>setAnulFiscalForm(f=>({...f,ncFecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        <p className="text-[9px] text-gray-400 mt-2">El monto de la NC toma el total de la factura automáticamente.</p>
+                      </div>
+                    </div>
+                    <div className="px-5 py-4 border-t flex gap-2">
+                      <button onClick={()=>setShowAnulFiscalModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-gray-500 bg-gray-100 hover:bg-gray-200">Cancelar</button>
+                      <button onClick={async()=>{
+                        if(!anulFiscalForm.nroControl||!anulFiscalForm.nroFiscal) return setDialog({title:'Aviso',text:'N° Control y N° Fiscal son obligatorios.',type:'alert'});
+                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:'N° Control y N° de Crédito de la NC son obligatorios.',type:'alert'});
+                        const base=parseNum(anulFiscalForm.baseImponible||0);
+                        const iva=parseNum(anulFiscalForm.iva||0);
+                        const total=base+iva;
+                        const invId=`ANUL-${Date.now().toString(36)}`;
+                        const ncId=`ANULNC-${Date.now().toString(36)}`;
+                        const batch=writeBatch(db);
+                        batch.set(getDocRef('maquilaInvoices',invId),{
+                          id:invId,fecha:anulFiscalForm.fecha,fechaFactura:anulFiscalForm.fecha,
+                          clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
+                          nroFiscal:anulFiscalForm.nroFiscal,nroControl:anulFiscalForm.nroControl,
+                          tasa:1,montoBase:base,iva,total,totalBs:total,baseGravableBs:base,ivaBs:iva,
+                          aplicaIva:'SI',esAnulacionFiscal:true,
+                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                        });
+                        batch.set(getDocRef('notasVentaCreditoDebito',ncId),{
+                          id:ncId,tipo:'NC',naturaleza:'FISCAL',
+                          nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
+                          fecha:anulFiscalForm.ncFecha,facturaId:invId,
+                          clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
+                          monto:base,ivaBs:iva,totalBs:total,tasaFactura:1,
+                          esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',
+                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                        });
+                        await batch.commit();
+                        setShowAnulFiscalModal(false);
+                        setDialog({title:'Registrado',text:'La factura y su NC de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
+                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">Registrar solo en Libro de Ventas</button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* TABLA */}
               <div className="bg-white rounded-2xl border overflow-hidden">
