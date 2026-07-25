@@ -1053,7 +1053,7 @@ function FacturacionApp({ fbUser, tasasList, onBack }) {
   useEffect(() => {
     if (!fbUser) return;
     const subs = [
-      onSnapshot(getColRef('facturacion_clientes'), s => setClientes(s.docs.map(d => d.data()))),
+      onSnapshot(getColRef('clientes'), s => setClientes(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(query(getColRef('facturacion_facturas'), orderBy('fechaEmision', 'desc')), s => setFacturas(s.docs.map(d => d.data()))),
       onSnapshot(query(getColRef('facturacion_pagos'), orderBy('fecha', 'desc')), s => setPagos(s.docs.map(d => d.data()))),
       onSnapshot(query(getColRef('banco_tasas'), orderBy('fecha', 'desc')), s => setTasas(s.docs.map(d => d.data())))
@@ -2048,9 +2048,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       onSnapshot(query(getColRef('caja_arques'), orderBy('fecha','desc')), s => setArques(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('banco_conciliaciones'), s => setConcils(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'), orderBy('fecha','desc')), s => setTasas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('facturacion_clientes'), s => setClientes(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('clientes'), s => setClientes(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(query(getColRef('facturacion_facturas'), orderBy('fechaEmision','desc')), s => setFacturas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('compras_proveedores'), s => setProvs(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('procura_proveedores'), s => setProvs(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('planDeCuentas'), s => setContC(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientosBanco(s.docs.map(d=>d.data()))),
     ];
@@ -5484,8 +5484,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [contCuentas2,setCuentas2]=useState([]);
     useEffect(()=>{
       const s1=onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')),s=>setVales(s.docs.map(d=>d.data())));
-      const s2=onSnapshot(getColRef('facturacion_clientes'),s=>setClientes2(s.docs.map(d=>d.data())));
-      const s3=onSnapshot(getColRef('compras_proveedores'),s=>setProvs2(s.docs.map(d=>d.data())));
+      const s2=onSnapshot(getColRef('clientes'),s=>setClientes2(s.docs.map(d=>({id:d.id, ...d.data()}))));
+      const s3=onSnapshot(getColRef('procura_proveedores'),s=>setProvs2(s.docs.map(d=>({id:d.id, ...d.data()}))));
       const s4=onSnapshot(getColRef('planDeCuentas'),s=>setCuentas2(s.docs.map(d=>({id:d.id,...d.data()}))));
       return()=>{s1();s2();s3();s4();};
     },[]);
