@@ -6008,6 +6008,30 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(filtCta){const ok=sub.some(sl=>(sl.codigo+' '+sl.cuenta).toLowerCase().includes(filtCta.toLowerCase()));if(!ok)return;}
       sub.forEach(sl=>{sBs+=sl.dBs-sl.hBs;sUSD+=sl.dUSD-sl.hUSD;lineasPlanas.push({...sl,sBs,sUSD});});
     });
+    // ── PDF / XLS ──────────────────────────────────────────────────────────
+    const buildHTMLLibro = () => {
+      let sBsAcum=0, sUSDAcum=0;
+      const rowsHtml = lineasPlanas.map((l,idx)=>{
+        const esInicio=idx===0||lineasPlanas[idx-1].grupoKey!==l.grupoKey;
+        sBsAcum=l.sBs; sUSDAcum=l.sUSD;
+        return `<tr style="border-bottom:1px solid #e2e8f0"><td>${esInicio?l.comp:''}</td><td>${esInicio?l.mes:''}</td><td>${esInicio?bancoDd(l.fecha):''}</td><td style="font-family:monospace;color:#2563eb">${l.codigo||'—'}</td><td style="padding-left:${l.tipo==='H'?'16':'4'}px">${l.cuenta||'—'}</td><td style="text-align:center;font-weight:900;color:${l.tipo==='D'?'#16a34a':'#dc2626'}">${l.tipo}</td><td>${esInicio?l.doc:''}</td><td>${esInicio?l.conc:''}</td><td style="text-align:right">${esInicio?bancoFmt(l.tasa):''}</td><td style="text-align:right;color:#16a34a">${l.dBs>0?'Bs.'+bancoFmt(l.dBs):''}</td><td style="text-align:right;color:#dc2626">${l.hBs>0?'Bs.'+bancoFmt(l.hBs):''}</td><td style="text-align:right;color:#64748b">Bs.${bancoFmt(sBsAcum)}</td><td style="text-align:right;color:#16a34a">${l.dUSD>0?'$'+bancoFmt(l.dUSD):''}</td><td style="text-align:right;color:#dc2626">${l.hUSD>0?'$'+bancoFmt(l.hUSD):''}</td><td style="text-align:right;color:#64748b">$${bancoFmt(sUSDAcum)}</td></tr>`;
+      }).join('');
+      const totBs=lineasPlanas.reduce((s,l)=>s+l.dBs-l.hBs,0), totBsAbs={d:lineasPlanas.reduce((s,l)=>s+l.dBs,0),h:lineasPlanas.reduce((s,l)=>s+l.hBs,0)};
+      const totUSDAbs={d:lineasPlanas.reduce((s,l)=>s+l.dUSD,0),h:lineasPlanas.reduce((s,l)=>s+l.hUSD,0)};
+      const subtitulo=`${new Set(lineasPlanas.map(l=>l.grupoKey)).size} asiento(s) · ${isBanco?(filtOrigen?nombreCta(cuentasFuente.find(c=>c.id===filtOrigen)):'Todos los bancos'):(filtOrigen?nombreCta(cuentasFuente.find(c=>c.id===filtOrigen)):'Todas las cajas')} · Del ${bancoDd(filtDesde)} al ${bancoDd(filtHasta)}`;
+      return bancoLetterheadOpen(`Libro Diario General Bimonetario — ${isBanco?'Banco':'Caja'}`,subtitulo)+
+        `<style>table{font-size:9px;border-collapse:collapse;width:100%}th{background:#0f172a;color:#e2e8f0;padding:6px 8px;text-align:left;font-size:8px;text-transform:uppercase;white-space:nowrap}td{padding:4px 8px;vertical-align:middle}tr:nth-child(even){background:#f8fafc}.tfoot-row{background:#0f172a;color:white;font-weight:900}</style>
+        <table><thead><tr><th>Comprobante</th><th>Mes</th><th>Fecha</th><th>Código</th><th>Cuenta de Movimiento</th><th style="text-align:center">T</th><th>Nro Doc</th><th>Concepto</th><th style="text-align:right">Tasa</th><th style="text-align:right;color:#4ade80">Debe Bs.</th><th style="text-align:right;color:#f87171">Haber Bs.</th><th style="text-align:right">Saldo Bs.</th><th style="text-align:right;color:#4ade80">Debe $</th><th style="text-align:right;color:#f87171">Haber $</th><th style="text-align:right">Saldo $</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+        <tfoot><tr class="tfoot-row"><td colspan="9">TOTALES — ${new Set(lineasPlanas.map(l=>l.grupoKey)).size} asiento(s)</td><td style="text-align:right;color:#4ade80">Bs.${bancoFmt(totBsAbs.d)}</td><td style="text-align:right;color:#f87171">Bs.${bancoFmt(totBsAbs.h)}</td><td></td><td style="text-align:right;color:#4ade80">$${bancoFmt(totUSDAbs.d)}</td><td style="text-align:right;color:#f87171">$${bancoFmt(totUSDAbs.h)}</td><td></td></tr></tfoot></table>`+
+        bancoLetterheadClose(`Módulo: Tesorería & ${isBanco?'Bancos':'Caja'}`);
+    };
+    const imprimirLibroPDF=()=>bancoPrintWindow(buildHTMLLibro());
+    const imprimirLibroXLS=()=>{
+      const h=buildHTMLLibro();
+      const b=new Blob([h],{type:'application/vnd.ms-excel;charset=utf-8'});
+      const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=`libro_diario_${isBanco?'banco':'caja'}_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(u);
+    };
     return(
       <div className="space-y-5 flex flex-col min-w-0 w-full">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-4">
@@ -6027,6 +6051,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </select></div>
             <div className="flex-1"><label className="block text-[10px] font-black uppercase text-slate-500 mb-1">Cuenta Contable</label><div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input type="text" className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2 text-xs font-semibold outline-none" placeholder="Ej: 1.1.01..." value={filtCta} onChange={e=>setFiltCta(e.target.value)}/></div></div>
             {(filtOrigen||filtCta||filtDesde!==bancoMesActual()+'-01'||filtHasta!==getTodayDate())&&<button onClick={()=>{setFiltDesde(bancoMesActual()+'-01');setFiltHasta(getTodayDate());setFiltOrigen('');setFiltCta('');}} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase hover:bg-red-100">Limpiar</button>}
+            <div className="ml-auto flex gap-2">
+              <button onClick={imprimirLibroPDF} className="flex items-center gap-1 px-3 py-2 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-red-700"><Download size={12}/> PDF</button>
+              <button onClick={imprimirLibroXLS} className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
+            </div>
           </div>
         </div>
         {lineasPlanas.length===0?<BEmptyState icon={BookOpen} title="Sin resultados" desc="No hay asientos para los filtros seleccionados."/>:(
