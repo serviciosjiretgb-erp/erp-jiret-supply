@@ -10158,6 +10158,11 @@ function ComprobantesContablesApp({ onBack }) {
   const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [filtHasta, setFiltHasta] = useState(getTodayDate());
   const [filtCuenta, setFiltCuenta] = useState('');
+  const [retIvaProvC, setRetIvaProvC] = useState([]);
+  const [retIslrProvC, setRetIslrProvC] = useState([]);
+  const [activosFijosC, setActivosFijosC] = useState([]);
+  const [notasVentaC, setNotasVentaC] = useState([]);
+  const [tasaDeprec, setTasaDeprec] = useState('');
 
   useEffect(() => {
     const subs = [
@@ -10168,6 +10173,10 @@ function ComprobantesContablesApp({ onBack }) {
       onSnapshot(getColRef('clientes'), s => setClientesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_proveedores'), s => setProvsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('retencionesClientes'), s => setRetencionesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('procura_ret_iva'), s => setRetIvaProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('procura_ret_islr'), s => setRetIslrProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('activos_fijos'), s => setActivosFijosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('notasVentaCreditoDebito'), s => setNotasVentaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('planDeCuentas'), s => setPlanCuentasC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_facturas_compra'), s => setFacturasCompraC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_servicios'), s => setServiciosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -10205,6 +10214,10 @@ function ComprobantesContablesApp({ onBack }) {
 
   const construirLineasVentas = () => {
     const filtradas = facturasVentaC.filter(f => {
+      // Anulaciones fiscales: factura "fantasma" que solo existe para el Libro de
+      // Ventas legal (reemplaza un número fiscal dañado/anulado). No es una venta
+      // real, así que no debe generar asiento contable.
+      if (f.esAnulacionFiscal) return false;
       if (filtDesde && f.fecha < filtDesde) return false;
       if (filtHasta && f.fecha > filtHasta) return false;
       return true;
@@ -10219,6 +10232,70 @@ function ComprobantesContablesApp({ onBack }) {
         dUSD: l.tipo==='DEBITO'?l.montoUSD:0, hUSD: l.tipo==='CREDITO'?l.montoUSD:0,
       }));
       return { id: f.id, comprobante: f.clientName||'—', fecha: f.fecha, doc: f.nroFiscal||f.documento||'—', conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'} (${asiento.tieneOp?'con OP':'sin OP'})`, tasa: Number(f.tasa||0), lineas, cuadrado: asiento.cuadrado };
+    });
+  };
+
+  // Ventas + Notas de Crédito/Débito en un solo libro, ordenado por fecha.
+  const construirLineasVentasCompleto = () => {
+    return [...construirLineasVentas(), ...construirLineasNotasVenta()]
+      .sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  };
+
+  // ── Notas de Crédito / Débito de Ventas ─────────────────────────────────
+  // NC (devolución/descuento): D Devoluciones-Ingresos + D IVA Débito Fiscal / H CxC Cliente
+  // ND (cargo adicional):      D CxC Cliente / H Ingresos + H IVA Débito Fiscal
+  const construirLineasNotasVenta = () => {
+    const normRif=(x)=>(x||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const ctaPlan=(patron)=>{const c=(planCuentasC||[]).find(pc=>patron.test(pc.nombre||''));
+      return c?{codigo:String(c.codigo||c.id||''),nombre:c.nombre||''}:null;};
+    const filtradas=(notasVentaC||[]).filter(n=>{
+      // Misma exclusión que la factura que anula: es solo Libro de Ventas, no contabilidad.
+      if (n.esAnulacionFiscal) return false;
+      const f=n.fecha||'';
+      if (filtDesde && f < filtDesde) return false;
+      if (filtHasta && f > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+
+    return filtradas.map(n => {
+      const esNC = n.tipo==='NC';
+      const facAfect=(facturasVentaC||[]).find(i=>i.id===n.facturaId);
+      const rif = n.clientRif || facAfect?.clientRif || '';
+      const nombreCli = n.clientName || facAfect?.clientName || '—';
+      const cliente=(clientesC||[]).find(c=>normRif(rif)&&normRif(c.rif)===normRif(rif));
+      const [codCli,nomCli]=cliente?.cuentaContableNombre
+        ? cliente.cuentaContableNombre.split('—').map(x=>x.trim())
+        : ['1.1.02.01.001','Cuentas por Cobrar Clientes'];
+      const tasa=Number(n.tasaFactura||0);
+      const baseBs=Number(n.monto||0);
+      const ivaBs = n.tieneIva===false ? 0 : (Number(n.ivaBs||0) || parseFloat((baseBs*0.16).toFixed(2)));
+      const totalBs = Number(n.totalBs||0) || (baseBs+ivaBs);
+      const cv=(bs)=>tasa>1?parseFloat((bs/tasa).toFixed(2)):0;
+      // Contrapartida de ingresos: para NC se prefiere la cuenta de Devoluciones si existe
+      const tieneOp=!!(facAfect?.opAsignada||(facAfect?.opsAsignadas&&facAfect.opsAsignadas.length>0));
+      const cfgIng=tieneOp?cuentasIngresoCfgC?.conOpNombre:cuentasIngresoCfgC?.sinOpNombre;
+      const ingFallback=tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)';
+      const [codIngD,nomIngD]=(cfgIng||ingFallback).split('—').map(x=>x.trim());
+      const ctaDev = esNC ? ctaPlan(/devoluci\w*|rebaja\w*\s+en\s+vent|descuent\w*\s+en\s+vent/i) : null;
+      const ctaIng = ctaDev ? {codigo:ctaDev.codigo,nombre:ctaDev.nombre} : {codigo:codIngD,nombre:nomIngD};
+      const ctaIvaObj=ctaPlan(/iva\s+d[eé]bito/i)||{codigo:'2.1.02.01.001',nombre:'IVA Débito Fiscal'};
+
+      const lineas=[];
+      if(esNC){
+        lineas.push({codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:'D',dBs:baseBs,hBs:0,dUSD:cv(baseBs),hUSD:0});
+        if(ivaBs>0) lineas.push({codigo:ctaIvaObj.codigo,cuenta:ctaIvaObj.nombre,tipo:'D',dBs:ivaBs,hBs:0,dUSD:cv(ivaBs),hUSD:0});
+        lineas.push({codigo:codCli,cuenta:nomCli,tipo:'H',dBs:0,hBs:totalBs,dUSD:0,hUSD:cv(totalBs)});
+      }else{
+        lineas.push({codigo:codCli,cuenta:nomCli,tipo:'D',dBs:totalBs,hBs:0,dUSD:cv(totalBs),hUSD:0});
+        lineas.push({codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:'H',dBs:0,hBs:baseBs,dUSD:0,hUSD:cv(baseBs)});
+        if(ivaBs>0) lineas.push({codigo:ctaIvaObj.codigo,cuenta:ctaIvaObj.nombre,tipo:'H',dBs:0,hBs:ivaBs,dUSD:0,hUSD:cv(ivaBs)});
+      }
+      const etq=esNC?'NC':'ND';
+      const natu=n.naturaleza==='NO_FISCAL'?' · No fiscal':'';
+      return { id:`NOTA-${n.id}`, comprobante:nombreCli, fecha:n.fecha||'', doc:n.nroDocumento||'—',
+        tasa, esNota:true, tipoNota:etq,
+        conc:`${etq} ${n.nroDocumento||''} — ${n.descripcion||(esNC?'Nota de crédito':'Nota de débito')}${facAfect?' · Fact. '+(facAfect.nroFiscal||facAfect.documento||''):''}${natu}`,
+        lineas };
     });
   };
 
@@ -10238,7 +10315,10 @@ function ComprobantesContablesApp({ onBack }) {
     }).sort((a,b) => (b.fechaComprobante||'').localeCompare(a.fechaComprobante||''));
     return filtradas.map(r => {
       const tipo = r.tipoRetencion || 'IVA';
-      const ctaRet = cuentaRetencion(tipo);
+      const ctaRet = r.cuentaContableRetNombre
+        ? { codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(),
+            nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim() }
+        : cuentaRetencion(tipo);
       const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const rifRet=normRif(r.clientRif);
       const cliente = clientesC.find(c => rifRet && normRif(c.rif)===rifRet) || null;
@@ -10296,14 +10376,110 @@ function ComprobantesContablesApp({ onBack }) {
     }).filter(Boolean);
   };
 
+  // Busca una cuenta en el Plan de Cuentas por patrón; si no existe usa el código de referencia.
+  const cuentaPlanC = (patron, fbCod, fbNom) => {
+    const c = (planCuentasC||[]).find(p => patron.test(p.nombre||''));
+    return c ? { codigo: String(c.codigo||c.id||''), nombre: c.nombre||'' } : { codigo: fbCod, nombre: fbNom };
+  };
+
+  // ── Retenciones a Proveedores (IVA + ISLR practicadas por nosotros) ──────
+  // Asiento: D Cuentas por Pagar del proveedor (su cuenta contable real)
+  //          H Retenciones por enterar (pasivo con el SENIAT)
+  const construirLineasRetencionesProveedor = () => {
+    const normRif = (x)=>(x||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const marca = (r,tipo)=>({ ...r, _tipo:tipo, _fecha: r.fechaFactura || r.fecha || '' });
+    const todas = [
+      ...(retIvaProvC||[]).map(r=>marca(r,'IVA')),
+      ...(retIslrProvC||[]).map(r=>marca(r,'ISLR')),
+    ].filter(r => {
+      if (filtDesde && r._fecha < filtDesde) return false;
+      if (filtHasta && r._fecha > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b._fecha||'').localeCompare(a._fecha||''));
+
+    return todas.map(r => {
+      const prov = provsC.find(p=>p.id===r.proveedorId)
+        || provsC.find(p=>normRif(r.rifProveedor) && normRif(p.rif)===normRif(r.rifProveedor))
+        || provsC.find(p=>contNormNombre(p.razonSocial||p.nombre)===contNormNombre(r.proveedor));
+      const [codProv, nomProv] = prov?.cuentaContableNombre
+        ? prov.cuentaContableNombre.split('—').map(x=>x.trim()) : ['',''];
+      const ctaRet = r._tipo==='IVA'
+        ? cuentaPlanC(/(retenc\w*\s+iva|iva\s+retenid)/i, '2.1.03.01.001', 'Retenciones IVA por enterar')
+        : cuentaPlanC(/(retenc\w*\s+(islr|s\/r|renta)|(islr|renta)\s+retenid)/i, '2.1.03.02.001', 'Retenciones ISLR por enterar');
+      const tasa = Number(r.tasa||0);
+      const montoUSD = Number(r.monto||0);
+      const montoBs = Number(r.montoBs || (tasa?montoUSD*tasa:0));
+      const nombreProv = r.proveedor || prov?.razonSocial || prov?.nombre || '—';
+      const lineaCxp = { codigo: codProv||'2.1.01.01.002', cuenta: nomProv||'Cuentas por Pagar Proveedores',
+        tipo:'D', dBs:montoBs, hBs:0, dUSD:montoUSD, hUSD:0 };
+      const lineaRet = { codigo: ctaRet.codigo, cuenta: `${ctaRet.nombre} (${r._tipo})`,
+        tipo:'H', dBs:0, hBs:montoBs, dUSD:0, hUSD:montoUSD };
+      const detalle = r._tipo==='IVA'
+        ? `${Number(r.pctRetencion||75)}%`
+        : `${Number(r.pct||0)}%${r.concepto?' · '+r.concepto:(r.codConcepto?' · '+r.codConcepto:'')}`;
+      return { id: `${r._tipo}-${r.id}`, comprobante: nombreProv, fecha: r._fecha,
+        doc: r.nroComprobante||'—', tipoRet: r._tipo, tasa,
+        conc: `Ret. ${r._tipo} ${detalle} — Fact. ${r.nroFactura||'—'}`,
+        lineas: [lineaCxp, lineaRet] };
+    });
+  };
+
+  // ── Depreciaciones (línea recta, un comprobante por mes del período) ─────
+  // Asiento: D Gasto de Depreciación por categoría
+  //          H Depreciación Acumulada por categoría
+  const construirLineasDepreciacion = () => {
+    const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n;
+      return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
+    const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number);
+      return (yb*12+mb)-(ya*12+ma); };
+    const desdeYM=(filtDesde||'').substring(0,7), hastaYM=(filtHasta||'').substring(0,7);
+    if(!desdeYM||!hastaYM||ymDiff(desdeYM,hastaYM)<0) return [];
+    const meses=[]; let cur=desdeYM;
+    while(ymDiff(cur,hastaYM)>=0 && meses.length<240){ meses.push(cur); cur=ymAdd(cur,1); }
+    const tasa=Number(tasaDeprec)||0;
+    const ctaGasto=cuentaPlanC(/(gasto|depreciaci).*depreciaci|depreciaci.*gasto/i,'5.1.02.05.001','Gasto de Depreciación');
+    const ctaAcum=cuentaPlanC(/depreciaci\w*\s+acumulad/i,'1.2.02.01.001','Depreciación Acumulada');
+    return meses.map(ym=>{
+      const porCat=new Map();
+      (activosFijosC||[]).forEach(a=>{
+        const adq=(a.fechaAdquisicion||'').substring(0,7); if(!adq) return;
+        const vidaMeses=Number(a.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
+        const transcurridos=ymDiff(adq,ym);
+        if(transcurridos<0||transcurridos>=vidaMeses) return;
+        const depMensual=(Number(a.valorCosto||0)-Number(a.valorResidual||0))/vidaMeses;
+        if(!(depMensual>0)) return;
+        const cat=a.categoria||'Otros';
+        const acc=porCat.get(cat)||{monto:0,n:0};
+        acc.monto+=depMensual; acc.n+=1; porCat.set(cat,acc);
+      });
+      if(porCat.size===0) return null;
+      const cats=[...porCat.entries()].sort((x,y)=>x[0].localeCompare(y[0]));
+      const lineas=[]; let totalUSD=0, nAct=0;
+      cats.forEach(([cat,v])=>{
+        const usd=Number(v.monto.toFixed(2)); const bs=tasa?usd*tasa:0;
+        totalUSD+=usd; nAct+=v.n;
+        lineas.push({codigo:ctaGasto.codigo, cuenta:`${ctaGasto.nombre} — ${cat}`, tipo:'D', dBs:bs, hBs:0, dUSD:usd, hUSD:0});
+      });
+      cats.forEach(([cat,v])=>{
+        const usd=Number(v.monto.toFixed(2)); const bs=tasa?usd*tasa:0;
+        lineas.push({codigo:ctaAcum.codigo, cuenta:`${ctaAcum.nombre} — ${cat}`, tipo:'H', dBs:0, hBs:bs, dUSD:0, hUSD:usd});
+      });
+      const [yy,mm]=ym.split('-');
+      const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
+      return { id:`DEP-${ym}`, comprobante:`DEPREC. ${mm}/${yy}`,
+        fecha:`${ym}-${String(ultimoDia).padStart(2,'0')}`, doc:`DEP-${ym}`, tasa,
+        conc:`Depreciación mensual — ${nAct} activo(s) · $${contFmt(totalUSD)}`, lineas };
+    }).filter(Boolean);
+  };
+
   const TABS_CC = [
     { id:'banco', label:'Comprobante de Banco', icon:'🏦', activo:true },
     { id:'caja', label:'Comprobante de Caja', icon:'💵', activo:true },
     { id:'procura', label:'Procura (Ctas x Pagar)', icon:'📋', activo:true },
     { id:'ventas', label:'Ventas (Ctas x Cobrar)', icon:'🧾', activo:true },
     { id:'ret_cli', label:'Retenciones a Clientes', icon:'📋', activo:true },
-    { id:'ret_prov', label:'Retenciones a Proveedores', icon:'📋', activo:false },
-    { id:'deprec', label:'Depreciaciones', icon:'📉', activo:false },
+    { id:'ret_prov', label:'Retenciones a Proveedores', icon:'📤', activo:true },
+    { id:'deprec', label:'Depreciaciones', icon:'📉', activo:true },
   ];
   const activo = sub || 'banco';
 
@@ -10359,13 +10535,16 @@ function ComprobantesContablesApp({ onBack }) {
       );
     }
     if (activo === 'ventas') {
-      const lineasVta = construirLineasVentas();
+      const lineasVta = construirLineasVentasCompleto();
+      const nFact = lineasVta.filter(r=>!r.esNota).length;
+      const nNC = lineasVta.filter(r=>r.tipoNota==='NC').length;
+      const nND = lineasVta.filter(r=>r.tipoNota==='ND').length;
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
-            <p className="text-[10px] text-gray-400 ml-auto">{lineasVta.length} factura(s)</p>
+            <p className="text-[10px] text-gray-400 ml-auto">{nFact} factura(s) · {nNC} NC · {nND} ND</p>
           </div>
           {!cuentasIngresoCfgC.conOpNombre&&!cuentasIngresoCfgC.sinOpNombre&&(
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ Las cuentas de ingresos (con/sin OP) todavía no están configuradas — ve a Facturación de Venta → "Cuentas de Ingresos" para configurarlas. Mientras tanto se usan cuentas genéricas de referencia.</div>
@@ -10373,18 +10552,18 @@ function ComprobantesContablesApp({ onBack }) {
           {lineasVta.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <FileText size={36} className="mx-auto mb-2 opacity-40"/>
-              <p className="text-xs font-black uppercase">Sin facturas para este período</p>
+              <p className="text-xs font-black uppercase">Sin facturas ni notas para este período</p>
             </div>
           ):(
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Cliente','Fecha','Código','Cuenta','T','Nro Fact.','Concepto','Debe $','Haber $','Debe Bs.','Haber Bs.'].map((h,i)=>(
+                <thead><tr style={{background:'#0f172a'}}>{['Cliente','Fecha','Código','Cuenta','T','Nro Doc.','Concepto','Debe $','Haber $','Debe Bs.','Haber Bs.'].map((h,i)=>(
                   <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
                   {lineasVta.flatMap((r,ri)=>r.lineas.map((l,li)=>(
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
-                      <td className="px-3 py-2 font-mono font-black text-teal-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 font-mono font-black text-teal-600">{li===0?(<>{r.tipoNota&&<span className={`mr-1 px-1.5 py-0.5 rounded text-[8px] ${r.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoNota}</span>}{r.comprobante}</>):''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
                       <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
@@ -10399,7 +10578,7 @@ function ComprobantesContablesApp({ onBack }) {
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasVta.length} factura(s)</td>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {nFact} factura(s) · {nNC} NC · {nND} ND</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasVta.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasVta.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasVta.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
@@ -10462,13 +10641,110 @@ function ComprobantesContablesApp({ onBack }) {
         </div>
       );
     }
-    if (activo === 'ret_prov' || activo === 'deprec') {
+    if (activo === 'ret_prov') {
+      const lineasRP = construirLineasRetencionesProveedor();
+      const nIVA = lineasRP.filter(r=>r.tipoRet==='IVA').length;
+      const nISLR = lineasRP.filter(r=>r.tipoRet==='ISLR').length;
       return (
-        <div className="p-6">
-          <div className="bg-white rounded-xl border border-dashed border-gray-300 p-14 text-center text-gray-400">
-            <FileText size={40} className="mx-auto mb-3 opacity-40"/>
-            <p className="text-sm font-black uppercase">Próximamente</p>
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasRP.length} comprobante(s) · {nIVA} IVA · {nISLR} ISLR</p>
           </div>
+          {lineasRP.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin retenciones para este período</p>
+              <p className="text-[10px] mt-1">Se generan automáticamente al registrar Facturas de Compra en Procura</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Proveedor','Fecha','Código','Cuenta','T','Nro Comp.','Concepto','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasRP.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
+                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
+                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRP.length} comprobante(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRP.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRP.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRP.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRP.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (activo === 'deprec') {
+      const lineasDep = construirLineasDepreciacion();
+      const totalDepUSD = lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa del día (Bs./$)</label><input type="number" step="0.01" placeholder="Opcional" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-[130px]" value={tasaDeprec} onChange={e=>setTasaDeprec(e.target.value)}/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasDep.length} mes(es) · Total ${contFmt(totalDepUSD)}</p>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Depreciación en línea recta calculada al vuelo desde Activos Fijos: (Costo − Residual) ÷ (Vida útil × 12), agrupada por categoría y con un comprobante por mes. Los activos se toman desde su mes de adquisición y dejan de depreciarse al agotar su vida útil.</div>
+          {lineasDep.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin depreciación para este período</p>
+              <p className="text-[10px] mt-1">Registre activos en Finanzas → Activos Fijos (costo, vida útil y fecha de adquisición)</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta','T','Nro Doc','Concepto','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasDep.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-stone-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
+                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
+                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasDep.length} mes(es)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
         </div>
       );
     }
@@ -10812,11 +11088,13 @@ function App() {
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
   const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
+  const [anulCliQuery, setAnulCliQuery] = useState('');
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
   const [retClientSearch, setRetClientSearch] = useState('');
   const [grafVentasFiltros, setGrafVentasFiltros] = useState({ anio: '', mes: '', vendedor: '', categoria: '', tabActiva: 'productos' });
   const [retFiltMes2, setRetFiltMes2] = useState('');
+  const [retFiltTipo2, setRetFiltTipo2] = useState('');
   const [retFiltQ2, setRetFiltQ2] = useState('AMBAS');
   const [retFiltCli2, setRetFiltCli2] = useState('');
   const [retFiltComp2, setRetFiltComp2] = useState('');
@@ -28978,6 +29256,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // (excluye 'Otras Retenciones' tipoExtra: Responsabilidad Social, AE, Timbre Fiscal, etc. — esas NO afectan el Libro de Ventas) ──
           const retPeriodo=(retenciones||[]).filter(r=>{
             if(r.tipoExtra) return false;
+            // El Libro de Ventas (legal) solo refleja retenciones de IVA.
+            // ISLR / Municipales / Otras se registran igual, pero no entran aquí.
+            if((r.tipoRetencion||'IVA')!=='IVA') return false;
             const f=r.fechaComprobante||r.fecha||'';
             return f>=periodoDesde&&f<=periodoHasta;
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
@@ -29471,7 +29752,7 @@ ${resumenHtml}
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
                 <button onClick={()=>{setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA'});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
-                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
+                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
@@ -29501,8 +29782,23 @@ ${resumenHtml}
                         </div>
                         <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (RIF)</label>
                           <input value={anulFiscalForm.clientRif} onChange={e=>setAnulFiscalForm(f=>({...f,clientRif:e.target.value}))} placeholder="J-12345678-9" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (Razón Social)</label>
-                          <input value={anulFiscalForm.clientName} onChange={e=>setAnulFiscalForm(f=>({...f,clientName:e.target.value}))} placeholder="Nombre del cliente" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        <div className="mt-3 relative"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (Razón Social)</label>
+                          <input value={anulFiscalForm.clientName} onChange={e=>{setAnulCliQuery(e.target.value);setAnulFiscalForm(f=>({...f,clientName:e.target.value}));}} placeholder="Nombre del cliente" autoComplete="off" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                          {anulCliQuery.trim().length>0 && (()=>{
+                            const q=anulCliQuery.toUpperCase();
+                            const sugs=(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes(q)||(c.rif||'').toUpperCase().includes(q)).slice(0,8);
+                            if(sugs.length===0) return null;
+                            return (
+                              <div className="absolute z-20 left-0 right-0 mt-1 bg-white border-2 border-orange-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                                {sugs.map(c=>(
+                                  <div key={c.rif||c.id} onMouseDown={()=>{setAnulFiscalForm(f=>({...f,clientName:c.name||c.nombre||'',clientRif:c.rif||f.clientRif}));setAnulCliQuery('');}} className="cursor-pointer px-3 py-1.5 hover:bg-orange-50 border-b border-gray-100 last:border-b-0 text-[10px]">
+                                    <span className="font-black">{c.name||c.nombre}</span> <span className="text-orange-600 ml-1">{c.rif||'Sin RIF'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
                         <div className="grid grid-cols-3 gap-3 mt-3">
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Base Bs.</label>
                             <input type="number" value={anulFiscalForm.baseImponible} onChange={e=>setAnulFiscalForm(f=>({...f,baseImponible:e.target.value,iva:String((parseNum(e.target.value)*0.16).toFixed(2))}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
@@ -29714,11 +30010,12 @@ ${resumenHtml}
               <div className="bg-white rounded-2xl border overflow-hidden">
                 <div className="px-4 py-3 border-b space-y-3">
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <h3 className="font-black text-sm uppercase text-blue-800">📋 Retenciones de IVA — {(()=>{
+                    <h3 className="font-black text-sm uppercase text-blue-800">📋 {retFiltTipo2?`Retenciones de ${retFiltTipo2==='Municipal'?'Impuestos Municipales':retFiltTipo2==='Otro'?'Otro Tipo':retFiltTipo2}`:'Retenciones (todos los tipos)'} — {(()=>{
                       const rf=(retenciones||[]).filter(r=>{
                         const f=r.fechaComprobante||r.fecha||'';
                         if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
                         if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
+                          if(retFiltTipo2&&(r.tipoRetencion||'IVA')!==retFiltTipo2)return false;
                         if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                         const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                         const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -29829,6 +30126,7 @@ ${resumenHtml}
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
                           if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
+                          if(retFiltTipo2&&(r.tipoRetencion||'IVA')!==retFiltTipo2)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -29844,6 +30142,7 @@ ${resumenHtml}
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
                           if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
+                          if(retFiltTipo2&&(r.tipoRetencion||'IVA')!==retFiltTipo2)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -29859,6 +30158,14 @@ ${resumenHtml}
                   </div>
                   {/* Filtros */}
                   <div className="flex gap-2 flex-wrap items-end">
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo</label>
+                      <select value={retFiltTipo2} onChange={e=>{setRetFiltTipo2(e.target.value);setRetPage2(0);}} className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400">
+                        <option value="">Todos los tipos</option>
+                        <option value="IVA">IVA</option>
+                        <option value="ISLR">ISLR</option>
+                        <option value="Municipal">Municipal</option>
+                        <option value="Otro">Otro</option>
+                      </select></div>
                     <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
                       <select value={retFiltMes2} onChange={e=>{setRetFiltMes2(e.target.value);setRetPage2(0);}} className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400">
                         <option value="">Todos</option>
@@ -29871,18 +30178,37 @@ ${resumenHtml}
                     <div><input value={retFiltCli2} onChange={e=>{setRetFiltCli2(e.target.value);setRetPage2(0);}} placeholder="Cliente..." className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400 w-36"/></div>
                     <div><input value={retFiltComp2} onChange={e=>{setRetFiltComp2(e.target.value);setRetPage2(0);}} placeholder="N° Comprobante..." className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400 w-36"/></div>
                     <div><input value={retFiltFact2} onChange={e=>{setRetFiltFact2(e.target.value);setRetPage2(0);}} placeholder="N° Factura..." className="border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-400 w-32"/></div>
+                    {(()=>{
+                      const base=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
+                        if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
+                        if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
+                        return true;});
+                      const cols={IVA:'bg-blue-100 text-blue-700',ISLR:'bg-purple-100 text-purple-700',Municipal:'bg-amber-100 text-amber-700',Otro:'bg-gray-200 text-gray-700'};
+                      return (<div className="flex gap-1.5 items-center ml-auto flex-wrap">
+                        {['IVA','ISLR','Municipal','Otro'].map(t=>{
+                          const lista=base.filter(r=>(r.tipoRetencion||'IVA')===t);
+                          if(lista.length===0) return null;
+                          const tot=lista.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
+                          return (<button key={t} type="button" onClick={()=>{setRetFiltTipo2(retFiltTipo2===t?'':t);setRetPage2(0);}}
+                            className={`px-2 py-1 rounded-lg font-black text-[9px] border-2 transition-all ${cols[t]} ${retFiltTipo2===t?'border-gray-800':'border-transparent'}`}>
+                            {t}: {lista.length} · {fmtVen(tot)}
+                          </button>);
+                        })}
+                      </div>);
+                    })()}
                   </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-gray-100"><tr className="font-black text-[9px] uppercase text-gray-500">
-                      <th className="py-2 px-3">N° Comp.</th><th className="py-2 px-3">Fecha</th><th className="py-2 px-3 text-indigo-600">NE</th><th className="py-2 px-3">N° Factura</th><th className="py-2 px-3">Cliente</th><th className="py-2 px-3 text-right">Monto Ret. Bs.</th><th className="py-2 px-3 text-right">Tasa Bs/$</th><th className="py-2 px-3 text-right text-green-700">Equiv. USD</th><th className="py-2 px-3">Quincena</th><th className="py-2 px-3 text-center">Acc.</th>
+                      <th className="py-2 px-3">N° Comp.</th><th className="py-2 px-3">Tipo</th><th className="py-2 px-3">Fecha</th><th className="py-2 px-3 text-indigo-600">NE</th><th className="py-2 px-3">N° Factura</th><th className="py-2 px-3">Cliente</th><th className="py-2 px-3">Cuenta Contable</th><th className="py-2 px-3 text-right">Monto Ret. Bs.</th><th className="py-2 px-3 text-right">Tasa Bs/$</th><th className="py-2 px-3 text-right text-green-700">Equiv. USD</th><th className="py-2 px-3">Quincena</th><th className="py-2 px-3 text-center">Acc.</th>
                     </tr></thead>
                     <tbody className="divide-y divide-gray-100">
                       {(()=>{
                         const retFilt=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                           if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
                           if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
+                          if(retFiltTipo2&&(r.tipoRetencion||'IVA')!==retFiltTipo2)return false;
                           if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                           const inv=(invoices||[]).find(i=>i.id===r.facturaId);
                           const retCliName=(r?.facturaId||'').startsWith('MANUAL-')?(r._manualCliente||''):(inv?.clientName||''); if(retFiltCli2&&!retCliName.toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -29893,7 +30219,7 @@ ${resumenHtml}
                         const retTotalPages=Math.ceil(retFilt.length/PAGE_RET)||1;
                         const retPageSafe=Math.min(retPage2,retTotalPages-1);
                         const retPageItems=retFilt.slice(retPageSafe*PAGE_RET,(retPageSafe+1)*PAGE_RET);
-                        if(retFilt.length===0) return <tr><td colSpan={10} className="py-6 text-center text-gray-400 text-[10px]">No hay retenciones para los filtros seleccionados</td></tr>;
+                        if(retFilt.length===0) return <tr><td colSpan={12} className="py-6 text-center text-gray-400 text-[10px]">No hay retenciones para los filtros seleccionados</td></tr>;
                         return retPageItems.map(ret=>{
                           const isManual=(ret.facturaId||'').startsWith('MANUAL-');
                           const inv=isManual?null:(invoices||[]).find(i=>i.id===ret.facturaId);
@@ -29916,12 +30242,16 @@ ${resumenHtml}
                           })();
                           return (<tr key={ret.id} className="hover:bg-yellow-50">
                             <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
+                            <td className="py-2 px-3">{(()=>{const t=ret.tipoRetencion||'IVA';
+                              const c={IVA:'bg-blue-100 text-blue-700',ISLR:'bg-purple-100 text-purple-700',Municipal:'bg-amber-100 text-amber-700',Otro:'bg-gray-200 text-gray-700'}[t]||'bg-gray-200 text-gray-700';
+                              return <span className={`px-2 py-0.5 rounded font-black text-[9px] ${c}`}>{t}</span>;})()}</td>
                             <td className="py-2 px-3">{ret.fechaComprobante}</td>
                             <td className={`py-2 px-3 font-bold ${retNeDoc==='⚠️ No vinculada'?'text-red-600 text-[10px]':'text-indigo-600'}`}>{retNeDoc}</td>
                             <td className="py-2 px-3 font-bold text-orange-600 flex items-center gap-1">
                               {nroFac}
                             </td>
                             <td className="py-2 px-3 uppercase">{cliente}</td>
+                            <td className="py-2 px-3 text-[9px] font-mono text-slate-500">{ret.cuentaContableRetNombre||<span className="text-gray-300">Automática</span>}</td>
                             <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0))}</td>
                             <td className="py-2 px-3 text-right font-mono text-slate-500 text-[10px]">{retTasa>1?formatNum(retTasa):<span className="text-red-400 text-[9px]">Sin tasa</span>}</td>
                             <td className="py-2 px-3 text-right font-black text-green-700">{retMontoUSD>0?'$'+formatNum(retMontoUSD):<span className="text-red-400 text-[9px]">—</span>}</td>
@@ -29941,6 +30271,7 @@ ${resumenHtml}
                 const retFiltPag=(retenciones||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';
                   if(retFiltMes2&&f.substring(5,7)!==retFiltMes2)return false;
                   if(retFiltQ2!=='AMBAS'&&getQuincenaRet(r)!==retFiltQ2)return false;
+                          if(retFiltTipo2&&(r.tipoRetencion||'IVA')!==retFiltTipo2)return false;
                   if(retFiltComp2&&!(r.nroRetencion||'').toUpperCase().includes(retFiltComp2.toUpperCase()))return false;
                   const inv2=(invoices||[]).find(i=>i.id===r.facturaId);
                   if(retFiltCli2&&!(inv2?.clientName||'').toUpperCase().includes(retFiltCli2.toUpperCase()))return false;
@@ -29981,6 +30312,22 @@ ${resumenHtml}
                             <option value="Municipal">Impuestos Municipales</option>
                             <option value="Otro">Otro</option>
                           </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Contable</label>
+                          <select value={retForm.cuentaContableRetId||''}
+                            onChange={e=>{const cta=(planDeCuentas||[]).find(c=>c.id===e.target.value);
+                              setRetForm(f=>({...f,cuentaContableRetId:e.target.value,cuentaContableRetNombre:cta?`${cta.codigo||''} — ${cta.nombre||''}`:''}));}}
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                            <option value="">— Automática según el tipo de retención —</option>
+                            {(planDeCuentas||[]).map(c=>(<option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>))}
+                          </select>
+                          <p className="text-[9px] text-gray-400 mt-1">
+                            {retForm.cuentaContableRetNombre
+                              ? `Se contabilizará contra: ${retForm.cuentaContableRetNombre}`
+                              : 'Si la dejas vacía, Contabilidad busca la cuenta por el tipo de retención en el Plan de Cuentas.'}
+                          </p>
                         </div>
 
                         {!retFactManual && <div>
