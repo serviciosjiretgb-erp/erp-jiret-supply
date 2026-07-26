@@ -141,6 +141,10 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [ppData,setPpData]=useState({minimoTributableUSD:190,alicuotaTributable:9,salarioMinimoOficial:130,tasaBcvCierre:0,cantidadEmpleados:0});
   const [ppCuentasCfg,setPpCuentasCfg]=useState({cuentaGastoId:'',cuentaGastoNombre:'',cuentaPasivoId:'',cuentaPasivoNombre:''});
   const [ppCuentasSaving,setPpCuentasSaving]=useState(false);
+  // ── Anticipo ISLR (1% × Base Imponible) — cuentas de Activo (anticipo aplicable a la
+  // declaración anual) y Pasivo (lo que se debe enterar por este concepto en el período) ──
+  const [anticipoIslrCfg,setAnticipoIslrCfg]=useState({cuentaActivoId:'',cuentaActivoNombre:'',cuentaPasivoId:'',cuentaPasivoNombre:''});
+  const [anticipoIslrSaving,setAnticipoIslrSaving]=useState(false);
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
   useEffect(()=>{
     const u=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
@@ -246,10 +250,25 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   },[fbUser,sec,ppAnio,ppMes]);
 
   useEffect(()=>{
-    if(!fbUser||sec!=='prot_pensiones') return;
+    if(!fbUser||(sec!=='prot_pensiones'&&sec!=='config')) return;
     const u=onSnapshot(doc(db,'settings','protPensionesCuentas'),d=>d.exists()&&setPpCuentasCfg(x=>({...x,...d.data()})));
     return()=>u();
   },[fbUser,sec]);
+
+  useEffect(()=>{
+    if(!fbUser||sec!=='config') return;
+    const u=onSnapshot(doc(db,'settings','anticipoIslrCuentas'),d=>d.exists()&&setAnticipoIslrCfg(x=>({...x,...d.data()})));
+    return()=>u();
+  },[fbUser,sec]);
+
+  const guardarAnticipoIslrCuentas=async()=>{
+    setAnticipoIslrSaving(true);
+    try{
+      await setDoc(doc(db,'settings','anticipoIslrCuentas'),anticipoIslrCfg,{merge:true});
+      setImpDialog({title:'✅ Guardado',text:'Cuentas contables de Anticipo ISLR guardadas.',type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setAnticipoIslrSaving(false);}
+  };
 
   const guardarPpCuentas=async()=>{
     setPpCuentasSaving(true);
@@ -2465,6 +2484,25 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
                   </select></div>
               </div>
               <button disabled={ppCuentasSaving} onClick={guardarPpCuentas} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{ppCuentasSaving?'Guardando...':'Guardar Cuentas Contables'}</button>
+            </div>
+
+            {/* ── Cuentas Contables: Anticipo ISLR (1% × Base Imponible) ── */}
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-3">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Cuentas Contables — Anticipo ISLR</h3>
+              <p className="text-[10px] text-slate-400">El Anticipo de ISLR (1% × Base Imponible) no es un gasto — es un adelanto que se aplica contra la declaración anual de ISLR. Por eso necesita una cuenta de Activo (el anticipo, a favor) y una de Pasivo (lo que se debe enterar por este período), en vez de gasto + pasivo.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta de Activo (Anticipo)</label>
+                  <select value={anticipoIslrCfg.cuentaActivoId||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setAnticipoIslrCfg(x=>({...x,cuentaActivoId:e.target.value,cuentaActivoNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar cuenta —</option>
+                    {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta de Pasivo (Por Enterar)</label>
+                  <select value={anticipoIslrCfg.cuentaPasivoId||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setAnticipoIslrCfg(x=>({...x,cuentaPasivoId:e.target.value,cuentaPasivoNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar cuenta —</option>
+                    {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select></div>
+              </div>
+              <button disabled={anticipoIslrSaving} onClick={guardarAnticipoIslrCuentas} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{anticipoIslrSaving?'Guardando...':'Guardar Cuentas Contables'}</button>
             </div>
 
             {/* ── Cuentas Contables: Retenciones a Clientes (IVA/ISLR/Municipal/Otro) ── */}
