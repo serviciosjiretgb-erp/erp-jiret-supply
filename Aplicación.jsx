@@ -10314,11 +10314,20 @@ function ComprobantesContablesApp({ onBack }) {
       return true;
     }).sort((a,b) => (b.fechaComprobante||'').localeCompare(a.fechaComprobante||''));
     return filtradas.map(r => {
-      const tipo = r.tipoRetencion || 'IVA';
-      const ctaRet = r.cuentaContableRetNombre
-        ? { codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(),
-            nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim() }
-        : cuentaRetencion(tipo);
+      // Dos orígenes posibles en 'retencionesClientes': el modal IVA/ISLR/Municipal (tipoRetencion +
+      // cuentaContableRetNombre) y el modal "Otras Retenciones" (tipoExtra:true, tipo/tipoLabel +
+      // cuentaContableNombre, configurada por tipo en Ajustes). Cada uno guarda su cuenta con un
+      // nombre de campo distinto — hay que leer el que corresponda o se pierde la cuenta configurada.
+      const tipo = r.tipoExtra ? (r.tipoLabel || r.tipo || 'Otra') : (r.tipoRetencion || 'IVA');
+      const ctaRet = r.tipoExtra
+        ? (r.cuentaContableNombre
+            ? { codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(),
+                nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim() }
+            : { codigo:'', nombre:`${tipo} (sin cuenta configurada — ver Registrar Otras Retenciones)` })
+        : (r.cuentaContableRetNombre
+            ? { codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(),
+                nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim() }
+            : cuentaRetencion(tipo));
       const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
       const rifRet=normRif(r.clientRif);
       const cliente = clientesC.find(c => rifRet && normRif(c.rif)===rifRet) || null;
@@ -28908,7 +28917,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                   {otraRetForm.cuentaContableId&&
                     <button type="button" onClick={guardarCuentaTipoRet}
-                      className="mt-1.5 text-[9px] font-black text-purple-700 hover:text-purple-900 flex items-center gap-1">
+                      className="mt-2 w-full py-1.5 rounded-lg bg-purple-100 hover:bg-purple-200 border border-purple-200 text-[10px] font-black text-purple-700 flex items-center justify-center gap-1.5 transition-colors">
                       📌 Guardar como predeterminada para "{(TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||{}).label}"
                     </button>}
                 </div>
@@ -29011,6 +29020,41 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span className="font-mono font-black text-purple-800">${parseNum(otraRetForm.tasa||0)>1?(parseNum(otraRetForm.montoRetenidoBs||0)/parseNum(otraRetForm.tasa)).toFixed(2):'—'}</span>
                   </div>
                 )}
+                {/* 🧾 Vista previa del asiento contable — mismo par D/H que verá Contabilidad → Retenciones a Clientes */}
+                {parseNum(otraRetForm.montoRetenidoBs||0)>0&&(()=>{
+                  const partesCta=(str)=>{const p=(str||'').split('—');return {codigo:(p[0]||'').trim(),nombre:p.slice(1).join('—').trim()};};
+                  const debito=partesCta(otraRetForm.cuentaContableNombre);
+                  const clienteAst=(clients||[]).find(c=>(c.rif||'').toUpperCase()===(otraRetForm.clientRif||'').toUpperCase());
+                  const credito=partesCta(clienteAst?.cuentaContableNombre);
+                  const tasaAst=parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                  const montoBsAst=parseNum(otraRetForm.montoRetenidoBs||0);
+                  const montoUsdAst=tasaAst>1?montoBsAst/tasaAst:0;
+                  return (
+                    <div className="bg-slate-900 rounded-xl p-3.5 space-y-2">
+                      <p className="text-[9px] font-black text-purple-300 uppercase tracking-wider">🧾 Asiento contable — vista previa</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-emerald-400 font-black text-[9px] shrink-0">D</span>
+                          <span className="font-mono text-[9px] text-purple-300 shrink-0">{debito.codigo||'—'}</span>
+                          <span className="text-[10px] text-slate-200 truncate">{debito.nombre||'Sin cuenta configurada para este tipo'}</span>
+                        </div>
+                        <span className="font-mono font-black text-[11px] text-emerald-400 shrink-0">Bs.{formatNum(montoBsAst)}</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-2 pl-4">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-red-400 font-black text-[9px] shrink-0">H</span>
+                          <span className="font-mono text-[9px] text-purple-300 shrink-0">{credito.codigo||'—'}</span>
+                          <span className="text-[10px] text-slate-200 truncate">{credito.nombre||otraRetForm.clientName||'Cuentas por Cobrar Clientes'}</span>
+                        </div>
+                        <span className="font-mono font-black text-[11px] text-red-400 shrink-0">Bs.{formatNum(montoBsAst)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[9px] text-slate-400 pt-1.5 border-t border-slate-700">
+                        <span>≈ ${formatNum(montoUsdAst)} USD · Tasa {formatNum(tasaAst)}</span>
+                        {!otraRetForm.cuentaContableId&&<span className="text-amber-400 font-bold">⚠ Configura la cuenta arriba para que no quede pendiente</span>}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Comprobante *</label>
@@ -30306,7 +30350,11 @@ ${resumenHtml}
 
                         <div>
                           <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Tipo de Retención</label>
-                          <select value={retForm.tipoRetencion||'IVA'} onChange={e=>setRetForm(f=>({...f,tipoRetencion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                          <select value={retForm.tipoRetencion||'IVA'} onChange={e=>{
+                            const nuevoTipo=e.target.value;
+                            const pctDefault={IVA:'75',ISLR:'2',Municipal:'1',Otro:''}[nuevoTipo]??'';
+                            setRetForm(f=>({...f,tipoRetencion:nuevoTipo,porcentaje:pctDefault}));
+                          }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
                             <option value="IVA">IVA</option>
                             <option value="ISLR">ISLR (Impuesto Sobre la Renta)</option>
                             <option value="Municipal">Impuestos Municipales</option>
@@ -30359,25 +30407,36 @@ ${resumenHtml}
                           </div>
                         </div>}
                         {selFact&&!retFactManual&&(()=>{
+                          const tipoSel=retForm.tipoRetencion||'IVA';
+                          const esIVA=tipoSel==='IVA';
                           const tasaFact=parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
                           const baseUsd=parseNum(selFact.montoBase||0);
                           const ivaUsd=parseNum(selFact.iva||0)||(selFact.aplicaIva==='SI'?parseFloat((baseUsd*0.16).toFixed(2)):0);
-                          const pctRet=parseNum(retForm.porcentaje||75)/100;
-                          const montoRetUsd=parseFloat((ivaUsd*pctRet).toFixed(2));
+                          // IVA se retiene sobre el IVA de la factura (75%/100%, agente de retención).
+                          // ISLR/Municipal/Otro se retienen sobre la Base Imponible — es un impuesto distinto,
+                          // no un porcentaje del IVA, por eso NO puede compartir la misma base de cálculo.
+                          const baseCalculoUsd=esIVA?ivaUsd:baseUsd;
+                          const pctRet=parseNum(retForm.porcentaje||(esIVA?75:0))/100;
+                          const montoRetUsd=parseFloat((baseCalculoUsd*pctRet).toFixed(2));
                           const montoRetBs=parseFloat((montoRetUsd*tasaFact).toFixed(2));
                           return(<>
                           <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs space-y-1">
                             <div><span className="font-black">Cliente:</span> {selFact.clientName} &nbsp;·&nbsp; <span className="font-black">RIF:</span> {selFact.clientRif}</div>
                             <div><span className="font-black">N° Fiscal:</span> {selFact.nroFiscal||'—'} &nbsp;·&nbsp; <span className="font-black">Control:</span> {selFact.nroControl||'—'}</div>
-                            <div><span className="font-black">IVA:</span> ${formatNum(ivaUsd)} USD &nbsp;·&nbsp; <span className="font-black">Tasa BCV:</span> {formatNum(tasaFact)} Bs/$</div>
-                            <div className="border-t border-blue-200 pt-1 font-black text-blue-800">Retención ({retForm.porcentaje||75}%): ${formatNum(montoRetUsd)} = <span className="text-orange-600">{formatNum(montoRetBs)} Bs.</span></div>
+                            <div><span className="font-black">{esIVA?'IVA':'Base Imponible'}:</span> ${formatNum(baseCalculoUsd)} USD &nbsp;·&nbsp; <span className="font-black">Tasa BCV:</span> {formatNum(tasaFact)} Bs/$</div>
+                            <div className="border-t border-blue-200 pt-1 font-black text-blue-800">Retención {tipoSel} ({formatNum(pctRet*100)}%): ${formatNum(montoRetUsd)} = <span className="text-orange-600">{formatNum(montoRetBs)} Bs.</span></div>
                             {!retForm.montoRetenido&&<button type="button" onClick={()=>setRetForm(f=>({...f,montoRetenido:String(montoRetBs)}))} className="mt-1 bg-blue-600 text-white px-3 py-1 rounded-lg font-black text-[9px]">⚡ Usar monto calculado</button>}
+                            {!esIVA&&<p className="text-[9px] text-blue-400 mt-1">Ajusta el % según la tabla/ordenanza que aplique a este concepto — no se calcula sobre el IVA.</p>}
                           </div>
                           <div className="grid grid-cols-2 gap-3">
                             <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">% Retención</label>
-                              <select value={retForm.porcentaje||'75'} onChange={e=>setRetForm(f=>({...f,porcentaje:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
-                                <option value="75">75%</option><option value="100">100%</option>
-                              </select></div>
+                              {esIVA?(
+                                <select value={retForm.porcentaje||'75'} onChange={e=>setRetForm(f=>({...f,porcentaje:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
+                                  <option value="75">75%</option><option value="100">100%</option>
+                                </select>
+                              ):(
+                                <input type="number" step="0.01" value={retForm.porcentaje||''} onChange={e=>setRetForm(f=>({...f,porcentaje:e.target.value}))} placeholder="Ej. 2" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                              )}</div>
                             <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto Retenido (Bs.)</label>
                               <input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder={String(montoRetBs)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
                               <span className="text-[9px] text-gray-400">≈ ${formatNum(parseNum(retForm.montoRetenido||0)/Math.max(tasaFact,1))} USD</span>
