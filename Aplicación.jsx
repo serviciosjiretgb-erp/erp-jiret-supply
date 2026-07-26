@@ -10453,15 +10453,20 @@ function ComprobantesContablesApp({ onBack }) {
                 nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim() }
             : cuentaRetencion(tipo));
       const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-      const rifRet=normRif(r.clientRif);
+      // El registro de retención solo guarda facturaId + clientRif — el nombre del cliente y el
+      // N° de factura viven en la factura vinculada (o en los campos _manual* si es registro manual).
+      const esManual = (r.facturaId||'').startsWith('MANUAL-');
+      const facAsoc = esManual ? null : (facturasVentaC||[]).find(f => f.id===r.facturaId || f.documento===r.facturaId);
+      const nombreCliente = r._manualCliente || facAsoc?.clientName || r.clientName || '—';
+      const nroFactura = r._manualNroFiscal || facAsoc?.nroFiscal || facAsoc?.documento || '—';
+      const rifRet=normRif(r.clientRif || facAsoc?.clientRif);
       const cliente = clientesC.find(c => rifRet && normRif(c.rif)===rifRet) || null;
       const [codCli, nomCli] = cliente?.cuentaContableNombre ? cliente.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-      const nombreCliente = r._manualCliente || r.clientName || '—';
       const montoBs = Number(r.montoRetenido||0);
       const montoUSD = montoBs / Math.max(Number(r.tasa||1),1);
       const lineaRet = { codigo: ctaRet.codigo, cuenta: `${ctaRet.nombre} (${tipo})`, tipo:'D', dBs: montoBs, hBs:0, dUSD: montoUSD, hUSD:0 };
-      const lineaCxc = { codigo: codCli||'', cuenta: nomCli||'Cuentas por Cobrar Clientes', tipo:'H', dBs:0, hBs: montoBs, dUSD:0, hUSD: montoUSD };
-      return { id: r.id, comprobante: nombreCliente, fecha: r.fechaComprobante||r.createdAt||'', doc: r.nroRetencion||'—', conc: `Retención ${tipo} — ${nombreCliente}`, tasa: Number(r.tasa||1), lineas: [lineaRet, lineaCxc] };
+      const lineaCxc = { codigo: codCli||'1.1.02.01.001', cuenta: nomCli||'Cuentas por Cobrar Clientes', tipo:'H', dBs:0, hBs: montoBs, dUSD:0, hUSD: montoUSD };
+      return { id: r.id, comprobante: nombreCliente, fecha: r.fechaComprobante||r.createdAt||'', doc: r.nroRetencion||'—', conc: `Retención ${tipo} — ${nombreCliente} · Fact. ${nroFactura}`, tasa: Number(r.tasa||1), lineas: [lineaRet, lineaCxc] };
     });
   };
 
@@ -10552,7 +10557,7 @@ function ComprobantesContablesApp({ onBack }) {
         : `${Number(r.pct||0)}%${r.concepto?' · '+r.concepto:(r.codConcepto?' · '+r.codConcepto:'')}`;
       return { id: `${r._tipo}-${r.id}`, comprobante: nombreProv, fecha: r._fecha,
         doc: r.nroComprobante||'—', tipoRet: r._tipo, tasa,
-        conc: `Ret. ${r._tipo} ${detalle} — Fact. ${r.nroFactura||'—'}`,
+        conc: `Ret. ${r._tipo} ${detalle} — ${nombreProv} · Fact. ${r.nroFactura||'—'}`,
         lineas: [lineaCxp, lineaRet] };
     });
   };
@@ -40300,7 +40305,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
     // Plan de Cuentas — movido aquí desde Configuración (mismo estado, misma lógica,
     // solo cambia desde dónde se accede: ahora tiene su propia tarjeta en Contabilidad).
-    const renderPlanDeCuentasModule = () => (
+    const renderPlanDeCuentasModule = () => { try { return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <div className="flex justify-between items-center mb-6 border-b pb-4">
@@ -40419,7 +40424,10 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            )}
         </div>
       </div>
-    );
+    ); } catch(err) {
+      console.error("Plan de Cuentas error:", err.message, err.stack);
+      return (<div className="max-w-2xl mx-auto mt-12 bg-red-50 border-2 border-red-300 rounded-3xl p-8 text-center"><div className="text-red-500 font-black text-lg uppercase mb-2">Error en Plan de Cuentas</div><div className="text-red-700 text-xs font-bold bg-red-100 rounded-xl p-3 font-mono">{err.message}</div><button onClick={()=>window.location.reload()} className="mt-4 bg-black text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase">Recargar</button></div>);
+    } };
 
     const renderConfiguracionModule = () => {
     try {
@@ -44711,7 +44719,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')}/>}
 
           {/* ── CONTABILIDAD — PLAN DE CUENTAS (movido desde Configuración) ── */}
-           {activeTab === 'plan_cuentas' && hasAnyPerm('configuracion') && (
+           {activeTab === 'plan_cuentas' && (hasPerm('configuracion') || (SYSTEM_MODULES.find(m=>m.id==='configuracion')?.submodules||[]).some(s=>hasPerm(s.id))) && (
              <div className="p-4 sm:p-6">
                <button onClick={()=>setActiveTab('home')} className="mb-4 flex items-center gap-1.5 text-gray-500 hover:text-gray-800 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
                {renderPlanDeCuentasModule()}
