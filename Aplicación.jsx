@@ -145,6 +145,9 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   // declaración anual) y Pasivo (lo que se debe enterar por este concepto en el período) ──
   const [anticipoIslrCfg,setAnticipoIslrCfg]=useState({cuentaActivoId:'',cuentaActivoNombre:'',cuentaPasivoId:'',cuentaPasivoNombre:''});
   const [anticipoIslrSaving,setAnticipoIslrSaving]=useState(false);
+  // ── Impuesto Sobre la Renta (ISLR anual) — gasto + pasivo, mismo patrón que AE/PP ──
+  const [islrAnualCfg,setIslrAnualCfg]=useState({cuentaGastoId:'',cuentaGastoNombre:'',cuentaPasivoId:'',cuentaPasivoNombre:''});
+  const [islrAnualSaving,setIslrAnualSaving]=useState(false);
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
   useEffect(()=>{
     const u=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
@@ -268,6 +271,21 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       setImpDialog({title:'✅ Guardado',text:'Cuentas contables de Anticipo ISLR guardadas.',type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
     finally{setAnticipoIslrSaving(false);}
+  };
+
+  useEffect(()=>{
+    if(!fbUser||sec!=='config') return;
+    const u=onSnapshot(doc(db,'settings','islrAnualCuentas'),d=>d.exists()&&setIslrAnualCfg(x=>({...x,...d.data()})));
+    return()=>u();
+  },[fbUser,sec]);
+
+  const guardarIslrAnualCuentas=async()=>{
+    setIslrAnualSaving(true);
+    try{
+      await setDoc(doc(db,'settings','islrAnualCuentas'),islrAnualCfg,{merge:true});
+      setImpDialog({title:'✅ Guardado',text:'Cuentas contables de Impuesto Sobre la Renta guardadas.',type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setIslrAnualSaving(false);}
   };
 
   const guardarPpCuentas=async()=>{
@@ -2503,6 +2521,25 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
                   </select></div>
               </div>
               <button disabled={anticipoIslrSaving} onClick={guardarAnticipoIslrCuentas} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{anticipoIslrSaving?'Guardando...':'Guardar Cuentas Contables'}</button>
+            </div>
+
+            {/* ── Cuentas Contables: Impuesto Sobre la Renta (ISLR anual) ── */}
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-3">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide">Cuentas Contables — Impuesto Sobre la Renta (Anual)</h3>
+              <p className="text-[10px] text-slate-400">El ISLR anual (calculado sobre la renta neta gravable del ejercicio, campo "islrAnual" en Resumen Tributario) sí es un gasto del período. Necesita las dos cuentas: el gasto que se reconoce y el pasivo (lo que se debe al SENIAT hasta que se pague).</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta de Gasto</label>
+                  <select value={islrAnualCfg.cuentaGastoId||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setIslrAnualCfg(x=>({...x,cuentaGastoId:e.target.value,cuentaGastoNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar cuenta —</option>
+                    {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select></div>
+                <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta de Pasivo (Por Pagar)</label>
+                  <select value={islrAnualCfg.cuentaPasivoId||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setIslrAnualCfg(x=>({...x,cuentaPasivoId:e.target.value,cuentaPasivoNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar cuenta —</option>
+                    {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select></div>
+              </div>
+              <button disabled={islrAnualSaving} onClick={guardarIslrAnualCuentas} className="bg-orange-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50">{islrAnualSaving?'Guardando...':'Guardar Cuentas Contables'}</button>
             </div>
 
             {/* ── Cuentas Contables: Retenciones a Clientes (IVA/ISLR/Municipal/Otro) ── */}
@@ -10300,12 +10337,28 @@ function ComprobantesContablesApp({ onBack }) {
   const [retIslrProvC, setRetIslrProvC] = useState([]);
   const [activosFijosC, setActivosFijosC] = useState([]);
   const [notasVentaC, setNotasVentaC] = useState([]);
+  // ── Ajustes: asientos manuales multimoneda, no derivados de ningún otro módulo ──
+  const [ajustesC, setAjustesC] = useState([]);
+  const [showAjusteModal, setShowAjusteModal] = useState(false);
+  const [ajusteEditando, setAjusteEditando] = useState(null);
+  const [ajusteForm, setAjusteForm] = useState({fecha:getTodayDate(), nroComprobante:'', concepto:'', tasa:'', lineas:[]});
+  const [ajusteBusqCuentaIdx, setAjusteBusqCuentaIdx] = useState(-1);
+  const [ajusteBusqCuentaTxt, setAjusteBusqCuentaTxt] = useState('');
+  const [ajusteSaving, setAjusteSaving] = useState(false);
+  // ── Reclasificar cuenta: override puntual de código/cuenta para una línea específica de
+  // cualquier comprobante, en cualquier pestaña. No toca el dato original — solo guarda el
+  // reemplazo y lo aplica al mostrar/exportar. Clave: tabId__comprobanteId__lineIdx.
+  const [reclasificacionesC, setReclasificacionesC] = useState({});
+  const [reclasificando, setReclasificando] = useState(null); // {tabId,compId,lineIdx,codigoActual,cuentaActual}
+  const [reclasBusq, setReclasBusq] = useState('');
+  const [reclasSaving, setReclasSaving] = useState(false);
   const [tasaDeprec, setTasaDeprec] = useState('');
   const [settingsCC, setSettingsCC] = useState({});
   const [impMes, setImpMes] = useState(getTodayDate().substring(5,7));
   const [impAnio, setImpAnio] = useState(getTodayDate().substring(0,4));
   const [aeCfgCC, setAeCfgCC] = useState({});
   const [ppCuentasCfgCC, setPpCuentasCfgCC] = useState({});
+  const [anticipoIslrCfgCC, setAnticipoIslrCfgCC] = useState({});
   const [aeManualCC, setAeManualCC] = useState({});
   const [ppDataCC, setPpDataCC] = useState({});
 
@@ -10321,9 +10374,12 @@ function ComprobantesContablesApp({ onBack }) {
       onSnapshot(getColRef('procura_ret_iva'), s => setRetIvaProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_ret_islr'), s => setRetIslrProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('activos_fijos'), s => setActivosFijosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('comprobantes_ajustes'), s => setAjustesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
       onSnapshot(doc(db,'settings','general'), d => { if(d.exists()) setSettingsCC(d.data()); }),
       onSnapshot(getDocRef('settings','actividadEconomica'), d => { if(d.exists()) setAeCfgCC(d.data()); }),
       onSnapshot(doc(db,'settings','protPensionesCuentas'), d => { if(d.exists()) setPpCuentasCfgCC(d.data()); }),
+      onSnapshot(doc(db,'settings','anticipoIslrCuentas'), d => { if(d.exists()) setAnticipoIslrCfgCC(d.data()); }),
       onSnapshot(getColRef('notasVentaCreditoDebito'), s => setNotasVentaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('planDeCuentas'), s => setPlanCuentasC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_facturas_compra'), s => setFacturasCompraC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -10716,7 +10772,154 @@ function ComprobantesContablesApp({ onBack }) {
         ],
       });
     }
+    // Anticipo ISLR (1% × Base Imponible del mes) — NO es gasto: D Activo (anticipo aplicable a la
+    // declaración anual) / H Pasivo (lo que se debe enterar por este período). Misma base de ventas
+    // (totalIngresos) que ya se usa arriba para Actividad Económica, misma tasa (tasaUCD).
+    const anticipoISLR = parseFloat((totalIngresos*0.01).toFixed(2));
+    if (anticipoISLR > 0) {
+      const ctaActivo = anticipoIslrCfgCC.cuentaActivoNombre ? partesCtaCC(anticipoIslrCfgCC.cuentaActivoNombre) : null;
+      const ctaPasivoIslr = anticipoIslrCfgCC.cuentaPasivoNombre ? partesCtaCC(anticipoIslrCfgCC.cuentaPasivoNombre) : null;
+      lineas.push({
+        id:`ANT-ISLR-${mesKey}`, comprobante:'Anticipo ISLR', fecha:fechaMes, doc:`ANT-ISLR-${mesKey}`, tasa:tasaUCD,
+        conc:`Anticipo ISLR (1%) — Base Imponible Bs.${contFmt(totalIngresos)}`,
+        lineas:[
+          {codigo:ctaActivo?.codigo||'', cuenta:ctaActivo?.nombre||'Anticipo ISLR (sin cuenta — Impuestos → Configuración)', tipo:'D', dBs:anticipoISLR, hBs:0, dUSD:tasaUCD?anticipoISLR/tasaUCD:0, hUSD:0},
+          {codigo:ctaPasivoIslr?.codigo||'', cuenta:ctaPasivoIslr?.nombre||'Anticipo ISLR por Enterar (sin cuenta — Impuestos → Configuración)', tipo:'H', dBs:0, hBs:anticipoISLR, dUSD:0, hUSD:tasaUCD?anticipoISLR/tasaUCD:0},
+        ],
+      });
+    }
     return lineas;
+  };
+
+  // ── Ajustes: comprobantes 100% manuales, multimoneda, cualquier par de cuentas ──────────
+  const construirLineasAjustes = () => {
+    return (ajustesC||[]).filter(a => {
+      if (filtDesde && a.fecha < filtDesde) return false;
+      if (filtHasta && a.fecha > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(a => ({
+      id: a.id, comprobante: a.nroComprobante||'AJUSTE', fecha: a.fecha, doc: a.nroComprobante||'—',
+      tasa: Number(a.tasa||0), conc: a.concepto||'Ajuste manual', _raw:a,
+      lineas: (a.lineas||[]).map(l => ({
+        codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipo,
+        dBs: l.tipo==='D'?Number(l.montoBs||0):0, hBs: l.tipo==='H'?Number(l.montoBs||0):0,
+        dUSD: l.tipo==='D'?Number(l.montoUSD||0):0, hUSD: l.tipo==='H'?Number(l.montoUSD||0):0,
+      })),
+    }));
+  };
+
+  const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:''});
+
+  const abrirNuevoAjuste = () => {
+    setAjusteEditando(null);
+    setAjusteForm({fecha:getTodayDate(), nroComprobante:'', concepto:'', tasa:String(settingsCC?.tasaBCV||''), lineas:[nuevaLineaAjusteVacia(),nuevaLineaAjusteVacia()]});
+    setAjusteBusqCuentaIdx(-1); setAjusteBusqCuentaTxt('');
+    setShowAjusteModal(true);
+  };
+  const abrirEditarAjuste = (raw) => {
+    setAjusteEditando(raw);
+    setAjusteForm({fecha:raw.fecha||getTodayDate(), nroComprobante:raw.nroComprobante||'', concepto:raw.concepto||'', tasa:raw.tasa?String(raw.tasa):'',
+      lineas:(raw.lineas||[]).map(l=>({codigo:l.codigo||'',cuenta:l.cuenta||'',tipo:l.tipo||'D',montoBs:l.montoBs?String(l.montoBs):'',montoUSD:l.montoUSD?String(l.montoUSD):''}))});
+    setAjusteBusqCuentaIdx(-1); setAjusteBusqCuentaTxt('');
+    setShowAjusteModal(true);
+  };
+  const agregarLineaAjuste = () => setAjusteForm(f=>({...f, lineas:[...f.lineas, nuevaLineaAjusteVacia()]}));
+  const quitarLineaAjuste = (idx) => setAjusteForm(f=>({...f, lineas:f.lineas.filter((_,i)=>i!==idx)}));
+  const actualizarLineaAjuste = (idx, campo, valor) => setAjusteForm(f=>{
+    const lineas=[...f.lineas];
+    const tasaNum = parseFloat(f.tasa)||0;
+    const l = {...lineas[idx], [campo]:valor};
+    // Conveniencia multimoneda: si hay tasa y el otro campo está vacío, se autocalcula — pero
+    // siempre queda editable manualmente después (no se fuerza el vínculo).
+    if (campo==='montoBs' && tasaNum>0 && !lineas[idx].montoUSD) l.montoUSD = valor?(parseFloat(valor)/tasaNum).toFixed(2):'';
+    if (campo==='montoUSD' && tasaNum>0 && !lineas[idx].montoBs) l.montoBs = valor?(parseFloat(valor)*tasaNum).toFixed(2):'';
+    lineas[idx]=l;
+    return {...f, lineas};
+  });
+  const totalesAjusteForm = () => {
+    const t={dBs:0,hBs:0,dUSD:0,hUSD:0};
+    (ajusteForm.lineas||[]).forEach(l=>{
+      const bs=parseFloat(l.montoBs)||0, usd=parseFloat(l.montoUSD)||0;
+      if(l.tipo==='D'){t.dBs+=bs;t.dUSD+=usd;} else {t.hBs+=bs;t.hUSD+=usd;}
+    });
+    return t;
+  };
+  const guardarAjuste = async () => {
+    if(!ajusteForm.fecha||!ajusteForm.nroComprobante||!ajusteForm.concepto)
+      return alert('Fecha, N° Comprobante y Concepto son obligatorios.');
+    const lineasValidas = (ajusteForm.lineas||[]).filter(l=>l.codigo && l.cuenta && (parseFloat(l.montoBs)>0 || parseFloat(l.montoUSD)>0));
+    if(lineasValidas.length<2) return alert('Agrega al menos 2 líneas (una Debe y una Haber) con cuenta y monto.');
+    setAjusteSaving(true);
+    try{
+      const payload = {
+        fecha: ajusteForm.fecha, nroComprobante: ajusteForm.nroComprobante, concepto: ajusteForm.concepto,
+        tasa: parseFloat(ajusteForm.tasa)||0,
+        lineas: lineasValidas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo, montoBs:parseFloat(l.montoBs)||0, montoUSD:parseFloat(l.montoUSD)||0})),
+        updatedAt: Date.now(), user: 'Sistema',
+      };
+      if (ajusteEditando) {
+        await setDoc(getDocRef('comprobantes_ajustes', ajusteEditando.id), {...payload, id:ajusteEditando.id, createdAt:ajusteEditando.createdAt||Date.now()});
+      } else {
+        const id = `AJ-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+        await setDoc(getDocRef('comprobantes_ajustes', id), {...payload, id, createdAt:Date.now()});
+      }
+      setShowAjusteModal(false);
+    } catch(e){ alert('Error al guardar: '+e.message); }
+    finally { setAjusteSaving(false); }
+  };
+  const eliminarAjuste = async (id) => {
+    if(!window.confirm('¿Eliminar este ajuste? Esta acción no se puede deshacer.')) return;
+    try{ await deleteDoc(getDocRef('comprobantes_ajustes', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+
+  // ── Reclasificar cuenta ──────────────────────────────────────────────────────────────
+  const claveReclas = (tabId, compId, lineIdx) => `${tabId}__${compId}__${lineIdx}`;
+  const cuentaReclas = (tabId, compId, lineIdx) => reclasificacionesC[claveReclas(tabId,compId,lineIdx)] || null;
+  const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual) => {
+    setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual});
+    setReclasBusq('');
+  };
+  const guardarReclasificacion = async (cta) => {
+    if(!reclasificando) return;
+    setReclasSaving(true);
+    try{
+      const key = claveReclas(reclasificando.tabId, reclasificando.compId, reclasificando.lineIdx);
+      await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
+        codigo: cta.codigo||'', cuenta: cta.nombre||'', tabId:reclasificando.tabId, compId:reclasificando.compId, lineIdx:reclasificando.lineIdx,
+        codigoOriginal: reclasificando.codigoActual||'', cuentaOriginal: reclasificando.cuentaActual||'', timestamp: Date.now(),
+      });
+      setReclasificando(null);
+    }catch(e){ alert('Error al reclasificar: '+e.message); }
+    finally{ setReclasSaving(false); }
+  };
+  const quitarReclasificacion = async () => {
+    if(!reclasificando) return;
+    setReclasSaving(true);
+    try{
+      const key = claveReclas(reclasificando.tabId, reclasificando.compId, reclasificando.lineIdx);
+      await deleteDoc(getDocRef('comprobantes_reclasificaciones', key));
+      setReclasificando(null);
+    }catch(e){ alert('Error: '+e.message); }
+    finally{ setReclasSaving(false); }
+  };
+  // Celda de código+cuenta reutilizable: aplica el override si existe y da acceso a reclasificar
+  // con un clic (reemplaza el par de <td> código/cuenta que se repite en las 8 pestañas).
+  const CeldaCuentaCC = ({tabId, compId, li, l}) => {
+    const ov = cuentaReclas(tabId, compId, li);
+    const codigo = ov?.codigo || l.codigo;
+    const cuenta = ov?.cuenta || l.cuenta;
+    return (
+      <>
+        <td className="px-3 py-2 font-mono text-blue-500">{codigo||'—'}</td>
+        <td className="px-3 py-2 font-bold text-gray-700 uppercase group relative cursor-pointer hover:bg-orange-50"
+          style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}
+          onClick={()=>abrirReclasificar(tabId, compId, li, codigo, cuenta)}
+          title="Clic para reclasificar esta cuenta">
+          {cuenta||'—'}{ov && <span className="ml-1 text-[8px] font-black text-purple-500 uppercase">● reclasificada</span>}
+          <Edit size={10} className="inline-block ml-1 opacity-0 group-hover:opacity-60"/>
+        </td>
+      </>
+    );
   };
 
   // ══════════════════════════════════════════════════════════════════════
@@ -10830,33 +11033,44 @@ ${valoresHtml}
   };
 
   // Config por pestaña: qué datos, títulos y formato de columnas usa cada comprobante.
+  // Aplica las reclasificaciones guardadas también al PDF/Excel, para que coincidan con pantalla.
+  const aplicarReclasCC = (tabId, lineasArr) => (lineasArr||[]).map(r => ({
+    ...r,
+    lineas: (r.lineas||[]).map((l, li) => {
+      const ov = cuentaReclas(tabId, r.id, li);
+      return ov ? {...l, codigo: ov.codigo, cuenta: ov.cuenta} : l;
+    }),
+  }));
+
   const configExportCC = (tabId) => {
     const comunes = { desde:filtDesde, hasta:filtHasta };
     switch(tabId){
       case 'banco': {
         const cta=cuentasBanco.find(c=>c.id===filtCuenta);
-        return {...comunes, titulo:'Comprobante de Banco', primeraCol:'Banco', cuentaLabel:'Cuenta de Movimiento', docLabel:'Nro Doc', tasa:true, ordenBsPrimero:true, unidad:'comprobante(s)', lineas:construirLineas(true), filtroCuentaNombre: filtCuenta?(cta?.banco||''):'Todos los bancos' };
+        return {...comunes, titulo:'Comprobante de Banco', primeraCol:'Banco', cuentaLabel:'Cuenta de Movimiento', docLabel:'Nro Doc', tasa:true, ordenBsPrimero:true, unidad:'comprobante(s)', lineas:aplicarReclasCC('banco',construirLineas(true)), filtroCuentaNombre: filtCuenta?(cta?.banco||''):'Todos los bancos' };
       }
       case 'caja': {
         const cta=cuentasCaja.find(c=>c.id===filtCuenta);
-        return {...comunes, titulo:'Comprobante de Caja', primeraCol:'Caja', cuentaLabel:'Cuenta de Movimiento', docLabel:'Nro Doc', tasa:true, ordenBsPrimero:true, unidad:'comprobante(s)', lineas:construirLineas(false), filtroCuentaNombre: filtCuenta?(cta?.nombre||''):'Todas las cajas' };
+        return {...comunes, titulo:'Comprobante de Caja', primeraCol:'Caja', cuentaLabel:'Cuenta de Movimiento', docLabel:'Nro Doc', tasa:true, ordenBsPrimero:true, unidad:'comprobante(s)', lineas:aplicarReclasCC('caja',construirLineas(false)), filtroCuentaNombre: filtCuenta?(cta?.nombre||''):'Todas las cajas' };
       }
       case 'procura':
-        return {...comunes, titulo:'Comprobante de Procura (Cuentas por Pagar)', primeraCol:'Proveedor', docLabel:'Nro Fact.', tasa:false, ordenBsPrimero:false, unidad:'factura(s)', lineas:construirLineasProcura()};
+        return {...comunes, titulo:'Comprobante de Procura (Cuentas por Pagar)', primeraCol:'Proveedor', docLabel:'Nro Fact.', tasa:false, ordenBsPrimero:false, unidad:'factura(s)', lineas:aplicarReclasCC('procura',construirLineasProcura())};
       case 'ventas':
-        return {...comunes, titulo:'Comprobante de Ventas (Cuentas por Cobrar)', primeraCol:'Cliente', docLabel:'Nro Doc.', tasa:false, ordenBsPrimero:false, unidad:'documento(s)', lineas:construirLineasVentasCompleto()};
+        return {...comunes, titulo:'Comprobante de Ventas (Cuentas por Cobrar)', primeraCol:'Cliente', docLabel:'Nro Doc.', tasa:false, ordenBsPrimero:false, unidad:'documento(s)', lineas:aplicarReclasCC('ventas',construirLineasVentasCompleto())};
       case 'ret_cli':
-        return {...comunes, titulo:'Retenciones a Clientes', primeraCol:'Cliente', docLabel:'Nro Comp.', tasa:false, ordenBsPrimero:true, unidad:'retención(es)', lineas:construirLineasRetencionesCliente()};
+        return {...comunes, titulo:'Retenciones a Clientes', primeraCol:'Cliente', docLabel:'Nro Comp.', tasa:false, ordenBsPrimero:true, unidad:'retención(es)', lineas:aplicarReclasCC('ret_cli',construirLineasRetencionesCliente())};
       case 'ret_prov':
-        return {...comunes, titulo:'Retenciones a Proveedores', primeraCol:'Proveedor', docLabel:'Nro Comp.', tasa:false, ordenBsPrimero:true, unidad:'comprobante(s)', lineas:construirLineasRetencionesProveedor()};
+        return {...comunes, titulo:'Retenciones a Proveedores', primeraCol:'Proveedor', docLabel:'Nro Comp.', tasa:false, ordenBsPrimero:true, unidad:'comprobante(s)', lineas:aplicarReclasCC('ret_prov',construirLineasRetencionesProveedor())};
       case 'deprec':
-        return {...comunes, titulo:'Depreciación de Activos Fijos', primeraCol:'Comprobante', docLabel:'Nro Doc', tasa:false, ordenBsPrimero:true, unidad:'mes(es)', lineas:construirLineasDepreciacion()};
+        return {...comunes, titulo:'Depreciación de Activos Fijos', primeraCol:'Comprobante', docLabel:'Nro Doc', tasa:false, ordenBsPrimero:true, unidad:'mes(es)', lineas:aplicarReclasCC('deprec',construirLineasDepreciacion())};
       case 'imp_enterar': {
         const lastDay = new Date(parseInt(impAnio,10), parseInt(impMes,10), 0).getDate();
         return { titulo:'Impuestos por Enterar', primeraCol:'Comprobante', docLabel:'Nro Doc', tasa:true, ordenBsPrimero:true, unidad:'impuesto(s)',
-          lineas:construirLineasImpuestosPorEnterar(),
+          lineas:aplicarReclasCC('imp_enterar',construirLineasImpuestosPorEnterar()),
           desde:`${impAnio}-${impMes}-01`, hasta:`${impAnio}-${impMes}-${String(lastDay).padStart(2,'0')}` };
       }
+      case 'ajustes':
+        return {...comunes, titulo:'Ajustes Contables', primeraCol:'Comprobante', docLabel:'Nro Comp.', tasa:true, ordenBsPrimero:true, unidad:'ajuste(s)', lineas:aplicarReclasCC('ajustes',construirLineasAjustes())};
       default: return null;
     }
   };
@@ -10880,6 +11094,7 @@ ${valoresHtml}
     { id:'ret_prov', label:'Retenciones a Proveedores', icon:'📤', activo:true },
     { id:'deprec', label:'Depreciaciones', icon:'📉', activo:true },
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
+    { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
   ];
   const activo = sub || 'banco';
 
@@ -10910,8 +11125,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <CeldaCuentaCC tabId='procura' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -10967,8 +11181,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-teal-600">{li===0?(<>{r.tipoNota&&<span className={`mr-1 px-1.5 py-0.5 rounded text-[8px] ${r.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoNota}</span>}{r.comprobante}</>):''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <CeldaCuentaCC tabId='ventas' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -11019,8 +11232,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-purple-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <CeldaCuentaCC tabId='ret_cli' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -11073,8 +11285,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <CeldaCuentaCC tabId='ret_prov' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -11128,8 +11339,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-stone-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <CeldaCuentaCC tabId='deprec' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -11159,6 +11369,7 @@ ${valoresHtml}
       const totalImpUSD = lineasImp.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       const faltaAE = lineasImp.some(r=>r.id.startsWith('AE-') && r.lineas.some(l=>!l.codigo));
       const faltaPP = lineasImp.some(r=>r.id.startsWith('PP-') && r.lineas.some(l=>!l.codigo));
+      const faltaAntIslr = lineasImp.some(r=>r.id.startsWith('ANT-ISLR-') && r.lineas.some(l=>!l.codigo));
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
@@ -11173,9 +11384,9 @@ ${valoresHtml}
             <p className="text-[10px] text-gray-400 ml-auto">{lineasImp.length} impuesto(s) · Total ${contFmt(totalImpUSD)}</p>
             <BotonesExportCC tabId="imp_enterar"/>
           </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Trae el cálculo de Actividad Económica y Protección de Pensiones del mes elegido, con las mismas cifras que Módulo de Impuestos → esas dos pestañas. Retenciones IVA/ISLR a proveedores y retenciones de clientes no van aquí — tienen sus propias pestañas en este módulo.</div>
-          {(faltaAE||faltaPP)&&(
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ {faltaAE&&faltaPP?'Actividad Económica y Protección de Pensiones no tienen':(faltaAE?'Actividad Económica no tiene':'Protección de Pensiones no tiene')} cuenta contable configurada — ve a Impuestos → Configuración para asignarlas.</div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Trae el cálculo de Actividad Económica, Protección de Pensiones y Anticipo ISLR (1% sobre la misma base de ventas del mes) — mismas cifras que Módulo de Impuestos. Retenciones IVA/ISLR a proveedores y retenciones de clientes no van aquí — tienen sus propias pestañas en este módulo.</div>
+          {(faltaAE||faltaPP||faltaAntIslr)&&(
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ {[faltaAE&&'Actividad Económica',faltaPP&&'Protección de Pensiones',faltaAntIslr&&'Anticipo ISLR'].filter(Boolean).join(', ')} no {[faltaAE,faltaPP,faltaAntIslr].filter(Boolean).length>1?'tienen':'tiene'} cuenta contable configurada — ve a Impuestos → Configuración para asignarla(s).</div>
           )}
           {lineasImp.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
@@ -11194,8 +11405,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-indigo-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                      <CeldaCuentaCC tabId='imp_enterar' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -11217,6 +11427,153 @@ ${valoresHtml}
               </table></div>
             </div>
           )}
+        </div>
+      );
+    }
+    if (activo === 'ajustes') {
+      const lineasAj = construirLineasAjustes();
+      const totalAjUSD = lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
+            <BotonesExportCC tabId="ajustes"/>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Comprobantes 100% manuales — no se derivan de ningún otro módulo. Úsalos para correcciones, reclasificaciones puntuales o cualquier asiento que no encaje en las otras pestañas. Soporta Bs. y $ por línea.</div>
+          {lineasAj.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin ajustes para este período</p>
+              <p className="text-[10px] mt-1">Usa "Nuevo Ajuste" para crear el primero</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'950px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta','T','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acción'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7&&i<=10?'text-right':i===4||i===11?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasAj.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <CeldaCuentaCC tabId='ajustes' compId={r.id} li={li} l={l}/>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?(r.tasa?contFmt(r.tasa):'—'):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className="px-3 py-2 text-center">{li===0&&(
+                        <div className="flex justify-center gap-1">
+                          <button onClick={()=>abrirEditarAjuste(r._raw)} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={13}/></button>
+                          <button onClick={()=>eliminarAjuste(r.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
+                        </div>
+                      )}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasAj.length} ajuste(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                  <td></td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
+          {/* ── Modal Nuevo/Editar Ajuste ── */}
+          {showAjusteModal && (()=>{
+            const totAj = totalesAjusteForm();
+            const cuadradoBs = Math.abs(totAj.dBs-totAj.hBs) < 0.01;
+            const cuadradoUsd = Math.abs(totAj.dUSD-totAj.hUSD) < 0.01;
+            return (
+              <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+                  <div className="px-6 py-4 flex justify-between items-center" style={{background:'#1e293b',borderBottom:'3px solid #f97316'}}>
+                    <h3 className="font-black text-white text-sm uppercase tracking-wide">🛠️ {ajusteEditando?'Editar Ajuste':'Nuevo Ajuste Contable'}</h3>
+                    <button onClick={()=>setShowAjusteModal(false)} className="text-white/60 hover:text-white"><X size={18}/></button>
+                  </div>
+                  <div className="p-5 space-y-4">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                        <input type="date" value={ajusteForm.fecha} onChange={e=>setAjusteForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                      <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Comprobante</label>
+                        <input value={ajusteForm.nroComprobante} onChange={e=>setAjusteForm(f=>({...f,nroComprobante:e.target.value.toUpperCase()}))} placeholder="AJ-0001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                      <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$ (opcional)</label>
+                        <input type="number" step="0.0001" value={ajusteForm.tasa} onChange={e=>setAjusteForm(f=>({...f,tasa:e.target.value}))} placeholder={String(settingsCC?.tasaBCV||'')} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+                    </div>
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label>
+                      <input value={ajusteForm.concepto} onChange={e=>setAjusteForm(f=>({...f,concepto:e.target.value}))} placeholder="Descripción del ajuste" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
+
+                    <div className="border-2 border-gray-100 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead><tr className="bg-gray-100"><th className="py-2 px-2 text-left text-[9px] font-black uppercase text-gray-500">Cuenta</th><th className="py-2 px-2 text-center text-[9px] font-black uppercase text-gray-500 w-14">D/H</th><th className="py-2 px-2 text-right text-[9px] font-black uppercase text-gray-500 w-28">Monto Bs.</th><th className="py-2 px-2 text-right text-[9px] font-black uppercase text-gray-500 w-24">Monto $</th><th className="w-8"></th></tr></thead>
+                        <tbody>
+                          {ajusteForm.lineas.map((l,idx)=>(
+                            <tr key={idx} className="border-b border-gray-50">
+                              <td className="py-1.5 px-2 relative">
+                                <input value={l.cuenta} onChange={e=>{actualizarLineaAjuste(idx,'cuenta',e.target.value);actualizarLineaAjuste(idx,'codigo','');setAjusteBusqCuentaIdx(idx);setAjusteBusqCuentaTxt(e.target.value);}}
+                                  onFocus={()=>{setAjusteBusqCuentaIdx(idx);setAjusteBusqCuentaTxt(l.cuenta);}}
+                                  placeholder="Buscar cuenta por código o nombre..." className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-orange-400"/>
+                                {l.codigo && <span className="text-[9px] font-mono text-blue-500">{l.codigo}</span>}
+                                {ajusteBusqCuentaIdx===idx && ajusteBusqCuentaTxt && (
+                                  <div className="absolute z-30 left-2 right-2 mt-1 bg-white border-2 border-orange-200 rounded-xl shadow-xl max-h-44 overflow-y-auto">
+                                    {(planCuentasC||[]).filter(c=>{
+                                      const q=ajusteBusqCuentaTxt.toUpperCase();
+                                      return (c.codigo||'').toUpperCase().includes(q)||(c.nombre||'').toUpperCase().includes(q);
+                                    }).slice(0,25).map(c=>(
+                                      <div key={c.id} onMouseDown={()=>{actualizarLineaAjuste(idx,'codigo',c.codigo||'');actualizarLineaAjuste(idx,'cuenta',c.nombre||'');setAjusteBusqCuentaIdx(-1);setAjusteBusqCuentaTxt('');}}
+                                        className="px-3 py-1.5 hover:bg-orange-50 cursor-pointer border-b border-gray-100 last:border-0 text-[10px]">
+                                        <span className="font-mono font-black text-orange-600">{c.codigo}</span> <span className="text-gray-600">— {c.nombre}</span>
+                                      </div>
+                                    ))}
+                                    {(planCuentasC||[]).filter(c=>{const q=ajusteBusqCuentaTxt.toUpperCase();return (c.codigo||'').toUpperCase().includes(q)||(c.nombre||'').toUpperCase().includes(q);}).length===0 &&
+                                      <div className="px-3 py-2 text-[10px] text-gray-400 font-bold text-center">Sin cuentas que coincidan</div>}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-1.5 px-2 text-center">
+                                <select value={l.tipo} onChange={e=>actualizarLineaAjuste(idx,'tipo',e.target.value)} className={`border-2 rounded-lg px-1.5 py-1 text-[11px] font-black outline-none ${l.tipo==='D'?'border-emerald-300 text-emerald-700':'border-red-300 text-red-600'}`}>
+                                  <option value="D">D</option><option value="H">H</option>
+                                </select>
+                              </td>
+                              <td className="py-1.5 px-2">
+                                <input type="number" step="0.01" value={l.montoBs} onChange={e=>actualizarLineaAjuste(idx,'montoBs',e.target.value)} className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-[11px] font-bold text-right outline-none focus:border-orange-400"/>
+                              </td>
+                              <td className="py-1.5 px-2">
+                                <input type="number" step="0.01" value={l.montoUSD} onChange={e=>actualizarLineaAjuste(idx,'montoUSD',e.target.value)} className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-[11px] font-bold text-right outline-none focus:border-orange-400"/>
+                              </td>
+                              <td className="py-1.5 px-1 text-center">
+                                {ajusteForm.lineas.length>2 && <button onClick={()=>quitarLineaAjuste(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button onClick={agregarLineaAjuste} className="text-[10px] font-black text-orange-600 hover:text-orange-800 flex items-center gap-1"><Plus size={13}/> Agregar línea</button>
+
+                    <div className={`rounded-xl p-3 text-[10px] font-bold flex flex-wrap gap-x-5 gap-y-1 items-center ${cuadradoBs&&cuadradoUsd?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>
+                      <span>Debe Bs. {contFmt(totAj.dBs)} · Haber Bs. {contFmt(totAj.hBs)}</span>
+                      <span>Debe $ {contFmt(totAj.dUSD)} · Haber $ {contFmt(totAj.hUSD)}</span>
+                      <span className="ml-auto font-black">{cuadradoBs&&cuadradoUsd?'✓ Cuadrado':'⚠ Descuadrado'}</span>
+                    </div>
+                  </div>
+                  <div className="px-5 pb-5 flex justify-end gap-3">
+                    <button onClick={()=>setShowAjusteModal(false)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+                    <button disabled={ajusteSaving} onClick={guardarAjuste} className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2"><Save size={13}/> {ajusteSaving?'Guardando...':(ajusteEditando?'Guardar Cambios':'Registrar Ajuste')}</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -11254,8 +11611,7 @@ ${valoresHtml}
                   <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                     <td className="px-3 py-2 font-mono font-black text-blue-600">{li===0?r.comprobante:''}</td>
                     <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                    <td className="px-3 py-2 font-mono text-blue-500">{l.codigo||'—'}</td>
-                    <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}>{l.cuenta||'—'}</td>
+                    <CeldaCuentaCC tabId={esBanco?'banco':'caja'} compId={r.id} li={li} l={l}/>
                     <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                     <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                     <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -11298,6 +11654,46 @@ ${valoresHtml}
         ))}
       </div>
       {contenido()}
+      {reclasificando && (()=>{
+        const filtradas = (planCuentasC||[]).filter(c=>{
+          const q=reclasBusq.toUpperCase();
+          return !q || (c.codigo||'').toUpperCase().includes(q) || (c.nombre||'').toUpperCase().includes(q);
+        }).slice(0,30);
+        return (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+              <div className="px-6 py-4 flex justify-between items-center" style={{background:'#581c87',borderBottom:'3px solid #a855f7'}}>
+                <h3 className="font-black text-white text-sm uppercase tracking-wide">🔀 Reclasificar Cuenta</h3>
+                <button onClick={()=>setReclasificando(null)} className="text-purple-200 hover:text-white"><X size={18}/></button>
+              </div>
+              <div className="p-5 space-y-3">
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-[11px]">
+                  <span className="text-purple-500 font-black uppercase text-[9px] block mb-0.5">Cuenta actual</span>
+                  <span className="font-mono text-purple-700 font-black">{reclasificando.codigoActual||'—'}</span> <span className="text-gray-700 font-bold">{reclasificando.cuentaActual||'—'}</span>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nueva cuenta contable</label>
+                  <input value={reclasBusq} onChange={e=>setReclasBusq(e.target.value)} placeholder="Buscar por código o nombre..." autoFocus
+                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/>
+                </div>
+                <div className="border-2 border-gray-100 rounded-xl max-h-56 overflow-y-auto">
+                  {filtradas.length===0?(
+                    <div className="p-4 text-center text-[10px] text-gray-400 font-bold">Sin cuentas que coincidan</div>
+                  ):filtradas.map(c=>(
+                    <div key={c.id} onClick={()=>guardarReclasificacion(c)} className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
+                      <span className="font-mono font-black text-purple-700">{c.codigo}</span> <span className="text-gray-700 font-bold uppercase">{c.nombre}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="px-5 pb-5 flex justify-between gap-3">
+                <button onClick={quitarReclasificacion} disabled={reclasSaving} className="px-4 py-2.5 text-red-500 hover:bg-red-50 rounded-xl text-xs font-black uppercase disabled:opacity-50">Quitar reclasificación</button>
+                <button onClick={()=>setReclasificando(null)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
