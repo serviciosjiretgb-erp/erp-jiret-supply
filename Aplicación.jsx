@@ -15580,6 +15580,10 @@ function App() {
         stats: ()=>({ s1:'Banco, Caja y más', s2:'Consolidado contable'}),
         chart:null
       },
+      hasAnyPerm('configuracion') && { tab:'plan_cuentas', icon:<FileText size={20}/>, title:'Plan de Cuentas', color:'#2563eb',
+        stats: ()=>({ s1:`${(planDeCuentas||[]).length} cuentas registradas`, s2:'Código, grupo y sub-grupo'}),
+        chart:null
+      },
       hasPerm('banco') && { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
         chart:null
@@ -15602,7 +15606,7 @@ function App() {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
       administracion:      ['ventas','banco','procura','impuestos'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
-      contabilidad:        ['comprobantes_contables'],
+      contabilidad:        ['comprobantes_contables','plan_cuentas'],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
       redes_portal:        [],
@@ -40294,6 +40298,129 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 };
 
 
+    // Plan de Cuentas — movido aquí desde Configuración (mismo estado, misma lógica,
+    // solo cambia desde dónde se accede: ahora tiene su propia tarjeta en Contabilidad).
+    const renderPlanDeCuentasModule = () => (
+      <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
+        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+           <div className="flex justify-between items-center mb-6 border-b pb-4">
+             <h2 className="text-xl font-black uppercase text-black flex items-center gap-3">
+               <FileText className="text-blue-500"/> Plan de Cuentas
+             </h2>
+             <div className="flex gap-2">
+               <button onClick={()=>{setPdcEditando(null);setPdcForm({codigo:'',nombre:'',grupo:'',subGrupo:''});setShowPDCForm(true);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-700"><Plus size={14}/> Agregar Cuenta</button>
+               <button onClick={()=>setShowPDCImport(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700"><ArrowDownToLine size={14}/> IMPORTAR TXT</button>
+               {planDeCuentas.length > 0 && <button onClick={()=>setDialog({title:'Limpiar Plan',text:'Eliminar TODAS las cuentas del plan? Esta accion es irreversible.',type:'confirm',onConfirm:async()=>{const b=writeBatch(db);planDeCuentas.forEach(p=>b.delete(getDocRef('planDeCuentas',p.id)));await b.commit();}})} className="bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><Trash2 size={14}/></button>}
+             </div>
+           </div>
+
+           {showPDCForm && (
+             <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 mb-6">
+               <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">{pdcEditando?'Editar Cuenta':'Agregar Cuenta'}</h3>
+               <div className="grid grid-cols-2 gap-3">
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Código</label>
+                   <input value={pdcForm.codigo} onChange={e=>setPdcForm(f=>({...f,codigo:e.target.value}))} placeholder="1.1.01.04.002" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta</label>
+                   <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo</label>
+                   {pdcForm.grupo==='__nuevo__'?(
+                     <input autoFocus value={pdcForm._grupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_grupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,grupo:f._grupoNuevo||''}))} placeholder="Escriba el grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
+                   ):(
+                     <select value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value,_grupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                       <option value="">— Seleccione grupo —</option>
+                       {[...new Set((planDeCuentas||[]).map(p=>p.grupo).filter(Boolean))].sort().map(g=><option key={g} value={g}>{g}</option>)}
+                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
+                     </select>
+                   )}
+                 </div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Sub-grupo</label>
+                   {pdcForm.subGrupo==='__nuevo__'?(
+                     <input autoFocus value={pdcForm._subGrupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_subGrupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,subGrupo:f._subGrupoNuevo||''}))} placeholder="Escriba el sub-grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
+                   ):(
+                     <select value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value,_subGrupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                       <option value="">— Seleccione sub-grupo —</option>
+                       {[...new Set((planDeCuentas||[]).filter(p=>!pdcForm.grupo||p.grupo===pdcForm.grupo).map(p=>p.subGrupo).filter(Boolean))].sort().map(sg=><option key={sg} value={sg}>{sg}</option>)}
+                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
+                     </select>
+                   )}
+                 </div>
+               </div>
+               <div className="flex gap-2 mt-4">
+                 <button onClick={()=>setShowPDCForm(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                 <button onClick={async()=>{
+                   if(!pdcForm.codigo||!pdcForm.nombre) return setDialog({title:'Aviso',text:'Código y Nombre son obligatorios.',type:'alert'});
+                   const id=pdcEditando?pdcEditando.id:pdcForm.codigo.replace(/\./g,'-');
+                   const {_grupoNuevo,_subGrupoNuevo,...pdcClean}=pdcForm;
+                   await setDoc(getDocRef('planDeCuentas',id),{...pdcClean,id});
+                   setShowPDCForm(false);setPdcEditando(null);
+                 }} className="bg-emerald-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700">{pdcEditando?'Guardar Cambios':'Agregar'}</button>
+               </div>
+             </div>
+           )}
+
+           {showPDCImport && (
+             <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6 mb-6">
+               <h3 className="text-sm font-black uppercase text-blue-800 mb-3">Importar Plan de Cuentas desde TXT</h3>
+               <p className="text-xs font-bold text-blue-600 mb-4">Formato requerido (separado por tabulaciones o pipes):<br/>
+                 <code className="bg-white px-2 py-1 rounded font-mono text-[10px]">Codigo | Nombre | Grupo | Sub-grupo | Cuenta | Subcuenta</code>
+               </p>
+               <div className="flex gap-3 items-center">
+                 <input type="file" accept=".txt,.csv,.tsv" onChange={e=>{ if(e.target.files[0]) handleImportPlanCuentasTXT(e.target.files[0]); }} className="flex-1 text-xs file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:font-black file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200" />
+                 <button onClick={()=>setShowPDCImport(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+               </div>
+             </div>
+           )}
+
+           <div className="mb-4 relative max-w-sm">
+             <Search className="absolute left-3 top-3 text-gray-400" size={16}/>
+             <input type="text" placeholder="Buscar cuenta..." value={pdcSearchTerm} onChange={e=>setPdcSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500" />
+           </div>
+
+           {planDeCuentas.length === 0 ? (
+             <div className="text-center py-16 text-gray-400">
+               <FileText size={48} className="mx-auto mb-4 opacity-30"/>
+               <p className="font-black text-xs uppercase">Plan de cuentas vacio</p>
+               <p className="text-xs mt-2">Importe un archivo TXT con el formato indicado</p>
+             </div>
+           ) : (
+             <div className="rounded-xl border border-gray-200 max-h-[500px] overflow-y-auto">
+               <table className="w-full text-xs text-left table-fixed">
+                 <thead className="bg-gray-100 border-b-2 border-gray-200 sticky top-0">
+                   <tr className="uppercase font-black text-[9px] text-gray-600 tracking-widest">
+                     <th className="py-2 px-3 border-r w-[14%]">Codigo</th>
+                     <th className="py-2 px-3 border-r w-[38%]">Nombre / Cuenta</th>
+                     <th className="py-2 px-3 border-r w-[18%]">Grupo</th>
+                     <th className="py-2 px-3 border-r w-[18%]">Sub-grupo</th>
+                     <th className="py-2 px-3 text-center w-[12%]">Accion</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-100">
+                   {planDeCuentas.filter(p => {
+                     const q = pdcSearchTerm.toUpperCase();
+                     return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q);
+                   }).map(p => (
+                     <tr key={p.id} className="hover:bg-gray-50">
+                       <td className="py-2 px-3 border-r font-black text-blue-600 font-mono text-[10px] break-words">{p.codigo}</td>
+                       <td className="py-2 px-3 border-r font-bold uppercase text-[10px] break-words whitespace-normal">{p.nombre}</td>
+                       <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.grupo}</td>
+                       <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.subGrupo}</td>
+                       <td className="py-2 px-3 text-center">
+                         <div className="flex justify-center gap-1">
+                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||''});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
+                           <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                         </div>
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+               <div className="px-4 py-2 bg-gray-50 border-t text-xs font-bold text-gray-500">{planDeCuentas.length} cuentas en el plan</div>
+             </div>
+           )}
+        </div>
+      </div>
+    );
+
     const renderConfiguracionModule = () => {
     try {
     if (!settings || !systemUsers) {
@@ -40771,122 +40898,6 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                 </tbody>
               </table>
            </div>
-        </div>
-        <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
-           <div className="flex justify-between items-center mb-6 border-b pb-4">
-             <h2 className="text-xl font-black uppercase text-black flex items-center gap-3">
-               <FileText className="text-blue-500"/> Plan de Cuentas
-             </h2>
-             <div className="flex gap-2">
-               <button onClick={()=>{setPdcEditando(null);setPdcForm({codigo:'',nombre:'',grupo:'',subGrupo:''});setShowPDCForm(true);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-700"><Plus size={14}/> Agregar Cuenta</button>
-               <button onClick={()=>setShowPDCImport(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700"><ArrowDownToLine size={14}/> IMPORTAR TXT</button>
-               {planDeCuentas.length > 0 && <button onClick={()=>setDialog({title:'Limpiar Plan',text:'Eliminar TODAS las cuentas del plan? Esta accion es irreversible.',type:'confirm',onConfirm:async()=>{const b=writeBatch(db);planDeCuentas.forEach(p=>b.delete(getDocRef('planDeCuentas',p.id)));await b.commit();}})} className="bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><Trash2 size={14}/></button>}
-             </div>
-           </div>
-
-           {showPDCForm && (
-             <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 mb-6">
-               <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">{pdcEditando?'Editar Cuenta':'Agregar Cuenta'}</h3>
-               <div className="grid grid-cols-2 gap-3">
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Código</label>
-                   <input value={pdcForm.codigo} onChange={e=>setPdcForm(f=>({...f,codigo:e.target.value}))} placeholder="1.1.01.04.002" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta</label>
-                   <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo</label>
-                   {pdcForm.grupo==='__nuevo__'?(
-                     <input autoFocus value={pdcForm._grupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_grupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,grupo:f._grupoNuevo||''}))} placeholder="Escriba el grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
-                   ):(
-                     <select value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value,_grupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
-                       <option value="">— Seleccione grupo —</option>
-                       {[...new Set((planDeCuentas||[]).map(p=>p.grupo).filter(Boolean))].sort().map(g=><option key={g} value={g}>{g}</option>)}
-                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
-                     </select>
-                   )}
-                 </div>
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Sub-grupo</label>
-                   {pdcForm.subGrupo==='__nuevo__'?(
-                     <input autoFocus value={pdcForm._subGrupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_subGrupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,subGrupo:f._subGrupoNuevo||''}))} placeholder="Escriba el sub-grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
-                   ):(
-                     <select value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value,_subGrupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
-                       <option value="">— Seleccione sub-grupo —</option>
-                       {[...new Set((planDeCuentas||[]).filter(p=>!pdcForm.grupo||p.grupo===pdcForm.grupo).map(p=>p.subGrupo).filter(Boolean))].sort().map(sg=><option key={sg} value={sg}>{sg}</option>)}
-                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
-                     </select>
-                   )}
-                 </div>
-               </div>
-               <div className="flex gap-2 mt-4">
-                 <button onClick={()=>setShowPDCForm(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
-                 <button onClick={async()=>{
-                   if(!pdcForm.codigo||!pdcForm.nombre) return setDialog({title:'Aviso',text:'Código y Nombre son obligatorios.',type:'alert'});
-                   const id=pdcEditando?pdcEditando.id:pdcForm.codigo.replace(/\./g,'-');
-                   const {_grupoNuevo,_subGrupoNuevo,...pdcClean}=pdcForm;
-                   await setDoc(getDocRef('planDeCuentas',id),{...pdcClean,id});
-                   setShowPDCForm(false);setPdcEditando(null);
-                 }} className="bg-emerald-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700">{pdcEditando?'Guardar Cambios':'Agregar'}</button>
-               </div>
-             </div>
-           )}
-
-           {showPDCImport && (
-             <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6 mb-6">
-               <h3 className="text-sm font-black uppercase text-blue-800 mb-3">Importar Plan de Cuentas desde TXT</h3>
-               <p className="text-xs font-bold text-blue-600 mb-4">Formato requerido (separado por tabulaciones o pipes):<br/>
-                 <code className="bg-white px-2 py-1 rounded font-mono text-[10px]">Codigo | Nombre | Grupo | Sub-grupo | Cuenta | Subcuenta</code>
-               </p>
-               <div className="flex gap-3 items-center">
-                 <input type="file" accept=".txt,.csv,.tsv" onChange={e=>{ if(e.target.files[0]) handleImportPlanCuentasTXT(e.target.files[0]); }} className="flex-1 text-xs file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:font-black file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200" />
-                 <button onClick={()=>setShowPDCImport(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
-               </div>
-             </div>
-           )}
-
-           <div className="mb-4 relative max-w-sm">
-             <Search className="absolute left-3 top-3 text-gray-400" size={16}/>
-             <input type="text" placeholder="Buscar cuenta..." value={pdcSearchTerm} onChange={e=>setPdcSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500" />
-           </div>
-
-           {planDeCuentas.length === 0 ? (
-             <div className="text-center py-16 text-gray-400">
-               <FileText size={48} className="mx-auto mb-4 opacity-30"/>
-               <p className="font-black text-xs uppercase">Plan de cuentas vacio</p>
-               <p className="text-xs mt-2">Importe un archivo TXT con el formato indicado</p>
-             </div>
-           ) : (
-             <div className="rounded-xl border border-gray-200 max-h-[500px] overflow-y-auto">
-               <table className="w-full text-xs text-left table-fixed">
-                 <thead className="bg-gray-100 border-b-2 border-gray-200 sticky top-0">
-                   <tr className="uppercase font-black text-[9px] text-gray-600 tracking-widest">
-                     <th className="py-2 px-3 border-r w-[14%]">Codigo</th>
-                     <th className="py-2 px-3 border-r w-[38%]">Nombre / Cuenta</th>
-                     <th className="py-2 px-3 border-r w-[18%]">Grupo</th>
-                     <th className="py-2 px-3 border-r w-[18%]">Sub-grupo</th>
-                     <th className="py-2 px-3 text-center w-[12%]">Accion</th>
-                   </tr>
-                 </thead>
-                 <tbody className="divide-y divide-gray-100">
-                   {planDeCuentas.filter(p => {
-                     const q = pdcSearchTerm.toUpperCase();
-                     return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q);
-                   }).map(p => (
-                     <tr key={p.id} className="hover:bg-gray-50">
-                       <td className="py-2 px-3 border-r font-black text-blue-600 font-mono text-[10px] break-words">{p.codigo}</td>
-                       <td className="py-2 px-3 border-r font-bold uppercase text-[10px] break-words whitespace-normal">{p.nombre}</td>
-                       <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.grupo}</td>
-                       <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.subGrupo}</td>
-                       <td className="py-2 px-3 text-center">
-                         <div className="flex justify-center gap-1">
-                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||''});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
-                           <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                         </div>
-                       </td>
-                     </tr>
-                   ))}
-                 </tbody>
-               </table>
-               <div className="px-4 py-2 bg-gray-50 border-t text-xs font-bold text-gray-500">{planDeCuentas.length} cuentas en el plan</div>
-             </div>
-           )}
         </div>
         {/* ── IMPORTAR INVENTARIO INICIAL ── */}
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
@@ -44698,6 +44709,14 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
           {/* ── CONTABILIDAD — COMPROBANTES CONTABLES ── */}
            {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')}/>}
+
+          {/* ── CONTABILIDAD — PLAN DE CUENTAS (movido desde Configuración) ── */}
+           {activeTab === 'plan_cuentas' && hasAnyPerm('configuracion') && (
+             <div className="p-4 sm:p-6">
+               <button onClick={()=>setActiveTab('home')} className="mb-4 flex items-center gap-1.5 text-gray-500 hover:text-gray-800 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
+               {renderPlanDeCuentasModule()}
+             </div>
+           )}
 
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
