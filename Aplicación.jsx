@@ -10279,6 +10279,7 @@ function ComprobantesContablesApp({ onBack }) {
         || clientesC.find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
         || provsC.find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
       const [codTercero, nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+      const cuentaGenerica=(patron)=>{const c2=(planCuentasC||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
       let contra;
       if (tercero && (codTercero||nomTercero)) {
         contra = { codigo: codTercero||tercero.cuentaContableId||'', cuenta: nomTercero||tercero.razonSocial||tercero.nombre||'' };
@@ -10286,7 +10287,9 @@ function ComprobantesContablesApp({ onBack }) {
         const l = m.lineasContra[0];
         contra = { codigo: l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta: l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'' };
       } else {
-        contra = { codigo:'', cuenta: m.grupoCobroId?'Cuentas por Cobrar':m.grupoPagoId?'Cuentas por Pagar':'Contrapartida (origen no identificado)' };
+        const esCobro=!!m.grupoCobroId, esPago=!!m.grupoPagoId;
+        const g=esCobro?cuentaGenerica(/(cuentas?\s+por\s+cobrar|cxc|client)/i):esPago?cuentaGenerica(/(cuentas?\s+por\s+pagar|cxp|proveedor)/i):null;
+        contra = { codigo: g?g.codigo:'', cuenta: g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)') };
       }
       const lineaContra = { codigo: contra.codigo, cuenta: contra.cuenta, tipo: isIng?'H':'D', dBs: isIng?0:montoBs, hBs: isIng?montoBs:0, dUSD: isIng?0:montoUSD, hUSD: isIng?montoUSD:0 };
       return { id: m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas: [lineaPropia, lineaContra] };
