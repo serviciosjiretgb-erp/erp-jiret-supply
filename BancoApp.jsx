@@ -2293,7 +2293,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // 2. CUENTAS BANCARIAS
   // ══════════════════════════════════════════════════════════════════════
-  const CuentasView = () => {
+  const CuentasViewRef = React.useRef();
+  if (!CuentasViewRef.current) {
+  CuentasViewRef.current = () => {
     const [modal, setModal]     = useState(false);
     const [editando, setEdit]   = useState(null);
     const [certCuenta, setCert] = useState(null);
@@ -2706,8 +2708,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const CuentasView = CuentasViewRef.current;
 
-  const MovimientosView = ({ ventasOnlyIngreso = false }) => {
+  // FIX CRÍTICO: MovimientosView se define como función anidada dentro de BancoApp. Cada vez que
+  // BancoApp se re-renderiza (lo cual pasa cada pocos segundos por cualquiera de sus múltiples
+  // onSnapshot — cuentas, movimientos, clientes, facturas, etc.), esta función se recreaba con una
+  // referencia NUEVA, y React la trataba como un componente DISTINTO: la desmontaba y volvía a
+  // montar, perdiendo TODO su estado interno (el modal "Nuevo Movimiento" abierto, lo que llevaba
+  // escrito en el formulario, todo). Por eso el modal "se cerraba solo". Con useRef, la función
+  // se crea UNA sola vez y su referencia queda fija — BancoApp puede re-renderizar todas las veces
+  // que quiera sin que React vuelva a montar este componente (mismo problema ya resuelto antes
+  // para ConciliacionView, aquí con una solución más simple ya que no hace falta sacarlo del todo).
+  const MovimientosViewRef = React.useRef();
+  if (!MovimientosViewRef.current) {
+  MovimientosViewRef.current = ({ ventasOnlyIngreso = false }) => {
     const [monedaVista, setMonedaVista] = useState('USD');
     const [searchTercero, setSearchTercero] = useState('');
     const [searchBanco,   setSearchBanco]   = useState('');
@@ -4236,11 +4251,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const MovimientosView = MovimientosViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 4. CAJA — CUENTAS DE CAJA
   // ══════════════════════════════════════════════════════════════════════
-  const CuentasCajaView = () => {
+  const CuentasCajaViewRef = React.useRef();
+  if (!CuentasCajaViewRef.current) {
+  CuentasCajaViewRef.current = () => {
     const [modal, setModal]   = useState(false);
     const [editando, setEdit] = useState(null);
     const [busy, setBusy]     = useState(false);
@@ -4457,6 +4476,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const CuentasCajaView = CuentasCajaViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // CUENTAS POR PAGAR RELACIONADAS — Terceros (alquileres, servicios, etc.)
@@ -4467,7 +4488,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     return Number(t.saldoInicial||0) + efecto;
   };
 
-  const TercerosRelacionadosView = () => {
+  const TercerosRelacionadosViewRef = React.useRef();
+  if (!TercerosRelacionadosViewRef.current) {
+  TercerosRelacionadosViewRef.current = () => {
     const [modal, setModal]   = useState(false);
     const [editando, setEdit] = useState(null);
     const [busy, setBusy]     = useState(false);
@@ -4632,6 +4655,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const TercerosRelacionadosView = TercerosRelacionadosViewRef.current;
 
   const CxPRelacionadasView = () => {
     const [filtro,setFiltro]=useState('');
@@ -4761,7 +4786,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     </div>
   );
 
-  const EstadoCuentaRelacionadosView = () => {
+  const EstadoCuentaRelacionadosViewRef = React.useRef();
+  if (!EstadoCuentaRelacionadosViewRef.current) {
+  EstadoCuentaRelacionadosViewRef.current = () => {
     const [filtro,setFiltro] = useState('');
     const [desde,setDesde] = useState('');
     const [hasta,setHasta] = useState('');
@@ -4934,12 +4961,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const EstadoCuentaRelacionadosView = EstadoCuentaRelacionadosViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 4. CAJA — OPERACIONES DE EFECTIVO
 
   // ══════════════════════════════════════════════════════════════════════
-  const CajaOpView = () => {
+  // Mismo problema y misma solución que en MovimientosView (ver comentario ahí arriba): sin esto,
+  // el modal "Nuevo Movimiento" de Caja también se cerraba solo cada vez que BancoApp re-renderizaba.
+  const CajaOpViewRef = React.useRef();
+  if (!CajaOpViewRef.current) {
+  CajaOpViewRef.current = () => {
     try {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
@@ -6052,6 +6085,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       );
     }
   };
+  }
+  const CajaOpView = CajaOpViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 5a-bis. LIMPIAR DUPLICADOS DE CAJA (cobros/pagos que quedaron registrados
@@ -6175,8 +6210,139 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   };
 
   // ══════════════════════════════════════════════════════════════════════
-  // 5b. RELACIÓN DE VALES (dinero en caja aún no recibido físicamente)
+  // 5c. REPARAR TRASLADOS HISTÓRICOS — traslados de fondo (Banco→Banco,
+  // Banco→Caja, Caja→Banco, Caja→Caja) registrados ANTES de que el lado
+  // destino generara su propio asiento contable con Traslados de Fondos.
+  // Es 100% ADITIVO: solo CREA el asiento que faltaba, nunca borra ni
+  // modifica ningún asiento ya existente (el lado origen no se toca).
   // ══════════════════════════════════════════════════════════════════════
+  const RepararTrasladosViewRef = React.useRef();
+  if (!RepararTrasladosViewRef.current) {
+  RepararTrasladosViewRef.current = () => {
+    const [selec, setSelec] = useState({});
+    const [busy, setBusy] = useState(false);
+    const [pwd, setPwd] = useState('');
+    const [pwdErr, setPwdErr] = useState(false);
+    const [confirmando, setConfirmando] = useState(false);
+    const [hecho, setHecho] = useState(0);
+
+    const ctaTrasladosObj = (contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+    const codTraslados = ctaTrasladosObj?String(ctaTrasladosObj.codigo||ctaTrasladosObj.id||''):'1.1.01.02.012';
+    const nomTraslados = ctaTrasladosObj?ctaTrasladosObj.nombre:'Traslados de Fondos';
+
+    // Candidato = movimiento de Ingreso, sin asientoContableId propio, cuyo concepto coincide
+    // con el texto que generaban las versiones viejas del traslado ("Transferencia recibida
+    // desde..." / "Traslado recibido desde...", con o sin mayúsculas).
+    const esCandidato = m => m.tipo==='Ingreso' && !m.asientoContableId && /^(traslado|transferencia) recibid[oa] desde/i.test(m.concepto||'');
+    const candidatosBanco = useMemo(()=>(movBanco||[]).filter(esCandidato).map(m=>{
+      const cta=cuentas.find(c=>c.id===m.cuentaId);
+      return {...m, _origen:'banco', _ctaCod:cta?.cuentaContableCod||'', _ctaNom:cta?.cuentaContableNom||cta?.banco||m.cuentaNombre||'—'};
+    }),[movBanco,cuentas]);
+    const candidatosCaja = useMemo(()=>(movCaja||[]).filter(esCandidato).map(m=>{
+      const c=cajas.find(x=>x.id===m.cajaId);
+      return {...m, _origen:'caja', _ctaCod:c?.cuentaContableCod||'', _ctaNom:c?.cuentaContableNom||c?.nombre||m.cajaNombre||'—'};
+    }),[movCaja,cajas]);
+    const candidatos = [...candidatosBanco,...candidatosCaja].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+
+    const seleccionados = candidatos.filter(c=>selec[c.id]);
+    const totalUSD = seleccionados.reduce((s,c)=>s+Number(c.montoUSD||0),0);
+
+    const ejecutarReparacion = async()=>{
+      if(!await validarClaveAdmin(pwd)){ setPwdErr(true); setTimeout(()=>setPwdErr(false),1500); return; }
+      setBusy(true);
+      try{
+        const batch=writeBatch(_bancoDB);
+        seleccionados.forEach(m=>{
+          const asientoId=bancoGid();
+          const montoBs=Number(m.montoBs||0), montoUSD=Number(m.montoUSD||0);
+          const tasa=Number(m.tasa)||1;
+          const conc=m.concepto||'';
+          batch.set(getDocRef('cont_asientos',asientoId),{
+            id:asientoId, comprobante:`CB-${(m.fecha||'').substring(0,7).replace('-','')}-${m.id.slice(-4).toUpperCase()}`,
+            numero:`CB-${(m.fecha||'').substring(0,7).replace('-','')}-${m.id.slice(-4).toUpperCase()}`,
+            mes:(m.fecha||'').substring(5,7)+'/'+(m.fecha||'').substring(0,4), fecha:m.fecha,
+            tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:m.referencia||'',
+            descripcion:conc.toUpperCase(), tasa, niif:false, efectivo:m._origen==='caja',
+            modulo: m._origen==='caja'?'Caja':'Bancos',
+            movimientoBancoId: m._origen==='caja'?'':m.id, movimientoCajaId: m._origen==='caja'?m.id:'',
+            lineas:[
+              {codigo:m._ctaCod,cuenta:m._ctaNom,tipoLinea:'D',nroDoc:m.referencia||'',concepto:conc,tasa,debeBs:montoBs,haberBs:0,debeUSD:montoUSD,haberUSD:0},
+              {codigo:codTraslados,cuenta:nomTraslados,tipoLinea:'H',nroDoc:m.referencia||'',concepto:conc,tasa,debeBs:0,haberBs:montoBs,debeUSD:0,haberUSD:montoUSD},
+            ],
+            totalDebeBs:montoBs, totalHaberBs:montoBs, totalDebeUSD:montoUSD, totalHaberUSD:montoUSD,
+            ts:serverTimestamp(), reparadoRetroactivamente:true,
+          });
+          batch.update(getDocRef(m._origen==='caja'?'caja_movimientos':'banco_movimientos', m.id), {asientoContableId:asientoId});
+        });
+        await batch.commit();
+        setHecho(seleccionados.length); setConfirmando(false); setPwd(''); setSelec({});
+      } finally { setBusy(false); }
+    };
+
+    return (
+      <div>
+        <div className="mb-6">
+          <h2 className="text-xl font-black uppercase text-slate-900 flex items-center gap-2"><AlertTriangle size={18} className="text-amber-500"/> Reparar Traslados Históricos</h2>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Traslados de fondo recibidos ANTES de que existiera el asiento de destino con Traslados de Fondos. Solo CREA el asiento que faltaba — no borra ni modifica nada existente. Nada viene marcado por defecto.</p>
+        </div>
+
+        {hecho>0&&(
+          <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 mb-5 flex items-center gap-3">
+            <CheckCircle size={20} className="text-emerald-500"/>
+            <p className="text-sm font-black text-emerald-700">{hecho} traslado(s) reparado(s) correctamente.</p>
+          </div>
+        )}
+
+        {candidatos.length===0?(
+          <BEmptyState icon={CheckCircle} title="Nada que reparar" desc="No se encontraron traslados recibidos sin asiento de destino"/>
+        ):(
+          <>
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden mb-4">
+              <table className="w-full">
+                <thead><tr><BTh/><BTh>Fecha</BTh><BTh>Origen</BTh><BTh>Cuenta Destino</BTh><BTh>Concepto</BTh><BTh right>Monto</BTh></tr></thead>
+                <tbody>
+                  {candidatos.map(c=>(
+                    <tr key={c.id} className="hover:bg-slate-50">
+                      <BTd><input type="checkbox" checked={!!selec[c.id]} onChange={()=>setSelec(p=>({...p,[c.id]:!p[c.id]}))} className="w-4 h-4 accent-orange-500"/></BTd>
+                      <BTd>{bancoDd(c.fecha)}</BTd>
+                      <BTd><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${c._origen==='banco'?'bg-blue-100 text-blue-700':'bg-emerald-100 text-emerald-700'}`}>{c._origen}</span></BTd>
+                      <BTd className="font-black">{c._ctaNom}</BTd>
+                      <BTd className="max-w-[280px] truncate" title={c.concepto}>{c.concepto}</BTd>
+                      <BTd right mono className="font-black text-emerald-600">${bancoFmt(c.montoUSD)}</BTd>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between bg-slate-900 rounded-xl p-4">
+              <span className="text-white text-xs font-black uppercase">{seleccionados.length} de {candidatos.length} seleccionado(s) · ${bancoFmt(totalUSD)}</span>
+              <button disabled={seleccionados.length===0} onClick={()=>setConfirmando(true)} className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600 disabled:opacity-40">Reparar Seleccionados</button>
+            </div>
+          </>
+        )}
+
+        {confirmando&&(
+          <BModal open={true} onClose={()=>{setConfirmando(false);setPwd('');setPwdErr(false);}} title="Confirmar reparación"
+            footer={<><BBo onClick={()=>{setConfirmando(false);setPwd('');}}>Cancelar</BBo><BBg onClick={ejecutarReparacion} disabled={busy}>{busy?'Reparando...':'Confirmar'}</BBg></>}>
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+                <AlertTriangle size={24} className="text-amber-500 mx-auto mb-2"/>
+                <p className="font-black text-slate-800">Se creará el asiento de destino para {seleccionados.length} traslado(s)</p>
+                <p className="text-xs text-slate-500 mt-1">Total: ${bancoFmt(totalUSD)} — esta acción no se puede deshacer</p>
+              </div>
+              <BFG label="Clave de administrador">
+                <input type="password" className={`${inp} ${pwdErr?'border-red-500 bg-red-50':''}`} value={pwd} onChange={e=>setPwd(e.target.value)} placeholder="Su contraseña de usuario" onKeyDown={e=>e.key==='Enter'&&ejecutarReparacion()}/>
+                {pwdErr&&<p className="text-red-500 text-[10px] font-black mt-1">Clave incorrecta</p>}
+              </BFG>
+            </div>
+          </BModal>
+        )}
+      </div>
+    );
+  };
+  }
+  const RepararTrasladosView = RepararTrasladosViewRef.current;
+
   // ══════════════════════════════════════════════════════════════════════
   // RESUMEN DE OPERACIONES BANCO-CAJA — consolidado multimoneda con tasa
   // manual editable, categorizado igual que el resto de selectores, más
@@ -6445,7 +6611,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     );
   };
 
-  const ValesView = () => {
+  const ValesViewRef = React.useRef();
+  if (!ValesViewRef.current) {
+  ValesViewRef.current = () => {
     const [modal,setModal]=useState(false);
     const [detalle,setDetalle]=useState(null);
     const [busy,setBusy]=useState(false);
@@ -6627,11 +6795,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const ValesView = ValesViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 5. ARQUEO DE CAJA
   // ══════════════════════════════════════════════════════════════════════
-  const ArqueoCajaView = () => {
+  const ArqueoCajaViewRef = React.useRef();
+  if (!ArqueoCajaViewRef.current) {
+  ArqueoCajaViewRef.current = () => {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
     const [cantidades, setCants] = useState({});
@@ -6766,6 +6938,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  }
+  const ArqueoCajaView = ArqueoCajaViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 6. CONCILIACIÓN BANCARIA
@@ -6852,7 +7026,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // 9. TASAS
   // ══════════════════════════════════════════════════════════════════════
-  const TasasView = () => {
+  const TasasViewRef = React.useRef();
+  if (!TasasViewRef.current) {
+  TasasViewRef.current = () => {
     const [modal,setModal]=useState(false);const [busy,setBusy]=useState(false);
     const [editando,setEditando]=useState(null);
     const initTF=()=>({fecha:getTodayDate(),modulo:'Todos',moneda:'USD',tasaRef:'',fuente:'Oficial / BCV'});
@@ -6907,6 +7083,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </BModal>
     </div>);
   };
+  }
+  const TasasView = TasasViewRef.current;
 
   // ── NAV ────────────────────────────────────────────────────────────────────
   const RepLibroDiarioView = ({ tipo = 'banco' }) => {
@@ -7644,7 +7822,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_caja',  label:'General de Caja',  icon:PiggyBank},
                                                     {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText},
                                                     {id:'rpt_libro_caja',label:'Libro Diario General',icon:BookOpen}] },
-    { group:'Config.',     color:'#64748b', items:[{id:'limpiar_dup',   label:'Limpiar Duplicados',icon:AlertTriangle}] },
+    { group:'Config.',     color:'#64748b', items:[{id:'limpiar_dup',   label:'Limpiar Duplicados',icon:AlertTriangle},
+                                                    {id:'reparar_trasl', label:'Reparar Traslados',  icon:CheckCircle}] },
   ];
   const navGroupsCxP = [
     { group:'Terceros',    color:'#f97316', items:[{id:'terceros_rel', label:'Terceros',            icon:Users},
@@ -7668,7 +7847,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     tasas:<TasasView/>,
     terceros_rel:<TercerosRelacionadosView/>, cxp_rel:<CxPRelacionadasView/>,
     hist_pago_rel:<HistorialPagoRelacionadosView/>, edo_cta_rel:<EstadoCuentaRelacionadosView/>,
-    limpiar_dup:<LimpiarDuplicadosCajaView/>
+    limpiar_dup:<LimpiarDuplicadosCajaView/>,
+    reparar_trasl:<RepararTrasladosView/>,
   };
 
   // ── Portal selector — pantalla de bienvenida ──────────────────────
