@@ -4156,12 +4156,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                             const tasaDestinoPrev=Number(form.tasaDestino)||tasa;
                             const comBs=Math.abs(bsV-(usdV*tasaDestinoPrev));
                             const comUSD=tasa>0?comBs/tasa:0;
-                            lines.push({cod:dCod,nom:cuentaDest.banco,dBs:bsV-comBs,hBs:0,dU:usdV-comUSD,hU:0,color:'text-amber-400'});
+                            const netoBsPrev=bsV-comBs, netoUsdPrev=usdV-comUSD;
+                            const ctaTrasladosPrev=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+                            const codTrasladosPrev=ctaTrasladosPrev?String(ctaTrasladosPrev.codigo||ctaTrasladosPrev.id||''):'1.1.01.02.012';
+                            const nomTrasladosPrev=ctaTrasladosPrev?ctaTrasladosPrev.nombre:'Traslados de Fondos';
+                            // Se muestran los DOS asientos por separado — el mismo par que se va a
+                            // guardar: Origen (D Traslados / H Banco Origen) y Destino (D Banco
+                            // Destino / H Traslados), en vez de nombrar directamente al otro banco.
+                            lines.push({grupo:`① Asiento Origen — ${bancoNom}`,cod:codTrasladosPrev,nom:nomTrasladosPrev,dBs:netoBsPrev,hBs:0,dU:netoUsdPrev,hU:0,color:'text-amber-400'});
                             lines.push({cod:bancoCod,nom:bancoNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
                             if(comUSD>0.005){
                               const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId);
                               lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
                             }
+                            lines.push({grupo:`② Asiento Destino — ${cuentaDest.banco}`,cod:dCod,nom:cuentaDest.banco,dBs:netoBsPrev,hBs:0,dU:netoUsdPrev,hU:0,color:'text-emerald-400'});
+                            lines.push({cod:codTrasladosPrev,nom:nomTrasladosPrev,dBs:0,hBs:netoBsPrev,dU:0,hU:netoUsdPrev,color:'text-amber-400'});
                           } else if(form.tipo==='Nota de Débito'){
                             const aj=contCuentas.find(c=>c.id===form.cuentaAjusteId);
                             if(aj)lines.push({cod:String(aj.codigo),nom:aj.nombre,dBs:bsV,hBs:0,dU:usdV,hU:0,color:'text-orange-400'});
@@ -4180,15 +4189,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                             });
                           }
                           return lines.map((l,i)=>(
-                            <tr key={i} className="border-b border-slate-800/50">
-                              <td className="py-2">
-                                <span className={`${l.color} block truncate max-w-[120px]`}>{l.cod&&<span className="text-blue-400 mr-1">{l.cod}</span>}{l.nom}</span>
-                              </td>
-                              <td className="text-right px-1 font-bold">{l.dBs>0?l.dBs.toFixed(2):''}</td>
-                              <td className="text-right px-1 text-slate-500">{l.hBs>0?l.hBs.toFixed(2):''}</td>
-                              <td className="text-right px-1 font-bold text-emerald-400">{l.dU>0?l.dU.toFixed(2):''}</td>
-                              <td className="text-right px-1 text-emerald-800">{l.hU>0?l.hU.toFixed(2):''}</td>
-                            </tr>
+                            <React.Fragment key={i}>
+                              {l.grupo && (
+                                <tr><td colSpan={5} className={`pt-3 pb-1 text-[8px] font-black uppercase tracking-widest ${i===0?'':'border-t border-slate-700'} text-slate-400`}>{l.grupo}</td></tr>
+                              )}
+                              <tr className="border-b border-slate-800/50">
+                                <td className="py-2">
+                                  <span className={`${l.color} block truncate max-w-[120px]`}>{l.cod&&<span className="text-blue-400 mr-1">{l.cod}</span>}{l.nom}</span>
+                                </td>
+                                <td className="text-right px-1 font-bold">{l.dBs>0?l.dBs.toFixed(2):''}</td>
+                                <td className="text-right px-1 text-slate-500">{l.hBs>0?l.hBs.toFixed(2):''}</td>
+                                <td className="text-right px-1 font-bold text-emerald-400">{l.dU>0?l.dU.toFixed(2):''}</td>
+                                <td className="text-right px-1 text-emerald-800">{l.hU>0?l.hU.toFixed(2):''}</td>
+                              </tr>
+                            </React.Fragment>
                           ));
                         })()}
                       </tbody>
@@ -5948,12 +5962,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                             const tasaDestinoPrev=Number(form.tasaDestino)||tasa;
                             const comBs=Math.abs(bsV-(usdV*tasaDestinoPrev));
                             const comUSD=tasa>0?comBs/tasa:0;
-                            lines.push({cod:dCod,nom:cuentaDest.banco,dBs:bsV-comBs,hBs:0,dU:usdV-comUSD,hU:0,color:'text-amber-400'});
+                            const netoBsPrev=bsV-comBs, netoUsdPrev=usdV-comUSD;
+                            const ctaTrasladosPrev=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+                            const codTrasladosPrev=ctaTrasladosPrev?String(ctaTrasladosPrev.codigo||ctaTrasladosPrev.id||''):'1.1.01.02.012';
+                            const nomTrasladosPrev=ctaTrasladosPrev?ctaTrasladosPrev.nombre:'Traslados de Fondos';
+                            // Mismo criterio que Banco: se muestran los DOS asientos que en
+                            // realidad se van a guardar — Origen (D Traslados / H Caja Origen) y
+                            // Destino (D Banco/Caja Destino / H Traslados) — no el otro banco directo.
+                            lines.push({grupo:`① Asiento Origen — ${cajaNom}`,cod:codTrasladosPrev,nom:nomTrasladosPrev,dBs:netoBsPrev,hBs:0,dU:netoUsdPrev,hU:0,color:'text-amber-400'});
                             lines.push({cod:cajaCod,nom:cajaNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
                             if(comUSD>0.005){
                               const ctaCom=contCuentas.find(c=>c.id===form.comisionCtaId);
                               lines.push({cod:ctaCom?String(ctaCom.codigo):'',nom:ctaCom?ctaCom.nombre:'Rebancarización',dBs:comBs,hBs:0,dU:comUSD,hU:0,color:'text-orange-300'});
                             }
+                            lines.push({grupo:`② Asiento Destino — ${cuentaDest.banco}`,cod:dCod,nom:cuentaDest.banco,dBs:netoBsPrev,hBs:0,dU:netoUsdPrev,hU:0,color:'text-emerald-400'});
+                            lines.push({cod:codTrasladosPrev,nom:nomTrasladosPrev,dBs:0,hBs:netoBsPrev,dU:0,hU:netoUsdPrev,color:'text-amber-400'});
                           } else if(form.tipo==='Nota de Débito'){
                             const aj=contCuentas.find(c=>c.id===form.cuentaAjusteId);
                             if(aj)lines.push({cod:String(aj.codigo),nom:aj.nombre,dBs:bsV,hBs:0,dU:usdV,hU:0,color:'text-orange-400'});
@@ -5972,15 +5995,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                             });
                           }
                           return lines.map((l,i)=>(
-                            <tr key={i} className="border-b border-slate-800/50">
-                              <td className="py-2">
-                                <span className={`${l.color} block truncate max-w-[120px]`}>{l.cod&&<span className="text-blue-400 mr-1">{l.cod}</span>}{l.nom}</span>
-                              </td>
-                              <td className="text-right px-1 font-bold">{l.dBs>0?l.dBs.toFixed(2):''}</td>
-                              <td className="text-right px-1 text-slate-500">{l.hBs>0?l.hBs.toFixed(2):''}</td>
-                              <td className="text-right px-1 font-bold text-emerald-400">{l.dU>0?l.dU.toFixed(2):''}</td>
-                              <td className="text-right px-1 text-emerald-800">{l.hU>0?l.hU.toFixed(2):''}</td>
-                            </tr>
+                            <React.Fragment key={i}>
+                              {l.grupo && (
+                                <tr><td colSpan={5} className={`pt-3 pb-1 text-[8px] font-black uppercase tracking-widest ${i===0?'':'border-t border-slate-700'} text-slate-400`}>{l.grupo}</td></tr>
+                              )}
+                              <tr className="border-b border-slate-800/50">
+                                <td className="py-2">
+                                  <span className={`${l.color} block truncate max-w-[120px]`}>{l.cod&&<span className="text-blue-400 mr-1">{l.cod}</span>}{l.nom}</span>
+                                </td>
+                                <td className="text-right px-1 font-bold">{l.dBs>0?l.dBs.toFixed(2):''}</td>
+                                <td className="text-right px-1 text-slate-500">{l.hBs>0?l.hBs.toFixed(2):''}</td>
+                                <td className="text-right px-1 font-bold text-emerald-400">{l.dU>0?l.dU.toFixed(2):''}</td>
+                                <td className="text-right px-1 text-emerald-800">{l.hU>0?l.hU.toFixed(2):''}</td>
+                              </tr>
+                            </React.Fragment>
                           ));
                         })()}
                       </tbody>
@@ -6158,6 +6186,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   const ResumenOperacionesView = () => {
     const [tasaManual, setTasaManual] = useState(String(tasaActiva||''));
+    const [tasaBinance, setTasaBinance] = useState('');
+    const [tasaIntervencion, setTasaIntervencion] = useState('');
+    const [ocultarCeros, setOcultarCeros] = useState(false);
     const [valesRes, setValesRes] = useState([]);
     useEffect(()=>{
       const u = onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')), s=>setValesRes(s.docs.map(d=>d.data())));
@@ -6165,8 +6196,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     },[]);
 
     const tasa = Number(tasaManual)||0;
+    const tBin = Number(tasaBinance)||0;
+    const tInt = Number(tasaIntervencion)||0;
     const convBs = (montoNativo, moneda) => moneda==='BS' ? montoNativo : montoNativo*tasa;
     const convUsd = (montoNativo, moneda) => moneda==='BS' ? (tasa>0?montoNativo/tasa:0) : montoNativo;
+    // A cuántos $ equivale un monto en Bs. si se convierte con la tasa Binance o de Intervención
+    // en vez de la tasa del día — para comparar el mismo saldo bajo las 3 tasas.
+    const usdBin = (montoBsNativo) => tBin>0 ? montoBsNativo/tBin : 0;
+    const usdInt = (montoBsNativo) => tInt>0 ? montoBsNativo/tInt : 0;
+    const variacionAbs = tBin - tasa;
+    const variacionPct = tasa>0 ? (variacionAbs/tasa*100) : 0;
 
     const GRUPOS = [
       {tipo:'Nacional-Bs',        label:'🇻🇪 Cuentas Nacionales — Bolívares'},
@@ -6179,6 +6218,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const bancosPorGrupo = GRUPOS.map(g=>{
       const lista = cuentas.filter(c=>g.tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===g.tipo)
+        .filter(c=>!ocultarCeros || Math.abs(Number(c.saldo||0))>=0.01)
         .map(c=>({ ...c, sBs: convBs(Number(c.saldo||0), c.moneda), sUsd: convUsd(Number(c.saldo||0), c.moneda) }));
       return { ...g, lista, subBs: lista.reduce((a,c)=>a+c.sBs,0), subUsd: lista.reduce((a,c)=>a+c.sUsd,0) };
     }).filter(g=>g.lista.length>0);
@@ -6203,7 +6243,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const saldoVal = c.moneda==='BS'?saldo.bs:saldo.usd;
       const saldoTotalNativo = (Number(c.saldoInicial)||0) + saldoVal;
       return { ...c, saldoTotalNativo, sBs: convBs(saldoTotalNativo, c.moneda), sUsd: convUsd(saldoTotalNativo, c.moneda) };
-    });
+    }).filter(c=>!ocultarCeros || Math.abs(c.saldoTotalNativo)>=0.01);
     const totalCajasBs = cajasLista.reduce((a,c)=>a+c.sBs,0);
     const totalCajasUsd = cajasLista.reduce((a,c)=>a+c.sUsd,0);
 
@@ -6212,6 +6252,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const granTotalBs = totalBancosBs+totalCajasBs;
     const granTotalUsd = totalBancosUsd+totalCajasUsd;
+    // Mismos totales en Bs., pero convertidos a Binance e Intervención — para comparar cuánto
+    // "rinde" el mismo saldo bajo cada tasa.
+    const totalBancosBin = usdBin(totalBancosBs), totalBancosInt = usdInt(totalBancosBs);
+    const totalCajasBin = usdBin(totalCajasBs), totalCajasInt = usdInt(totalCajasBs);
+    const granTotalBin = usdBin(granTotalBs), granTotalInt = usdInt(granTotalBs);
 
     const buildHTML = () => {
       const filasBancos = bancosPorGrupo.map(g=>`
@@ -6221,20 +6266,29 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       `).join('');
       const filasCajas = cajasLista.map(c=>`<tr><td>${c.nombre||'—'}</td><td style="text-align:center">${c.moneda}</td><td style="text-align:right">${c.moneda==='BS'?'Bs.':'$'}${bancoFmt(c.saldoTotalNativo)}</td><td style="text-align:right;color:#16a34a">Bs.${bancoFmt(c.sBs)}</td><td style="text-align:right;color:#16a34a;font-weight:900">$${bancoFmt(c.sUsd)}</td></tr>`).join('');
       const filasVales = valesPendientes.map(v=>`<tr><td>${bancoDd(v.fecha)}</td><td>${v.titular||'—'}</td><td>${v.concepto||'—'}</td><td style="text-align:right;font-weight:900;color:#dc2626">${v.moneda==='BS'?'Bs.':'$'}${bancoFmt(v.monto)}</td></tr>`).join('');
-      return bancoLetterheadOpen('Resumen de Operaciones Banco-Caja',`Tasa del día: ${bancoFmt(tasa)} Bs/$ · Generado ${bancoDd(getTodayDate())}`)+
+      const tablaVariacion = (tasa>0||tBin>0) ? `
+        <h3>Variación de Tasa</h3>
+        <table style="max-width:320px"><tbody>
+          <tr><td style="font-weight:900">${bancoFmt(tasa)}</td><td style="text-align:right;font-weight:900;color:#2563eb">BCV</td></tr>
+          <tr><td style="font-weight:900">${bancoFmt(tBin)}</td><td style="text-align:right;font-weight:900;color:#d97706">BINANCE</td></tr>
+          <tr><td style="font-weight:900;color:#dc2626">${bancoFmt(Math.abs(variacionAbs))}</td><td style="text-align:right;font-weight:900;color:#dc2626">${variacionPct.toFixed(2)}%</td></tr>
+        </tbody></table>` : '';
+      const filaEquivRates = (etiqueta,bin,intv) => (tBin>0||tInt>0) ? `<tr><td colspan="3" style="text-align:right;font-style:italic;color:#64748b">${etiqueta}${tBin>0?` · A Binance: $${bancoFmt(bin)}`:''}${tInt>0?` · A Intervención: $${bancoFmt(intv)}`:''}</td></tr>` : '';
+      return bancoLetterheadOpen('Resumen de Operaciones Banco-Caja',`Tasa BCV: ${bancoFmt(tasa)} Bs/$ · Generado ${bancoDd(getTodayDate())}`)+
         `<style>table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:18px}th{background:#0f172a;color:#e2e8f0;padding:6px 10px;text-align:left;font-size:8px;text-transform:uppercase;white-space:nowrap}td{padding:5px 10px;border-bottom:1px solid #e2e8f0}h3{font-size:12px;font-weight:900;text-transform:uppercase;margin:14px 0 6px;color:#0f172a}</style>
+        ${tablaVariacion}
         <h3>🏦 Bancos</h3>
         <table><thead><tr><th>Banco</th><th>N° Cuenta</th><th>Moneda</th><th style="text-align:right">Saldo Nativo</th><th style="text-align:right">Equiv. Bs.</th><th style="text-align:right">Equiv. $</th></tr></thead>
         <tbody>${filasBancos}</tbody>
-        <tfoot><tr style="background:#0f172a"><td colspan="4" style="color:#fff;font-weight:900;text-align:right">TOTAL BANCOS</td><td style="color:#4ade80;font-weight:900;text-align:right">Bs.${bancoFmt(totalBancosBs)}</td><td style="color:#4ade80;font-weight:900;text-align:right">$${bancoFmt(totalBancosUsd)}</td></tr></tfoot></table>
+        <tfoot><tr style="background:#0f172a"><td colspan="4" style="color:#fff;font-weight:900;text-align:right">TOTAL BANCOS</td><td style="color:#4ade80;font-weight:900;text-align:right">Bs.${bancoFmt(totalBancosBs)}</td><td style="color:#4ade80;font-weight:900;text-align:right">$${bancoFmt(totalBancosUsd)}</td></tr>${filaEquivRates('',totalBancosBin,totalBancosInt)}</tfoot></table>
         <h3>💰 Cajas</h3>
         <table><thead><tr><th>Caja</th><th>Moneda</th><th style="text-align:right">Saldo Nativo</th><th style="text-align:right">Equiv. Bs.</th><th style="text-align:right">Equiv. $</th></tr></thead>
         <tbody>${filasCajas||'<tr><td colspan="5" style="text-align:center;color:#94a3b8">Sin cajas registradas</td></tr>'}</tbody>
-        <tfoot><tr style="background:#0f172a"><td colspan="3" style="color:#fff;font-weight:900;text-align:right">TOTAL CAJAS</td><td style="color:#4ade80;font-weight:900;text-align:right">Bs.${bancoFmt(totalCajasBs)}</td><td style="color:#4ade80;font-weight:900;text-align:right">$${bancoFmt(totalCajasUsd)}</td></tr></tfoot></table>
+        <tfoot><tr style="background:#0f172a"><td colspan="3" style="color:#fff;font-weight:900;text-align:right">TOTAL CAJAS</td><td style="color:#4ade80;font-weight:900;text-align:right">Bs.${bancoFmt(totalCajasBs)}</td><td style="color:#4ade80;font-weight:900;text-align:right">$${bancoFmt(totalCajasUsd)}</td></tr>${filaEquivRates('',totalCajasBin,totalCajasInt)}</tfoot></table>
         <h3>📋 Vales Pendientes (${valesPendientes.length})</h3>
         <table><thead><tr><th>Fecha</th><th>Titular</th><th>Concepto</th><th style="text-align:right">Monto</th></tr></thead>
         <tbody>${filasVales||'<tr><td colspan="4" style="text-align:center;color:#94a3b8">Sin vales pendientes</td></tr>'}</tbody></table>
-        <table style="margin-top:20px"><tfoot><tr style="background:#f97316"><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">TOTAL GENERAL BANCO + CAJA</td><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">Bs.${bancoFmt(granTotalBs)}</td><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">$${bancoFmt(granTotalUsd)}</td></tr></tfoot></table>`+
+        <table style="margin-top:20px"><tfoot><tr style="background:#f97316"><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">TOTAL GENERAL BANCO + CAJA</td><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">Bs.${bancoFmt(granTotalBs)}</td><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">$${bancoFmt(granTotalUsd)}</td></tr>${(tBin>0||tInt>0)?`<tr style="background:#1e293b">${tBin>0?`<td colspan="2" style="color:#fbbf24;font-weight:700;text-align:right;padding:6px 10px">A Tasa Binance</td><td style="color:#fbbf24;font-weight:900;text-align:right;padding:6px 10px">$${bancoFmt(granTotalBin)}</td>`:'<td colspan="3"></td>'}</tr>`:''}${(tInt>0)?`<tr style="background:#1e293b"><td colspan="2" style="color:#c4b5fd;font-weight:700;text-align:right;padding:6px 10px">A Tasa Intervención</td><td style="color:#c4b5fd;font-weight:900;text-align:right;padding:6px 10px">$${bancoFmt(granTotalInt)}</td></tr>`:''}</tfoot></table>`+
         bancoLetterheadClose('Módulo: Tesorería & Bancos');
     };
     const imprimirPDF = () => bancoPrintWindow(buildHTML());
@@ -6247,15 +6301,39 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <h2 className="text-xl font-black uppercase text-slate-900">Resumen de Operaciones Banco-Caja</h2>
             <p className="text-xs text-slate-400 font-medium mt-0.5">Consolidado multimoneda · {bancoDd(getTodayDate())}</p>
           </div>
-          <div className="flex items-end gap-3">
+          <div className="flex items-end gap-3 flex-wrap">
             <div>
-              <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa de Cambio del Día (Bs/$)</label>
-              <input type="number" step="0.01" value={tasaManual} onChange={e=>setTasaManual(e.target.value)} placeholder="Ej. 40.00" className={`${inp} w-36 font-black text-center`}/>
+              <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV / Día (Bs/$)</label>
+              <input type="number" step="0.01" value={tasaManual} onChange={e=>setTasaManual(e.target.value)} placeholder="Ej. 40.00" className={`${inp} w-32 font-black text-center`}/>
             </div>
+            <div>
+              <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Binance (Bs/$)</label>
+              <input type="number" step="0.01" value={tasaBinance} onChange={e=>setTasaBinance(e.target.value)} placeholder="Ej. 45.00" className={`${inp} w-32 font-black text-center border-amber-300`}/>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Intervención (Bs/$)</label>
+              <input type="number" step="0.01" value={tasaIntervencion} onChange={e=>setTasaIntervencion(e.target.value)} placeholder="Ej. 42.00" className={`${inp} w-32 font-black text-center border-violet-300`}/>
+            </div>
+            <button onClick={()=>setOcultarCeros(v=>!v)} className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase transition-colors ${ocultarCeros?'bg-slate-800 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+              {ocultarCeros?<Eye size={12}/>:<EyeOff size={12}/>} {ocultarCeros?'Mostrar saldos en $0':'Ocultar saldos en $0'}
+            </button>
             <button onClick={imprimirPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><Download size={12}/> PDF</button>
             <button onClick={imprimirXLS} className="flex items-center gap-1.5 px-3 py-2.5 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
           </div>
         </div>
+
+        {(tasa>0||tBin>0) && (
+          <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden max-w-xs">
+            <div className="px-4 py-2" style={{background:'#0f172a'}}><p className="text-white font-black text-[10px] uppercase tracking-widest">Variación de Tasa</p></div>
+            <table className="w-full text-sm">
+              <tbody>
+                <tr className="border-b border-slate-100"><td className="px-4 py-2 font-mono font-black">{bancoFmt(tasa)}</td><td className="px-4 py-2 font-black text-blue-600 text-right text-xs">BCV</td></tr>
+                <tr className="border-b border-slate-100"><td className="px-4 py-2 font-mono font-black">{bancoFmt(tBin)}</td><td className="px-4 py-2 font-black text-amber-600 text-right text-xs">BINANCE</td></tr>
+                <tr><td className="px-4 py-2 font-mono font-black text-red-500">{bancoFmt(Math.abs(variacionAbs))}</td><td className="px-4 py-2 font-black text-red-500 text-right text-xs">{variacionPct.toFixed(2)}%</td></tr>
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {tasa<=0 && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] font-bold text-amber-700">⚠ Ingrese la tasa de cambio del día para ver los equivalentes en Bs./USD.</div>}
 
@@ -6290,9 +6368,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   </table>
                 </div>
               ))}
-              <div className="flex items-center justify-between p-4 rounded-xl" style={{background:'#0f172a'}}>
-                <span className="text-white font-black text-xs uppercase">Total Bancos</span>
-                <span className="text-emerald-400 font-black text-sm">Bs. {bancoFmt(totalBancosBs)} &nbsp;·&nbsp; ${bancoFmt(totalBancosUsd)}</span>
+              <div className="rounded-xl overflow-hidden" style={{background:'#0f172a'}}>
+                <div className="flex items-center justify-between p-4">
+                  <span className="text-white font-black text-xs uppercase">Total Bancos</span>
+                  <span className="text-emerald-400 font-black text-sm">Bs. {bancoFmt(totalBancosBs)} &nbsp;·&nbsp; ${bancoFmt(totalBancosUsd)}</span>
+                </div>
+                {(tBin>0||tInt>0) && <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 pb-3 border-t border-slate-700 pt-2">
+                  {tBin>0 && <span className="text-[10px] text-amber-400 font-bold">A Binance: <b className="font-black">${bancoFmt(totalBancosBin)}</b></span>}
+                  {tInt>0 && <span className="text-[10px] text-violet-400 font-bold">A Intervención: <b className="font-black">${bancoFmt(totalBancosInt)}</b></span>}
+                </div>}
               </div>
             </div>
           )}
@@ -6315,9 +6399,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   ))}
                 </tbody>
               </table>
-              <div className="flex items-center justify-between p-4 rounded-xl" style={{background:'#0f172a'}}>
-                <span className="text-white font-black text-xs uppercase">Total Cajas</span>
-                <span className="text-emerald-400 font-black text-sm">Bs. {bancoFmt(totalCajasBs)} &nbsp;·&nbsp; ${bancoFmt(totalCajasUsd)}</span>
+              <div className="rounded-xl overflow-hidden" style={{background:'#0f172a'}}>
+                <div className="flex items-center justify-between p-4">
+                  <span className="text-white font-black text-xs uppercase">Total Cajas</span>
+                  <span className="text-emerald-400 font-black text-sm">Bs. {bancoFmt(totalCajasBs)} &nbsp;·&nbsp; ${bancoFmt(totalCajasUsd)}</span>
+                </div>
+                {(tBin>0||tInt>0) && <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 pb-3 border-t border-slate-700 pt-2">
+                  {tBin>0 && <span className="text-[10px] text-amber-400 font-bold">A Binance: <b className="font-black">${bancoFmt(totalCajasBin)}</b></span>}
+                  {tInt>0 && <span className="text-[10px] text-violet-400 font-bold">A Intervención: <b className="font-black">${bancoFmt(totalCajasInt)}</b></span>}
+                </div>}
               </div>
             </div>
           )}
@@ -6341,9 +6431,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           )}
         </BCard>
 
-        <div className="flex items-center justify-between p-5 rounded-2xl shadow-lg" style={{background:'linear-gradient(135deg,#f97316,#ea580c)'}}>
-          <span className="text-white font-black text-sm uppercase tracking-wide">Total General Banco + Caja</span>
-          <span className="text-white font-black text-lg">Bs. {bancoFmt(granTotalBs)} &nbsp;·&nbsp; ${bancoFmt(granTotalUsd)}</span>
+        <div className="rounded-2xl shadow-lg overflow-hidden" style={{background:'linear-gradient(135deg,#f97316,#ea580c)'}}>
+          <div className="flex items-center justify-between p-5">
+            <span className="text-white font-black text-sm uppercase tracking-wide">Total General Banco + Caja</span>
+            <span className="text-white font-black text-lg">Bs. {bancoFmt(granTotalBs)} &nbsp;·&nbsp; ${bancoFmt(granTotalUsd)}</span>
+          </div>
+          {(tBin>0||tInt>0) && <div className="flex flex-wrap gap-x-8 gap-y-1 px-5 pb-4 border-t border-white/20 pt-3">
+            {tBin>0 && <span className="text-[11px] text-white/90 font-bold">A Tasa Binance: <b className="font-black">${bancoFmt(granTotalBin)}</b></span>}
+            {tInt>0 && <span className="text-[11px] text-white/90 font-bold">A Tasa Intervención: <b className="font-black">${bancoFmt(granTotalInt)}</b></span>}
+          </div>}
         </div>
       </div>
     );
