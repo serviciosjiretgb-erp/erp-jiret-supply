@@ -10324,6 +10324,7 @@ const partesCtaCC = (str) => { const p=(str||'').split('—'); return { codigo:(
 function ComprobantesContablesApp({ onBack }) {
   const [sub, setSub] = useState(''); // '', 'banco', 'caja', 'ret_cli'
   const [movBanco, setMovBanco] = useState([]);
+  const [asientosCC, setAsientosCC] = useState([]);
   const [movCaja, setMovCaja] = useState([]);
   const [cuentasBanco, setCuentasBanco] = useState([]);
   const [cuentasCaja, setCuentasCaja] = useState([]);
@@ -10379,6 +10380,7 @@ function ComprobantesContablesApp({ onBack }) {
       onSnapshot(getColRef('caja_cuentas'), s => setCuentasCaja(s.docs.map(d => d.data()))),
       onSnapshot(getColRef('clientes'), s => setClientesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_proveedores'), s => setProvsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('cont_asientos'), s => setAsientosCC(s.docs.map(d => d.data()))),
       onSnapshot(getColRef('cxp_terceros_relacionados'), s => setTercerosRelC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('cxp_pagos_relacionados'), s => setPagosRelC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('retencionesClientes'), s => setRetencionesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -10591,6 +10593,15 @@ function ComprobantesContablesApp({ onBack }) {
       const isIng = m.tipo === 'Ingreso' || m.tipo === 'Nota de Crédito';
       const tasa = Number(m.tasa) || 1;
       const montoBs = Number(m.montoBs || 0), montoUSD = Number(m.montoUSD || 0);
+      // Si ya existe un asiento formal para este movimiento, se usan SUS líneas tal cual (las
+      // cuentas reales que se seleccionaron al registrarlo) — mismo criterio que se corrigió en
+      // el Libro Diario de BancoApp.jsx. Sin esto, un traslado entre bancos, por ejemplo, caía en
+      // "Contrapartida (origen no identificado)" en vez de mostrar la cuenta real.
+      const asientoLigado = (asientosCC||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
+      let lineas;
+      if (asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0) {
+        lineas = asientoLigado.lineas.map(l=>({ codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipoLinea||(Number(l.debeBs||0)>0?'D':'H'), dBs: Number(l.debeBs||0), hBs: Number(l.haberBs||0), dUSD: Number(l.debeUSD||0), hUSD: Number(l.haberUSD||0) }));
+      } else {
       const lineaPropia = { codigo: cta.cuentaContableCod || '—', cuenta: nombreCta(cta), tipo: isIng?'D':'H', dBs: isIng?montoBs:0, hBs: isIng?0:montoBs, dUSD: isIng?montoUSD:0, hUSD: isIng?0:montoUSD };
       const nombreDirecto = m.terceroNombre || m.clientName || m.proveedor || '';
       const partesGuion = (m.concepto||'').split('—').map(s=>s.trim());
@@ -10624,7 +10635,9 @@ function ComprobantesContablesApp({ onBack }) {
         contra = { codigo: g?g.codigo:'', cuenta: g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)') };
       }
       const lineaContra = { codigo: contra.codigo, cuenta: contra.cuenta, tipo: isIng?'H':'D', dBs: isIng?0:montoBs, hBs: isIng?montoBs:0, dUSD: isIng?0:montoUSD, hUSD: isIng?montoUSD:0 };
-      return { id: m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas: [lineaPropia, lineaContra] };
+      lineas = [lineaPropia, lineaContra];
+      }
+      return { id: m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas };
     }).filter(Boolean);
   };
 
