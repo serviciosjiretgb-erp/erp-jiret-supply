@@ -8032,12 +8032,14 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
             <select value={histFiltCuenta} onChange={e=>{setHistFiltCuenta(e.target.value);setHistPage(0);}}
               className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
               <option value="">Todos los bancos/cajas</option>
-              {cuentasBancarias.length>0&&<optgroup label="Bancos">
-                {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
-              </optgroup>}
-              {cajasEfectivo.length>0&&<optgroup label="Cajas">
-                {cajasEfectivo.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
-              </optgroup>}
+              {[['Nacional-Bs','🇻🇪 Cuentas Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
+                const grupo=cuentasBancarias.filter(c=>tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo);
+                return grupo.length>0&&<optgroup key={tipo} label={label}>
+                  {grupo.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                </optgroup>;
+              })}
+              {cajasEfectivo.length>0&&<optgroup label="💰 Cajas">
+                {cajasEfectivo.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}</optgroup>}
             </select>
             {(histSearch||histFiltMes||histFiltMetodo!=='TODOS'||histFiltCuenta)&&<button onClick={()=>{setHistSearch('');setHistFiltMes('');setHistFiltMetodo('TODOS');setHistFiltCuenta('');setHistPage(0);}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
           </div>
@@ -8161,10 +8163,13 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                   }}
                   className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
                   <option value="">— Sin cuenta —</option>
-                  {cuentasBancarias.length>0&&<optgroup label="Bancos">
-                    {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
-                  </optgroup>}
-                  {cajasEfectivo.length>0&&<optgroup label="Cajas">
+                  {[['Nacional-Bs','🇻🇪 Cuentas Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
+                    const grupo=cuentasBancarias.filter(c=>tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo);
+                    return grupo.length>0&&<optgroup key={tipo} label={label}>
+                      {grupo.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                    </optgroup>;
+                  })}
+                  {cajasEfectivo.length>0&&<optgroup label="💰 Cajas">
                     {cajasEfectivo.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
                   </optgroup>}
                 </select>
@@ -10333,6 +10338,8 @@ function ComprobantesContablesApp({ onBack }) {
   const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [filtHasta, setFiltHasta] = useState(getTodayDate());
   const [filtCuenta, setFiltCuenta] = useState('');
+  // Buscador compartido por las 9 pestañas — filtra por Comprobante, Fecha, Código, Cuenta, Nro Doc o Concepto.
+  const [buscarCC, setBuscarCC] = useState('');
   const [retIvaProvC, setRetIvaProvC] = useState([]);
   const [retIslrProvC, setRetIslrProvC] = useState([]);
   const [activosFijosC, setActivosFijosC] = useState([]);
@@ -11002,7 +11009,7 @@ ${valoresHtml}
     const rif     = settingsCC?.empresaRif || settingsCC?.empresaRIF || 'J-412309374';
     const dir     = settingsCC?.empresaDireccion || 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
     const tel     = settingsCC?.empresaTelefono || '';
-    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:14px;font-weight:900;text-transform:uppercase;color:#111;margin-bottom:10px;letter-spacing:.3px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.resumen{display:flex;flex-wrap:wrap;gap:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:10.5px;}.resumen span{display:block;font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}.resumen b{font-size:12px;}.badge-ok{color:#059669;}.badge-bad{color:#dc2626;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;white-space:nowrap;}td{padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}.grupo-inicio{border-top:2px solid #cbd5e1!important;}tfoot td{background:#0f172a!important;color:#fff;font-weight:900;padding:7px 8px;}.c-doc{font-weight:900;color:#ea580c;}.c-fecha{color:#9ca3af;white-space:nowrap;}.c-cod{color:#2563eb;}.c-cuenta{font-weight:700;text-transform:uppercase;}.c-tipo{text-align:center;}.c-doc2{color:#9ca3af;}.c-conc{text-transform:uppercase;}.c-tasa,.c-dbs,.c-hbs,.c-dusd,.c-husd{text-align:right;font-weight:900;white-space:nowrap;}.c-dbs,.c-dusd{color:#059669;}.c-hbs,.c-husd{color:#dc2626;}.c-tasa{color:#9ca3af;font-weight:400;}.t-d{color:#059669;font-weight:900;}.t-h{color:#dc2626;font-weight:900;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;}.btn-print{display:none!important;}th,tfoot td{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:14px;font-weight:900;text-transform:uppercase;color:#111;margin-bottom:10px;letter-spacing:.3px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.resumen{display:flex;flex-wrap:wrap;gap:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:10.5px;}.resumen span{display:block;font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}.resumen b{font-size:12px;}.badge-ok{color:#059669;}.badge-bad{color:#dc2626;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;white-space:nowrap;}td{padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}.grupo-inicio{border-top:2px solid #cbd5e1!important;}tfoot td{background:#0f172a!important;color:#fff;font-weight:900;padding:7px 8px;}.c-doc{font-weight:900;color:#ea580c;}.c-fecha{color:#9ca3af;white-space:nowrap;}.c-cod{color:#2563eb;}.c-cuenta{font-weight:700;text-transform:uppercase;}.c-tipo{text-align:center;}.c-doc2{color:#9ca3af;}.c-conc{text-transform:uppercase;}.c-tasa,.c-dbs,.c-hbs,.c-dusd,.c-husd{text-align:right;font-weight:900;white-space:nowrap;}.c-dbs,.c-dusd{color:#059669;}.c-hbs,.c-husd{color:#dc2626;}.c-tasa{color:#9ca3af;font-weight:400;}.t-d{color:#059669;font-weight:900;}.t-h{color:#dc2626;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}th,tfoot td{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:8px;}th{font-size:7px;padding:4px 5px;}td{padding:4px 5px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:12px;margin-bottom:6px;}.resumen{padding:6px 10px;margin-bottom:8px;gap:10px;}.resumen b{font-size:10px;}}`;
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${titulo}</title><style>${css}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${empresa}</h2><p>RIF: ${rif}</p><p>${dir}</p>${tel?`<p>Tel: ${tel}</p>`:''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">${escCC(titulo)}</div>${contenidoHtml}</div></div></body></html>`;
     const w = window.open('', '_blank');
     if(w){ w.document.write(html); w.document.close(); }
@@ -11041,6 +11048,20 @@ ${valoresHtml}
       return ov ? {...l, codigo: ov.codigo, cuenta: ov.cuenta} : l;
     }),
   }));
+
+  // Buscador compartido: si algún campo del comprobante (o de cualquiera de sus líneas)
+  // coincide, se muestra el grupo completo — no solo la línea que coincidió.
+  const filtrarPorBusquedaCC = (lineasArr) => {
+    const q = (buscarCC||'').toUpperCase().trim();
+    if (!q) return lineasArr;
+    return (lineasArr||[]).filter(r => {
+      if ((r.comprobante||'').toUpperCase().includes(q)) return true;
+      if ((r.doc||'').toUpperCase().includes(q)) return true;
+      if ((r.conc||'').toUpperCase().includes(q)) return true;
+      if ((contDd(r.fecha)||'').includes(q) || (r.fecha||'').includes(q)) return true;
+      return (r.lineas||[]).some(l => (l.codigo||'').toUpperCase().includes(q) || (l.cuenta||'').toUpperCase().includes(q));
+    });
+  };
 
   const configExportCC = (tabId) => {
     const comunes = { desde:filtDesde, hasta:filtHasta };
@@ -11100,12 +11121,14 @@ ${valoresHtml}
 
   const contenido = () => {
     if (activo === 'procura') {
-      const lineasProc = construirLineasProcura();
+      const lineasProc = filtrarPorBusquedaCC(construirLineasProcura());
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasProc.length} factura(s)</p>
             <BotonesExportCC tabId="procura"/>
           </div>
@@ -11150,7 +11173,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ventas') {
-      const lineasVta = construirLineasVentasCompleto();
+      const lineasVta = filtrarPorBusquedaCC(construirLineasVentasCompleto());
       const nFact = lineasVta.filter(r=>!r.esNota).length;
       const nNC = lineasVta.filter(r=>r.tipoNota==='NC').length;
       const nND = lineasVta.filter(r=>r.tipoNota==='ND').length;
@@ -11159,6 +11182,8 @@ ${valoresHtml}
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{nFact} factura(s) · {nNC} NC · {nND} ND</p>
             <BotonesExportCC tabId="ventas"/>
           </div>
@@ -11206,12 +11231,14 @@ ${valoresHtml}
       );
     }
     if (activo === 'ret_cli') {
-      const lineasRet = construirLineasRetencionesCliente();
+      const lineasRet = filtrarPorBusquedaCC(construirLineasRetencionesCliente());
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasRet.length} retención(es)</p>
             <BotonesExportCC tabId="ret_cli"/>
           </div>
@@ -11257,7 +11284,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ret_prov') {
-      const lineasRP = construirLineasRetencionesProveedor();
+      const lineasRP = filtrarPorBusquedaCC(construirLineasRetencionesProveedor());
       const nIVA = lineasRP.filter(r=>r.tipoRet==='IVA').length;
       const nISLR = lineasRP.filter(r=>r.tipoRet==='ISLR').length;
       return (
@@ -11265,6 +11292,8 @@ ${valoresHtml}
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasRP.length} comprobante(s) · {nIVA} IVA · {nISLR} ISLR</p>
             <BotonesExportCC tabId="ret_prov"/>
           </div>
@@ -11310,7 +11339,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'deprec') {
-      const lineasDep = construirLineasDepreciacion();
+      const lineasDep = filtrarPorBusquedaCC(construirLineasDepreciacion());
       const totalDepUSD = lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       return (
         <div className="p-6 space-y-4">
@@ -11318,6 +11347,8 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa del día (Bs./$)</label><input type="number" step="0.01" placeholder="Opcional" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-[130px]" value={tasaDeprec} onChange={e=>setTasaDeprec(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasDep.length} mes(es) · Total ${contFmt(totalDepUSD)}</p>
             <BotonesExportCC tabId="deprec"/>
           </div>
@@ -11365,7 +11396,7 @@ ${valoresHtml}
     }
     if (activo === 'imp_enterar') {
       const MESES_IMP=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-      const lineasImp = construirLineasImpuestosPorEnterar();
+      const lineasImp = filtrarPorBusquedaCC(construirLineasImpuestosPorEnterar());
       const totalImpUSD = lineasImp.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       const faltaAE = lineasImp.some(r=>r.id.startsWith('AE-') && r.lineas.some(l=>!l.codigo));
       const faltaPP = lineasImp.some(r=>r.id.startsWith('PP-') && r.lineas.some(l=>!l.codigo));
@@ -11381,6 +11412,8 @@ ${valoresHtml}
               <select className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={impAnio} onChange={e=>setImpAnio(e.target.value)}>
                 {[parseInt(impAnio)-1,parseInt(impAnio),parseInt(impAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
               </select></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasImp.length} impuesto(s) · Total ${contFmt(totalImpUSD)}</p>
             <BotonesExportCC tabId="imp_enterar"/>
           </div>
@@ -11431,7 +11464,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ajustes') {
-      const lineasAj = construirLineasAjustes();
+      const lineasAj = filtrarPorBusquedaCC(construirLineasAjustes());
       const totalAjUSD = lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       return (
         <div className="p-6 space-y-4">
@@ -11439,6 +11472,8 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
             <BotonesExportCC tabId="ajustes"/>
           </div>
@@ -11580,7 +11615,7 @@ ${valoresHtml}
     const esBanco = activo === 'banco';
     const cuentasFuente = esBanco ? cuentasBanco : cuentasCaja;
     const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
-    const lineasPorComprobante = construirLineas(esBanco);
+    const lineasPorComprobante = filtrarPorBusquedaCC(construirLineas(esBanco));
     return (
       <div className="p-6 space-y-4">
         <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
@@ -11592,6 +11627,8 @@ ${valoresHtml}
           </div>
           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+            <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
           <p className="text-[10px] text-gray-400 ml-auto">{lineasPorComprobante.length} comprobante(s)</p>
           <BotonesExportCC tabId={esBanco?'banco':'caja'}/>
         </div>
@@ -28851,10 +28888,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <select value={histFiltCuenta} onChange={e=>{setHistFiltCuenta(e.target.value);setHistPage(0);}}
                         className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400">
                         <option value="">Todos los bancos/cajas</option>
-                        {cuentasBanco.length>0&&<optgroup label="Bancos">
-                          {cuentasBanco.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
-                        </optgroup>}
-                        {cajasCuentas.length>0&&<optgroup label="Cajas">
+                        {[['Nacional-Bs','🇻🇪 Cuentas Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
+                          const grupo=cuentasBanco.filter(c=>tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo);
+                          return grupo.length>0&&<optgroup key={tipo} label={label}>
+                            {grupo.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                          </optgroup>;
+                        })}
+                        {cajasCuentas.length>0&&<optgroup label="💰 Cajas">
                           {cajasCuentas.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
                         </optgroup>}
                       </select>
@@ -30029,10 +30069,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       setCxcEditForm(f=>({...f,cuentaBancariaId:v,cuentaBancoNombre:esCaja?(cta?.nombre||''):(cta?.banco||cta?.nombre||'')}));
                     }}>
                     <option value="">— Sin cuenta —</option>
-                    {cuentasBanco.length>0&&<optgroup label="Bancos">
-                      {cuentasBanco.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
-                    </optgroup>}
-                    {cajasCuentas.length>0&&<optgroup label="Cajas">
+                    {[['Nacional-Bs','🇻🇪 Cuentas Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
+                      const grupo=cuentasBanco.filter(c=>tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo);
+                      return grupo.length>0&&<optgroup key={tipo} label={label}>
+                        {grupo.map(c=><option key={c.id} value={c.id}>{c.banco||c.nombre}</option>)}
+                      </optgroup>;
+                    })}
+                    {cajasCuentas.length>0&&<optgroup label="💰 Cajas">
                       {cajasCuentas.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre}</option>)}
                     </optgroup>}
                   </select>
