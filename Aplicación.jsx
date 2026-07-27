@@ -10329,6 +10329,8 @@ function ComprobantesContablesApp({ onBack }) {
   const [cuentasCaja, setCuentasCaja] = useState([]);
   const [clientesC, setClientesC] = useState([]);
   const [provsC, setProvsC] = useState([]);
+  const [tercerosRelC, setTercerosRelC] = useState([]);
+  const [pagosRelC, setPagosRelC] = useState([]);
   const [retencionesC, setRetencionesC] = useState([]);
   const [planCuentasC, setPlanCuentasC] = useState([]);
   const [facturasCompraC, setFacturasCompraC] = useState([]);
@@ -10377,6 +10379,8 @@ function ComprobantesContablesApp({ onBack }) {
       onSnapshot(getColRef('caja_cuentas'), s => setCuentasCaja(s.docs.map(d => d.data()))),
       onSnapshot(getColRef('clientes'), s => setClientesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_proveedores'), s => setProvsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('cxp_terceros_relacionados'), s => setTercerosRelC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('cxp_pagos_relacionados'), s => setPagosRelC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('retencionesClientes'), s => setRetencionesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_ret_iva'), s => setRetIvaProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_ret_islr'), s => setRetIslrProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -10600,7 +10604,16 @@ function ComprobantesContablesApp({ onBack }) {
       const [codTercero, nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
       const cuentaGenerica=(patron)=>{const c2=(planCuentasC||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
       let contra;
-      if (tercero && (codTercero||nomTercero)) {
+      if (m.tipoTercero==='Relacionado'&&m.terceroId) {
+        // Los terceros "Relacionado" (préstamos entre empresas) viven en cxp_terceros_relacionados,
+        // no en Clientes ni Proveedores — si no se busca ahí, este bloque nunca los reconoce y cae
+        // en un "Cuentas por Pagar" genérico de proveedor, que no es lo que es.
+        const tercRel=(tercerosRelC||[]).find(t=>t.id===m.terceroId);
+        const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
+        contra = { codigo: codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta: nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas') };
+      }
+      else if (tercero && (codTercero||nomTercero)) {
         contra = { codigo: codTercero||tercero.cuentaContableId||'', cuenta: nomTercero||tercero.razonSocial||tercero.nombre||'' };
       } else if (m.lineasContra && m.lineasContra.length>0) {
         const l = m.lineasContra[0];
@@ -10796,6 +10809,57 @@ function ComprobantesContablesApp({ onBack }) {
       });
     }
     return lineas;
+  };
+
+  // ── Cuentas por Pagar Relacionadas: préstamos entre empresas, registrados como terceros
+  // "Relacionado" desde Banco/Caja, o anotados manualmente desde Estado de Cuenta de
+  // Relacionados. Dos formatos posibles en cxp_pagos_relacionados: los que vienen de un
+  // movimiento real (origen+movimientoId, monto ya con signo) y los manuales (con campo
+  // tipo aparte, monto sin signo) — se normalizan ambos aquí.
+  const construirLineasRelacionadas = () => {
+    const montoConSigno = (p) => {
+      if (p.origen) return Number(p.monto||0);
+      const m = Math.abs(Number(p.monto||0));
+      return p.tipo==='Ingreso' ? -m : m;
+    };
+    const filtradas = (pagosRelC||[]).filter(p => {
+      if (filtDesde && p.fecha < filtDesde) return false;
+      if (filtHasta && p.fecha > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+
+    return filtradas.map(p => {
+      const montoSigno = montoConSigno(p);
+      const esIngreso = montoSigno < 0; // recibimos del relacionado / aumenta lo que le debemos
+      const montoUSD = Math.abs(montoSigno);
+
+      const movLigado = p.origen==='caja'
+        ? (movCaja||[]).find(m=>m.id===p.movimientoId)
+        : p.origen==='banco' ? (movBanco||[]).find(m=>m.id===p.movimientoId) : null;
+      const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
+      const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
+      const ctaOrigen = movLigado ? cuentasOrigen.find(c=>c.id===movLigado[idFieldOrigen]) : null;
+      const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
+      const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
+      const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsCC?.tasaBCV||0)||1);
+      const montoBs = montoUSD * tasa;
+
+      const tercRel = (tercerosRelC||[]).find(t=>t.id===p.terceroId);
+      const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+      const ctaPrestamo = (planCuentasC||[]).find(pc=>/(pr[ée]stamo|relacionad)/i.test(pc.nombre||''));
+      const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
+      const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
+      const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
+
+      const lineaOrigen = { codigo: codCtaOrigen, cuenta: nombreCtaOrigen, tipo: esIngreso?'D':'H', dBs: esIngreso?montoBs:0, hBs: esIngreso?0:montoBs, dUSD: esIngreso?montoUSD:0, hUSD: esIngreso?0:montoUSD };
+      const lineaRelacionada = { codigo: codRelFinal, cuenta: `${nomRelFinal} — ${nombreTercero}`, tipo: esIngreso?'H':'D', dBs: esIngreso?0:montoBs, hBs: esIngreso?montoBs:0, dUSD: esIngreso?0:montoUSD, hUSD: esIngreso?montoUSD:0 };
+
+      return {
+        id: p.id, comprobante: nombreTercero, fecha: p.fecha||'', doc: p.referencia||'—',
+        conc: `${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''}`,
+        tasa, lineas: [lineaOrigen, lineaRelacionada],
+      };
+    });
   };
 
   // ── Ajustes: comprobantes 100% manuales, multimoneda, cualquier par de cuentas ──────────
@@ -11092,6 +11156,8 @@ ${valoresHtml}
       }
       case 'ajustes':
         return {...comunes, titulo:'Ajustes Contables', primeraCol:'Comprobante', docLabel:'Nro Comp.', tasa:true, ordenBsPrimero:true, unidad:'ajuste(s)', lineas:aplicarReclasCC('ajustes',construirLineasAjustes())};
+      case 'relacionadas':
+        return {...comunes, titulo:'Cuentas por Pagar Relacionadas', primeraCol:'Tercero', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('relacionadas',construirLineasRelacionadas())};
       default: return null;
     }
   };
@@ -11116,6 +11182,7 @@ ${valoresHtml}
     { id:'deprec', label:'Depreciaciones', icon:'📉', activo:true },
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
+    { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
   ];
   const activo = sub || 'banco';
 
@@ -11609,6 +11676,62 @@ ${valoresHtml}
               </div>
             );
           })()}
+        </div>
+      );
+    }
+    if (activo === 'relacionadas') {
+      const lineasRel = filtrarPorBusquedaCC(construirLineasRelacionadas());
+      const totalRelUSD = lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Tercero, código, cuenta, referencia, concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasRel.length} movimiento(s) · Total ${contFmt(totalRelUSD)}</p>
+            <BotonesExportCC tabId="relacionadas"/>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Préstamos entre empresas — terceros "Relacionado" vinculados desde Banco/Caja, o anotados manualmente desde Estado de Cuenta de Relacionados. Recibir dinero del relacionado aumenta lo que le debemos (Haber); pagarle o abonarle lo reduce (Debe).</div>
+          {lineasRel.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
+              <p className="text-[10px] mt-1">Se generan al vincular un tercero "Relacionado" en Banco/Caja, o desde Estado de Cuenta de Relacionados</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasRel.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <CeldaCuentaCC tabId='relacionadas' compId={r.id} li={li} l={l}/>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
+                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
         </div>
       );
     }
