@@ -6536,6 +6536,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const idField = isBanco ? 'cuentaId' : 'cajaId';
     const [filtDesde,setFiltDesde]=useState(bancoMesActual()+'-01'); const [filtHasta,setFiltHasta]=useState(getTodayDate());
     const [filtOrigen,setFiltOrigen]=useState(''); const [filtCta,setFiltCta]=useState('');
+    // El asiento formal (cont_asientos) ya tiene las cuentas REALES que se seleccionaron al
+    // registrar el movimiento (contrapartidas, tercero, etc.). Si existe, hay que usarlo tal
+    // cual en vez de volver a adivinarlo con heurísticas — que es lo que causaba que este
+    // reporte mostrara una cuenta genérica distinta a la que realmente se eligió.
+    const [asientosLocal, setAsientosLocal] = useState([]);
+    useEffect(()=>{
+      const u=onSnapshot(getColRef('cont_asientos'),s=>setAsientosLocal(s.docs.map(d=>d.data())));
+      return()=>u();
+    },[]);
     let allMovs=movsFuente.map(m=>({...m,origen:isBanco?'Banco':'Caja'}));
     allMovs=allMovs.filter(m=>{if(m.fecha<filtDesde||m.fecha>filtHasta)return false;if(filtOrigen&&m[idField]!==filtOrigen)return false;return true;});
     allMovs.sort((a,b)=>a.fecha.localeCompare(b.fecha));
@@ -6548,7 +6557,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const comp=nombreCta(ctaP)||(isBanco?'BANCO':'CAJA');
       const grupoKey=m.id; // clave interna única por transacción — separada de "comp" para no fusionar movimientos del mismo banco/caja
       const mesL=m.fecha.substring(5,7)+'/'+m.fecha.substring(0,4);const doc=m.referencia||'—';const conc=m.esVale?`[VALE] ${m.concepto}`:m.concepto;
-      let sub=[{comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:nombreCta(ctaP),tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
+      // ── Si ya existe un asiento formal para este movimiento, se usan SUS líneas tal cual
+      // (las cuentas que de verdad se seleccionaron), sin recalcular nada por heurística. ──
+      const asientoLigado=asientosLocal.find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
+      let sub;
+      if(asientoLigado&&asientoLigado.lineas&&asientoLigado.lineas.length>0){
+        sub=asientoLigado.lineas.map(l=>({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:l.codigo||'',cuenta:l.cuenta||'—',tipo:l.tipoLinea||(Number(l.debeBs||0)>0?'D':'H'),dBs:Number(l.debeBs||0),hBs:Number(l.haberBs||0),dUSD:Number(l.debeUSD||0),hUSD:Number(l.haberUSD||0)}));
+      } else {
+      sub=[{comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:ctaP.cuentaContableCod||'—',cuenta:nombreCta(ctaP),tipo:isIng?'D':'H',dBs:isIng?valBs:0,hBs:isIng?0:valBs,dUSD:isIng?valUSD:0,hUSD:isIng?0:valUSD}];
       // Se intenta SIEMPRE identificar primero al cliente/proveedor y su cuenta contable YA
       // asignada (misma cuenta de operación) — porque lineasContra/asientoDebito a veces quedaron
       // guardados con el nombre del cliente/proveedor en vez de su cuenta contable real.
@@ -6568,7 +6584,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       // genérica del plan de cuentas (misma lógica que Directorio de Clientes/Proveedores),
       // en vez de dejarlo sin código.
       const cuentaGenerica=(patron)=>{const cta=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta?{codigo:String(cta.codigo||cta.id||''),nombre:cta.nombre||''}:null;};
-      if(tercero&&(codTercero||nomTercero)){
+      if(m.tipoTercero==='Relacionado'&&m.terceroId){
+        // Los terceros "Relacionados" (préstamos entre empresas) viven en su propia colección,
+        // no en Clientes ni Proveedores — si se buscan ahí nunca aparecen y el reporte termina
+        // cayendo en "Cuentas por Cobrar/Pagar" genérico, que no tiene nada que ver.
+        const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
+        const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
+        sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''),cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas'),tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
+      }
+      else if(tercero&&(codTercero||nomTercero)){
         sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
       else if(tercero && cuentaGenerica(esProveedorMov?/(cuentas?\s+por\s+pagar|cxp|proveedor)/i:/(cuentas?\s+por\s+cobrar|cxc|client)/i)){
@@ -6584,9 +6609,22 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const contraNombre=g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)');
         sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:contraCodigo,cuenta:contraNombre,tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
+      }
       if(filtCta){const ok=sub.some(sl=>(sl.codigo+' '+sl.cuenta).toLowerCase().includes(filtCta.toLowerCase()));if(!ok)return;}
       sub.forEach(sl=>{sBs+=sl.dBs-sl.hBs;sUSD+=sl.dUSD-sl.hUSD;lineasPlanas.push({...sl,sBs,sUSD});});
     });
+    // El saldo acumulado (sBs/sUSD) ya quedó calculado arriba en orden cronológico real
+    // (de la más antigua a la más reciente), que es como debe ser un saldo corrido. Para
+    // MOSTRAR la más reciente primero solo se invierte el orden de los GRUPOS (comprobantes)
+    // — sin tocar el orden interno de las líneas de cada uno ni los valores ya calculados.
+    {
+      const grupos=[]; const idxPorKey={};
+      lineasPlanas.forEach(l=>{
+        if(idxPorKey[l.grupoKey]===undefined){idxPorKey[l.grupoKey]=grupos.length;grupos.push([]);}
+        grupos[idxPorKey[l.grupoKey]].push(l);
+      });
+      lineasPlanas=grupos.reverse().flat();
+    }
     // ── PDF / XLS ──────────────────────────────────────────────────────────
     const buildHTMLLibro = () => {
       let sBsAcum=0, sUSDAcum=0;
@@ -6773,7 +6811,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <tbody>
               {tableRows.flatMap((r,idx)=>{
                 const lineas=r.lineas||[];
-                const comp=r.comprobante||r.numero||('CB-'+(idx+1).toString().padStart(4,'0'));
+                const comp=(title||'').split('·')[0].trim()||r.comprobante||r.numero||('CB-'+(idx+1).toString().padStart(4,'0'));
                 const mesL=r.fecha?r.fecha.substring(5,7)+'/'+r.fecha.substring(0,4):'—';
                 const nroDoc=r.nroDocumento||r.referencia||'—';
                 const conc=r.descripcion||r.concepto||'—';
@@ -6874,7 +6912,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         || (provs||[]).find(p=>nombreNorm && bancoNormNombre(p.razonSocial||p.name||p.nombre)===nombreNorm);
       const [codTercero,nomTercero]=tercero?.cuentaContableNombre?tercero.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
       const cuentaGenerica=(patron)=>{const cta2=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta2?{codigo:String(cta2.codigo||cta2.id||''),nombre:cta2.nombre||''}:null;};
-      if(tercero&&(codTercero||nomTercero)){
+      if(m.tipoTercero==='Relacionado'&&m.terceroId){
+        const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
+        const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
+        lineasContra=[{codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''),cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas'),tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
+      }
+      else if(tercero&&(codTercero||nomTercero)){
         lineasContra=[{codigo:codTercero||tercero.cuentaContableId||'',cuenta:nomTercero||tercero.razonSocial||tercero.nombre||'',tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
       else if(tercero && cuentaGenerica(esProveedorMov?/(cuentas?\s+por\s+pagar|cxp|proveedor)/i:/(cuentas?\s+por\s+cobrar|cxc|client)/i)){
@@ -6909,7 +6953,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       let sBs=0, sUSD=0;
       const rowsHtml = tableRows.flatMap(r=>{
         const lineas=r.lineas||[];
-        const comp=r.comprobante||r.numero||'—';
+        const comp=nombreCta(cuentasFuente.find(c=>c.id===getMovCuentaId(r)))||r.comprobante||r.numero||'—';
         const mesL=r.fecha?r.fecha.substring(5,7)+'/'+r.fecha.substring(0,4):'—';
         const nroDoc=r.nroDocumento||r.referencia||'—';
         const conc=r.descripcion||r.concepto||'—';
