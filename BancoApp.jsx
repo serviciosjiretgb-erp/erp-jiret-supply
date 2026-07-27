@@ -17,7 +17,7 @@ import {
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getFirestore, collection, doc, setDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp, writeBatch, arrayUnion
+  onSnapshot, query, orderBy, serverTimestamp, writeBatch, arrayUnion, getDocs
 } from 'firebase/firestore';
 
 // ── Firebase (mismo proyecto que el ERP principal) ──────────────────
@@ -4892,6 +4892,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   // ══════════════════════════════════════════════════════════════════════
   const CajaOpView = () => {
+    try {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
     // Filtros
@@ -5229,6 +5230,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(factura&&form.cerrarCxC){
           const ns=Math.max(0,factura.saldoUSD-montoUSD);
           batch.update(getDocRef('facturacion_facturas',factura.id),{saldoUSD:ns,estado:ns<0.01?'Pagada':'Pendiente'});
+        }
+        if(form.aplicaTercero&&form.tipoTercero==='Relacionado'&&form.terceroId){
+          const idPagoRel=bancoGid();
+          batch.set(getDocRef('cxp_pagos_relacionados',idPagoRel),{
+            id:idPagoRel,terceroId:form.terceroId,terceroNombre:tercero?.nombre||'',
+            fecha:form.fecha,concepto:form.concepto,referencia:form.referencia,
+            monto:form.tipo==='Ingreso'?-montoUSD:montoUSD,
+            origen:'caja',movimientoId:id,ts:serverTimestamp()
+          });
         }
 
         await batch.commit();
@@ -5938,6 +5948,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </BModal>
       </div>
     );
+    } catch(err) {
+      console.error('CajaOpView error:', err);
+      return (
+        <div className="max-w-2xl mx-auto mt-12 bg-red-50 border-2 border-red-300 rounded-3xl p-8 text-center">
+          <AlertTriangle size={40} className="text-red-500 mx-auto mb-3"/>
+          <div className="text-red-600 font-black text-lg uppercase mb-2">Error en Caja — Nuevo Movimiento</div>
+          <div className="text-red-700 text-xs font-bold bg-red-100 rounded-xl p-3 font-mono break-words">{err.message}</div>
+          <button onClick={()=>window.location.reload()} className="mt-4 bg-black text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase">Recargar</button>
+        </div>
+      );
+    }
   };
 
   // ══════════════════════════════════════════════════════════════════════
