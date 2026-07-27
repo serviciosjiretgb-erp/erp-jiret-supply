@@ -6149,6 +6149,206 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // 5b. RELACIÓN DE VALES (dinero en caja aún no recibido físicamente)
   // ══════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════
+  // RESUMEN DE OPERACIONES BANCO-CAJA — consolidado multimoneda con tasa
+  // manual editable, categorizado igual que el resto de selectores, más
+  // vales pendientes. Reutiliza EXACTAMENTE la misma fórmula de saldo de
+  // caja que CuentasCajaView (saldoInicial + movimientos + cobros/pagos
+  // CxC/CxP enrutados a la caja) para que las cifras cuadren con el resto.
+  // ══════════════════════════════════════════════════════════════════════
+  const ResumenOperacionesView = () => {
+    const [tasaManual, setTasaManual] = useState(String(tasaActiva||''));
+    const [valesRes, setValesRes] = useState([]);
+    useEffect(()=>{
+      const u = onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')), s=>setValesRes(s.docs.map(d=>d.data())));
+      return ()=>u();
+    },[]);
+
+    const tasa = Number(tasaManual)||0;
+    const convBs = (montoNativo, moneda) => moneda==='BS' ? montoNativo : montoNativo*tasa;
+    const convUsd = (montoNativo, moneda) => moneda==='BS' ? (tasa>0?montoNativo/tasa:0) : montoNativo;
+
+    const GRUPOS = [
+      {tipo:'Nacional-Bs',        label:'🇻🇪 Cuentas Nacionales — Bolívares'},
+      {tipo:'Nacional-Ext',       label:'💵 Cuentas Moneda Extranjera'},
+      {tipo:'Internacional',     label:'🌐 Cuentas Internacionales'},
+      {tipo:'Electronica',       label:'💳 Cuentas Electrónicas'},
+      {tipo:'Tarjeta-Debito-Intl',label:'🪪 Tarjetas de Débito Internacionales'},
+      {tipo:'Pago-Movil',        label:'📱 Pago Móvil'},
+    ];
+
+    const bancosPorGrupo = GRUPOS.map(g=>{
+      const lista = cuentas.filter(c=>g.tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===g.tipo)
+        .map(c=>({ ...c, sBs: convBs(Number(c.saldo||0), c.moneda), sUsd: convUsd(Number(c.saldo||0), c.moneda) }));
+      return { ...g, lista, subBs: lista.reduce((a,c)=>a+c.sBs,0), subUsd: lista.reduce((a,c)=>a+c.sUsd,0) };
+    }).filter(g=>g.lista.length>0);
+    const totalBancosBs = bancosPorGrupo.reduce((s,g)=>s+g.subBs,0);
+    const totalBancosUsd = bancosPorGrupo.reduce((s,g)=>s+g.subUsd,0);
+
+    const getSaldoCajaRes = (cajaId)=>{
+      const esBs = m => String(m||'').toUpperCase()==='BS';
+      const movs = movCaja.filter(m=>m.cajaId===cajaId);
+      const bs  = movs.filter(m=>esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
+      const usd = movs.filter(m=>!esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+      const cobrosCaja = (cobrosCajaCxc||[]).filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId&&!c.grupoCobroId);
+      const bsCobros  = cobrosCaja.filter(c=>esBs(c.moneda)).reduce((a,c)=>{const t=Number(c.tasa||tasaActiva)||tasaActiva;return a+(Number(c.montoBs||0)||(Number(c.monto||0)*t));},0);
+      const usdCobros = cobrosCaja.filter(c=>!esBs(c.moneda)).reduce((a,c)=>a+Number(c.monto||0),0);
+      const pagosCaja = (pagosCajaCxP||[]).filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId&&!p.grupoPagoId);
+      const bsPagos  = pagosCaja.filter(p=>esBs(p.moneda)).reduce((a,p)=>{const t=Number(p.tasa||tasaActiva)||tasaActiva;return a+(Number(p.montoBs||0)||(Number(p.monto||0)*t));},0);
+      const usdPagos = pagosCaja.filter(p=>!esBs(p.moneda)).reduce((a,p)=>a+Number(p.monto||0),0);
+      return {bs: bs+bsCobros-bsPagos, usd: usd+usdCobros-usdPagos};
+    };
+    const cajasLista = (cajas||[]).map(c=>{
+      const saldo = getSaldoCajaRes(c.id);
+      const saldoVal = c.moneda==='BS'?saldo.bs:saldo.usd;
+      const saldoTotalNativo = (Number(c.saldoInicial)||0) + saldoVal;
+      return { ...c, saldoTotalNativo, sBs: convBs(saldoTotalNativo, c.moneda), sUsd: convUsd(saldoTotalNativo, c.moneda) };
+    });
+    const totalCajasBs = cajasLista.reduce((a,c)=>a+c.sBs,0);
+    const totalCajasUsd = cajasLista.reduce((a,c)=>a+c.sUsd,0);
+
+    const valesPendientes = (valesRes||[]).filter(v=>v.estado==='Pendiente');
+    const totalValesUsd = valesPendientes.reduce((a,v)=>a+Number(v.montoUSD||(v.moneda==='BS'?(tasa>0?Number(v.monto||0)/tasa:0):Number(v.monto||0))),0);
+
+    const granTotalBs = totalBancosBs+totalCajasBs;
+    const granTotalUsd = totalBancosUsd+totalCajasUsd;
+
+    const buildHTML = () => {
+      const filasBancos = bancosPorGrupo.map(g=>`
+        <tr><td colspan="6" style="background:#f1f5f9;font-weight:900;font-size:9px;text-transform:uppercase;padding:6px 10px">${g.label}</td></tr>
+        ${g.lista.map(c=>`<tr><td>${c.banco||'—'}</td><td>${c.numeroCuenta||'—'}</td><td style="text-align:center">${c.moneda}</td><td style="text-align:right">${c.moneda==='BS'?'Bs.':'$'}${bancoFmt(c.saldo)}</td><td style="text-align:right;color:#16a34a">Bs.${bancoFmt(c.sBs)}</td><td style="text-align:right;color:#16a34a;font-weight:900">$${bancoFmt(c.sUsd)}</td></tr>`).join('')}
+        <tr style="background:#f8fafc"><td colspan="4" style="font-weight:900;text-align:right;padding:6px 10px">Subtotal ${g.label}</td><td style="text-align:right;font-weight:900">Bs.${bancoFmt(g.subBs)}</td><td style="text-align:right;font-weight:900">$${bancoFmt(g.subUsd)}</td></tr>
+      `).join('');
+      const filasCajas = cajasLista.map(c=>`<tr><td>${c.nombre||'—'}</td><td style="text-align:center">${c.moneda}</td><td style="text-align:right">${c.moneda==='BS'?'Bs.':'$'}${bancoFmt(c.saldoTotalNativo)}</td><td style="text-align:right;color:#16a34a">Bs.${bancoFmt(c.sBs)}</td><td style="text-align:right;color:#16a34a;font-weight:900">$${bancoFmt(c.sUsd)}</td></tr>`).join('');
+      const filasVales = valesPendientes.map(v=>`<tr><td>${bancoDd(v.fecha)}</td><td>${v.titular||'—'}</td><td>${v.concepto||'—'}</td><td style="text-align:right;font-weight:900;color:#dc2626">${v.moneda==='BS'?'Bs.':'$'}${bancoFmt(v.monto)}</td></tr>`).join('');
+      return bancoLetterheadOpen('Resumen de Operaciones Banco-Caja',`Tasa del día: ${bancoFmt(tasa)} Bs/$ · Generado ${bancoDd(getTodayDate())}`)+
+        `<style>table{width:100%;border-collapse:collapse;font-size:10px;margin-bottom:18px}th{background:#0f172a;color:#e2e8f0;padding:6px 10px;text-align:left;font-size:8px;text-transform:uppercase;white-space:nowrap}td{padding:5px 10px;border-bottom:1px solid #e2e8f0}h3{font-size:12px;font-weight:900;text-transform:uppercase;margin:14px 0 6px;color:#0f172a}</style>
+        <h3>🏦 Bancos</h3>
+        <table><thead><tr><th>Banco</th><th>N° Cuenta</th><th>Moneda</th><th style="text-align:right">Saldo Nativo</th><th style="text-align:right">Equiv. Bs.</th><th style="text-align:right">Equiv. $</th></tr></thead>
+        <tbody>${filasBancos}</tbody>
+        <tfoot><tr style="background:#0f172a"><td colspan="4" style="color:#fff;font-weight:900;text-align:right">TOTAL BANCOS</td><td style="color:#4ade80;font-weight:900;text-align:right">Bs.${bancoFmt(totalBancosBs)}</td><td style="color:#4ade80;font-weight:900;text-align:right">$${bancoFmt(totalBancosUsd)}</td></tr></tfoot></table>
+        <h3>💰 Cajas</h3>
+        <table><thead><tr><th>Caja</th><th>Moneda</th><th style="text-align:right">Saldo Nativo</th><th style="text-align:right">Equiv. Bs.</th><th style="text-align:right">Equiv. $</th></tr></thead>
+        <tbody>${filasCajas||'<tr><td colspan="5" style="text-align:center;color:#94a3b8">Sin cajas registradas</td></tr>'}</tbody>
+        <tfoot><tr style="background:#0f172a"><td colspan="3" style="color:#fff;font-weight:900;text-align:right">TOTAL CAJAS</td><td style="color:#4ade80;font-weight:900;text-align:right">Bs.${bancoFmt(totalCajasBs)}</td><td style="color:#4ade80;font-weight:900;text-align:right">$${bancoFmt(totalCajasUsd)}</td></tr></tfoot></table>
+        <h3>📋 Vales Pendientes (${valesPendientes.length})</h3>
+        <table><thead><tr><th>Fecha</th><th>Titular</th><th>Concepto</th><th style="text-align:right">Monto</th></tr></thead>
+        <tbody>${filasVales||'<tr><td colspan="4" style="text-align:center;color:#94a3b8">Sin vales pendientes</td></tr>'}</tbody></table>
+        <table style="margin-top:20px"><tfoot><tr style="background:#f97316"><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">TOTAL GENERAL BANCO + CAJA</td><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">Bs.${bancoFmt(granTotalBs)}</td><td style="color:#fff;font-weight:900;text-align:right;font-size:12px;padding:10px">$${bancoFmt(granTotalUsd)}</td></tr></tfoot></table>`+
+        bancoLetterheadClose('Módulo: Tesorería & Bancos');
+    };
+    const imprimirPDF = () => bancoPrintWindow(buildHTML());
+    const imprimirXLS = () => { const h=buildHTML(); const b=new Blob([h],{type:'application/vnd.ms-excel;charset=utf-8'}); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=`resumen_banco_caja_${getTodayDate()}.xls`; a.click(); URL.revokeObjectURL(u); };
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-4 mb-2">
+          <div>
+            <h2 className="text-xl font-black uppercase text-slate-900">Resumen de Operaciones Banco-Caja</h2>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">Consolidado multimoneda · {bancoDd(getTodayDate())}</p>
+          </div>
+          <div className="flex items-end gap-3">
+            <div>
+              <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa de Cambio del Día (Bs/$)</label>
+              <input type="number" step="0.01" value={tasaManual} onChange={e=>setTasaManual(e.target.value)} placeholder="Ej. 40.00" className={`${inp} w-36 font-black text-center`}/>
+            </div>
+            <button onClick={imprimirPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><Download size={12}/> PDF</button>
+            <button onClick={imprimirXLS} className="flex items-center gap-1.5 px-3 py-2.5 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
+          </div>
+        </div>
+
+        {tasa<=0 && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] font-bold text-amber-700">⚠ Ingrese la tasa de cambio del día para ver los equivalentes en Bs./USD.</div>}
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <BKPI label="Total Bancos" value={`$${bancoFmt(totalBancosUsd)}`} sub={`Bs. ${bancoFmt(totalBancosBs)}`} accent="blue" Icon={Building2}/>
+          <BKPI label="Total Cajas" value={`$${bancoFmt(totalCajasUsd)}`} sub={`Bs. ${bancoFmt(totalCajasBs)}`} accent="green" Icon={PiggyBank}/>
+          <BKPI label="Vales Pendientes" value={valesPendientes.length} sub={`$${bancoFmt(totalValesUsd)}`} accent="gold" Icon={FileText}/>
+          <BKPI label="Total General" value={`$${bancoFmt(granTotalUsd)}`} sub={`Bs. ${bancoFmt(granTotalBs)}`} accent="red" Icon={Wallet}/>
+        </div>
+
+        <BCard title="🏦 Bancos" subtitle="Saldos por categoría, con equivalente en ambas monedas">
+          {bancosPorGrupo.length===0 ? <BEmptyState icon={Building2} title="Sin cuentas bancarias" desc="Registre cuentas en Cuentas Bancarias"/> : (
+            <div className="space-y-5">
+              {bancosPorGrupo.map(g=>(
+                <div key={g.tipo}>
+                  <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-2">{g.label}</p>
+                  <table className="w-full">
+                    <thead><tr><BTh>Banco</BTh><BTh>N° Cuenta</BTh><BTh>Moneda</BTh><BTh right>Saldo Nativo</BTh><BTh right>Equiv. Bs.</BTh><BTh right>Equiv. $</BTh></tr></thead>
+                    <tbody>
+                      {g.lista.map(c=>(
+                        <tr key={c.id}>
+                          <BTd className="font-black">{c.banco}</BTd>
+                          <BTd mono>{c.numeroCuenta||'—'}</BTd>
+                          <BTd>{c.moneda}</BTd>
+                          <BTd right mono>{c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldo)}</BTd>
+                          <BTd right mono className="text-slate-500">Bs. {bancoFmt(c.sBs)}</BTd>
+                          <BTd right mono className="text-emerald-600 font-black">${bancoFmt(c.sUsd)}</BTd>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot><tr className="bg-slate-50"><td colSpan={4} className="px-4 py-2 text-right font-black text-[10px] uppercase text-slate-500">Subtotal</td><td className="px-4 py-2 text-right font-black text-xs">Bs. {bancoFmt(g.subBs)}</td><td className="px-4 py-2 text-right font-black text-xs text-emerald-600">${bancoFmt(g.subUsd)}</td></tr></tfoot>
+                  </table>
+                </div>
+              ))}
+              <div className="flex items-center justify-between p-4 rounded-xl" style={{background:'#0f172a'}}>
+                <span className="text-white font-black text-xs uppercase">Total Bancos</span>
+                <span className="text-emerald-400 font-black text-sm">Bs. {bancoFmt(totalBancosBs)} &nbsp;·&nbsp; ${bancoFmt(totalBancosUsd)}</span>
+              </div>
+            </div>
+          )}
+        </BCard>
+
+        <BCard title="💰 Cajas" subtitle="Saldos de efectivo (saldo inicial + movimientos + cobros/pagos enrutados)">
+          {cajasLista.length===0 ? <BEmptyState icon={PiggyBank} title="Sin cajas registradas" desc="Registre cajas en Cuentas de Caja"/> : (
+            <div className="space-y-3">
+              <table className="w-full">
+                <thead><tr><BTh>Caja</BTh><BTh>Moneda</BTh><BTh right>Saldo Nativo</BTh><BTh right>Equiv. Bs.</BTh><BTh right>Equiv. $</BTh></tr></thead>
+                <tbody>
+                  {cajasLista.map(c=>(
+                    <tr key={c.id}>
+                      <BTd className="font-black">{c.nombre}</BTd>
+                      <BTd>{c.moneda}</BTd>
+                      <BTd right mono>{c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldoTotalNativo)}</BTd>
+                      <BTd right mono className="text-slate-500">Bs. {bancoFmt(c.sBs)}</BTd>
+                      <BTd right mono className="text-emerald-600 font-black">${bancoFmt(c.sUsd)}</BTd>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex items-center justify-between p-4 rounded-xl" style={{background:'#0f172a'}}>
+                <span className="text-white font-black text-xs uppercase">Total Cajas</span>
+                <span className="text-emerald-400 font-black text-sm">Bs. {bancoFmt(totalCajasBs)} &nbsp;·&nbsp; ${bancoFmt(totalCajasUsd)}</span>
+              </div>
+            </div>
+          )}
+        </BCard>
+
+        <BCard title="📋 Vales Pendientes" subtitle={`${valesPendientes.length} vale(s) · $${bancoFmt(totalValesUsd)} equivalente`}>
+          {valesPendientes.length===0 ? <BEmptyState icon={FileText} title="Sin vales pendientes" desc="El dinero contabilizado en caja está físicamente en caja"/> : (
+            <table className="w-full">
+              <thead><tr><BTh>Fecha</BTh><BTh>Titular</BTh><BTh>Concepto</BTh><BTh right>Monto</BTh></tr></thead>
+              <tbody>
+                {valesPendientes.map((v,i)=>(
+                  <tr key={i}>
+                    <BTd>{bancoDd(v.fecha)}</BTd>
+                    <BTd className="font-black">{v.titular||'—'}</BTd>
+                    <BTd>{v.concepto||'—'}</BTd>
+                    <BTd right mono className="text-red-500 font-black">{v.moneda==='BS'?'Bs.':'$'}{bancoFmt(v.monto)}</BTd>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </BCard>
+
+        <div className="flex items-center justify-between p-5 rounded-2xl shadow-lg" style={{background:'linear-gradient(135deg,#f97316,#ea580c)'}}>
+          <span className="text-white font-black text-sm uppercase tracking-wide">Total General Banco + Caja</span>
+          <span className="text-white font-black text-lg">Bs. {bancoFmt(granTotalBs)} &nbsp;·&nbsp; ${bancoFmt(granTotalUsd)}</span>
+        </div>
+      </div>
+    );
+  };
+
   const ValesView = () => {
     const [modal,setModal]=useState(false);
     const [detalle,setDetalle]=useState(null);
@@ -7395,7 +7595,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <h1 className="text-2xl font-black text-slate-900 uppercase tracking-wide mb-2">Seleccione un Módulo</h1>
           <p className="text-slate-400 text-sm">¿Con qué desea trabajar hoy?</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 w-full max-w-6xl">
           {/* BANCOS */}
           <button onClick={()=>{ setSubmodulo('banco'); setSec('dashboard'); }}
             className="group text-left rounded-2xl border-2 border-slate-200 bg-white p-8 hover:border-blue-400 hover:shadow-xl transition-all duration-200"
@@ -7457,7 +7657,41 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               Entrar al módulo <ArrowRight size={14}/>
             </div>
           </button>
+          {/* RESUMEN DE OPERACIONES BANCO-CAJA */}
+          <button onClick={()=>{ setSubmodulo('resumen_op'); }}
+            className="group text-left rounded-2xl border-2 border-slate-200 bg-white p-8 hover:border-violet-400 hover:shadow-xl transition-all duration-200">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-5 transition-all group-hover:scale-110" style={{background:'#f5f3ff'}}>
+              <Scale size={28} style={{color:'#8b5cf6'}}/>
+            </div>
+            <h2 className="text-lg font-black text-slate-900 uppercase tracking-wide mb-2">📊 Resumen Banco-Caja</h2>
+            <p className="text-sm text-slate-400 mb-5">Consolidado multimoneda con tasa del día editable</p>
+            <div className="space-y-1.5">
+              {['Bancos por categoría','Cajas y efectivo','Vales pendientes','Tasa del día editable','PDF y Excel'].map(m=>(
+                <div key={m} className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <div className="w-1.5 h-1.5 rounded-full" style={{background:'#8b5cf6'}}/>
+                  {m}
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 flex items-center gap-2 font-black text-xs uppercase" style={{color:'#8b5cf6'}}>
+              Entrar al módulo <ArrowRight size={14}/>
+            </div>
+          </button>
         </div>
+      </div>
+    </div>
+  );
+  if(submodulo==='resumen_op') return (
+    <div className="min-h-screen" style={{background:'#f8fafc'}}>
+      <div className="flex items-center px-6 py-4" style={{background:'#0f172a',borderBottom:'2px solid #f97316'}}>
+        <button onClick={()=>setSubmodulo('')} className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors text-xs font-black uppercase">
+          <ArrowLeft size={14}/> Volver
+        </button>
+        <div className="w-px h-5 bg-slate-700 mx-3"/>
+        <span className="text-white font-black text-sm uppercase tracking-wide">Bancos & Tesorería · Resumen Banco-Caja</span>
+      </div>
+      <div className="p-6 max-w-6xl mx-auto">
+        <ResumenOperacionesView/>
       </div>
     </div>
   );
