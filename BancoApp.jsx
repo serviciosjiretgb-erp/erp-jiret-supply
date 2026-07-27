@@ -2862,12 +2862,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             ];
           }
         } else if(esTransferencia && cuentaDest) {
-          // Transferencia/Traslado de Fondo banco a banco (o banco a caja): banco origen→Haber, destino→Debe
+          // Transferencia/Traslado de Fondo: se usa una cuenta puente "Traslados de Fondos" en
+          // AMBOS lados (origen y destino) en vez de nombrar directamente al otro banco/caja —
+          // así cada lado queda como un asiento completo e independiente, sin depender de que el
+          // otro lado exista para cuadrar. Origen: D Traslados de Fondos / H Banco Origen.
+          // Destino: D Banco Destino / H Traslados de Fondos (se crea más abajo, junto al movimiento).
           const bsOrigen=esMonedaLocal?montoBs:montoUSD*tasa;
           const usdOrigen=esMonedaLocal?montoBs/tasa:montoUSD;
           // Leer cuenta contable con fallback al campo unificado 'cuentaContable' (cod · nom)
           const splitCta=(c)=>({cod:(c?.cuentaContableCod||c?.cuentaContable?.split('·')[0]||'').trim(),nom:(c?.cuentaContableNom||c?.cuentaContable?.split('·')[1]||c?.banco||'').trim()});
           const ctaDest=splitCta(cuentaDest); const ctaOrig=splitCta(cuentaSel);
+          const ctaTrasladosObj=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+          const codTraslados=ctaTrasladosObj?String(ctaTrasladosObj.codigo||ctaTrasladosObj.id||''):'1.1.01.02.012';
+          const nomTraslados=ctaTrasladosObj?ctaTrasladosObj.nombre:'Traslados de Fondos';
           if(form.tipo==='Traslado de Fondo'&&(!ctaDest.cod||!ctaOrig.cod)){
             alert('Error: El banco origen o destino no tiene cuenta contable asignada. Configúrela en Cuentas Bancarias.');
             setBusy(false); return;
@@ -2880,7 +2887,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             setBusy(false); return;
           }
           todasLineas=[
-            {codigo:ctaDest.cod,cuenta:ctaDest.nom||`Banco ${cuentaDest.banco||'Destino'}`,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
+            {codigo:codTraslados,cuenta:nomTraslados,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
             {codigo:ctaOrig.cod,cuenta:ctaOrig.nom||`Banco ${cuenta.banco}`,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:bsOrigen,debeUSD:0,haberUSD:usdOrigen},
           ];
           if(comisionUSD>0.005){
@@ -2951,12 +2958,36 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           const netoBs=esMonedaLocal?montoBs-comisionBs:(montoBs-comisionBs);
           const netoUSD=montoUSD-comisionUSD;
           const idDestino=bancoGid();
+          // El destino de un traslado no tenía NINGÚN asiento contable propio — solo el movimiento
+          // crudo. Se crea aquí igual que el origen: D Banco/Caja Destino / H Traslados de Fondos.
+          const ctaTrasladosDestObj=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+          const codTrasladosDest=ctaTrasladosDestObj?String(ctaTrasladosDestObj.codigo||ctaTrasladosDestObj.id||''):'1.1.01.02.012';
+          const nomTrasladosDest=ctaTrasladosDestObj?ctaTrasladosDestObj.nombre:'Traslados de Fondos';
+          const asientoDestId=bancoGid();
+          const codCtaDestPropia=cuentaDest.cuentaContableCod||'';
+          const nomCtaDestPropia=cuentaDest.cuentaContableNom||cuentaDest.banco||'';
+          const conceptoDest=`Traslado recibido desde ${cuenta.banco} | Ref: ${form.referencia}`;
+          batch.set(getDocRef('cont_asientos',asientoDestId),{
+            id:asientoDestId, comprobante:`CB-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
+            numero:`CB-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
+            mes:form.fecha.substring(5,7)+'/'+form.fecha.substring(0,4), fecha:form.fecha,
+            tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
+            descripcion:conceptoDest.toUpperCase(), tasa, niif:false, efectivo:false,
+            modulo: destinoEsCaja?'Caja':'Bancos',
+            movimientoBancoId: destinoEsCaja?'':idDestino, movimientoCajaId: destinoEsCaja?idDestino:'',
+            lineas:[
+              {codigo:codCtaDestPropia,cuenta:nomCtaDestPropia,tipoLinea:'D',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:netoBs,haberBs:0,debeUSD:netoUSD,haberUSD:0},
+              {codigo:codTrasladosDest,cuenta:nomTrasladosDest,tipoLinea:'H',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:0,haberBs:netoBs,debeUSD:0,haberUSD:netoUSD},
+            ],
+            totalDebeBs:netoBs, totalHaberBs:netoBs, totalDebeUSD:netoUSD, totalHaberUSD:netoUSD,
+            ts:serverTimestamp(),
+          });
           if(destinoEsCaja){
             batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativo});
-            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:`Traslado recibido desde ${cuenta.banco} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,estatus:'No Conciliado',ts:serverTimestamp()});
+            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           } else {
             batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativo});
-            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Transferencia',concepto:`Transferencia recibida desde ${cuenta.banco} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,montoNativo:netoNativo,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativo,estatus:'No Conciliado',ts:serverTimestamp()});
+            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Transferencia',concepto:conceptoDest,referencia:form.referencia,tasa,montoNativo:netoNativo,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativo,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           }
         }
         if(factura&&form.cerrarCxC){
@@ -3824,11 +3855,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
           <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,tasaDestino:''})}>
             <option value="">— Seleccione destino —</option>
-            <optgroup label="🏦 Bancos">
-              {cuentas.filter(c=>c.id!==form.cuentaId&&esBancario(c)&&(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase()))).map(c=>(
-                <option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldo)}</option>
-              ))}
-            </optgroup>
+            {[['Nacional-Bs','🇻🇪 Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
+              const grupo=cuentas.filter(c=>c.id!==form.cuentaId&&esBancario(c)&&(tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo)&&(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase())));
+              return grupo.length>0&&(
+                <optgroup key={tipo} label={label}>
+                  {grupo.map(c=>(<option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldo)}</option>))}
+                </optgroup>
+              );
+            })}
             <optgroup label="💰 Cajas">
               {cajas.filter(c=>!searchDestino||c.nombre.toUpperCase().includes(searchDestino.toUpperCase())).map(c=>(
                 <option key={c.id} value={c.id}>{c.nombre} · {c.moneda==='BS'?'Bs.':'$'}</option>
@@ -5152,9 +5186,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             ];
           }
         } else if(esTransferencia && cuentaDest){
+          // Misma cuenta puente que en Banco: D Traslados de Fondos / H Caja Origen — el destino
+          // arma su propio asiento por separado, más abajo, junto a su movimiento.
           const bsOrigen=esMonedaLocal?montoBs:montoUSD*tasa;
           const usdOrigen=esMonedaLocal?montoBs/tasa:montoUSD;
           const ctaDest={cod:(cuentaDest.cuentaContableCod||'').trim(),nom:(cuentaDest.cuentaContableNom||cuentaDest.banco||'').trim()};
+          const ctaTrasladosObj=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+          const codTraslados=ctaTrasladosObj?String(ctaTrasladosObj.codigo||ctaTrasladosObj.id||''):'1.1.01.02.012';
+          const nomTraslados=ctaTrasladosObj?ctaTrasladosObj.nombre:'Traslados de Fondos';
           if(form.tipo==='Traslado de Fondo'&&(!ctaDest.cod||!ctaCajaCod)){
             alert('Error: la caja o la cuenta destino no tiene cuenta contable asignada. Configúrela en Cuentas de Caja / Cuentas Bancarias.');
             setBusy(false); return;
@@ -5167,7 +5206,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             setBusy(false); return;
           }
           todasLineas=[
-            {codigo:ctaDest.cod,cuenta:ctaDest.nom||`${destinoEsCaja?'Caja':'Banco'} ${cuentaDest.banco||'Destino'}`,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
+            {codigo:codTraslados,cuenta:nomTraslados,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:bsOrigen-comisionBs,haberBs:0,debeUSD:usdOrigen-comisionUSD,haberUSD:0},
             {codigo:ctaCajaCod,cuenta:ctaCajaNom,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:bsOrigen,debeUSD:0,haberUSD:usdOrigen},
           ];
           if(comisionUSD>0.005){
@@ -5218,12 +5257,34 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           const netoBs=montoBs-comisionBs;
           const netoUSD=montoUSD-comisionUSD;
           const idDestino=bancoGid();
+          const ctaTrasladosDestObj=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+          const codTrasladosDest=ctaTrasladosDestObj?String(ctaTrasladosDestObj.codigo||ctaTrasladosDestObj.id||''):'1.1.01.02.012';
+          const nomTrasladosDest=ctaTrasladosDestObj?ctaTrasladosDestObj.nombre:'Traslados de Fondos';
+          const asientoDestId=bancoGid();
+          const codCtaDestPropia=cuentaDest.cuentaContableCod||'';
+          const nomCtaDestPropia=cuentaDest.cuentaContableNom||cuentaDest.banco||'';
+          const conceptoDest=`Traslado recibido desde ${caja.nombre} | Ref: ${form.referencia}`;
+          batch.set(getDocRef('cont_asientos',asientoDestId),{
+            id:asientoDestId, comprobante:`CC-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
+            numero:`CC-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
+            mes:form.fecha.substring(5,7)+'/'+form.fecha.substring(0,4), fecha:form.fecha,
+            tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
+            descripcion:conceptoDest.toUpperCase(), tasa, niif:false, efectivo:true,
+            modulo: destinoEsCaja?'Caja':'Bancos',
+            movimientoBancoId: destinoEsCaja?'':idDestino, movimientoCajaId: destinoEsCaja?idDestino:'',
+            lineas:[
+              {codigo:codCtaDestPropia,cuenta:nomCtaDestPropia,tipoLinea:'D',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:netoBs,haberBs:0,debeUSD:netoUSD,haberUSD:0},
+              {codigo:codTrasladosDest,cuenta:nomTrasladosDest,tipoLinea:'H',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:0,haberBs:netoBs,debeUSD:0,haberUSD:netoUSD},
+            ],
+            totalDebeBs:netoBs, totalHaberBs:netoBs, totalDebeUSD:netoUSD, totalHaberUSD:netoUSD,
+            ts:serverTimestamp(),
+          });
           if(destinoEsCaja){
             batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativo});
-            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:`Traslado recibido desde ${caja.nombre} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,estatus:'No Conciliado',ts:serverTimestamp()});
+            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           } else {
             batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativo});
-            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Traslado desde Caja',concepto:`Traslado recibido desde ${caja.nombre} | Ref: ${form.referencia}`,referencia:form.referencia,tasa,montoNativo:netoNativo,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativo,estatus:'No Conciliado',ts:serverTimestamp()});
+            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Traslado desde Caja',concepto:conceptoDest,referencia:form.referencia,tasa,montoNativo:netoNativo,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativo,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           }
         }
 
@@ -5596,11 +5657,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           </div>
                           <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,tasaDestino:''})}>
                             <option value="">— Seleccione destino —</option>
-                            <optgroup label="🏦 Bancos">
-                              {cuentas.filter(c=>(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase()))).map(c=>(
-                                <option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldo)}</option>
-                              ))}
-                            </optgroup>
+                            {[['Nacional-Bs','🇻🇪 Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
+                              const grupo=cuentas.filter(c=>(tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo)&&(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase())));
+                              return grupo.length>0&&(
+                                <optgroup key={tipo} label={label}>
+                                  {grupo.map(c=>(<option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'}{bancoFmt(c.saldo)}</option>))}
+                                </optgroup>
+                              );
+                            })}
                             <optgroup label="💰 Cajas">
                               {cajas.filter(c=>c.id!==form.cuentaId&&(!searchDestino||c.nombre.toUpperCase().includes(searchDestino.toUpperCase()))).map(c=>(
                                 <option key={c.id} value={c.id}>{c.nombre} · {c.moneda==='BS'?'Bs.':'$'}</option>
