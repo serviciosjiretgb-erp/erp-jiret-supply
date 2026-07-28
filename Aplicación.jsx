@@ -408,7 +408,8 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
       // Solo retenciones de IVA — el mismo criterio que ya usa Libro de Ventas. Sin este filtro se
       // sumaban también ISLR/Municipal/Otras retenciones, inflando "Retenciones del Período".
-      const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f>=desde&&f<=hasta&&(r.tipoRetencion||'IVA')==='IVA';});
+      // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
+      const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f.substring(0,7)===`${detAnio}-${detMes}`&&getQuincenaRetMod(r)===detQ&&(r.tipoRetencion||'IVA')==='IVA';});
       let ivaDebitosBs=0;
       ventasFact.forEach(inv=>{
         if(inv.aplicaIva!=='SI') return;
@@ -1353,7 +1354,8 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
             const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
           });
           const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
-          const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f>=desde&&f<=hasta&&(r.tipoRetencion||'IVA')==='IVA';});
+          // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
+          const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f.substring(0,7)===`${detAnio}-${detMes}`&&getQuincenaRetMod(r)===detQ&&(r.tipoRetencion||'IVA')==='IVA';});
           let ventasGravadasBs=0, ivaDebitosBs=0;
           ventasFact.forEach(inv=>{
             if(inv.aplicaIva!=='SI') return;
@@ -2808,6 +2810,14 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
 // Utilidades Procura (scope de módulo)
 const pFmt=(n)=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0);
 const pNum=(v)=>parseFloat(String(v||0).replace(/[^0-9.-]/g,''))||0;
+// Quincena de una retención: la que se eligió a mano al registrarla (no necesariamente la
+// que marca la fecha) — a nivel de módulo para que Libro de Ventas y Determinación de IVA
+// usen exactamente el mismo criterio.
+const getQuincenaRetMod=(r)=>{
+  if(String(r?.quincena)==='1'||String(r?.quincena)==='2') return String(r.quincena);
+  const dd=parseInt((r?.fechaComprobante||r?.fecha||'').split('-')[2],10);
+  return dd&&dd<=15?'1':'2';
+};
 const pDate=(s)=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
 const pId=()=>Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,5).toUpperCase();
 const getMesActual=()=>{const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;};
@@ -12254,9 +12264,11 @@ function App() {
   // (p.ej. registros de "Otra Retención" guardados antes de este fix, que no lo tenían), la
   // deriva de fechaComprobante — así no desaparecen de ambos filtros de quincena a la vez.
   const getQuincenaRet=(r)=>{
-    // Tolerante a que 'quincena' se haya guardado como número (1/2) en vez de texto ('1'/'2') —
-    // con comparación estricta ('===') un número se ignoraba y cae a recalcular por fecha, lo
-    // que podía contradecir lo que la propia fila ya tenía guardado y mostraba en pantalla.
+    // La quincena la elige la persona a mano al registrar la retención (campo QUINCENA del
+    // modal) — es una decisión suya, no necesariamente igual a la fecha del comprobante, y el
+    // sistema debe respetarla siempre que exista. Tolerante a que se haya guardado como número
+    // (1/2) en vez de texto ('1'/'2'). Solo si el campo no existe (registros viejos, o cuando
+    // de verdad no hay dato) se calcula por la fecha, como último recurso.
     if(String(r?.quincena)==='1'||String(r?.quincena)==='2') return String(r.quincena);
     const dd=parseInt((r?.fechaComprobante||r?.fecha||'').split('-')[2],10);
     return dd&&dd<=15?'1':'2';
@@ -30449,7 +30461,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // ISLR / Municipales / Otras se registran igual, pero no entran aquí.
             if((r.tipoRetencion||'IVA')!=='IVA') return false;
             const f=r.fechaComprobante||r.fecha||'';
-            return f>=periodoDesde&&f<=periodoHasta;
+            if(f.substring(0,7)!==`${libroAnio}-${mes2}`) return false; // mismo mes/año
+            // La quincena de una retención es la que se eligió al registrarla (campo QUINCENA
+            // del modal) — no necesariamente la que marca su fecha. Se respeta esa elección aquí.
+            if(libroQuincena!=='AMBAS'&&getQuincenaRet(r)!==libroQuincena) return false;
+            return true;
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
