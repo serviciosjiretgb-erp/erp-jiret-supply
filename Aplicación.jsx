@@ -947,19 +947,28 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     const q=parseInt(txtQuincena,10);
     const lista=retIVA.filter(r=>{
       const mesOK=(r.fecha||'').substring(0,7)===txtMes;
-      const qOK=((r.periodo||'').toUpperCase().includes('II')?2:1)===q;
+      // La quincena se calcula del DÍA real de la fecha (1-15 = I, 16-fin = II), no del campo de
+      // texto "periodo" — ese campo puede no estar bien poblado en registros viejos, y como
+      // "includes('II')" da false para un texto vacío, todo terminaba cayendo en la I Quincena
+      // por defecto (por eso pedir la I traía todo el mes).
+      const dia=parseInt((r.fecha||'').substring(8,10),10)||1;
+      const qOK=(dia<=15?1:2)===q;
       return mesOK&&qOK;
     }).sort(_ordCompIVA);
     if(lista.length===0){setImpDialog({title:'Sin registros',text:`No hay retenciones IVA para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`,type:'alert'});return;}
     const rifAgente=_soloRif(settings?.empresaRif||'J-41230937-4');
     const periodoAAAAMM=txtMes.replace('-','');
     const N2=n=>(parseFloat(n)||0).toFixed(2);
-    const PCT_IVA=16;
     const lineas=lista.map(r=>{
       const montoRet=pNum(r.montoBs||0);
       const pctRetUsado=(pNum(r.pctRetencion||75)/100)||0.75;
       const baseIVA=pNum(r.baseIVABs||0); // monto de IVA de la factura (no la base)
-      const base16=pNum(r.base16Bs||0)
+      // Alícuota real de ESTA factura: si tiene base8Bs y no base16Bs, fue al 8% — no siempre 16%.
+      const base16Real=pNum(r.base16Bs||0);
+      const base8Real=pNum(r.base8Bs||0);
+      const soloOcho=base8Real>0&&base16Real===0;
+      const PCT_IVA=soloOcho?8:16;
+      const base16=(base16Real+base8Real)
         ||(baseIVA?parseFloat((baseIVA/(PCT_IVA/100)).toFixed(2)):0)
         ||(montoRet?parseFloat((montoRet/(pctRetUsado*(PCT_IVA/100))).toFixed(2)):0);
       const exento=pNum(r.exentoBs||0);
