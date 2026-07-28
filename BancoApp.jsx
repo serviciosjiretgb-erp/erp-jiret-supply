@@ -2293,9 +2293,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // 2. CUENTAS BANCARIAS
   // ══════════════════════════════════════════════════════════════════════
-  const CuentasViewRef = React.useRef();
-  if (!CuentasViewRef.current) {
-  CuentasViewRef.current = () => {
+  const CuentasView = () => {
     const [modal, setModal]     = useState(false);
     const [editando, setEdit]   = useState(null);
     const [certCuenta, setCert] = useState(null);
@@ -2708,8 +2706,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const CuentasView = CuentasViewRef.current;
 
   // FIX CRÍTICO: MovimientosView se define como función anidada dentro de BancoApp. Cada vez que
   // BancoApp se re-renderiza (lo cual pasa cada pocos segundos por cualquiera de sus múltiples
@@ -2720,9 +2716,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // se crea UNA sola vez y su referencia queda fija — BancoApp puede re-renderizar todas las veces
   // que quiera sin que React vuelva a montar este componente (mismo problema ya resuelto antes
   // para ConciliacionView, aquí con una solución más simple ya que no hace falta sacarlo del todo).
-  const MovimientosViewRef = React.useRef();
-  if (!MovimientosViewRef.current) {
-  MovimientosViewRef.current = ({ ventasOnlyIngreso = false }) => {
+  const MovimientosView = ({ ventasOnlyIngreso = false }) => {
     const [monedaVista, setMonedaVista] = useState('USD');
     const [searchTercero, setSearchTercero] = useState('');
     const [searchBanco,   setSearchBanco]   = useState('');
@@ -4251,15 +4245,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const MovimientosView = MovimientosViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 4. CAJA — CUENTAS DE CAJA
   // ══════════════════════════════════════════════════════════════════════
-  const CuentasCajaViewRef = React.useRef();
-  if (!CuentasCajaViewRef.current) {
-  CuentasCajaViewRef.current = () => {
+  const CuentasCajaView = () => {
     const [modal, setModal]   = useState(false);
     const [editando, setEdit] = useState(null);
     const [busy, setBusy]     = useState(false);
@@ -4476,8 +4466,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const CuentasCajaView = CuentasCajaViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // CUENTAS POR PAGAR RELACIONADAS — Terceros (alquileres, servicios, etc.)
@@ -4488,9 +4476,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     return Number(t.saldoInicial||0) + efecto;
   };
 
-  const TercerosRelacionadosViewRef = React.useRef();
-  if (!TercerosRelacionadosViewRef.current) {
-  TercerosRelacionadosViewRef.current = () => {
+  const TercerosRelacionadosView = () => {
     const [modal, setModal]   = useState(false);
     const [editando, setEdit] = useState(null);
     const [busy, setBusy]     = useState(false);
@@ -4655,8 +4641,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const TercerosRelacionadosView = TercerosRelacionadosViewRef.current;
 
   const CxPRelacionadasView = () => {
     const [filtro,setFiltro]=useState('');
@@ -4786,9 +4770,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     </div>
   );
 
-  const EstadoCuentaRelacionadosViewRef = React.useRef();
-  if (!EstadoCuentaRelacionadosViewRef.current) {
-  EstadoCuentaRelacionadosViewRef.current = () => {
+  const EstadoCuentaRelacionadosView = () => {
     const [filtro,setFiltro] = useState('');
     const [desde,setDesde] = useState('');
     const [hasta,setHasta] = useState('');
@@ -4961,8 +4943,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const EstadoCuentaRelacionadosView = EstadoCuentaRelacionadosViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 4. CAJA — OPERACIONES DE EFECTIVO
@@ -4970,9 +4950,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // Mismo problema y misma solución que en MovimientosView (ver comentario ahí arriba): sin esto,
   // el modal "Nuevo Movimiento" de Caja también se cerraba solo cada vez que BancoApp re-renderizaba.
-  const CajaOpViewRef = React.useRef();
-  if (!CajaOpViewRef.current) {
-  CajaOpViewRef.current = () => {
+  const CajaOpView = () => {
     try {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
@@ -6085,8 +6063,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       );
     }
   };
-  }
-  const CajaOpView = CajaOpViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 5a-bis. LIMPIAR DUPLICADOS DE CAJA (cobros/pagos que quedaron registrados
@@ -6216,9 +6192,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // Es 100% ADITIVO: solo CREA el asiento que faltaba, nunca borra ni
   // modifica ningún asiento ya existente (el lado origen no se toca).
   // ══════════════════════════════════════════════════════════════════════
-  const RepararTrasladosViewRef = React.useRef();
-  if (!RepararTrasladosViewRef.current) {
-  RepararTrasladosViewRef.current = () => {
+  const RepararTrasladosView = () => {
     const [selec, setSelec] = useState({});
     const [busy, setBusy] = useState(false);
     const [pwd, setPwd] = useState('');
@@ -6340,8 +6314,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const RepararTrasladosView = RepararTrasladosViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // RESUMEN DE OPERACIONES BANCO-CAJA — consolidado multimoneda con tasa
@@ -6611,9 +6583,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     );
   };
 
-  const ValesViewRef = React.useRef();
-  if (!ValesViewRef.current) {
-  ValesViewRef.current = () => {
+  const ValesView = () => {
     const [modal,setModal]=useState(false);
     const [detalle,setDetalle]=useState(null);
     const [busy,setBusy]=useState(false);
@@ -6795,15 +6765,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const ValesView = ValesViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 5. ARQUEO DE CAJA
   // ══════════════════════════════════════════════════════════════════════
-  const ArqueoCajaViewRef = React.useRef();
-  if (!ArqueoCajaViewRef.current) {
-  ArqueoCajaViewRef.current = () => {
+  const ArqueoCajaView = () => {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
     const [cantidades, setCants] = useState({});
@@ -6938,8 +6904,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
-  }
-  const ArqueoCajaView = ArqueoCajaViewRef.current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 6. CONCILIACIÓN BANCARIA
@@ -7026,9 +6990,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // 9. TASAS
   // ══════════════════════════════════════════════════════════════════════
-  const TasasViewRef = React.useRef();
-  if (!TasasViewRef.current) {
-  TasasViewRef.current = () => {
+  const TasasView = () => {
     const [modal,setModal]=useState(false);const [busy,setBusy]=useState(false);
     const [editando,setEditando]=useState(null);
     const initTF=()=>({fecha:getTodayDate(),modulo:'Todos',moneda:'USD',tasaRef:'',fuente:'Oficial / BCV'});
@@ -7083,8 +7045,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </BModal>
     </div>);
   };
-  }
-  const TasasView = TasasViewRef.current;
 
   // ── NAV ────────────────────────────────────────────────────────────────────
   const RepLibroDiarioView = ({ tipo = 'banco' }) => {
