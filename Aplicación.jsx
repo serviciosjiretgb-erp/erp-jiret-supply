@@ -422,13 +422,16 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
         if(f.periodoLibroMes) return f.periodoLibroMes===`${detAnio}-${detMes}`&&String(f.periodoLibroQ||'1')===String(detQ);
         const fecha=f.fecha||''; return fecha>=desde&&fecha<=hasta;
       });
-      let c32=0,c34=0;
+      let c32=0,c34=0,c34_8=0;
       comprasFact.forEach(f=>{
-        const tot=f.totales||{}; c34+=pNum(tot.iva16Bs||0);
+        const tot=f.totales||{}; c34+=pNum(tot.iva16Bs||0); c34_8+=pNum(tot.iva8Bs||0);
         if(f.esImportacion&&f.importacion){c32+=pNum(f.importacion.iva||0);}
       });
       const L=detLcRes;
-      const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+pNum(L.c343);
+      // Campo 343 (crédito fiscal alícuota reducida 8%) se calcula de las facturas, igual que
+      // el 16% (c34) — antes dependía de un campo manual que casi nunca se llenaba, así que este
+      // crédito nunca llegaba a sumarse en Determinación de IVA.
+      const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+c34_8;
       const item9=ivaDebitosBs+pNum(detManual.m48)-pNum(detManual.m80);
       const item19=pNum(L.c37), item18=c36-item19, item20=item18+item19;
       const heredaCF2=!detLibroVentasCfg._cfExcedenteManual&&detPrevCfg.saldoCierreCF!=null;
@@ -1371,15 +1374,18 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
             if(f.periodoLibroMes) return f.periodoLibroMes===`${detAnio}-${detMes}`&&String(f.periodoLibroQ||'1')===String(detQ);
             const fecha=f.fecha||''; return fecha>=desde&&fecha<=hasta;
           });
-          let c30=0,c31=0,c32=0,c33=0,c34=0;
+          let c30=0,c31=0,c32=0,c33=0,c34=0,c33_8=0,c34_8=0;
           comprasFact.forEach(f=>{
             const tot=f.totales||{};
             c30+=pNum(tot.exentoBs||0); c33+=pNum(tot.base16Bs||0); c34+=pNum(tot.iva16Bs||0);
+            c33_8+=pNum(tot.base8Bs||0); c34_8+=pNum(tot.iva8Bs||0);
             if(f.esImportacion&&f.importacion){c31+=pNum(f.importacion.baseImponible||0);c32+=pNum(f.importacion.iva||0);}
           });
           const L=detLcRes;
-          const c35=c30+c31+pNum(L.c312)+pNum(L.c313)+c33+pNum(L.c332)+pNum(L.c333);
-          const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+pNum(L.c343);
+          // Campo 333/343 (alícuota reducida 8%) se calcula de las facturas, igual que el 16%
+          // (c33/c34) — antes dependía de un campo manual que casi nunca se llenaba.
+          const c35=c30+c31+pNum(L.c312)+pNum(L.c313)+c33+pNum(L.c332)+c33_8;
+          const c36=c32+pNum(L.c322)+pNum(L.c323)+c34+pNum(L.c342)+c34_8;
 
           // ── Débitos Fiscales (1-9) ──
           const item1=pNum(detManual.m40), item2=pNum(detManual.m41);
@@ -1630,7 +1636,7 @@ table{border-collapse:collapse;width:100%}
                     <Row n={13} label="Importaciones gravadas por alícuota reducida" codeA="313" valA={<LInput val={L.c313} onSet={v=>setDetLcRes(x=>({...x,c313:v}))}/>} codeB="323" valB={<LInput val={L.c323} onSet={v=>setDetLcRes(x=>({...x,c323:v}))}/>}/>
                     <Row n={14} label="Compras internas gravadas solo por alícuota general" codeA="33" valA={V(c33)} codeB="34" valB={V(c34)}/>
                     <Row n={15} label="Compras internas gravadas por alícuota general más adicional" codeA="332" valA={<LInput val={L.c332} onSet={v=>setDetLcRes(x=>({...x,c332:v}))}/>} codeB="342" valB={<LInput val={L.c342} onSet={v=>setDetLcRes(x=>({...x,c342:v}))}/>}/>
-                    <Row n={16} label="Compras internas gravadas por alícuota reducida" codeA="333" valA={<LInput val={L.c333} onSet={v=>setDetLcRes(x=>({...x,c333:v}))}/>} codeB="343" valB={<LInput val={L.c343} onSet={v=>setDetLcRes(x=>({...x,c343:v}))}/>}/>
+                    <Row n={16} label="Compras internas gravadas por alícuota reducida" codeA="333" valA={V(c33_8)} codeB="343" valB={V(c34_8)}/>
                     <Row n={17} label="Total compras y créditos fiscales del período" codeA="35" valA={V(c35)} codeB="36" valB={V(c36)} bold/>
                     <Row n={18} label="Créditos Fiscales Totalmente Deducibles" codeB="70" valB={V(item18)}/>
                     <Row n={19} label="Créditos Fiscales producto de la Aplicación del porcentaje de la prorrata" codeB="37" valB={<LInput val={L.c37} onSet={v=>setDetLcRes(x=>({...x,c37:v}))}/>}/>
@@ -6682,6 +6688,24 @@ const CxPView = ({
     return m;
   },[notasCompraCD]);
 
+  // Anticipos a proveedores aún no aplicados a ninguna factura — mismo criterio que
+  // Estado de Cuenta de Proveedor: pagos con esAnticipo=true cuyo saldo (monto-montoAplicado)
+  // sigue siendo mayor a cero.
+  const _anticiposPorProv = useMemo(()=>{
+    const m = new Map();
+    for(const a of (pagosCxP||[]).filter(p=>p.esAnticipo)){
+      const rif=(a.proveedorId||a.proveedor||'').trim();
+      if(!rif) continue;
+      const aplicado=pN(a.montoAplicado||0);
+      const saldoAnt=pN(a.monto||0)-aplicado;
+      if(saldoAnt<=0.01) continue;
+      if(!m.has(rif)) m.set(rif,[]);
+      m.get(rif).push({...a,_saldoAnt:saldoAnt});
+    }
+    return m;
+  },[pagosCxP]);
+  const getAnticipoProv = g => (_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[]).reduce((s,a)=>s+a._saldoAnt,0);
+
   // Saldo real de una factura al fechaRef
   const getSaldoFact = (f) => {
     const total = pN(f.total||f.totalUSD||0);
@@ -6731,9 +6755,19 @@ const CxPView = ({
       }
       if(m[rif]) m[rif].total += netNC;
     });
-    return Object.values(m).filter(g=>Math.abs(g.total)>0.01).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
+    // Proveedores que SOLO tienen un anticipo pendiente por aplicar (sin factura activa ni NC/ND) —
+    // igual deben salir reflejados, aunque no tengan ninguna factura abierta todavía.
+    _anticiposPorProv.forEach((ants,rif)=>{
+      if(m[rif]) return; // ya tiene facturas o NC/ND, el anticipo se resta más abajo
+      const prov = (proveedores||[]).find(p=>p.rif===rif||p.id===rif);
+      if(!prov && !ants.length) return;
+      m[rif]={provId:rif,nombre:prov?.nombre||ants[0]?.proveedor||rif,rif:prov?.rif||rif,facts:[],total:0,vMas60:0,v31_60:0,v1_30:0,corriente:0};
+    });
+    // El saldo neto de cada proveedor descuenta los anticipos pendientes por aplicar.
+    Object.values(m).forEach(g=>{ g.total -= getAnticipoProv(g); });
+    return Object.values(m).filter(g=>Math.abs(g.total)>0.01||getAnticipoProv(g)>0.01).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[_factsActivas, proveedores, notasCompraCD]);
+  },[_factsActivas, proveedores, notasCompraCD, _anticiposPorProv]);
 
   const filtrados = cxpSearch
     ? porProveedor.filter(g=>(g.nombre||'').toLowerCase().includes(cxpSearch.toLowerCase())||(g.rif||'').includes(cxpSearch))
@@ -6806,6 +6840,7 @@ const CxPView = ({
       const est = getEstado(g);
       const tasa = tasaBCV||1;
       const ncNDs = _ncPorProv.get(g.rif)||[];
+      const anticiposG = _anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
       const factRows = g.facts.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
         const pagos=(_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef));
         const totalPag=pagos.reduce((s,p)=>s+pN(p.monto||0),0);
@@ -6833,6 +6868,8 @@ ${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" styl
 ${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}`;
       }).join('');
       const ncRows = ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasa;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Proveedor directo'}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(u)}</td><td></td><td></td></tr>`;}).join('');
+      const anticipoRows = anticiposG.length===0?'':(`<tr style="background:#f0fdfa"><td colspan="11" style="padding:3px 6px;font-weight:900;color:#0f766e;font-size:8px;text-transform:uppercase">💰 Anticipos pendientes por aplicar</td></tr>`+
+        anticiposG.map(a=>`<tr style="background:#f0fdfa;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#0f766e">↳ Anticipo ${fD(a.fecha)} · ${a.metodo||'—'} ${a.referencia?'#'+a.referencia:''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#0f766e;font-family:monospace;font-weight:700">-$${fN(a._saldoAnt)}</td><td></td><td style="padding:2px 6px;color:#0f766e;font-style:italic">${a.concepto||'Anticipo a proveedor'}</td></tr>`).join(''));
       return `<div style="margin-bottom:14px;page-break-inside:avoid">
 <div style="background:#1e293b;color:#fff;padding:7px 12px;display:flex;justify-content:space-between;align-items:center">
   <div><strong style="font-size:11px">${g.nombre}</strong> <span style="font-size:9px;color:#94a3b8">${g.rif}</span></div>
@@ -6840,7 +6877,7 @@ ${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background
 </div>
 <table style="width:100%;border-collapse:collapse;font-size:9px">
   <thead><tr style="background:#0f172a"><th style="padding:4px 6px;text-align:left;font-size:7.5px;color:#f97316">FACTURA</th><th style="color:#f97316;padding:4px 6px">EMISIÓN</th><th style="color:#f97316;padding:4px 6px">VENCE</th><th style="color:#f97316;padding:4px 6px;text-align:center">DÍAS</th><th style="color:#f97316;padding:4px 6px">N° CONTROL</th><th style="color:#f97316;padding:4px 6px;text-align:right">TOTAL USD</th><th style="color:#16a34a;padding:4px 6px;text-align:right">PAGADO</th><th style="color:#dc2626;padding:4px 6px;text-align:right">RET.IVA</th><th style="color:#7c3aed;padding:4px 6px;text-align:right">RET.ISLR</th><th style="color:#f97316;padding:4px 6px;text-align:right">SALDO USD</th><th style="color:#94a3b8;padding:4px 6px">DETALLE</th></tr></thead>
-  <tbody>${factRows}${ncRows}</tbody>
+  <tbody>${factRows}${ncRows}${anticipoRows}</tbody>
   <tfoot><tr style="background:#1e293b;color:#fff"><td colspan="5" style="padding:4px 8px;font-weight:900">Subtotal ${g.facts.length} doc(s)</td><td style="padding:4px 8px;text-align:right;font-family:monospace">$${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td><td colspan="3"></td><td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;color:#f97316">$${fN(g.total)}</td><td></td></tr></tfoot>
 </table></div>`;
     }).join('');
@@ -6861,21 +6898,49 @@ ${body}
   // ── Excel ──────────────────────────────────────────────────────────
   const exportarExcelCxP = () => {
     const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const ths=['Proveedor','RIF','N° Factura','N° Control','Fecha Emis.','Fecha Vence','Días','Total USD','Pagado','Ret. IVA','Ret. ISLR','NC/ND','Saldo USD','Estado','Detalle'];
-    const rows=[];
+    const ths=['Proveedor / Factura','N° Control','Fecha Emis.','Fecha Vence','Días','Total USD','Pagado','Ret. IVA','Ret. ISLR','Saldo USD','Estado','Detalle'];
+    // Número como celda de Excel: valor con punto decimal + mso-number-format para que Excel lo
+    // reconozca como número real (con separador de miles y 2 decimales), no como texto plano.
+    const numCell = (v,extra='') => `<td style="padding:3px 6px;text-align:right;font-family:monospace;mso-number-format:'#,##0.00'${extra}">${pN(v).toFixed(2)}</td>`;
+    let filas='';
     filtrados.forEach(g=>{
       const est=getEstado(g);
-      g.facts.forEach(f=>{
+      const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
+      filas+=`<tr style="background:#1e293b"><td colspan="${ths.length}" style="color:#fff;font-weight:bold;padding:5px 6px">${g.nombre} — ${g.rif||'S/RIF'} &nbsp;|&nbsp; Saldo: $${fN(g.total)} &nbsp;|&nbsp; ${est}</td></tr>`;
+      g.facts.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).forEach(f=>{
         const tasaF=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
         const pagosF=(_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef)).reduce((s,p)=>s+pN(p.monto||0),0);
         const retIVA=(_retIVAPorFact.get(f.id)||[]).reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasaF,0);
         const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
         const saldo=getSaldoFact(f);
         const dias=getAgingDias(f);
-        rows.push([g.nombre,g.rif,f.nroFactura||'—',f.nroControl||'—',f.fecha||'',f.fechaVencimiento||'',dias>0?dias:0,pN(f.total||0),pagosF,retIVA,retISLR,0,saldo,est,f.observaciones||'']);
+        filas+=`<tr>
+          <td style="padding:3px 6px">${f.nroFactura||'—'}</td>
+          <td style="padding:3px 6px">${f.nroControl||'—'}</td>
+          <td style="padding:3px 6px">${fD(f.fecha)}</td>
+          <td style="padding:3px 6px">${fD(f.fechaVencimiento)}</td>
+          <td style="padding:3px 6px;text-align:center">${dias>0?dias:0}</td>
+          ${numCell(f.total)}${numCell(pagosF)}${numCell(retIVA)}${numCell(retISLR)}${numCell(saldo,';font-weight:bold')}
+          <td style="padding:3px 6px">${est}</td>
+          <td style="padding:3px 6px">${(f.observaciones||'—').toString().replace(/</g,'&lt;')}</td>
+        </tr>`;
+      });
+      const ncNDsX=_ncPorProv.get(g.rif)||[];
+      ncNDsX.forEach(n=>{
+        const t=pN(n.tasaFactura||0)||tasaBCV||1; const u=t>1?pN(n.monto||0)/t:0;
+        filas+=`<tr style="background:#faf5ff"><td colspan="4" style="padding:3px 6px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#7c3aed;font-family:monospace;mso-number-format:'#,##0.00'">${n.tipo==='NC'?'-':''}${u.toFixed(2)}</td><td colspan="2"></td></tr>`;
+      });
+      anticiposG.forEach(a=>{
+        filas+=`<tr style="background:#f0fdfa"><td colspan="4" style="padding:3px 6px;color:#0f766e">↳ Anticipo pendiente · ${fD(a.fecha)} ${a.referencia?'#'+a.referencia:''}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#0f766e;font-family:monospace;font-weight:bold;mso-number-format:'#,##0.00'">-${a._saldoAnt.toFixed(2)}</td><td colspan="2" style="color:#0f766e;font-style:italic">${a.concepto||'Anticipo a proveedor'}</td></tr>`;
       });
     });
-    const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — CUENTAS POR PAGAR · Corte: ${fechaRef}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="12" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalCartera)}</td><td></td><td></td></tr></tfoot></table></body></html>`;
+    const html=`<html><head><meta charset="utf-8"></head><body>
+<h2 style="font-family:Arial;font-size:11px">${emp} — CUENTAS POR PAGAR · Corte: ${fechaRef}</h2>
+<table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1">
+<thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead>
+<tbody>${filas}</tbody>
+<tfoot><tr><td colspan="9" style="font-weight:bold;padding:5px 6px;text-align:right">TOTAL CARTERA</td><td style="font-weight:bold;padding:5px 6px;text-align:right;font-family:monospace;mso-number-format:'#,##0.00'">${totalCartera.toFixed(2)}</td><td colspan="2"></td></tr></tfoot>
+</table></body></html>`;
     Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'})),download:'CxP_Detallado.xls'}).click();
   };
 
@@ -6945,6 +7010,7 @@ ${body}
                   const est=getEstado(g);
                   const isExp = cxpExpandAll || !!cxpExpanded[g.provId];
                   const ncNDs = _ncPorProv.get(g.rif)||[];
+                  const anticiposG = _anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
                   return(
                   <React.Fragment key={g.provId}>
                     <tr className="border-b border-gray-100 hover:bg-slate-50 cursor-pointer" onClick={()=>setCxpExpanded(p=>({...p,[g.provId]:!p[g.provId]}))}>
@@ -7051,6 +7117,18 @@ ${body}
                                   <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{n.tipo==='NC'?'-$':'$'}{fN(u)}</td>
                                 </tr>
                               );})}
+                              {anticiposG.length>0&&(
+                                <tr className="bg-teal-50">
+                                  <td colSpan={11} className="py-1.5 px-3 text-[8px] font-black text-teal-700 uppercase tracking-wide">💰 Anticipos pendientes por aplicar</td>
+                                </tr>
+                              )}
+                              {anticiposG.map((a,ai)=>(
+                                <tr key={ai} className="bg-teal-50 border-b border-teal-100">
+                                  <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-teal-700">↳ Anticipo · {fD(a.fecha)} · {a.metodo||'—'} {a.referencia?'#'+a.referencia:''}</td>
+                                  <td colSpan={4} className="text-[8px] text-teal-600 italic">{a.concepto||'Anticipo a proveedor'}</td>
+                                  <td className="py-1.5 px-3 text-right font-mono font-black text-teal-700 text-[8px]">-${fN(a._saldoAnt)}</td>
+                                </tr>
+                              ))}
                             </tbody>
                             <tfoot>
                               <tr className="bg-slate-900 text-white font-black">
@@ -9178,8 +9256,11 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
   const c31 = totImpBase;   const c32 = totImpIVA;                           // imp. general auto
   const c33 = totBase16;    const c34 = totCred16;                           // CI general auto
   // campos manuales del resumen (lcRes)
-  const c35 = c30+c31+(lcRes.c312||0)+(lcRes.c313||0)+c33+(lcRes.c332||0)+(lcRes.c333||0); // total base
-  const c36 = c32+(lcRes.c322||0)+(lcRes.c323||0)+c34+(lcRes.c342||0)+(lcRes.c343||0);      // total CF
+  // Campo 333/343 (Compras internas alícuota reducida 8%) se calcula automáticamente de las
+  // facturas — igual que el 16% — en vez de depender de que alguien lo escriba a mano cada
+  // período. Por eso también faltaba en Determinación de IVA: nunca llegaba a sumarse.
+  const c35 = c30+c31+(lcRes.c312||0)+(lcRes.c313||0)+c33+(lcRes.c332||0)+totBase8; // total base
+  const c36 = c32+(lcRes.c322||0)+(lcRes.c323||0)+c34+(lcRes.c342||0)+totCred8;      // total CF
   const c71 = (lcRes.c70||0)+(lcRes.c37||0);                                  // total CF deducibles
   const c39 = c71+(lcRes.c20||0)-(lcRes.c21||0)-(lcRes.c81||0)+(lcRes.c38||0)-(lcRes.c82||0); // total CF
 
@@ -9231,7 +9312,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     aoa.push(['','','','',13,'Importaciones gravadas por alícuota reducida',313,lcRes.c313||0,323,lcRes.c323||0]);
     aoa.push(['','','','',14,'Compras internas gravadas por alícuota general (16%)',33,c33,34,c34]);
     aoa.push(['','','','',15,'Compras internas gravadas por alícuota general más adicional',332,lcRes.c332||0,342,lcRes.c342||0]);
-    aoa.push(['','','','',16,'Compras internas gravadas por alícuota reducida',333,lcRes.c333||0,343,lcRes.c343||0]);
+    aoa.push(['','','','',16,'Compras internas gravadas por alícuota reducida',333,totBase8,343,totCred8]);
     aoa.push(['','','','',17,'Total compras y créditos fiscales del período',35,c35,36,c36]);
     // Items 18-26 (manuales + algunos auto)
     aoa.push(['','','','',18,'Créditos fiscales totalmente deducibles',70,lcRes.c70||0,'','']);
@@ -9415,7 +9496,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
     ${rRow(13,'Importaciones gravadas por alícuota reducida',313,lcRes.c313||0,323,lcRes.c323||0,false,false)}
     ${rRow(14,'Compras internas gravadas por alícuota general (16%)',33,c33,34,c34,true,false)}
     ${rRow(15,'Compras internas gravadas por alícuota general más adicional',332,lcRes.c332||0,342,lcRes.c342||0,false,false)}
-    ${rRow(16,'Compras internas gravadas por alícuota reducida',333,lcRes.c333||0,343,lcRes.c343||0,false,false)}
+    ${rRow(16,'Compras internas gravadas por alícuota reducida',333,totBase8,343,totCred8,true,false)}
     ${rRow(17,'Total compras y créditos fiscales del período',35,c35,36,c36,true,false)}
     <tr><td colspan="6" style="padding:2px"></td></tr>
     <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">18</td><td style="padding:3px 8px" colspan="3">Créditos fiscales totalmente deducibles</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">70</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c70||0)}</td></tr>
@@ -9686,7 +9767,7 @@ ${resumenHtml}
                 {n:13,lbl:'Importaciones alícuota reducida',c1:313,k1:'c313',c2:323,k2:'c323',auto:false},
                 {n:14,lbl:'Compras internas alícuota general 16%',c1:33,v1:c33,c2:34,v2:c34,auto:true},
                 {n:15,lbl:'Compras internas al. general + adicional',c1:332,k1:'c332',c2:342,k2:'c342',auto:false},
-                {n:16,lbl:'Compras internas alícuota reducida',c1:333,k1:'c333',c2:343,k2:'c343',auto:false},
+                {n:16,lbl:'Compras internas alícuota reducida',c1:333,v1:totBase8,c2:343,v2:totCred8,auto:true},
               ].map(row=>{
                 const bg=row.n===17?'#fffbeb':row.auto?'#eff6ff':'#fff';
                 const inputSt={width:'100%',border:'1px solid #d1d5db',borderRadius:3,padding:'1px 3px',fontFamily:'monospace',fontSize:9,textAlign:'right',background:'#f8fafc'};
