@@ -5240,7 +5240,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
 };
 
 
-const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings}) => {
+const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings,appUser}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
@@ -5544,6 +5544,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         });
       }
       await batch.commit();
+      if(_isEditMode) logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Factura de compra EDITADA: ${form.nroFactura||id} · Proveedor: ${prov?.nombre||form.proveedor||'—'} · Total: $${formatNum(tot.totalUSD||0)}`);
       const nISLR=retISLRLista.filter(r=>r.monto>0).length;
       // Incrementar correlativos solo en creación (no en edición)
       if(!_isEditMode){
@@ -7085,6 +7086,7 @@ ${body}
                                               type:'confirm',
                                               onConfirm: async()=>{
                                                 await deleteDoc(getDocRef('procura_facturas_compra',f.id));
+                                                logAuditoria(appUser,'Cuentas por Pagar','ELIMINACIÓN',`Factura de compra ELIMINADA: ${f.nroFactura||f.id} · Proveedor: ${g.nombre||'—'} · Total: ${f.moneda==='Bs'?'Bs.':'$'}${fN(f.total||0)}`);
                                                 setDialog({title:'✅ Eliminada',text:'La factura fue eliminada.',type:'alert'});
                                               }
                                             });
@@ -8000,6 +8002,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
         kSnapRev.docs.forEach(d=>reversarMov(d.data(),d.id,true));
       }
       await batch.commit();
+      logAuditoria(appUser,'Cuentas por Pagar','ELIMINACIÓN',`Pago REVERSADO: $${fN(pN(p.monto||0))} a ${p.proveedor||'—'} · Ref: ${p.referencia||'—'} · Factura: ${f?.nroFiscal||f?.documento||p.facturaId||'—'}`);
       setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. Saldo de factura y de banco/caja restaurados.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -10135,6 +10138,45 @@ const getTodayDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
 
+// Auditoría de acciones críticas (eliminar/revertir/editar) — el resto de "Auditoría de Sistema"
+// se infiere leyendo los datos que existen ahora mismo, así que nunca puede mostrar algo que ya
+// se borró. Esta función escribe un registro APARTE, permanente, en el momento en que ocurre la
+// acción — funciona para cualquier módulo, pasando el usuario porque no todos los componentes
+// comparten el mismo ámbito de React.
+const logAuditoria = async (appUser, modulo, tipo, detalle) => {
+  try {
+    const id = `AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    await setDoc(getDocRef('auditoria_eventos', id), {
+      id, fecha: getTodayDate(), ts: Date.now(),
+      usuario: appUser?.nombre||appUser?.displayName||appUser?.email||'Usuario',
+      rol: appUser?.role||appUser?.rol||'—',
+      modulo, tipo, detalle,
+    });
+  } catch(e) { console.warn('No se pudo registrar en auditoría:', e); }
+};
+
+// Identificación de dispositivo para "Restringir a dispositivos autorizados". Un sitio web NO
+// puede leer el nombre real del equipo (Windows lo oculta por seguridad, a propósito, para
+// cualquier página) — así que se genera una huella propia, única por navegador, guardada en
+// localStorage la primera vez que se usa ese navegador en esa PC. Si se borran los datos del
+// navegador o se usa uno distinto en la misma PC, cuenta como un dispositivo nuevo.
+const getDeviceId = () => {
+  try {
+    let id = localStorage.getItem('_deviceId');
+    if (!id) {
+      id = `DEV-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;
+      localStorage.setItem('_deviceId', id);
+    }
+    return id;
+  } catch(e) { return `DEV-temp-${Date.now()}`; }
+};
+const getDeviceLabel = () => {
+  const ua = navigator.userAgent||'';
+  const nav = /Edg\//.test(ua)?'Edge':/Chrome\//.test(ua)?'Chrome':/Firefox\//.test(ua)?'Firefox':/Safari\//.test(ua)?'Safari':'Navegador';
+  const os = /Windows/.test(ua)?'Windows':/Mac/.test(ua)?'Mac':/Linux/.test(ua)?'Linux':/Android/.test(ua)?'Android':/iPhone|iPad/.test(ua)?'iOS':'—';
+  return `${nav} en ${os}`;
+};
+
 const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
 // Tasa de cambio: hasta 4 decimales (mínimo 2)
 const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num || 0);
@@ -11983,6 +12025,16 @@ ${valoresHtml}
 function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
+  const [auditoriaEventos, setAuditoriaEventos] = useState([]);
+  useEffect(()=>{
+    const u = onSnapshot(getColRef('auditoria_eventos'), s=>setAuditoriaEventos(s.docs.map(d=>d.data())));
+    return ()=>u();
+  },[]);
+  const [dispositivosAutorizados, setDispositivosAutorizados] = useState([]);
+  useEffect(()=>{
+    const u = onSnapshot(getColRef('dispositivos_autorizados'), s=>setDispositivosAutorizados(s.docs.map(d=>d.data())));
+    return ()=>u();
+  },[]);
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
@@ -13164,6 +13216,29 @@ function App() {
       setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}).catch(()=>{});
     }
     if (!foundUser) return setLoginError('Credenciales incorrectas. Intente nuevamente.');
+    // Dispositivos autorizados — Master siempre puede entrar (si no, nadie podría aprobar equipos).
+    if (foundUser.restringirDispositivo && foundUser.role !== 'Master') {
+      const deviceId = getDeviceId();
+      const dispId = `${foundUser.username}__${deviceId}`;
+      try {
+        const { getDoc: gdDev } = await import('firebase/firestore');
+        const dSnap = await gdDev(getDocRef('dispositivos_autorizados', dispId));
+        if (dSnap.exists() && dSnap.data().estado === 'aprobado') {
+          setDoc(getDocRef('dispositivos_autorizados', dispId), { ultimoAcceso: Date.now() }, { merge: true }).catch(()=>{});
+        } else {
+          if (!dSnap.exists()) {
+            await setDoc(getDocRef('dispositivos_autorizados', dispId), {
+              id: dispId, username: foundUser.username, nombreUsuario: foundUser.name||foundUser.username,
+              deviceId, deviceLabel: getDeviceLabel(), estado: 'pendiente',
+              fechaSolicitud: Date.now(),
+            });
+          }
+          return setLoginError('Este equipo no está autorizado para tu usuario. Se notificó al administrador — inténtalo de nuevo cuando sea aprobado en Dispositivos Autorizados.');
+        }
+      } catch(e) {
+        return setLoginError('No se pudo verificar el dispositivo. Intente de nuevo.');
+      }
+    }
     // Session lock — sin await para no bloquear login
     if (foundUser.role !== 'Master') {
       Promise.resolve().then(async () => {
@@ -14930,6 +15005,7 @@ function App() {
       }
 
       setShowNewInvoicePanel(false); setEditingInvoiceId(null); setInvoiceOriginalNeOrigen(''); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
+      if(editingInvoiceId) logAuditoria(appUser,'Ventas','EDICIÓN',`Factura de venta EDITADA: ${id} · Cliente: ${newInvoiceForm.clientName||'—'}`);
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
   };
@@ -14984,6 +15060,7 @@ function App() {
             }
           }
           await deleteDoc(getDocRef('maquilaInvoices', id));
+          logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Factura de venta ELIMINADA: ${inv?.documento||id} · Cliente: ${inv?.clientName||'—'} · Total: $${formatNum(parseNum(inv?.total||inv?.montoBase||0))}`);
           setDialog({title:'✅ Eliminada', text:'Factura eliminada y stock restaurado en Inventario de Terminados.', type:'alert'});
         } catch(err) {
           setDialog({title:'Error', text:err.message, type:'alert'});
@@ -24624,6 +24701,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 updatedAt: Date.now(), user: appUser?.name||'Sistema' };
               delete data.neClientSearch; delete data.neShowClientDrop;
               await setDoc(getDocRef('notasEntrega', id), data);
+              if(editId) logAuditoria(appUser,'Notas de Entrega','EDICIÓN',`NE EDITADA: ${id} · Cliente: ${data.clientName||'—'} · Total: $${formatNum(data.total||0)}`);
               // ── Enlace con Cotización: si esta NE proviene de una cotización, marcarla FACTURADA ──
               if(!editId && form.cotizOrigen){
                 try {
@@ -24708,6 +24786,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               // 2. Eliminar la NE
               batch.delete(getDocRef('notasEntrega',ne.id));
               await batch.commit();
+              logAuditoria(appUser,'Notas de Entrega','ELIMINACIÓN',`NE ELIMINADA: ${ne.id} · Cliente: ${ne.clientName||'—'} · Fecha: ${ne.fecha||'—'} · Total: $${formatNum(ne.total||ne.totalUSD||0)}`);
               // 3. Limpiar de comCobranza si existe
               setComCobranza(prev=>(prev||[]).filter(c=>c.neId!==ne.id));
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
@@ -27975,6 +28054,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 }
 
                 await batch.commit();
+                logAuditoria(appUser,'Cuentas por Cobrar','ELIMINACIÓN',`Cobro ELIMINADO: $${formatNum(cobro.monto)} · Ref: ${cobro.referencia||'—'} · NE: ${ne?.documento||cobro.neId||'—'} · Cliente: ${cobro.clientName||'—'}`);
                 setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvEncontrado?'\nMovimiento de banco/caja también ajustado.':'\n⚠ No se encontró el movimiento bancario/caja asociado.'}`,type:'alert'});
               }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
             }});
@@ -40199,6 +40279,12 @@ ${resumenHtml}
       (finishedGoodsInventory||[]).forEach(fg=>{
         logs.push({id:`FG-${fg.id}`,fecha:fg.fechaFinalizacion||fg.updatedAt||'',usuario:'Sistema',rol:'Producción',modulo:'Inventario Terminados',tipo:'CREACIÓN',detalle:`Producto terminado: ${fg.producto||fg.id} — ${fg.cliente||'—'} — Stock: ${formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} ${fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'}`,ts:fg.timestamp||0});
       });
+      // Eventos reales de auditoría (eliminar/revertir/editar pagos, cobros, NE, facturas) —
+      // grabados en el momento en que ocurren, a diferencia del resto de este log (arriba), que
+      // se infiere de los datos que existen ahora y por eso nunca puede mostrar una eliminación.
+      (auditoriaEventos||[]).forEach(ev=>{
+        logs.push({id:ev.id, fecha:ev.fecha||'', usuario:ev.usuario||'—', rol:ev.rol||'—', modulo:ev.modulo||'—', tipo:ev.tipo||'—', detalle:ev.detalle||'', ts:ev.ts||0});
+      });
       return logs.sort((a,b)=>b.ts-a.ts||(b.fecha||'').localeCompare(a.fecha||''));
     })();
 
@@ -40370,6 +40456,91 @@ ${resumenHtml}
       </div>
     );
   };
+
+  // ============================================================================
+  // MÓDULO DISPOSITIVOS AUTORIZADOS
+  // ============================================================================
+  const renderDispositivosModule = () => {
+    const pendientes = (dispositivosAutorizados||[]).filter(d=>d.estado==='pendiente').sort((a,b)=>(b.fechaSolicitud||0)-(a.fechaSolicitud||0));
+    const aprobados = (dispositivosAutorizados||[]).filter(d=>d.estado==='aprobado').sort((a,b)=>(b.fechaAprobacion||0)-(a.fechaAprobacion||0));
+    const rechazados = (dispositivosAutorizados||[]).filter(d=>d.estado==='rechazado');
+
+    const aprobarDisp = async (d) => {
+      await setDoc(getDocRef('dispositivos_autorizados', d.id), {estado:'aprobado', fechaAprobacion: Date.now(), aprobadoPor: appUser?.name||appUser?.username||'—'}, {merge:true});
+      logAuditoria(appUser,'Seguridad','EDICIÓN',`Dispositivo APROBADO: ${d.deviceLabel||'—'} para ${d.nombreUsuario||d.username}`);
+    };
+    const rechazarDisp = async (d) => {
+      await setDoc(getDocRef('dispositivos_autorizados', d.id), {estado:'rechazado', fechaRechazo: Date.now()}, {merge:true});
+      logAuditoria(appUser,'Seguridad','EDICIÓN',`Dispositivo RECHAZADO: ${d.deviceLabel||'—'} para ${d.nombreUsuario||d.username}`);
+    };
+    const revocarDisp = (d) => setDialog({title:'¿Revocar acceso?', text:`${d.nombreUsuario||d.username} ya no podrá entrar desde "${d.deviceLabel||'este equipo'}" hasta que lo apruebes de nuevo.`, type:'confirm', onConfirm: async()=>{
+      await deleteDoc(getDocRef('dispositivos_autorizados', d.id));
+      logAuditoria(appUser,'Seguridad','ELIMINACIÓN',`Dispositivo REVOCADO: ${d.deviceLabel||'—'} de ${d.nombreUsuario||d.username}`);
+    }});
+    const fmtF = (ts) => ts ? new Date(ts).toLocaleString('es-VE',{dateStyle:'short',timeStyle:'short'}) : '—';
+
+    return (
+      <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
+        <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-8 py-6 border-b-2 border-black">
+            <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><Lock size={28} className="text-orange-500"/> Dispositivos Autorizados</h1>
+            <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Aprueba o revoca desde qué equipos puede entrar cada usuario restringido</p>
+          </div>
+          <div className="p-8 space-y-8">
+            {pendientes.length>0 && (
+              <div>
+                <h3 className="text-sm font-black uppercase text-amber-700 mb-3 flex items-center gap-2"><AlertTriangle size={16}/> Pendientes de aprobación ({pendientes.length})</h3>
+                <div className="space-y-3">
+                  {pendientes.map(d=>(
+                    <div key={d.id} className="flex items-center justify-between bg-amber-50 border-2 border-amber-200 rounded-2xl p-4">
+                      <div>
+                        <p className="font-black text-sm">{d.nombreUsuario||d.username}</p>
+                        <p className="text-[10px] text-gray-500 font-bold uppercase">{d.deviceLabel||'Dispositivo desconocido'} · Solicitado: {fmtF(d.fechaSolicitud)}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={()=>aprobarDisp(d)} className="px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 flex items-center gap-1.5"><CheckCircle size={13}/> Aprobar</button>
+                        <button onClick={()=>rechazarDisp(d)} className="px-4 py-2 bg-red-100 text-red-700 rounded-xl text-[10px] font-black uppercase hover:bg-red-200">Rechazar</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <h3 className="text-sm font-black uppercase text-green-700 mb-3 flex items-center gap-2"><ShieldCheck size={16}/> Dispositivos aprobados ({aprobados.length})</h3>
+              {aprobados.length===0 ? <p className="text-xs text-gray-400 italic">Ningún dispositivo aprobado todavía.</p> : (
+                <div className="space-y-2">
+                  {aprobados.map(d=>(
+                    <div key={d.id} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl p-3">
+                      <div>
+                        <p className="font-black text-xs">{d.nombreUsuario||d.username}</p>
+                        <p className="text-[9px] text-gray-500 font-bold uppercase">{d.deviceLabel||'—'} · Aprobado: {fmtF(d.fechaAprobacion)} · Último acceso: {fmtF(d.ultimoAcceso)}</p>
+                      </div>
+                      <button onClick={()=>revocarDisp(d)} className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-[9px] font-black uppercase hover:bg-red-100">Revocar</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {rechazados.length>0 && (
+              <div>
+                <h3 className="text-sm font-black uppercase text-gray-500 mb-3">Rechazados ({rechazados.length})</h3>
+                <div className="space-y-2">
+                  {rechazados.map(d=>(
+                    <div key={d.id} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl p-3 opacity-60">
+                      <p className="text-[10px] font-bold">{d.nombreUsuario||d.username} · {d.deviceLabel||'—'}</p>
+                      <button onClick={()=>aprobarDisp(d)} className="px-3 py-1.5 bg-green-50 text-green-600 rounded-lg text-[9px] font-black uppercase hover:bg-green-100">Aprobar igual</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
 
 
 // ── Restaurador de Cobros — componente propio (evita hooks condicionales) ──
@@ -41488,6 +41659,16 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                  </div>
                  {newUserForm.role==='Vendedor'&&<div><label className="text-[10px] font-bold text-orange-600 uppercase block mb-1">Nombre del vendedor (tal como aparece en NEs)</label><select value={newUserForm.vendedorNombre||''} onChange={e=>setNewUserForm({...newUserForm,vendedorNombre:e.target.value})} className="w-full border-2 border-orange-300 rounded-xl p-3 font-black text-xs outline-none focus:border-orange-500"><option value="">— Seleccionar vendedor —</option>{((settings?.vendedores&&settings.vendedores.length>0)?settings.vendedores:[]).map(v=><option key={v} value={v}>{v}</option>)}</select></div>}
               </div>
+              <div className="mt-4 bg-red-50 border-2 border-red-200 rounded-2xl p-4 flex items-center justify-between gap-4">
+                <div>
+                  <label className="text-[11px] font-black text-red-700 uppercase flex items-center gap-2"><ShieldCheck size={14}/> Restringir a dispositivos autorizados</label>
+                  <p className="text-[9px] font-bold text-gray-500 mt-1">Si se activa, este usuario solo podrá iniciar sesión desde equipos que tú apruebes en <b>Dispositivos Autorizados</b>. Al intentar entrar desde uno nuevo, quedará pendiente de tu aprobación.</p>
+                </div>
+                <button type="button" onClick={()=>setNewUserForm(f=>({...f,restringirDispositivo:!f.restringirDispositivo}))}
+                  className={`flex-shrink-0 w-14 h-7 rounded-full transition-all relative ${newUserForm.restringirDispositivo?'bg-red-600':'bg-gray-300'}`}>
+                  <span className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${newUserForm.restringirDispositivo?'left-7':'left-0.5'}`}/>
+                </button>
+              </div>
               <div className="mt-6 border-t border-gray-200 pt-4">
                 <h4 className="text-sm font-black uppercase text-gray-800 mb-2 flex items-center gap-2">
                   <ShieldCheck size={18} className="text-orange-500"/> Permisología del Usuario
@@ -41980,6 +42161,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                         // 4. Eliminar facturas asociadas
                         for (const inv of (invoices||[]).filter(i=>i.opAsignada===selectedOP.id))
                           await deleteDoc(getDocRef('maquilaInvoices', inv.id));
+                        logAuditoria(appUser,'Ventas','ELIMINACIÓN',`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} ELIMINADA completa (incluye sus facturas asociadas)`);
                         setSelectedOpId('');
                         setDialog({title:'✅ Eliminada', text:`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} eliminada completamente.`, type:'alert'});
                       }, 'ELIMINAR OP COMPLETA — ACCIÓN IRREVERSIBLE')}
@@ -43625,6 +43807,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                     {(hasPerm('kpi')||hasPerm('costos')||hasPerm('costos_reportes')||appUser?.role==='Master') && navInPortal('kpi') && <button onClick={()=>{clearAllReports();setActiveTab('kpi');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='kpi'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> KPI</button>}
                     {(hasPerm('costos_operativos')||hasPerm('costos_reportes')||hasPerm('costos')) && !hasPerm('ventas') && navInPortal('costos') && <button onClick={() => {clearAllReports(); setActiveTab(hasPerm('costos_reportes')||hasPerm('costos')?'costos':'costos_operativos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${(activeTab==='costos'||activeTab==='costos_operativos') ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BarChart3 size={14}/> Reportes</button>}
                     {(hasPerm('auditoria')||appUser?.role==='Master') && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('auditoria');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='auditoria'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShieldCheck size={14}/> Auditoría</button>}
+                    {appUser?.role==='Master' && navInPortal('auditoria') && <button onClick={()=>{clearAllReports();setActiveTab('dispositivos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='dispositivos'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Lock size={14}/> Dispositivos</button>}
                     {hasPerm('resena') && navInPortal('resena') && <button onClick={()=>{clearAllReports();setActiveTab('resena');setResenaTab('portada');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab==='resena'?'bg-orange-500 text-white shadow-lg':'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BookOpen size={14}/> Reseña</button>}
                  </div>
               </div>
@@ -45534,6 +45717,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            )}
            {activeTab === 'kpi' && (hasPerm('kpi') || hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && renderKPIModule()}
            {activeTab === 'auditoria' && (hasPerm('auditoria') || appUser?.role==='Master') && renderAuditoriaModule()}
+           {activeTab === 'dispositivos' && appUser?.role==='Master' && renderDispositivosModule()}
         </main>
 
         {dialog && (
