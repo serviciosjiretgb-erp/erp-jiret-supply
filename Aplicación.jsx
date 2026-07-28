@@ -545,8 +545,15 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       const baseIVA=pNum(ret.baseIVABs||0);      // = Monto IVA (la cantidad de IVA)
       const pctRet=pNum(ret.pctRetencion||75);
       const ivaRetenido=pNum(ret.montoBs||0);
-      // Base imponible de la factura (antes de IVA) — si tenemos base16Bs guardada la usamos, si no aproximamos
-      const base16=pNum(ret.base16Bs||0)||parseFloat((baseIVA/0.16).toFixed(2));
+      // Base imponible de la factura (antes de IVA) — se toma la suma real de base16Bs + base8Bs
+      // guardadas en la factura. Solo si NINGUNA de las dos existe (facturas muy viejas, de antes
+      // de que se guardara base8Bs) se aproxima dividiendo el IVA entre 0.16 como último recurso.
+      const base16Real=pNum(ret.base16Bs||0);
+      const base8Real=pNum(ret.base8Bs||0);
+      const tieneAmbasAlicuotas=base16Real>0&&base8Real>0;
+      const soloOcho=base8Real>0&&base16Real===0;
+      const base16=(base16Real+base8Real)||parseFloat((baseIVA/0.16).toFixed(2));
+      const alicuotaLabel=tieneAmbasAlicuotas?'16% y 8%':(soloOcho?'8,00%':'16,00%');
       const total=pNum(ret.totalFacturaBs||0)||parseFloat((base16+baseIVA).toFixed(2));
       const exento=pNum(ret.exentoBs||0);
 
@@ -640,7 +647,7 @@ th,td{border:1px solid #888;padding:3px 5px;vertical-align:top}
       <td class="num">${fV(total)}</td>
       <td class="num">${fV(exento)}</td>
       <td class="num"><strong>${fV(base16)}</strong></td>
-      <td style="text-align:center">16,00%</td>
+      <td style="text-align:center">${alicuotaLabel}</td>
       <td class="num">${fV(baseIVA)}</td>
       <td style="text-align:center;font-weight:bold">${pctRet},00%</td>
       <td class="num"><strong style="font-size:10px">${fV(ivaRetenido)}</strong></td>
@@ -2825,11 +2832,11 @@ const calcTotalesFC=(f)=>{
     if(esBsFC){
       const d=v=>r2(v/tasa);
       return{sub:d(sub),base16:d(base16),base8:d(base8),exento:d(exento),iva16:d(iva16),iva8:d(iva8),ivaTotal:d(iva16+iva8),totalUSD:d(total),
-        subBs:r2(sub),base16Bs:r2(base16),iva16Bs:iva16,iva8Bs:iva8,exentoBs:r2(exento),totalBs:total,_bsNativo:true};
+        subBs:r2(sub),base16Bs:r2(base16),base8Bs:r2(base8),iva16Bs:iva16,iva8Bs:iva8,exentoBs:r2(exento),totalBs:total,_bsNativo:true};
     }
     return{sub,base16,base8,exento,iva16,iva8,ivaTotal:iva16+iva8,totalUSD:total,
-      subBs:tasa?sub*tasa:0,base16Bs:tasa?base16*tasa:0,iva16Bs:tasa?iva16*tasa:0,
-      iva8Bs:tasa?iva8*tasa:0,exentoBs:tasa?exento*tasa:0,totalBs:tasa?total*tasa:0};
+      subBs:tasa?sub*tasa:0,base16Bs:tasa?base16*tasa:0,base8Bs:tasa?base8*tasa:0,
+      iva16Bs:tasa?iva16*tasa:0,iva8Bs:tasa?iva8*tasa:0,exentoBs:tasa?exento*tasa:0,totalBs:tasa?total*tasa:0};
   }
   const baseIn=pNum(f.montoBase||0);
   if(esBsFC){
@@ -2840,7 +2847,7 @@ const calcTotalesFC=(f)=>{
     const d=v=>r2(v/tasa);
     return{sub:d(baseBsN),base16:f.aplicaIva==='SI'?d(baseBsN):0,base8:f.aplicaIva==='8'?d(baseBsN):0,
       exento:f.aplicaIva==='NO'?d(baseBsN):0,iva16:d(iva16BsN),iva8:d(iva8BsN),ivaTotal:d(iva16BsN+iva8BsN),totalUSD:d(totalBsN),
-      subBs:baseBsN,base16Bs:f.aplicaIva==='SI'?baseBsN:0,iva16Bs:iva16BsN,iva8Bs:iva8BsN,
+      subBs:baseBsN,base16Bs:f.aplicaIva==='SI'?baseBsN:0,base8Bs:f.aplicaIva==='8'?baseBsN:0,iva16Bs:iva16BsN,iva8Bs:iva8BsN,
       exentoBs:f.aplicaIva==='NO'?baseBsN:0,totalBs:totalBsN,_bsNativo:true};
   }
   const iva16=f.aplicaIva==='SI'?r2(baseIn*0.16):0;
@@ -2848,7 +2855,7 @@ const calcTotalesFC=(f)=>{
   const totalUSD=r2(baseIn+iva16+iva8);
   return{sub:baseIn,base16:f.aplicaIva==='SI'?baseIn:0,base8:f.aplicaIva==='8'?baseIn:0,
     exento:f.aplicaIva==='NO'?baseIn:0,iva16,iva8,ivaTotal:iva16+iva8,totalUSD,
-    subBs:tasa?baseIn*tasa:0,base16Bs:tasa?(f.aplicaIva==='SI'?baseIn:0)*tasa:0,
+    subBs:tasa?baseIn*tasa:0,base16Bs:tasa?(f.aplicaIva==='SI'?baseIn:0)*tasa:0,base8Bs:tasa?(f.aplicaIva==='8'?baseIn:0)*tasa:0,
     iva16Bs:tasa?iva16*tasa:0,iva8Bs:tasa?iva8*tasa:0,
     exentoBs:tasa?(f.aplicaIva==='NO'?baseIn:0)*tasa:0,totalBs:tasa?totalUSD*tasa:0};
 };
@@ -5424,7 +5431,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         const _updRet={nroFactura:form.nroFactura,nroControl:form.nroControl||'',
           proveedor:form.proveedor,rifProveedor:prov?.rif||'',
           fechaFactura:form.fecha,tasa:form.tasa,
-          totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+          totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,base8Bs:tot.base8Bs||0,iva16Bs:tot.iva16Bs||0,
           exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',updatedAt:Date.now()};
         // Actualizar ret IVA si existe
         if(form.aplicaRetIVA&&retIVA.monto>0){
@@ -5484,7 +5491,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
             pctRetencion:pNum(form.pctRetIVA||75),
             baseIVAUSD:retIVA.ivaBaseUSD,baseIVABs:retIVA.ivaBaseBs,
             monto:retIVA.monto,montoBs:retIVA.montoBs,
-            totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+            totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,base8Bs:tot.base8Bs||0,iva16Bs:tot.iva16Bs||0,
             exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
             tasa:form.tasa,periodo:getPeriodo(form.fecha),
             status:'PENDIENTE',timestamp:Date.now()
@@ -5502,7 +5509,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
             tipoContrib:r.tipoContrib||'PJD',
             pct:r.pct,baseImponibleBs:r.baseImponibleBs,sustraendoBs:r.sustraendoBs,
             monto:r.monto,montoBs:r.montoBs,
-            totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,iva16Bs:tot.iva16Bs||0,
+            totalFacturaBs:tot.totalBs||0,base16Bs:tot.base16Bs||0,base8Bs:tot.base8Bs||0,iva16Bs:tot.iva16Bs||0,
             exentoBs:tot.exentoBs||0,domicilioProveedor:prov?.direccion||'',
             valorUT,tasa:form.tasa,periodo:getPeriodo(form.fecha),
             status:'PENDIENTE',timestamp:Date.now()
