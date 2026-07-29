@@ -7819,6 +7819,8 @@ const HistorialPagosView = ({
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [cajasEfectivo, setCajasEfectivo] = useState([]);
   const [histFiltCuenta, setHistFiltCuenta] = useState('');
+  const [modalRestaurar, setModalRestaurar] = useState(false);
+  const [restForm, setRestForm] = useState({tipo:'banco', cuentaId:'', monto:'', tasa:'', fecha:getTodayDate(), concepto:'', referencia:''});
   const HIST_PER_PAGE = 50;
 
   useEffect(()=>{
@@ -7833,6 +7835,11 @@ const HistorialPagosView = ({
   const hoy = getTodayDate();
 
   const _factMap = useMemo(()=>{ const m=new Map(); (facturasCompra||[]).forEach(f=>m.set(f.id,f)); return m; },[facturasCompra]);
+  // El monto "efectivo" de un anticipo es lo que AÚN NO se ha aplicado a ninguna factura — no su
+  // monto original. Una vez que se aplica (total o parcialmente) a una factura, esa parte ya
+  // se cuenta a través del registro de pago que queda vinculado a esa factura; si se sigue
+  // sumando el monto completo del anticipo TAMBIÉN, el mismo dinero se cuenta dos veces.
+  const montoEfectivo = p => p.esAnticipo ? Math.max(0, pN(p.monto||0)-pN(p.montoAplicado||0)) : pN(p.monto||0);
 
   const metodos = ['TODOS','Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Tarjeta Internacional (Banplus)'];
 
@@ -7859,8 +7866,50 @@ const HistorialPagosView = ({
 
   const totalPages = Math.ceil(histFiltered.length / HIST_PER_PAGE);
   const paginated = histFiltered.slice(histPage*HIST_PER_PAGE, (histPage+1)*HIST_PER_PAGE);
-  const totalFiltrado = histFiltered.reduce((s,p)=>s+pN(p.monto||0),0);
-  const totalBsFiltrado = histFiltered.reduce((s,p)=>s+pN(p.monto||0)*(pN(p.tasa||tasaBCV||1)),0);
+  const totalFiltrado = histFiltered.reduce((s,p)=>s+montoEfectivo(p),0);
+  const totalBsFiltrado = histFiltered.reduce((s,p)=>s+montoEfectivo(p)*(pN(p.tasa||tasaBCV||1)),0);
+
+  // ── Restaurar movimiento de banco/caja manualmente (corrige una reversión hecha por error) ──
+  // Crea SOLO el movimiento bancario/de caja y ajusta el saldo de la cuenta — a propósito NO
+  // crea ningún registro en procura_pagos_cxp, para que no vuelva a aparecer en Historial de Pagos.
+  const ejecutarRestauracion = async () => {
+    if(!restForm.cuentaId || !pN(restForm.monto)) return setDialog({title:'Aviso', text:'Selecciona la cuenta e ingresa el monto.', type:'alert'});
+    try {
+      const montoNativo = pN(restForm.monto);
+      const tasa = pN(restForm.tasa)||tasaBCV||1;
+      const esCaja = restForm.tipo==='caja';
+      const cuentasDisp = esCaja ? cajasEfectivo : cuentasBancarias;
+      const cta = cuentasDisp.find(c=>c.id===restForm.cuentaId);
+      if(!cta) return setDialog({title:'Aviso', text:'Cuenta no encontrada.', type:'alert'});
+      const esBs = (cta.moneda||'').toUpperCase()==='BS';
+      const montoBs = esBs ? montoNativo : montoNativo*tasa;
+      const montoUSD = esBs ? montoNativo/tasa : montoNativo;
+      const batch = writeBatch(db);
+      const movId = `MOV-CORR-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+      const conceptoFinal = restForm.concepto || 'Corrección manual — reversión incorrecta de pago CxP';
+      if(esCaja){
+        batch.set(getDocRef('caja_movimientos', movId), {
+          id:movId, cajaId:cta.id, cajaNombre:cta.nombre, moneda:cta.moneda,
+          tipo:'Egreso', fecha:restForm.fecha, monto:montoNativo, montoBs, montoUSD, tasa,
+          concepto:conceptoFinal, referencia:restForm.referencia||'', estatus:'No Conciliado', ts:Date.now(),
+        });
+      } else {
+        batch.set(getDocRef('banco_movimientos', movId), {
+          id:movId, cuentaId:cta.id, cuentaNombre:cta.banco, tipoBanco:cta.tipoBanco, moneda:cta.moneda,
+          tipo:'Egreso', fecha:restForm.fecha, montoNativo, montoBs, montoUSD, tasa,
+          concepto:conceptoFinal, referencia:restForm.referencia||'', origenIngreso:'Corrección Manual',
+          saldoAnterior:pN(cta.saldo||0), saldoResultante:parseFloat((pN(cta.saldo||0)-montoNativo).toFixed(2)),
+          estatus:'No Conciliado', ts:Date.now(),
+        });
+        batch.update(getDocRef('banco_cuentas', cta.id), {saldo:parseFloat((pN(cta.saldo||0)-montoNativo).toFixed(2))});
+      }
+      await batch.commit();
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Restauración manual de ${esCaja?'caja':'banco'}: -${montoNativo.toFixed(2)} ${cta.moneda} en ${esCaja?cta.nombre:cta.banco} (corrige reversión incorrecta) · ${conceptoFinal}`);
+      setDialog({title:'✅ Restaurado', text:'El movimiento fue creado y el saldo ajustado. No se generó ningún registro en Historial de Pagos.', type:'alert'});
+      setModalRestaurar(false);
+      setRestForm({tipo:'banco', cuentaId:'', monto:'', tasa:'', fecha:getTodayDate(), concepto:'', referencia:''});
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
 
   // ── PDF Historial ──────────────────────────────────────────────────
   const generarPDFHistorial = () => {
@@ -7869,16 +7918,17 @@ const HistorialPagosView = ({
     const rows = histFiltered.map(p=>{
       const f=_factMap.get(p.facturaId);
       const tasa=pN(p.tasa||tasaBCV||1);
-      const montoBs=pN(p.montoBs||0)>0?pN(p.montoBs):pN(p.monto||0)*tasa;
+      const montoEf=montoEfectivo(p);
+      const montoBs=pN(p.montoBs||0)>0&&!p.esAnticipo?pN(p.montoBs):montoEf*tasa;
       return `<tr style="border-bottom:1px solid #f3f4f6">
 <td style="padding:6px 10px;color:#64748b">${p.fecha||'—'}</td>
-<td style="padding:6px 10px;font-weight:700;color:#f97316">${f?.nroFactura||'—'}</td>
+<td style="padding:6px 10px;font-weight:700;color:#f97316">${f?.nroFactura||(p.esAnticipo?'Anticipo':'—')}</td>
 <td style="padding:6px 10px;font-weight:600">${p.proveedor||'—'}</td>
 <td style="padding:6px 10px;color:#64748b;font-size:9px">${p.banco||'—'}${p.concepto?`<div style="font-size:8px;color:#94a3b8;font-style:italic;margin-top:2px">${p.concepto}</div>`:''}</td>
 <td style="padding:6px 10px">${p.metodo||'—'}</td>
 <td style="padding:6px 10px;font-size:9px;color:#94a3b8;font-family:monospace">${p.referencia||'—'}</td>
 <td style="padding:6px 10px;text-align:right;font-weight:900;color:#3b82f6">${montoBs>0?`Bs.${fN(montoBs)}`:'—'}</td>
-<td style="padding:6px 10px;text-align:right;font-weight:900;color:#16a34a">$${fN(pN(p.monto||0))}</td>
+<td style="padding:6px 10px;text-align:right;font-weight:900;color:#16a34a">$${fN(montoEf)}</td>
 </tr>`;
     }).join('');
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Historial de Pagos</title>
@@ -8123,6 +8173,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
             </h3>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-gray-400 font-bold">{histFiltered.length} registros · ${fN(totalFiltrado)}</span>
+              {appUser?.role==='Master' && <button onClick={()=>setModalRestaurar(true)} title="Corregir un movimiento de banco/caja afectado por una reversión incorrecta, sin generar registro en Historial de Pagos" className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-[9px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">
+                <ShieldCheck size={11}/> Restaurar Banco/Caja
+              </button>}
               <button onClick={generarPDFHistorial} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded-xl text-[9px] font-black uppercase hover:bg-gray-700 transition-all">
                 <Printer size={11}/> PDF
               </button>
@@ -8174,11 +8227,12 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
               {paginated.map(p=>{
                 const f = _factMap.get(p.facturaId);
                 const tasa = pN(p.tasa||tasaBCV||1);
-                const montoBs = pN(p.montoBs||0)>0 ? pN(p.montoBs) : pN(p.monto||0)*tasa;
+                const montoEf = montoEfectivo(p);
+                const montoBs = pN(p.montoBs||0)>0 && !p.esAnticipo ? pN(p.montoBs) : montoEf*tasa;
                 return(
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-orange-50/30">
                     <td className="py-2.5 px-4 text-gray-500 whitespace-nowrap">{p.fecha||'—'}</td>
-                    <td className="py-2.5 px-4 font-bold text-orange-600">{f?.nroFactura||'—'}</td>
+                    <td className="py-2.5 px-4 font-bold text-orange-600">{f?.nroFactura||(p.esAnticipo?<span className="text-teal-600">Anticipo{pN(p.montoAplicado||0)>0.01?' (aplicado parcial/total)':''}</span>:'—')}</td>
                     <td className="py-2.5 px-4 font-bold text-gray-700 max-w-[180px] truncate">{p.proveedor||'—'}</td>
                     <td className="py-2.5 px-4 text-gray-500 text-[9px]">
                       {p.banco||'—'}
@@ -8187,7 +8241,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                     <td className="py-2.5 px-4 text-gray-500">{p.metodo||'—'}</td>
                     <td className="py-2.5 px-4 text-gray-400 text-[9px] font-mono">{p.referencia||'—'}</td>
                     <td className="py-2.5 px-4 text-right font-black text-blue-600">{montoBs>0.01?`Bs.${fN(montoBs)}`:<span className="text-gray-300 text-[9px]">—</span>}</td>
-                    <td className="py-2.5 px-4 text-right font-black text-green-700">${fN(pN(p.monto||0))}</td>
+                    <td className="py-2.5 px-4 text-right font-black text-green-700">${fN(montoEf)}{p.esAnticipo&&pN(p.montoAplicado||0)>0.01&&<div className="text-[8px] text-gray-400 font-bold normal-case">(saldo pendiente por aplicar)</div>}</td>
                     <td className="py-2.5 px-4 text-center">
                       <div className="flex items-center gap-1 justify-center">
                         <button onClick={()=>generarPDFPago(p)} title="Comprobante PDF"
@@ -8238,6 +8292,57 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           </div>
         )}
       </div>
+
+      {/* MODAL RESTAURAR BANCO/CAJA — corrige una reversión incorrecta, sin tocar Historial de Pagos */}
+      {modalRestaurar&&(
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <h3 className="font-black text-sm uppercase mb-1 flex items-center gap-2 text-red-600"><ShieldCheck size={16}/>Restaurar Movimiento de Banco/Caja</h3>
+            <p className="text-[10px] text-gray-500 font-bold mb-4">Crea el egreso que corresponde y ajusta el saldo de la cuenta. NO genera ningún registro en Historial de Pagos — úsalo solo para corregir una reversión que afectó el banco por error.</p>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <button onClick={()=>setRestForm(f=>({...f,tipo:'banco',cuentaId:''}))} className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase border-2 ${restForm.tipo==='banco'?'bg-gray-900 text-white border-gray-900':'bg-white text-gray-500 border-gray-200'}`}>Banco</button>
+                <button onClick={()=>setRestForm(f=>({...f,tipo:'caja',cuentaId:''}))} className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase border-2 ${restForm.tipo==='caja'?'bg-gray-900 text-white border-gray-900':'bg-white text-gray-500 border-gray-200'}`}>Caja</button>
+              </div>
+              <div>
+                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Cuenta</label>
+                <select value={restForm.cuentaId} onChange={e=>setRestForm(f=>({...f,cuentaId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-red-400">
+                  <option value="">— Seleccionar —</option>
+                  {(restForm.tipo==='caja'?cajasEfectivo:cuentasBancarias).map(c=>(
+                    <option key={c.id} value={c.id}>{restForm.tipo==='caja'?c.nombre:`${c.banco} · ${c.numeroCuenta||''}`} ({c.moneda})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Monto (en moneda de la cuenta)</label>
+                  <input type="number" step="0.01" value={restForm.monto} onChange={e=>setRestForm(f=>({...f,monto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-red-400"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                  <input type="number" step="0.01" value={restForm.tasa} onChange={e=>setRestForm(f=>({...f,tasa:e.target.value}))} placeholder={String(tasaBCV||'')} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-red-400"/>
+                </div>
+              </div>
+              <div>
+                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Fecha</label>
+                <input type="date" value={restForm.fecha} onChange={e=>setRestForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-red-400"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Referencia (opcional)</label>
+                <input value={restForm.referencia} onChange={e=>setRestForm(f=>({...f,referencia:e.target.value}))} placeholder="Ej: mismo N° de referencia del pago original" className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-red-400"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Concepto</label>
+                <input value={restForm.concepto} onChange={e=>setRestForm(f=>({...f,concepto:e.target.value}))} placeholder="Corrección manual — reversión incorrecta de pago CxP" className="w-full border-2 border-gray-200 rounded-xl p-2.5 font-bold text-xs outline-none focus:border-red-400"/>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={()=>setModalRestaurar(false)} className="flex-1 py-2.5 rounded-xl border-2 border-gray-200 text-gray-600 font-black text-xs uppercase hover:bg-gray-50">Cancelar</button>
+              <button onClick={ejecutarRestauracion} className="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-black text-xs uppercase hover:bg-red-700">Registrar Egreso</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL EDITAR PAGO */}
       {editPago&&(
