@@ -12643,6 +12643,144 @@ function App() {
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
+  // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
+  // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
+  // Contables (Procura + Ventas + Retenciones a Clientes + Banco + Caja), EXCLUYENDO
+  // Retenciones a Proveedores a propósito: ya está completa dentro de Procura (cada
+  // factura genera su asiento con la retención incluida) y sumarla aparte duplicaría.
+  const [facturasCompraApp, setFacturasCompraApp] = useState([]);
+  const [proveedoresApp, setProveedoresApp] = useState([]);
+  const [serviciosApp, setServiciosApp] = useState([]);
+  const [retencionesClientesApp, setRetencionesClientesApp] = useState([]);
+  const [movBancoApp, setMovBancoApp] = useState([]);
+  const [movCajaApp, setMovCajaApp] = useState([]);
+  const [cuentasBancoApp, setCuentasBancoApp] = useState([]);
+  const [cuentasCajaApp, setCuentasCajaApp] = useState([]);
+  const [tercerosRelApp, setTercerosRelApp] = useState([]);
+  const [pagosRelApp, setPagosRelApp] = useState([]);
+  const [ajustesApp, setAjustesApp] = useState([]);
+  useEffect(()=>{
+    const subs = [
+      onSnapshot(getColRef('procura_facturas_compra'), s=>setFacturasCompraApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('procura_proveedores'), s=>setProveedoresApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('procura_servicios'), s=>setServiciosApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('retencionesClientes'), s=>setRetencionesClientesApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('banco_movimientos'), s=>setMovBancoApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('caja_movimientos'), s=>setMovCajaApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancoApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('caja_cuentas'), s=>setCuentasCajaApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('cxp_terceros_relacionados'), s=>setTercerosRelApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('cxp_pagos_relacionados'), s=>setPagosRelApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('comprobantes_ajustes'), s=>setAjustesApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+    ];
+    return ()=>subs.forEach(u=>u());
+  },[]);
+
+  // Combina TODAS las fuentes reales de la contabilidad — igual que hace Comprobantes
+  // Contables internamente — en una sola lista de asientos {fecha, comprobante, modulo,
+  // lineas:[{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}]}. A propósito NO incluye
+  // Retenciones a Proveedores: esa información ya viene completa dentro de cada asiento
+  // de Procura (confirmado en generarAsientoFC), y sumarla aparte duplicaría los montos.
+  const getAsientosReales = () => {
+    const out = [];
+    const mapLineas = (lineas) => lineas.map(l=>({
+      codigo:(l.cuenta||'').split('—')[0].trim(),
+      cuenta:(l.cuenta||'').split('—').slice(1).join('—').trim()||l.cuenta,
+      debeBs: l.tipo==='DEBITO'?(l.montoBs||0):0, haberBs: l.tipo==='CREDITO'?(l.montoBs||0):0,
+      debeUSD: l.tipo==='DEBITO'?(l.montoUSD||0):0, haberUSD: l.tipo==='CREDITO'?(l.montoUSD||0):0,
+    }));
+    // 1) Procura — ya incluye retenciones IVA/ISLR dentro del mismo asiento
+    (facturasCompraApp||[]).forEach(f=>{
+      try{
+        const tot=calcTotalesFC(f);
+        const retIVA=calcRetIVA(f,tot);
+        const retISLRLista=calcRetISLRLista(f,tot);
+        const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
+        const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp);
+        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', lineas:mapLineas(asiento.lineas)});
+      }catch(e){}
+    });
+    // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+      try{
+        const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', lineas:mapLineas(asiento.lineas)});
+      }catch(e){}
+    });
+    // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
+    (retencionesClientesApp||[]).forEach(r=>{
+      const tipo = r.tipoExtra ? (r.tipoLabel||r.tipo||'Otra') : (r.tipoRetencion||'IVA');
+      const ctaRet = r.tipoExtra
+        ? (r.cuentaContableNombre ? {codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim()} : {codigo:'2.1.03.99.001', nombre:`${tipo} por enterar`})
+        : (r.cuentaContableRetNombre ? {codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim()} : {codigo: tipo==='IVA'?'2.1.03.01.001':'2.1.03.02.001', nombre:`Retenciones ${tipo} por enterar`});
+      const montoBs=Number(r.montoRetenido||0);
+      const montoUSD=montoBs/Math.max(Number(r.tasa||1),1);
+      const cliente = (clients||[]).find(c=>c.rif && r.clientRif && c.rif.replace(/\W/g,'')===String(r.clientRif).replace(/\W/g,''));
+      const [codCli,nomCli]=cliente?.cuentaContableNombre?cliente.cuentaContableNombre.split('—').map(s=>s.trim()):['1.1.02.01.001','Cuentas por Cobrar Clientes'];
+      out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes',
+        lineas:[
+          {codigo:ctaRet.codigo, cuenta:`${ctaRet.nombre} (${tipo})`, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+          {codigo:codCli||'1.1.02.01.001', cuenta:nomCli||'Cuentas por Cobrar Clientes', debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+        ]});
+    });
+    // 4) Banco y 5) Caja — el movimiento propio + su contrapartida. Si el movimiento ya
+    // tiene un asiento formal vinculado (asientoContableId), se usan esas líneas reales
+    // en vez de reconstruir una genérica.
+    [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco'},
+     {movs:movCajaApp, cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja'}].forEach(({movs,cuentas,idField,nombreCta,mod})=>{
+      (movs||[]).forEach(m=>{
+        const cta=(cuentas||[]).find(c=>c.id===m[idField]);
+        if(!cta) return;
+        const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
+        if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
+          out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, lineas:(asientoLigado.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)}))});
+          return;
+        }
+        const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
+        const montoBs=Number(m.montoBs||0), montoUSD=Number(m.montoUSD||0);
+        const g = isIng
+          ? (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+cobrar|cxc|client)/i.test(p.nombre||''))
+          : (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+pagar|cxp|proveedor)/i.test(p.nombre||''));
+        const contra = g ? {codigo:String(g.codigo||g.id||''), cuenta:g.nombre||''} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
+        const lineaPropia={codigo:cta.cuentaContableCod||'—', cuenta:nombreCta(cta)||mod, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
+        const lineaContra={codigo:contra.codigo, cuenta:contra.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
+        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, lineas:[lineaPropia,lineaContra]});
+      });
+    });
+    // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
+    // ningún otro módulo.
+    (pagosRelApp||[]).forEach(p=>{
+      const montoSigno = p.origen ? Number(p.monto||0) : (p.tipo==='Ingreso'?-Math.abs(Number(p.monto||0)):Math.abs(Number(p.monto||0)));
+      const esIngreso = montoSigno < 0;
+      const montoUSD = Math.abs(montoSigno);
+      const movLigado = p.origen==='caja' ? (movCajaApp||[]).find(m=>m.id===p.movimientoId) : p.origen==='banco' ? (movBancoApp||[]).find(m=>m.id===p.movimientoId) : null;
+      const cuentasOrigen = p.origen==='caja' ? cuentasCajaApp : cuentasBancoApp;
+      const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
+      const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
+      const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
+      const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
+      const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settings?.tasaBCV||0)||1);
+      const montoBs = montoUSD * tasa;
+      const tercRel = (tercerosRelApp||[]).find(t=>t.id===p.terceroId);
+      const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+      const ctaPrestamo = (planDeCuentas||[]).find(pc=>/(pr[ée]stamo|relacionad)/i.test(pc.nombre||''));
+      const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
+      const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
+      const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
+      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
+        lineas:[
+          {codigo:codCtaOrigen, cuenta:nombreCtaOrigen, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
+          {codigo:codRelFinal, cuenta:`${nomRelFinal} — ${nombreTercero}`, debeBs:esIngreso?0:montoBs, haberBs:esIngreso?montoBs:0, debeUSD:esIngreso?0:montoUSD, haberUSD:esIngreso?montoUSD:0},
+        ]});
+    });
+    // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
+    // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
+    (ajustesApp||[]).forEach(a=>{
+      out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes',
+        lineas:(a.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0}))});
+    });
+    return out;
+  };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
@@ -41214,7 +41352,7 @@ ${resumenHtml}
   // de los Libros Diarios, sin restricción de fecha por defecto)
   // ============================================================================
   const renderMayorAnaliticoModule = () => {
-    const asientosPeriodo = (asientosApp||[]).filter(a=>{
+    const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
     }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
@@ -41301,7 +41439,7 @@ ${resumenHtml}
   // MÓDULO BALANCE DE COMPROBACIÓN (independiente)
   // ============================================================================
   const renderBalanceComprobacionModule = () => {
-    const asientosPeriodo = (asientosApp||[]).filter(a=>{
+    const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
     });
@@ -41377,7 +41515,7 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
-    const asientosPeriodo = (asientosApp||[]).filter(a=>{
+    const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
     });
@@ -41454,7 +41592,7 @@ ${resumenHtml}
   // ============================================================================
   const renderBalanceGeneralModule = () => {
     const corte = contFiltHasta || getTodayDate();
-    const asientosHastaCorte = (asientosApp||[]).filter(a=>(a.fecha||'')<=corte);
+    const asientosHastaCorte = getAsientosReales().filter(a=>(a.fecha||'')<=corte);
     const porCuenta = {};
     asientosHastaCorte.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
@@ -41547,7 +41685,7 @@ ${resumenHtml}
     };
     const indiceCorte = getIndice(periodoCorte);
     const cuentasNoMonetarias = (planDeCuentas||[]).filter(c=>c.tipoPartida==='NO_MONETARIA');
-    const asientosOrdenados = (asientosApp||[]).filter(a=>(a.fecha||'')<=corte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const asientosOrdenados = getAsientosReales().filter(a=>(a.fecha||'')<=corte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
     const resultados = cuentasNoMonetarias.map(cuenta => {
       let capas = [];
       asientosOrdenados.forEach(a=>{
