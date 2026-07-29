@@ -8075,6 +8075,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const cuentaIdF = editForm.cuentaId!=null?editForm.cuentaId:(editPago.cuentaId||'');
       const tasaF = pN(editForm.tasa!=null?editForm.tasa:(editPago.tasa||tasaBCV||0))||1;
       const monedaF = editForm.moneda!=null?editForm.moneda:editPago.moneda;
+      // Si el pago no tenía grupoPagoId (p.ej. porque el movimiento original se borró en una
+      // reversión), se genera uno nuevo aquí para poder vincular el movimiento que se cree abajo.
+      const grupoPagoIdF = editPago.grupoPagoId || `GRP-RESTORE-${Date.now().toString(36)}`;
       const montoBsF  = monedaF==='Bs'?totalPago:parseFloat((totalPago*tasaF).toFixed(2));
       const montoUSDF = monedaF==='Bs'?parseFloat((totalPago/tasaF).toFixed(2)):totalPago;
 
@@ -8096,7 +8099,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
         const pid=`PAGCXP-EDIT-${Date.now().toString(36)}-${i}`;
         batch.set(getDocRef('procura_pagos_cxp',pid),{
           id:pid,esAnticipo:false,montoAplicado:0,facturaId:a.facturaId,
-          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
+          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:grupoPagoIdF,
           monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
           concepto:editPago.concepto||'Pago CxP',cuentaId:cuentaIdF,moneda:monedaF||'USD',
           tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
@@ -8117,7 +8120,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
         const antId=`ANTCXP-EDIT-${Date.now().toString(36)}`;
         batch.set(getDocRef('procura_pagos_cxp',antId),{
           id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
-          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:editPago.grupoPagoId||'',
+          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:grupoPagoIdF,
           monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
           concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:cuentaIdF,moneda:monedaF||'USD',
           tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
@@ -8127,10 +8130,10 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       }
       // 4) Si el pago tenía un movimiento de banco/caja vinculado, actualizar su desglose de facturas,
       //    fecha/referencia y — si la cuenta cambió — moverlo a la cuenta/colección correcta.
-      if(editPago.grupoPagoId){
+      {
         const [bSnap,kSnap]=await Promise.all([
-          getDocs(query(getColRef('banco_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
-          getDocs(query(getColRef('caja_movimientos'),where('grupoPagoId','==',editPago.grupoPagoId))),
+          getDocs(query(getColRef('banco_movimientos'),where('grupoPagoId','==',grupoPagoIdF))),
+          getDocs(query(getColRef('caja_movimientos'),where('grupoPagoId','==',grupoPagoIdF))),
         ]);
         const nuevaEsCaja = cuentaIdF.startsWith('CAJA::');
         const camposComunes = {facturas:nuevasFacturasMv,fecha:fechaF,referencia:referenciaF,metodo:metodoF,montoUSD:montoUSDF,montoBs:montoBsF,tasa:tasaF};
@@ -8155,6 +8158,35 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
             batch.update(d.ref,{...camposComunes,monto:montoUSDF,cajaId:cuentaIdF.replace('CAJA::','')});
           }
         });
+        // No había NINGÚN movimiento vinculado (p.ej. se perdió en una reversión, o el pago nunca
+        // tuvo cuenta asociada) — si ahora se seleccionó una cuenta, se crea el egreso que falta.
+        if(bSnap.empty && kSnap.empty && cuentaIdF){
+          const movId=`MOV-RESTORE-${Date.now().toString(36)}`;
+          if(nuevaEsCaja){
+            const cajaId=cuentaIdF.replace('CAJA::','');
+            const cajaObj=cajasEfectivo.find(c=>c.id===cajaId);
+            batch.set(getDocRef('caja_movimientos',movId),{
+              id:movId,cajaId,cajaNombre:cajaObj?.nombre||'',moneda:cajaObj?.moneda||'USD',
+              tipo:'Egreso',fecha:fechaF,monto:montoUSDF,montoBs:montoBsF,montoUSD:montoUSDF,tasa:tasaF,
+              concepto:editPago.concepto||'Pago CxP (restaurado)',referencia:referenciaF,grupoPagoId:grupoPagoIdF,
+              facturas:nuevasFacturasMv,estatus:'No Conciliado',ts:Date.now(),
+            });
+          } else {
+            const ctaObj=cuentasBancarias.find(c=>c.id===cuentaIdF);
+            if(ctaObj){
+              batch.set(getDocRef('banco_movimientos',movId),{
+                id:movId,cuentaId:cuentaIdF,cuentaNombre:ctaObj.banco||'',tipoBanco:ctaObj.tipoBanco,moneda:ctaObj.moneda,
+                tipo:'Egreso',fecha:fechaF,montoNativo:montoUSDF,montoBs:montoBsF,montoUSD:montoUSDF,tasa:tasaF,
+                concepto:editPago.concepto||'Pago CxP (restaurado)',referencia:referenciaF,grupoPagoId:grupoPagoIdF,
+                facturas:nuevasFacturasMv,origenIngreso:'Restauración desde Editar Pago',
+                saldoAnterior:pN(ctaObj.saldo||0),saldoResultante:parseFloat((pN(ctaObj.saldo||0)-montoUSDF).toFixed(2)),
+                estatus:'No Conciliado',ts:Date.now(),
+              });
+              batch.update(getDocRef('banco_cuentas',ctaObj.id),{saldo:parseFloat((pN(ctaObj.saldo||0)-montoUSDF).toFixed(2))});
+            }
+          }
+          logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Movimiento de ${nuevaEsCaja?'caja':'banco'} RESTAURADO desde Editar Pago: -$${fN(montoUSDF)} a ${editPago.proveedor||'—'} · Ref: ${referenciaF||'—'}`);
+        }
       }
       await batch.commit();
       setEditPago(null);
