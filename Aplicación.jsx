@@ -10663,8 +10663,8 @@ const contDd = (s) => { if (!s) return '—'; const [y, m, d] = String(s).split(
 const contNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const partesCtaCC = (str) => { const p=(str||'').split('—'); return { codigo:(p[0]||'').trim(), nombre:p.slice(1).join('—').trim() }; };
 
-function ComprobantesContablesApp({ onBack }) {
-  const [sub, setSub] = useState(''); // '', 'banco', 'caja', 'ret_cli'
+function ComprobantesContablesApp({ onBack, initialSub }) {
+  const [sub, setSub] = useState(initialSub||''); // '', 'banco', 'caja', 'ret_cli'
   const [movBanco, setMovBanco] = useState([]);
   const [asientosCC, setAsientosCC] = useState([]);
   const [movCaja, setMovCaja] = useState([]);
@@ -10676,6 +10676,8 @@ function ComprobantesContablesApp({ onBack }) {
   const [pagosRelC, setPagosRelC] = useState([]);
   const [retencionesC, setRetencionesC] = useState([]);
   const [planCuentasC, setPlanCuentasC] = useState([]);
+  const [indicesInflacion, setIndicesInflacion] = useState([]);
+  const [indiceForm, setIndiceForm] = useState({periodo:'', indice:''});
   const [facturasCompraC, setFacturasCompraC] = useState([]);
   const [serviciosC, setServiciosC] = useState([]);
   const [facturasVentaC, setFacturasVentaC] = useState([]);
@@ -10685,6 +10687,8 @@ function ComprobantesContablesApp({ onBack }) {
   const [filtCuenta, setFiltCuenta] = useState('');
   // Buscador compartido por las 9 pestañas — filtra por Comprobante, Fecha, Código, Cuenta, Nro Doc o Concepto.
   const [buscarCC, setBuscarCC] = useState('');
+  const [mayorCuentaSel, setMayorCuentaSel] = useState('');
+  const [mayorBusqCuenta, setMayorBusqCuenta] = useState('');
   const [retIvaProvC, setRetIvaProvC] = useState([]);
   const [retIslrProvC, setRetIslrProvC] = useState([]);
   const [activosFijosC, setActivosFijosC] = useState([]);
@@ -10737,6 +10741,7 @@ function ComprobantesContablesApp({ onBack }) {
       onSnapshot(doc(db,'settings','anticipoIslrCuentas'), d => { if(d.exists()) setAnticipoIslrCfgCC(d.data()); }),
       onSnapshot(getColRef('notasVentaCreditoDebito'), s => setNotasVentaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('planDeCuentas'), s => setPlanCuentasC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('indices_inflacion'), s => setIndicesInflacion(s.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b)=>(a.periodo||'').localeCompare(b.periodo||'')))),
       onSnapshot(getColRef('procura_facturas_compra'), s => setFacturasCompraC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_servicios'), s => setServiciosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('maquilaInvoices'), s => setFacturasVentaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -11538,8 +11543,13 @@ ${valoresHtml}
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
+    { id:'mayor_analitico', label:'Mayor Analítico', icon:'📖', activo:true },
+    { id:'balance_comprobacion', label:'Balance de Comprobación', icon:'⚖️', activo:true },
+    { id:'estado_resultados', label:'Estado de Resultados', icon:'📈', activo:true },
+    { id:'balance_general', label:'Balance General', icon:'🏛️', activo:true },
+    { id:'ajuste_inflacion', label:'Ajuste por Inflación', icon:'💹', activo:true },
   ];
-  const activo = sub || 'banco';
+  const activo = sub || initialSub || 'banco';
 
   const contenido = () => {
     if (activo === 'procura') {
@@ -11969,7 +11979,7 @@ ${valoresHtml}
                     <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label>
                       <input value={ajusteForm.concepto} onChange={e=>setAjusteForm(f=>({...f,concepto:e.target.value}))} placeholder="Descripción del ajuste" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/></div>
 
-                    <div className="border-2 border-gray-100 rounded-xl overflow-hidden">
+                    <div className="border-2 border-gray-100 rounded-xl">
                       <table className="w-full text-xs">
                         <thead><tr className="bg-gray-100"><th className="py-2 px-2 text-left text-[9px] font-black uppercase text-gray-500">Cuenta</th><th className="py-2 px-2 text-center text-[9px] font-black uppercase text-gray-500 w-14">D/H</th><th className="py-2 px-2 text-right text-[9px] font-black uppercase text-gray-500 w-28">Monto Bs.</th><th className="py-2 px-2 text-right text-[9px] font-black uppercase text-gray-500 w-24">Monto $</th><th className="w-8"></th></tr></thead>
                         <tbody>
@@ -12087,6 +12097,402 @@ ${valoresHtml}
               </table></div>
             </div>
           )}
+        </div>
+      );
+    }
+    if (activo === 'balance_comprobacion') {
+      const asientosPeriodo = (asientosCC||[]).filter(a=>{
+        const f=a.fecha||'';
+        return (!filtDesde||f>=filtDesde) && (!filtHasta||f<=filtHasta);
+      });
+      const porCuenta = {};
+      asientosPeriodo.forEach(a=>{
+        (a.lineas||[]).forEach(l=>{
+          const cod = l.codigo||'—';
+          if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', dBs:0, hBs:0, dUSD:0, hUSD:0};
+          porCuenta[cod].dBs += parseNum(l.debeBs||0); porCuenta[cod].hBs += parseNum(l.haberBs||0);
+          porCuenta[cod].dUSD += parseNum(l.debeUSD||0); porCuenta[cod].hUSD += parseNum(l.haberUSD||0);
+        });
+      });
+      const filasBalance = Object.values(porCuenta)
+        .filter(c=>!buscarCC || c.codigo.toUpperCase().includes(buscarCC.toUpperCase()) || c.cuenta.toUpperCase().includes(buscarCC.toUpperCase()))
+        .sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const totBal = filasBalance.reduce((s,c)=>({dBs:s.dBs+c.dBs,hBs:s.hBs+c.hBs,dUSD:s.dUSD+c.dUSD,hUSD:s.hUSD+c.hUSD}),{dBs:0,hBs:0,dUSD:0,hUSD:0});
+      const cuadrado = Math.abs(totBal.dBs-totBal.hBs)<0.02 && Math.abs(totBal.dUSD-totBal.hUSD)<0.02;
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar cuenta</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Código o nombre..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-56"/></div>
+            <span className={`text-[10px] font-black uppercase px-3 py-2 rounded-lg ${cuadrado?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>{cuadrado?'✓ Cuadrado':'⚠ Descuadrado'}</span>
+            <p className="text-[10px] text-gray-400 ml-auto">{filasBalance.length} cuenta(s)</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr style={{background:'#0f172a'}}>
+                <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Código</th>
+                <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Cuenta</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe Bs.</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber Bs.</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe $</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber $</th>
+              </tr></thead>
+              <tbody>
+                {filasBalance.length===0 && <tr><td colSpan={6} className="text-center py-8 text-gray-400">Sin movimientos en el período seleccionado.</td></tr>}
+                {filasBalance.map(c=>(
+                  <tr key={c.codigo} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="px-3 py-2 font-mono font-black text-orange-600">{c.codigo}</td>
+                    <td className="px-3 py-2 font-bold text-gray-700">{c.cuenta}</td>
+                    <td className="px-3 py-2 text-right font-mono">{c.dBs>0.01?contFmt(c.dBs):'—'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{c.hBs>0.01?contFmt(c.hBs):'—'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{c.dUSD>0.01?contFmt(c.dUSD):'—'}</td>
+                    <td className="px-3 py-2 text-right font-mono">{c.hUSD>0.01?contFmt(c.hUSD):'—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr style={{background:'#0f172a'}}>
+                <td colSpan={2} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(totBal.dBs)}</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(totBal.hBs)}</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(totBal.dUSD)}</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(totBal.hUSD)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        </div>
+      );
+    }
+    if (activo === 'estado_resultados') {
+      const asientosPeriodo = (asientosCC||[]).filter(a=>{
+        const f=a.fecha||'';
+        return (!filtDesde||f>=filtDesde) && (!filtHasta||f<=filtHasta);
+      });
+      const porCuenta = {};
+      asientosPeriodo.forEach(a=>{
+        (a.lineas||[]).forEach(l=>{
+          const cod = l.codigo||'';
+          if(!cod) return;
+          if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0};
+          porCuenta[cod].debeBs += parseNum(l.debeBs||0);
+          porCuenta[cod].haberBs += parseNum(l.haberBs||0);
+        });
+      });
+      // Convención de códigos ya usada en el plan de cuentas: 4.x = Ingresos, 5.1.x = Costo de
+      // Ventas, el resto de 5.x = Gastos Operativos.
+      const cuentas = Object.values(porCuenta);
+      const ingresos = cuentas.filter(c=>c.codigo.startsWith('4')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const costos = cuentas.filter(c=>c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const gastos = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const totalIngresos = ingresos.reduce((s,c)=>s+c.saldo,0);
+      const totalCostos = costos.reduce((s,c)=>s+c.saldo,0);
+      const totalGastos = gastos.reduce((s,c)=>s+c.saldo,0);
+      const utilidadBruta = totalIngresos - totalCostos;
+      const utilidadNeta = utilidadBruta - totalGastos;
+      const FilaER = ({c}) => (
+        <tr className="border-b border-gray-100">
+          <td className="px-3 py-1.5 pl-8 font-mono text-[9px] text-gray-400">{c.codigo}</td>
+          <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
+          <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>
+        </tr>
+      );
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-3xl">
+            <table className="w-full text-xs">
+              <tbody>
+                <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Ingresos</td></tr>
+                {ingresos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin ingresos en el período.</td></tr>}
+                {ingresos.map(c=><FilaER key={c.codigo} c={c}/>)}
+                <tr className="bg-emerald-50 border-y-2 border-emerald-200"><td colSpan={2} className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Ingresos</td><td className="px-3 py-2 text-right font-mono font-black text-emerald-700">{contFmt(totalIngresos)}</td></tr>
+
+                <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Costo de Ventas</td></tr>
+                {costos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin costos en el período.</td></tr>}
+                {costos.map(c=><FilaER key={c.codigo} c={c}/>)}
+                <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Costo de Ventas</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalCostos)}</td></tr>
+
+                <tr className="bg-gray-900"><td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td><td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBruta>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(utilidadBruta)}</td></tr>
+
+                <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Gastos Operativos</td></tr>
+                {gastos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin gastos en el período.</td></tr>}
+                {gastos.map(c=><FilaER key={c.codigo} c={c}/>)}
+                <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Gastos Operativos</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalGastos)}</td></tr>
+
+                <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}><td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td><td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{contFmt(Math.abs(utilidadNeta))}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+    if (activo === 'ajuste_inflacion') {
+      const corte = filtHasta || getTodayDate();
+      const periodoCorte = corte.substring(0,7);
+      // Índice de un período (YYYY-MM): si no hay valor exacto, usa el más reciente disponible
+      // ANTES de ese período — evita que falte un mes puntual y rompa todo el cálculo.
+      const getIndice = (periodo) => {
+        const exacto = (indicesInflacion||[]).find(i=>i.periodo===periodo);
+        if (exacto) return parseNum(exacto.indice);
+        const anteriores = (indicesInflacion||[]).filter(i=>i.periodo<=periodo).sort((a,b)=>b.periodo.localeCompare(a.periodo));
+        return anteriores.length ? parseNum(anteriores[0].indice) : 0;
+      };
+      const indiceCorte = getIndice(periodoCorte);
+      const cuentasNoMonetarias = (planCuentasC||[]).filter(c=>c.tipoPartida==='NO_MONETARIA');
+      const asientosOrdenados = (asientosCC||[]).filter(a=>(a.fecha||'')<=corte).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      // Por cada cuenta no monetaria: reconstruir sus "capas" (monto + fecha de adquisición) con
+      // el método FIFO — cada egreso consume primero las capas más antiguas — y reexpresar cada
+      // capa según el índice del mes en que se adquirió, comparado con el índice de corte.
+      const resultados = cuentasNoMonetarias.map(cuenta => {
+        let capas = [];
+        asientosOrdenados.forEach(a=>{
+          (a.lineas||[]).filter(l=>l.codigo===cuenta.codigo).forEach(l=>{
+            const debe = parseNum(l.debeBs||0), haber = parseNum(l.haberBs||0);
+            if (debe > 0.01) capas.push({fecha:a.fecha, monto:debe});
+            if (haber > 0.01) {
+              let restante = haber;
+              while (restante > 0.01 && capas.length > 0) {
+                const consumo = Math.min(capas[0].monto, restante);
+                capas[0].monto -= consumo; restante -= consumo;
+                if (capas[0].monto < 0.01) capas.shift();
+              }
+            }
+          });
+        });
+        const saldoHistorico = capas.reduce((s,c)=>s+c.monto,0);
+        const sinIndice = capas.some(c=>getIndice(c.fecha.substring(0,7))<=0);
+        const valorAjustado = capas.reduce((s,c)=>{
+          const idxCapa = getIndice(c.fecha.substring(0,7));
+          const factor = idxCapa>0 ? indiceCorte/idxCapa : 1;
+          return s + c.monto*factor;
+        },0);
+        return {codigo:cuenta.codigo, cuenta:cuenta.nombre, saldoHistorico, valorAjustado, ajuste:valorAjustado-saldoHistorico, capas:capas.length, sinIndice};
+      }).filter(r=>Math.abs(r.saldoHistorico)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const totalHistorico = resultados.reduce((s,r)=>s+r.saldoHistorico,0);
+      const totalAjustado = resultados.reduce((s,r)=>s+r.valorAjustado,0);
+      const totalAjuste = totalAjustado - totalHistorico;
+      const faltaIndice = resultados.some(r=>r.sinIndice) || indiceCorte<=0;
+
+      const guardarIndice = async () => {
+        if(!indiceForm.periodo || !parseNum(indiceForm.indice)) return alert('Ingresa el período (mes) y el índice.');
+        await setDoc(getDocRef('indices_inflacion', indiceForm.periodo), {id:indiceForm.periodo, periodo:indiceForm.periodo, indice:parseNum(indiceForm.indice)});
+        setIndiceForm({periodo:'', indice:''});
+      };
+
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de corte</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <p className="text-[10px] text-gray-400">Índice del período de corte ({periodoCorte}): <b className={indiceCorte>0?'text-gray-700':'text-red-600'}>{indiceCorte>0?indiceCorte:'sin registrar'}</b></p>
+          </div>
+
+          {faltaIndice && (
+            <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-[10px] font-bold text-amber-800">
+              ⚠ Falta registrar el índice de inflación de uno o más períodos usados en este cálculo — esas capas se muestran sin reexpresar (factor 1) hasta que ingreses el índice correspondiente abajo.
+            </div>
+          )}
+
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h4 className="text-[10px] font-black uppercase text-gray-600 mb-3">Índices de Inflación por Período (mensual)</h4>
+            <div className="flex flex-wrap items-end gap-2 mb-3">
+              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Período</label><input type="month" value={indiceForm.periodo} onChange={e=>setIndiceForm(f=>({...f,periodo:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none"/></div>
+              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Índice</label><input type="number" step="0.01" value={indiceForm.indice} onChange={e=>setIndiceForm(f=>({...f,indice:e.target.value}))} placeholder="Ej: 1250.50" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-32"/></div>
+              <button onClick={guardarIndice} className="bg-teal-600 text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-teal-700">Guardar Índice</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+              {(indicesInflacion||[]).map(i=>(
+                <span key={i.id} className="bg-gray-100 rounded-lg px-2.5 py-1 text-[9px] font-bold text-gray-600">{i.periodo}: {i.indice}</span>
+              ))}
+              {(indicesInflacion||[]).length===0 && <p className="text-[10px] text-gray-400 italic">Sin índices registrados todavía.</p>}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr style={{background:'#0f172a'}}>
+                <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Código</th>
+                <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Cuenta (No Monetaria)</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo Histórico</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Valor Reexpresado</th>
+                <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Ajuste por Inflación</th>
+              </tr></thead>
+              <tbody>
+                {resultados.length===0 && <tr><td colSpan={5} className="text-center py-8 text-gray-400">Sin cuentas no monetarias con saldo — verifica la clasificación "Tipo de Partida" en Plan de Cuentas.</td></tr>}
+                {resultados.map(r=>(
+                  <tr key={r.codigo} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="px-3 py-2 font-mono font-black text-orange-600">{r.codigo}{r.sinIndice&&<span className="text-amber-500" title="Falta índice para alguna capa">⚠</span>}</td>
+                    <td className="px-3 py-2 font-bold text-gray-700">{r.cuenta}<span className="text-gray-400 font-normal ml-1">({r.capas} capa{r.capas!==1?'s':''})</span></td>
+                    <td className="px-3 py-2 text-right font-mono">{contFmt(r.saldoHistorico)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{contFmt(r.valorAjustado)}</td>
+                    <td className={`px-3 py-2 text-right font-mono font-black ${r.ajuste>=0?'text-emerald-600':'text-red-600'}`}>{contFmt(r.ajuste)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr style={{background:'#0f172a'}}>
+                <td colSpan={2} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-gray-300">{contFmt(totalHistorico)}</td>
+                <td className="px-3 py-2.5 text-right font-mono font-black text-gray-300">{contFmt(totalAjustado)}</td>
+                <td className={`px-3 py-2.5 text-right font-mono font-black ${totalAjuste>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(totalAjuste)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-3 text-[10px] font-bold text-blue-800">
+            ℹ Este cálculo reexpresa cada cuenta marcada como "No Monetaria" en Plan de Cuentas, reconstruyendo sus capas por fecha de adquisición con el método FIFO. El asiento contable (Debe a la cuenta reexpresada / Haber a Resultado por Exposición a la Inflación) todavía debe registrarse manualmente en Comprobantes/Ajustes usando estos montos. El "Resultado Monetario del Ejercicio" (la ganancia o pérdida por mantener efectivo y cuentas por cobrar/pagar durante la inflación) no se calcula aquí — es una fórmula distinta y más compleja que requeriría su propio desarrollo.
+          </div>
+        </div>
+      );
+    }
+    if (activo === 'balance_general') {
+      const corte = filtHasta || getTodayDate();
+      const asientosHastaCorte = (asientosCC||[]).filter(a=>(a.fecha||'')<=corte);
+      const porCuenta = {};
+      asientosHastaCorte.forEach(a=>{
+        (a.lineas||[]).forEach(l=>{
+          const cod = l.codigo||'';
+          if(!cod) return;
+          if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0};
+          porCuenta[cod].debeBs += parseNum(l.debeBs||0);
+          porCuenta[cod].haberBs += parseNum(l.haberBs||0);
+        });
+      });
+      const cuentas = Object.values(porCuenta);
+      // Activo: saldo normal deudor. Pasivo y Patrimonio: saldo normal acreedor.
+      const activos = cuentas.filter(c=>c.codigo.startsWith('1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const pasivos = cuentas.filter(c=>c.codigo.startsWith('2')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      const patrimonio = cuentas.filter(c=>c.codigo.startsWith('3')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      // Utilidad del ejercicio (acumulada hasta la fecha de corte) — se suma al Patrimonio, como
+      // corresponde, aunque todavía no se haya hecho un cierre formal que la traslade a una
+      // cuenta de utilidades retenidas.
+      const ingresosTot = cuentas.filter(c=>c.codigo.startsWith('4')).reduce((s,c)=>s+(c.haberBs-c.debeBs),0);
+      const costosTot = cuentas.filter(c=>c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+      const gastosTot = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+      const utilidadEjercicio = ingresosTot - costosTot - gastosTot;
+      const totalActivo = activos.reduce((s,c)=>s+c.saldo,0);
+      const totalPasivo = pasivos.reduce((s,c)=>s+c.saldo,0);
+      const totalPatrimonio = patrimonio.reduce((s,c)=>s+c.saldo,0) + utilidadEjercicio;
+      const totalPasivoPatrimonio = totalPasivo + totalPatrimonio;
+      const cuadrado = Math.abs(totalActivo - totalPasivoPatrimonio) < 0.5;
+      const FilaBG = ({c}) => (
+        <tr className="border-b border-gray-100">
+          <td className="px-3 py-1.5 pl-6 font-mono text-[9px] text-gray-400">{c.codigo}</td>
+          <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
+          <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>
+        </tr>
+      );
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de corte</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <span className={`text-[10px] font-black uppercase px-3 py-2 rounded-lg ${cuadrado?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>{cuadrado?'✓ Cuadrado':'⚠ Descuadrado'}</span>
+            <p className="text-[10px] text-gray-400">Al {corte}</p>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <tbody>
+                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Activo</td></tr>
+                  {activos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin saldo.</td></tr>}
+                  {activos.map(c=><FilaBG key={c.codigo} c={c}/>)}
+                  <tr className="bg-blue-50 border-y-2 border-blue-200"><td colSpan={2} className="px-3 py-2.5 font-black text-blue-700 text-[10px] uppercase">Total Activo</td><td className="px-3 py-2.5 text-right font-mono font-black text-blue-700">{contFmt(totalActivo)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <tbody>
+                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Pasivo</td></tr>
+                  {pasivos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin saldo.</td></tr>}
+                  {pasivos.map(c=><FilaBG key={c.codigo} c={c}/>)}
+                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2.5 font-black text-red-700 text-[10px] uppercase">Total Pasivo</td><td className="px-3 py-2.5 text-right font-mono font-black text-red-700">{contFmt(totalPasivo)}</td></tr>
+
+                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300 pt-4">Patrimonio</td></tr>
+                  {patrimonio.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin saldo.</td></tr>}
+                  {patrimonio.map(c=><FilaBG key={c.codigo} c={c}/>)}
+                  <tr className="border-b border-gray-100"><td className="px-3 py-1.5 pl-6 font-mono text-[9px] text-gray-400">—</td><td className="px-3 py-1.5 text-gray-600 italic">Utilidad del Ejercicio (acumulada)</td><td className="px-3 py-1.5 text-right font-mono">{contFmt(utilidadEjercicio)}</td></tr>
+                  <tr className="bg-emerald-50 border-y-2 border-emerald-200"><td colSpan={2} className="px-3 py-2.5 font-black text-emerald-700 text-[10px] uppercase">Total Patrimonio</td><td className="px-3 py-2.5 text-right font-mono font-black text-emerald-700">{contFmt(totalPatrimonio)}</td></tr>
+                  <tr className="bg-gray-900"><td colSpan={2} className="px-3 py-3 font-black text-white text-[11px] uppercase">Total Pasivo + Patrimonio</td><td className="px-3 py-3 text-right font-mono font-black text-white text-[11px]">{contFmt(totalPasivoPatrimonio)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    if (activo === 'mayor_analitico') {
+      const asientosPeriodo = (asientosCC||[]).filter(a=>{
+        const f=a.fecha||'';
+        return (!filtDesde||f>=filtDesde) && (!filtHasta||f<=filtHasta);
+      }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      const cuentasConMov = {};
+      asientosPeriodo.forEach(a=>(a.lineas||[]).forEach(l=>{
+        const cod=l.codigo||'—';
+        if(!cuentasConMov[cod]) cuentasConMov[cod]={codigo:cod, cuenta:l.cuenta||''};
+      }));
+      const listaCuentas = Object.values(cuentasConMov)
+        .filter(c=>!mayorBusqCuenta || c.codigo.toUpperCase().includes(mayorBusqCuenta.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuenta.toUpperCase()))
+        .sort((a,b)=>a.codigo.localeCompare(b.codigo));
+      let saldoAcum = 0;
+      const movsCuenta = !mayorCuentaSel ? [] : asientosPeriodo.flatMap(a=>
+        (a.lineas||[]).filter(l=>l.codigo===mayorCuentaSel).map(l=>{
+          saldoAcum += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
+          return {...l, fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, saldoAcum};
+        })
+      );
+      const cuentaInfo = listaCuentas.find(c=>c.codigo===mayorCuentaSel);
+      return (
+        <div className="p-6 flex flex-col md:flex-row gap-4">
+          <div className="w-full md:w-72 flex-shrink-0 bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+            <input value={mayorBusqCuenta} onChange={e=>setMayorBusqCuenta(e.target.value)} placeholder="Buscar cuenta..." className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+            <div className="max-h-[60vh] overflow-y-auto space-y-1">
+              {listaCuentas.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el período.</p>}
+              {listaCuentas.map(c=>(
+                <button key={c.codigo} onClick={()=>setMayorCuentaSel(c.codigo)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-[10px] font-bold transition-colors ${mayorCuentaSel===c.codigo?'bg-orange-500 text-white':'hover:bg-gray-50 text-gray-700'}`}>
+                  <span className="font-mono font-black">{c.codigo}</span><br/>{c.cuenta}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1 bg-white rounded-xl border border-gray-200 p-4">
+            <div className="flex flex-wrap items-end gap-3 mb-3">
+              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+              {cuentaInfo && <p className="text-xs font-black text-gray-700 ml-auto">{cuentaInfo.codigo} — {cuentaInfo.cuenta}</p>}
+            </div>
+            {!mayorCuentaSel ? (
+              <div className="text-center py-16 text-gray-400 text-sm">← Selecciona una cuenta para ver su detalle</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr style={{background:'#0f172a'}}>
+                    <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Fecha</th>
+                    <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Comprobante</th>
+                    <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Módulo</th>
+                    <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe Bs.</th>
+                    <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber Bs.</th>
+                    <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo</th>
+                  </tr></thead>
+                  <tbody>
+                    {movsCuenta.length===0 && <tr><td colSpan={6} className="text-center py-8 text-gray-400">Sin movimientos en el período.</td></tr>}
+                    {movsCuenta.map((m,i)=>(
+                      <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="px-3 py-2">{m.fecha||'—'}</td>
+                        <td className="px-3 py-2 font-mono text-gray-500">{m.comprobante||'—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{m.modulo||'—'}</td>
+                        <td className="px-3 py-2 text-right font-mono">{parseNum(m.debeBs)>0.01?contFmt(parseNum(m.debeBs)):'—'}</td>
+                        <td className="px-3 py-2 text-right font-mono">{parseNum(m.haberBs)>0.01?contFmt(parseNum(m.haberBs)):'—'}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-black ${m.saldoAcum<0?'text-red-600':'text-gray-800'}`}>{contFmt(m.saldoAcum)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       );
     }
@@ -16576,6 +16982,26 @@ function App() {
       },
       hasAnyPerm('configuracion') && { tab:'plan_cuentas', icon:<FileText size={20}/>, title:'Plan de Cuentas', color:'#2563eb',
         stats: ()=>({ s1:`${(planDeCuentas||[]).length} cuentas registradas`, s2:'Código, grupo y sub-grupo'}),
+        chart:null
+      },
+      hasPerm('banco') && { tab:'mayor_analitico_cc', icon:<BookOpen size={20}/>, title:'Mayor Analítico', color:'#8b5cf6',
+        stats: ()=>({ s1:'Detalle por cuenta', s2:'Movimientos y saldo acumulado'}),
+        chart:null
+      },
+      hasPerm('banco') && { tab:'balance_comprobacion_cc', icon:<FileSpreadsheet size={20}/>, title:'Balance de Comprobación', color:'#0d9488',
+        stats: ()=>({ s1:'Sumas y saldos', s2:'Debe vs. Haber por cuenta'}),
+        chart:null
+      },
+      hasPerm('banco') && { tab:'estado_resultados_cc', icon:<TrendingUp size={20}/>, title:'Estado de Resultados', color:'#16a34a',
+        stats: ()=>({ s1:'Ingresos, costos y gastos', s2:'Utilidad o pérdida del período'}),
+        chart:null
+      },
+      hasPerm('banco') && { tab:'balance_general_cc', icon:<Building2 size={20}/>, title:'Balance General', color:'#1e3a8a',
+        stats: ()=>({ s1:'Activo, Pasivo y Patrimonio', s2:'Estado de situación financiera'}),
+        chart:null
+      },
+      hasPerm('banco') && { tab:'ajuste_inflacion_cc', icon:<TrendingUp size={20}/>, title:'Ajuste por Inflación', color:'#be123c',
+        stats: ()=>({ s1:'Reexpresión DPC-10', s2:'Por fecha de adquisición (FIFO)'}),
         chart:null
       },
       hasPerm('banco') && { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
@@ -41398,6 +41824,21 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
     // Plan de Cuentas — movido aquí desde Configuración (mismo estado, misma lógica,
     // solo cambia desde dónde se accede: ahora tiene su propia tarjeta en Contabilidad).
+    // Sugerencia de tipo de partida para el Ajuste por Inflación. Regla general: efectivo,
+    // bancos, cuentas por cobrar/pagar y obligaciones financieras son MONETARIAS (no se
+    // reexpresan); inventario, activo fijo y patrimonio son NO MONETARIAS (sí se reexpresan).
+    // Es solo una sugerencia inicial — se puede corregir cuenta por cuenta.
+    const sugerirTipoPartida = (codigo) => {
+      const c = String(codigo||'');
+      if (/^1\.1\.01/.test(c)) return 'MONETARIA';      // Efectivo, Bancos
+      if (/^1\.1\.02/.test(c)) return 'MONETARIA';      // Cuentas por Cobrar
+      if (/^1\.1\.03/.test(c)) return 'NO_MONETARIA';   // Inventario
+      if (/^1\.2/.test(c))     return 'NO_MONETARIA';   // Activo Fijo
+      if (/^1/.test(c))        return 'MONETARIA';      // resto de Activo, por defecto
+      if (/^2/.test(c))        return 'MONETARIA';      // Pasivo (cuentas por pagar, préstamos)
+      if (/^3/.test(c))        return 'NO_MONETARIA';   // Patrimonio
+      return 'MONETARIA';
+    };
     const renderPlanDeCuentasModule = () => { try { return (
       <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
@@ -41417,7 +41858,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">{pdcEditando?'Editar Cuenta':'Agregar Cuenta'}</h3>
                <div className="grid grid-cols-2 gap-3">
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Código</label>
-                   <input value={pdcForm.codigo} onChange={e=>setPdcForm(f=>({...f,codigo:e.target.value}))} placeholder="1.1.01.04.002" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
+                   <input value={pdcForm.codigo} onChange={e=>setPdcForm(f=>({...f,codigo:e.target.value,tipoPartida:f.tipoPartida||sugerirTipoPartida(e.target.value)}))} placeholder="1.1.01.04.002" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta</label>
                    <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo</label>
@@ -41441,6 +41882,13 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                        <option value="__nuevo__">+ Otro (escribir nuevo)</option>
                      </select>
                    )}
+                 </div>
+                 <div>
+                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo de Partida (Ajuste por Inflación)</label>
+                   <select value={pdcForm.tipoPartida||'MONETARIA'} onChange={e=>setPdcForm(f=>({...f,tipoPartida:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                     <option value="MONETARIA">Monetaria (no se reexpresa)</option>
+                     <option value="NO_MONETARIA">No Monetaria (sí se reexpresa)</option>
+                   </select>
                  </div>
                </div>
                <div className="flex gap-2 mt-4">
@@ -41504,7 +41952,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                        <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.subGrupo}</td>
                        <td className="py-2 px-3 text-center">
                          <div className="flex justify-center gap-1">
-                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||''});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
+                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||'',tipoPartida:p.tipoPartida||sugerirTipoPartida(p.codigo)});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
                            <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
                          </div>
                        </td>
@@ -45822,6 +46270,11 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
           {/* ── CONTABILIDAD — COMPROBANTES CONTABLES ── */}
            {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')}/>}
+           {activeTab === 'mayor_analitico_cc' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} initialSub="mayor_analitico"/>}
+           {activeTab === 'balance_comprobacion_cc' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} initialSub="balance_comprobacion"/>}
+           {activeTab === 'estado_resultados_cc' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} initialSub="estado_resultados"/>}
+           {activeTab === 'balance_general_cc' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} initialSub="balance_general"/>}
+           {activeTab === 'ajuste_inflacion_cc' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} initialSub="ajuste_inflacion"/>}
 
           {/* ── CONTABILIDAD — PLAN DE CUENTAS (movido desde Configuración) ── */}
            {activeTab === 'plan_cuentas' && (hasPerm('configuracion') || (SYSTEM_MODULES.find(m=>m.id==='configuracion')?.submodules||[]).some(s=>hasPerm(s.id))) && (
