@@ -17037,7 +17037,7 @@ function App() {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
       administracion:      ['ventas','banco','procura','impuestos'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
-      contabilidad:        ['comprobantes_contables','plan_cuentas'],
+      contabilidad:        ['comprobantes_contables','plan_cuentas','mayor_analitico_cc','balance_comprobacion_cc','estado_resultados_cc','balance_general_cc','ajuste_inflacion_cc'],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
       redes_portal:        [],
