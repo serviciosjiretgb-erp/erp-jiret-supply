@@ -10253,8 +10253,8 @@ const logAuditoria = async (appUser, modulo, tipo, detalle) => {
     const id = `AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     await setDoc(getDocRef('auditoria_eventos', id), {
       id, fecha: getTodayDate(), ts: Date.now(),
-      usuario: appUser?.nombre||appUser?.displayName||appUser?.email||'Usuario',
-      rol: appUser?.role||appUser?.rol||'—',
+      usuario: appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario',
+      rol: appUser?.role||'—',
       modulo, tipo, detalle,
     });
   } catch(e) { console.warn('No se pudo registrar en auditoría:', e); }
@@ -10327,6 +10327,15 @@ const detectSubcategory = (code, desc) => {
   if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA|PAÑAL|FG-[A-Z]/.test(c) && !/TERMO|STRETCH|STRECTH|CINTA|KRAFT|DISPEN/.test(c)) return 'Bolsas Plásticas';
   if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
   return '';
+};
+// Unidad correcta de un producto terminado — antes solo distinguía Termoencogible (KG) vs
+// todo lo demás (Millares), lo que hacía que Stretch Film (que no es Termoencogible pero
+// tampoco se cuenta en millares como una bolsa) cayera mal en "Millares". Ahora reconoce las
+// 3 categorías reales: Termoencogible = KG, Stretch Film = Rollos, el resto = Millares.
+const getUnidadPT = (codigo, desc, tipoProducto) => {
+  if (tipoProducto === 'TERMOENCOGIBLE') return 'KG';
+  if (detectSubcategory(codigo, desc) === 'Stretch Film') return 'Rollo';
+  return 'Millares';
 };
 const cleanFGCode = (id) => {
   if(!id) return '';
@@ -15013,7 +15022,7 @@ function App() {
         invCode: (it.invCode || '').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim() || '',
         cantidad: it.cantidad,
         desc: it.desc || fg?.producto || '',
-        unidad: it.unidad || (esTermo?'KG':'Millares'),
+        unidad: it.unidad || getUnidadPT(it.invCode||fg?.id, it.desc||fg?.producto, esTermo?'TERMOENCOGIBLE':''),
         esTermo,
         precioUnit: precioUnitVenta,
         costoUnit: costoCapturado,
@@ -21793,11 +21802,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         <div id="pdf-content" className="bg-white p-10 min-h-0 text-black">
           <div className="flex justify-between mb-8 no-pdf">
             <button onClick={() => setShowSingleInvoice(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
-            <button onClick={() => handleExportPDF(`Factura_${inv.documento}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+            <button onClick={() => handleExportPDF(`Factura_${inv.nroFiscal||inv.documento}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
           </div>
           <div className="hidden pdf-header mb-6"><ReportHeader /></div>
           <div className="text-center my-6 pb-4 border-b-4 border-orange-500">
-            <span className="text-2xl font-black uppercase">INVOICE N° {(inv.documento||'').replace(/^FAC-/,'INVO-')}</span>
+            <span className="text-2xl font-black uppercase">INVOICE N° {inv.nroFiscal||(inv.documento||'').replace(/^FAC-/,'INVO-')}</span>
           </div>
 
           {/* Datos del cliente y factura */}
@@ -25713,7 +25722,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <label className="text-[9px] font-black text-orange-600 uppercase block mb-1">🧾 Fecha de Factura</label>
                           <input type="date" value={newInvoiceForm.fechaFactura||newInvoiceForm.fecha} onChange={e=>setNewInvoiceForm({...newInvoiceForm, fechaFactura: e.target.value})} className="border-2 border-orange-300 rounded-xl p-2 text-xs font-bold outline-none focus:border-orange-500 bg-orange-50" />
                         </div>
-                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.documento || generateInvoiceId()}</span>
+                        <span className="bg-orange-100 text-orange-800 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest shadow-sm">INVOICE NRO: {newInvoiceForm.nroFiscal || newInvoiceForm.documento || generateInvoiceId()}</span>
                         {newInvoiceForm.neOrigen && <span className="bg-blue-100 text-blue-800 px-3 py-2 rounded-xl text-[10px] font-black">NE: {newInvoiceForm.neOrigen}</span>}
                         {/* NRO FISCAL Y CONTROL */}
                         <div className="flex items-center gap-3 flex-wrap">
