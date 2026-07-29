@@ -12697,14 +12697,14 @@ function App() {
         const retISLRLista=calcRetISLRLista(f,tot);
         const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
         const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', lineas:mapLineas(asiento.lineas)});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
     // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', lineas:mapLineas(asiento.lineas)});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -12717,7 +12717,7 @@ function App() {
       const montoUSD=montoBs/Math.max(Number(r.tasa||1),1);
       const cliente = (clients||[]).find(c=>c.rif && r.clientRif && c.rif.replace(/\W/g,'')===String(r.clientRif).replace(/\W/g,''));
       const [codCli,nomCli]=cliente?.cuentaContableNombre?cliente.cuentaContableNombre.split('—').map(s=>s.trim()):['1.1.02.01.001','Cuentas por Cobrar Clientes'];
-      out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes',
+      out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes', concepto:`Retención ${tipo} — ${r.clientName||cliente?.razonSocial||cliente?.nombre||'—'}`,
         lineas:[
           {codigo:ctaRet.codigo, cuenta:`${ctaRet.nombre} (${tipo})`, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
           {codigo:codCli||'1.1.02.01.001', cuenta:nomCli||'Cuentas por Cobrar Clientes', debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
@@ -12733,7 +12733,7 @@ function App() {
         if(!cta) return;
         const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
         if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
-          out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, lineas:(asientoLigado.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)}))});
+          out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:(asientoLigado.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)}))});
           return;
         }
         const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
@@ -12744,7 +12744,7 @@ function App() {
         const contra = g ? {codigo:String(g.codigo||g.id||''), cuenta:g.nombre||''} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
         const lineaPropia={codigo:cta.cuentaContableCod||'—', cuenta:nombreCta(cta)||mod, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
         const lineaContra={codigo:contra.codigo, cuenta:contra.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
-        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, lineas:[lineaPropia,lineaContra]});
+        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:[lineaPropia,lineaContra]});
       });
     });
     // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
@@ -12767,7 +12767,7 @@ function App() {
       const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
       const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
       const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
+      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas', concepto:`${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${nombreTercero}`,
         lineas:[
           {codigo:codCtaOrigen, cuenta:nombreCtaOrigen, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
           {codigo:codRelFinal, cuenta:`${nomRelFinal} — ${nombreTercero}`, debeBs:esIngreso?0:montoBs, haberBs:esIngreso?montoBs:0, debeUSD:esIngreso?0:montoUSD, haberUSD:esIngreso?montoUSD:0},
@@ -12776,7 +12776,7 @@ function App() {
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
-      out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes',
+      out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
         lineas:(a.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0}))});
     });
     return out;
@@ -41347,6 +41347,27 @@ ${resumenHtml}
     );
   };
 
+  // Barra de navegación compartida entre los 5 reportes de Contabilidad — permite saltar
+  // directo de uno a otro sin volver al Panel Principal.
+  const ContNavBar = ({active}) => (
+    <div style={{background:'#0f172a'}} className="px-4 flex items-center gap-1 overflow-x-auto border-b-2 border-orange-500">
+      <button onClick={()=>setActiveTab('home')} className="flex items-center gap-1.5 px-3 py-3 text-[10px] font-black uppercase text-gray-400 hover:text-white whitespace-nowrap"><ArrowLeft size={13}/> Volver</button>
+      <div className="w-px h-5 bg-white/20 mx-1"/>
+      {[
+        {id:'mayor_analitico_cc', label:'Mayor Analítico', icon:'📖'},
+        {id:'balance_comprobacion_cc', label:'Balance de Comprobación', icon:'⚖️'},
+        {id:'estado_resultados_cc', label:'Estado de Resultados', icon:'📈'},
+        {id:'balance_general_cc', label:'Balance General', icon:'🏛️'},
+        {id:'ajuste_inflacion_cc', label:'Ajuste por Inflación', icon:'💹'},
+      ].map(t=>(
+        <button key={t.id} onClick={()=>setActiveTab(t.id)}
+          className={`flex items-center gap-1.5 px-4 py-3 text-[10px] font-black uppercase whitespace-nowrap border-b-2 transition-colors ${active===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white'}`}>
+          <span>{t.icon}</span>{t.label}
+        </button>
+      ))}
+    </div>
+  );
+
   // ============================================================================
   // MÓDULO MAYOR ANALÍTICO (independiente — analiza TODAS las cuentas contables
   // de los Libros Diarios, sin restricción de fecha por defecto)
@@ -41365,16 +41386,19 @@ ${resumenHtml}
       .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()))
       .sort((a,b)=>a.codigo.localeCompare(b.codigo));
     let saldoAcum = 0;
+    let saldoAcumUSD = 0;
     const movsCuenta = !mayorCuentaSelApp ? [] : asientosPeriodo.flatMap(a=>
       (a.lineas||[]).filter(l=>l.codigo===mayorCuentaSelApp).map(l=>{
         saldoAcum += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
-        return {...l, fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, saldoAcum};
+        saldoAcumUSD += parseNum(l.debeUSD||0) - parseNum(l.haberUSD||0);
+        return {...l, fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum, saldoAcumUSD};
       })
     );
     const cuentaInfo = listaCuentas.find(c=>c.codigo===mayorCuentaSelApp);
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <ContNavBar active="mayor_analitico_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
             <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><BookOpen size={28} className="text-purple-500"/> Mayor Analítico</h1>
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Detalle cronológico y saldo acumulado de cada cuenta contable — todas las cuentas de los Libros Diarios</p>
@@ -41408,20 +41432,28 @@ ${resumenHtml}
                       <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Fecha</th>
                       <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Comprobante</th>
                       <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Módulo</th>
+                      <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Concepto</th>
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe Bs.</th>
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber Bs.</th>
-                      <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo</th>
+                      <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo Bs.</th>
+                      <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300 border-l border-gray-700">Debe $</th>
+                      <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber $</th>
+                      <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo $</th>
                     </tr></thead>
                     <tbody>
-                      {movsCuenta.length===0 && <tr><td colSpan={6} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
+                      {movsCuenta.length===0 && <tr><td colSpan={10} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
                       {movsCuenta.map((m,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="px-3 py-2">{m.fecha||'—'}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{m.fecha||'—'}</td>
                           <td className="px-3 py-2 font-mono text-gray-500">{m.comprobante||'—'}</td>
                           <td className="px-3 py-2 text-gray-500">{m.modulo||'—'}</td>
+                          <td className="px-3 py-2 text-gray-500 max-w-[220px] truncate" title={m.concepto}>{m.concepto||'—'}</td>
                           <td className="px-3 py-2 text-right font-mono">{parseNum(m.debeBs)>0.01?contFmt(parseNum(m.debeBs)):'—'}</td>
                           <td className="px-3 py-2 text-right font-mono">{parseNum(m.haberBs)>0.01?contFmt(parseNum(m.haberBs)):'—'}</td>
                           <td className={`px-3 py-2 text-right font-mono font-black ${m.saldoAcum<0?'text-red-600':'text-gray-800'}`}>{contFmt(m.saldoAcum)}</td>
+                          <td className="px-3 py-2 text-right font-mono border-l border-gray-100">{parseNum(m.debeUSD)>0.01?contFmt(parseNum(m.debeUSD)):'—'}</td>
+                          <td className="px-3 py-2 text-right font-mono">{parseNum(m.haberUSD)>0.01?contFmt(parseNum(m.haberUSD)):'—'}</td>
+                          <td className={`px-3 py-2 text-right font-mono font-black ${m.saldoAcumUSD<0?'text-red-600':'text-blue-700'}`}>{contFmt(m.saldoAcumUSD)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -41460,6 +41492,7 @@ ${resumenHtml}
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <ContNavBar active="balance_comprobacion_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
             <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><FileSpreadsheet size={28} className="text-teal-600"/> Balance de Comprobación</h1>
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Sumas y saldos de todas las cuentas — Debe vs. Haber</p>
@@ -41548,6 +41581,7 @@ ${resumenHtml}
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <ContNavBar active="estado_resultados_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
             <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><TrendingUp size={28} className="text-green-600"/> Estado de Resultados</h1>
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Ingresos, costos y gastos — utilidad o pérdida del período</p>
@@ -41626,6 +41660,7 @@ ${resumenHtml}
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <ContNavBar active="balance_general_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
             <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><Building2 size={28} className="text-blue-900"/> Balance General</h1>
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Activo, Pasivo y Patrimonio — estado de situación financiera a una fecha de corte</p>
@@ -41725,6 +41760,7 @@ ${resumenHtml}
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <ContNavBar active="ajuste_inflacion_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
             <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><TrendingUp size={28} className="text-rose-700"/> Ajuste por Inflación</h1>
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Reexpresión DPC-10 por fecha de adquisición (FIFO)</p>
