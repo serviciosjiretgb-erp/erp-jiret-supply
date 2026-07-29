@@ -28426,7 +28426,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   };
                 })
                 .filter(nd=>(nd.total-nd._yaCobrado)>0.01);
-              const allNesCliente=[...(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)),...ndsDirectasCliente].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+              // Mismo reparto FIFO del crédito general (NC/ND "sin NE") que en la vista previa —
+              // así lo que se guarda coincide exactamente con lo que la persona vio en pantalla,
+              // y una NE ya cubierta por la NC no se puede volver a cobrar por error.
+              const creditoNCSubmit = Math.max(0, -((_manualNCPorCliente.get(m.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)));
+              let poolSubmit = creditoNCSubmit;
+              const _saldoAjustadoSubmit = new Map();
+              [...(notasEntrega||[])].filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName))
+                .sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))
+                .forEach(ne=>{
+                  const original=getSaldoNEAtFecha(ne,null);
+                  const aplicado=poolSubmit>0?Math.min(poolSubmit,Math.max(0,original)):0;
+                  poolSubmit-=aplicado;
+                  _saldoAjustadoSubmit.set(ne.id,original-aplicado);
+                });
+              const getSaldoNEAjustadoSubmit=(ne)=>_saldoAjustadoSubmit.has(ne.id)?_saldoAjustadoSubmit.get(ne.id):getSaldoNEAtFecha(ne,null);
+              const allNesCliente=[...(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAjustadoSubmit(ne)>0.01&&(ne.clientRif===m.clientRif||ne.clientName===m.clientName)),...ndsDirectasCliente].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
               const nesADistribuir=nesSelecIds.length>0?allNesCliente.filter(ne=>nesSelecIds.includes(ne.id)):allNesCliente;
               const totalUSD=lineas.reduce((s,l)=>s+(l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1)),0);
               const batch=writeBatch(db);
@@ -28450,7 +28465,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const nesSinManual=nesADistribuir.filter(ne=>distManualSubmit[ne.id]==null);
               for(const ne of [...nesConManual,...nesSinManual]){
                 if(restante<=0.001) break;
-                const saldoNE=getSaldoNEAtFecha(ne,null);
+                const saldoNE=getSaldoNEAjustadoSubmit(ne);
                 const manualNE=distManualSubmit[ne.id];
                 const montoNE=manualNE!=null?Math.min(parseNum(manualNE),saldoNE,restante):Math.min(restante,saldoNE);
                 if(montoNE<=0.001) continue;
@@ -28705,8 +28720,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               porClienteModal[k].total+=getSaldoNEAtFecha(ne,null);
               porClienteModal[k].nes.push(ne);
             });
+            // Repartir el crédito general (NC/ND "sin NE") de cada cliente entre sus NE, más
+            // antigua primero — igual que se reparte un cobro. Sin esto, una NE ya cubierta por
+            // una Nota de Crédito directa (sin factura específica) seguía apareciendo como
+            // pendiente con su monto completo, aunque el cliente ya no debiera nada en total.
+            Object.values(porClienteModal).forEach(cl=>{
+              const creditoNC = Math.max(0, -((_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)));
+              let pool = creditoNC;
+              [...cl.nes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
+                const original = getSaldoNEAtFecha(ne,null);
+                const aplicado = pool>0 ? Math.min(pool, Math.max(0,original)) : 0;
+                pool -= aplicado;
+                ne._saldoAjustado = original - aplicado;
+              });
+            });
+            const getSaldoNEAjustado = (ne) => ne._saldoAjustado!=null ? ne._saldoAjustado : getSaldoNEAtFecha(ne,null);
             const clientesConSaldo=Object.values(porClienteModal)
-              .filter(cl=>Math.abs(cl.total)>0.01)
+              .filter(cl=>cl.nes.some(ne=>Math.abs(getSaldoNEAjustado(ne))>0.01))
               .sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
             const busq=(pm.clientSearch||'').toLowerCase();
             const clientesSinDeuda=(clients||[]).filter(c=>(c.razonSocial||c.rif)&&!clientesConSaldo.some(cs=>cs.clientRif===(c.rif||'')))
@@ -28714,14 +28744,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const clientesTodos=[...clientesConSaldo,...clientesSinDeuda];
             const clientesFiltrados=busq?clientesTodos.filter(cl=>(cl.clientName||'').toLowerCase().includes(busq)||(cl.clientRif||'').toLowerCase().includes(busq)):clientesConSaldo;
             const clienteSel=clientesTodos.find(cl=>cl.clientRif===pm.clientRif);
-            const nesPendientes=(clienteSel?.nes||[]).filter(ne=>Math.abs(getSaldoNEAtFecha(ne,null))>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
+            const nesPendientes=(clienteSel?.nes||[]).filter(ne=>Math.abs(getSaldoNEAjustado(ne))>0.01).sort((a,b)=>new Date(a.fecha)-new Date(b.fecha));
             // Anticipos del cliente con saldo disponible (cobros esAnticipo sin aplicar del todo)
             const anticiposCliente=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif===pm.clientRif||c.clientName===pm.clientName))
               .map(a=>({...a,_saldoAnt:parseNum(a.monto||0)-parseNum(a.montoAplicado||0)}))
               .filter(a=>a._saldoAnt>0.01);
             const totalAnticipos=anticiposCliente.reduce((s,a)=>s+a._saldoAnt,0);
             const nesSelecIds=Object.keys(pm.nesSelec||{}).filter(id=>pm.nesSelec[id]);
-            const saldoTotalCliente=clienteSel?.total||0;
+            // NC/ND "sin NE" del cliente (ej. un cruce de cuenta manual) — ya se resta del total en
+            // Estado de Cuenta, pero antes NUNCA se tomaba en cuenta aquí, así que Registrar Cobro
+            // podía mostrar como pendiente algo que una Nota de Crédito ya había saldado.
+            const ncSinNEClienteSel = clienteSel ? (_manualNCPorCliente.get(clienteSel.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0) : 0;
+            const saldoTotalCliente=Math.max(0,(clienteSel?.total||0)+ncSinNEClienteSel);
             const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/Math.max(parseNum(pm.tasa),1);
             const montoBs=pm.moneda==='Bs'?parseNum(pm.monto):parseNum(pm.monto)*parseNum(pm.tasa||1);
             // Multicobro totals
@@ -28744,7 +28778,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             nesParaDistribuir.forEach(ne=>{
               if(distManual[ne.id]!=null){ distMap[ne.id]=parseNum(distManual[ne.id]); return; }
               if(distRestante<=0.001){distMap[ne.id]=0;return;}
-              const s=getSaldoNEAtFecha(ne,null);
+              const s=getSaldoNEAjustado(ne);
               const aplicar=Math.min(distRestante,s);
               distMap[ne.id]=aplicar;
               distRestante-=aplicar;
@@ -28870,7 +28904,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>}
                       {montoDisponibleTotal>0&&nesSelecIds.length>0&&totalDistribuido<montoDisponibleTotal-0.01&&(()=>{
                         const faltante=montoDisponibleTotal-totalDistribuido;
-                        const otrasNes=nesPendientes.filter(ne=>!nesSelecIds.includes(ne.id)&&getSaldoNEAtFecha(ne,null)>0.01);
+                        const otrasNes=nesPendientes.filter(ne=>!nesSelecIds.includes(ne.id)&&getSaldoNEAjustado(ne)>0.01);
                         if(otrasNes.length===0) return null;
                         return (
                           <div style={{padding:'8px 14px',background:'#fff7ed',borderBottom:'1px solid #fed7aa'}}>
@@ -28878,7 +28912,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             {otrasNes.map(ne=>(
                               <button key={ne.id} onClick={()=>setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:true}}))}
                                 style={{display:'flex',justifyContent:'space-between',width:'100%',fontSize:9,fontWeight:700,color:'#9a3412',border:'1px dashed #fdba74',background:'#fff',borderRadius:6,padding:'4px 8px',marginBottom:3,cursor:'pointer'}}>
-                                <span>+ {ne._esNDDirecta?`ND ${ne.nroFiscal||ne.id}`:ne.id}</span><span>${formatNum(getSaldoNEAtFecha(ne,null))}</span>
+                                <span>+ {ne._esNDDirecta?`ND ${ne.nroFiscal||ne.id}`:ne.id}</span><span>${formatNum(getSaldoNEAjustado(ne))}</span>
                               </button>
                             ))}
                             <div style={{fontSize:8,color:'#9a3412',marginTop:2}}>Si no seleccionas ninguna, el sobrante queda como saldo a favor del cliente.</div>
@@ -28886,7 +28920,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         );
                       })()}
                       {nesPendientes.map((ne,i)=>{
-                        const saldo=getSaldoNEAtFecha(ne,null);
+                        const saldo=getSaldoNEAjustado(ne);
                         const sel=!!pm.nesSelec?.[ne.id];
                         const aplicado=distMap[ne.id]||0;
                         const invVinc=ne._esNDDirecta?null:(ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())));
@@ -28986,6 +29020,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   {/* COL 2 — Líneas de Pago (Multicobro) */}
                   <div style={{flex:1,overflowY:'auto',background:'#fff',padding:'20px 24px',display:'flex',flexDirection:'column',gap:16}}>
                     <div style={{fontSize:9,fontWeight:900,color:'#E8541A',textTransform:'uppercase',letterSpacing:2}}>3 · Métodos de Pago</div>
+
+                    {clienteSel&&ncSinNEClienteSel<-0.01&&(
+                      <div style={{background:'#f0fdfa',border:'2px solid #5eead4',borderRadius:10,padding:'10px 14px',fontSize:10,fontWeight:700,color:'#0f766e'}}>
+                        💰 Este cliente tiene un crédito general (Nota de Crédito sin factura específica) de <b>${formatNum(Math.abs(ncSinNEClienteSel))}</b> que ya se descontó de la Deuda Total mostrada abajo. Verifica antes de registrar un cobro nuevo.
+                      </div>
+                    )}
 
                     {/* Balance en tiempo real */}
                     {clienteSel&&(
