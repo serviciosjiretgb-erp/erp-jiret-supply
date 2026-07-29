@@ -7816,6 +7816,7 @@ const HistorialPagosView = ({
   const [editForm, setEditForm] = useState({});
   const [editAplicaciones, setEditAplicaciones] = useState([]);
   const [editFacBusq, setEditFacBusq] = useState('');
+  const [editModoSoloBanco, setEditModoSoloBanco] = useState(false);
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [cajasEfectivo, setCajasEfectivo] = useState([]);
   const [histFiltCuenta, setHistFiltCuenta] = useState('');
@@ -8060,12 +8061,23 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
   // ── Guardar edición (fecha/método/referencia/banco + distribución a facturas) ──
   const guardarEdicion = async () => {
     if(!editPago) return;
-    const totalAplicado = editAplicaciones.reduce((s,a)=>s+pN(a.monto),0);
     const totalPago = pN(editForm.monto!=null?editForm.monto:editPago.monto);
+    // Modo "solo banco/caja" (solo disponible para anticipos): no toca su aplicación a facturas
+    // para nada, sin importar qué haya en "Aplicar a Factura(s)" — por eso no hace falta
+    // validarla aquí tampoco.
+    if(editPago.esAnticipo && editModoSoloBanco){
+      await _procederGuardarEdicion(totalPago);
+      return;
+    }
+    const totalAplicado = editAplicaciones.reduce((s,a)=>s+pN(a.monto),0);
     if(totalAplicado>totalPago+0.01){
       setDialog({title:'Error',text:`Estás aplicando $${fN(totalAplicado)} pero el pago es de $${fN(totalPago)}.`,type:'alert'});
       return;
     }
+    await _procederGuardarEdicion(totalPago);
+  };
+  const _procederGuardarEdicion = async (totalPago) => {
+    const totalAplicado = editAplicaciones.reduce((s,a)=>s+pN(a.monto),0);
     try{
       const batch = writeBatch(db);
       const fechaF = editForm.fecha||editPago.fecha;
@@ -8080,53 +8092,65 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const grupoPagoIdF = editPago.grupoPagoId || `GRP-RESTORE-${Date.now().toString(36)}`;
       const montoBsF  = monedaF==='Bs'?totalPago:parseFloat((totalPago*tasaF).toFixed(2));
       const montoUSDF = monedaF==='Bs'?parseFloat((totalPago/tasaF).toFixed(2)):totalPago;
+      let nuevasFacturasMv=[]; // para el movimiento vinculado, si existe
 
-      // 1) Revertir el efecto anterior: si este pago ya estaba aplicado a una factura, restaurar su saldo
-      if(editPago.facturaId){
-        const fAnt=_factMap.get(editPago.facturaId);
-        if(fAnt){
-          batch.update(getDocRef('procura_facturas_compra',fAnt.id),{
-            saldoPendiente: pN(fAnt.saldoPendiente||0)+pN(editPago.monto||0), status:'PENDIENTE', updatedAt:Date.now()
+      // ── Modo "solo banco/caja" (elegido explícitamente por la persona, solo para anticipos):
+      // no toca su aplicación a facturas para nada. Solo se actualizan los datos del pago
+      // (fecha, banco, referencia, monto) en el mismo registro, dejando montoAplicado igual.
+      // Sin este modo activado, un anticipo se edita exactamente igual que cualquier otro pago
+      // (la función completa de aplicar a factura(s) sigue funcionando como siempre).
+      if(editPago.esAnticipo && editModoSoloBanco){
+        batch.update(getDocRef('procura_pagos_cxp', editPago.id), {
+          fecha:fechaF, metodo:metodoF, referencia:referenciaF, banco:bancoF,
+          cuentaId:cuentaIdF, moneda:monedaF||'USD', tasa:tasaF, monto:totalPago,
+        });
+      } else {
+        // 1) Revertir el efecto anterior: si este pago ya estaba aplicado a una factura, restaurar su saldo
+        if(editPago.facturaId){
+          const fAnt=_factMap.get(editPago.facturaId);
+          if(fAnt){
+            batch.update(getDocRef('procura_facturas_compra',fAnt.id),{
+              saldoPendiente: pN(fAnt.saldoPendiente||0)+pN(editPago.monto||0), status:'PENDIENTE', updatedAt:Date.now()
+            });
+          }
+        }
+        // 2) Borrar el registro de pago original y crear los nuevos según la distribución elegida
+        batch.delete(getDocRef('procura_pagos_cxp', editPago.id));
+        editAplicaciones.filter(a=>pN(a.monto)>0.001).forEach((a,i)=>{
+          const f=_factMap.get(a.facturaId);
+          const monto=pN(a.monto);
+          const pid=`PAGCXP-EDIT-${Date.now().toString(36)}-${i}`;
+          batch.set(getDocRef('procura_pagos_cxp',pid),{
+            id:pid,esAnticipo:false,montoAplicado:0,facturaId:a.facturaId,
+            proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:grupoPagoIdF,
+            monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
+            concepto:editPago.concepto||'Pago CxP',cuentaId:cuentaIdF,moneda:monedaF||'USD',
+            tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
+            saldoInicialImportado:editPago.saldoInicialImportado||false,
+            timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
+          });
+          if(f){
+            const nuevoSaldo=Math.max(0,pN(f.saldoPendiente||0)-monto);
+            batch.update(getDocRef('procura_facturas_compra',f.id),{
+              saldoPendiente:nuevoSaldo, status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE', updatedAt:Date.now()
+            });
+            nuevasFacturasMv.push({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto});
+          }
+        });
+        // 3) Si queda un remanente sin aplicar, se guarda como anticipo del proveedor
+        const remanente=totalPago-totalAplicado;
+        if(remanente>0.01){
+          const antId=`ANTCXP-EDIT-${Date.now().toString(36)}`;
+          batch.set(getDocRef('procura_pagos_cxp',antId),{
+            id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
+            proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:grupoPagoIdF,
+            monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
+            concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:cuentaIdF,moneda:monedaF||'USD',
+            tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
+            saldoInicialImportado:editPago.saldoInicialImportado||false,
+            timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
           });
         }
-      }
-      // 2) Borrar el registro de pago original y crear los nuevos según la distribución elegida
-      batch.delete(getDocRef('procura_pagos_cxp', editPago.id));
-      const nuevasFacturasMv=[]; // para actualizar el movimiento vinculado, si existe
-      editAplicaciones.filter(a=>pN(a.monto)>0.001).forEach((a,i)=>{
-        const f=_factMap.get(a.facturaId);
-        const monto=pN(a.monto);
-        const pid=`PAGCXP-EDIT-${Date.now().toString(36)}-${i}`;
-        batch.set(getDocRef('procura_pagos_cxp',pid),{
-          id:pid,esAnticipo:false,montoAplicado:0,facturaId:a.facturaId,
-          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:grupoPagoIdF,
-          monto,fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
-          concepto:editPago.concepto||'Pago CxP',cuentaId:cuentaIdF,moneda:monedaF||'USD',
-          tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
-          saldoInicialImportado:editPago.saldoInicialImportado||false,
-          timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
-        });
-        if(f){
-          const nuevoSaldo=Math.max(0,pN(f.saldoPendiente||0)-monto);
-          batch.update(getDocRef('procura_facturas_compra',f.id),{
-            saldoPendiente:nuevoSaldo, status:nuevoSaldo<0.01?'PAGADA':'PENDIENTE', updatedAt:Date.now()
-          });
-          nuevasFacturasMv.push({id:f.id,nroFactura:f.nroFactura||'—',fecha:f.fecha||'',monto});
-        }
-      });
-      // 3) Si queda un remanente sin aplicar, se guarda como anticipo del proveedor
-      const remanente=totalPago-totalAplicado;
-      if(remanente>0.01){
-        const antId=`ANTCXP-EDIT-${Date.now().toString(36)}`;
-        batch.set(getDocRef('procura_pagos_cxp',antId),{
-          id:antId,esAnticipo:true,montoAplicado:0,facturaId:'',
-          proveedorId:editPago.proveedorId,proveedor:editPago.proveedor,grupoPagoId:grupoPagoIdF,
-          monto:parseFloat(remanente.toFixed(2)),fecha:fechaF,metodo:metodoF,banco:bancoF,referencia:referenciaF,
-          concepto:(editPago.concepto||'Anticipo')+' (saldo no aplicado)',cuentaId:cuentaIdF,moneda:monedaF||'USD',
-          tasa:tasaF,cuentaContableNombre:editPago.cuentaContableNombre||'',
-          saldoInicialImportado:editPago.saldoInicialImportado||false,
-          timestamp:editPago.timestamp||Date.now(),user:appUser?.name||'Sistema'
-        });
       }
       // 4) Si el pago tenía un movimiento de banco/caja vinculado, actualizar su desglose de facturas,
       //    fecha/referencia y — si la cuenta cambió — moverlo a la cuenta/colección correcta.
@@ -8190,7 +8214,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       }
       await batch.commit();
       setEditPago(null);
-      setDialog({title:'✅ Guardado',text:'Pago actualizado y distribuido.',type:'alert'});
+      setDialog({title:'✅ Guardado',text:'Pago actualizado.',type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
@@ -8280,7 +8304,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
                           className="px-2 py-1 bg-gray-900 text-white rounded-lg text-[8px] font-black uppercase hover:bg-gray-700 transition-all">
                           🖨 PDF
                         </button>
-                        <button onClick={()=>{setEditPago(p);setEditForm({fecha:p.fecha||'',metodo:p.metodo||'',referencia:p.referencia||'',banco:p.banco||'',monto:String(p.monto||'')});setEditAplicaciones(p.facturaId?[{facturaId:p.facturaId,monto:pN(p.monto)}]:[]);setEditFacBusq('');}} title="Editar pago"
+                        <button onClick={()=>{setEditPago(p);setEditForm({fecha:p.fecha||'',metodo:p.metodo||'',referencia:p.referencia||'',banco:p.banco||'',monto:String(p.monto||'')});setEditAplicaciones(p.facturaId?[{facturaId:p.facturaId,monto:pN(p.monto)}]:[]);setEditFacBusq('');setEditModoSoloBanco(false);}} title="Editar pago"
                           className="px-2 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-[8px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all">
                           ✏️ Editar
                         </button>
@@ -8454,7 +8478,28 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
               </div>
             </div>
 
-            {(()=>{
+            {editPago.esAnticipo && (
+              <div className="flex gap-2 mb-3">
+                <button type="button" onClick={()=>setEditModoSoloBanco(false)}
+                  className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase border-2 ${!editModoSoloBanco?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-500 border-gray-200'}`}>
+                  Aplicar a factura(s)
+                </button>
+                <button type="button" onClick={()=>setEditModoSoloBanco(true)}
+                  className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase border-2 ${editModoSoloBanco?'bg-teal-600 text-white border-teal-600':'bg-white text-gray-500 border-gray-200'}`}>
+                  Solo corregir banco/caja
+                </button>
+              </div>
+            )}
+            {(editPago.esAnticipo && editModoSoloBanco) ? (
+              <div className="border-2 border-teal-200 rounded-xl p-3 bg-teal-50/60">
+                <p className="text-[10px] font-black text-teal-700 uppercase mb-1">💡 Modo: solo banco/caja</p>
+                <p className="text-[10px] text-gray-500 font-bold">
+                  Con esta opción marcada, al guardar solo se corrigen los datos del pago (fecha, banco/cuenta, referencia, monto) —
+                  no se toca su aplicación a facturas para nada.
+                  {pN(editPago.montoAplicado||0)>0.01 && <><br/>Ya tiene <b>${fN(pN(editPago.montoAplicado))}</b> aplicados de <b>${fN(pN(editPago.monto))}</b>; el saldo disponible (${fN(pN(editPago.monto)-pN(editPago.montoAplicado))}) queda exactamente igual al guardar.</>}
+                </p>
+              </div>
+            ) : (()=>{
               const totalPago=pN(editForm.monto!=null?editForm.monto:editPago.monto);
               const totalAplicado=editAplicaciones.reduce((s,a)=>s+pN(a.monto),0);
               const facsProv=(facturasCompra||[]).filter(f=>
