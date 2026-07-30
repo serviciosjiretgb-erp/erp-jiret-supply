@@ -41373,6 +41373,11 @@ ${resumenHtml}
   // de los Libros Diarios, sin restricción de fecha por defecto)
   // ============================================================================
   const renderMayorAnaliticoModule = () => {
+    const LABEL_MODULO = {
+      'Procura':'📋 Procura (Ctas x Pagar)', 'Ventas':'🧾 Ventas (Ctas x Cobrar)',
+      'Retenciones a Clientes':'📋 Retenciones a Clientes', 'Banco':'🏦 Comprobante de Banco',
+      'Caja':'💵 Comprobante de Caja', 'Relacionadas':'🤝 Cuentas por Pagar Relacionadas', 'Ajustes':'🛠️ Ajustes',
+    };
     const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
@@ -41391,7 +41396,7 @@ ${resumenHtml}
       (a.lineas||[]).filter(l=>l.codigo===mayorCuentaSelApp).map(l=>{
         saldoAcum += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
         saldoAcumUSD += parseNum(l.debeUSD||0) - parseNum(l.haberUSD||0);
-        return {...l, fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum, saldoAcumUSD};
+        return {...l, fecha:a.fecha, referencia:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum, saldoAcumUSD};
       })
     );
     const cuentaInfo = listaCuentas.find(c=>c.codigo===mayorCuentaSelApp);
@@ -41422,7 +41427,21 @@ ${resumenHtml}
               </div>
             </div>
             <div className="flex-1 bg-white rounded-xl border border-gray-200 p-4">
-              {cuentaInfo && <p className="text-xs font-black text-gray-700 mb-3">{cuentaInfo.codigo} — {cuentaInfo.cuenta}</p>}
+              {cuentaInfo && (
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <p className="text-xs font-black text-gray-700">{cuentaInfo.codigo} — {cuentaInfo.cuenta}</p>
+                  <div className="flex gap-3">
+                    <div className={`rounded-xl px-4 py-2.5 ${saldoAcum<0?'bg-red-50':'bg-gray-900'}`}>
+                      <p className={`text-[8px] font-black uppercase tracking-widest ${saldoAcum<0?'text-red-500':'text-gray-400'}`}>Saldo Bs.</p>
+                      <p className={`text-sm font-black font-mono ${saldoAcum<0?'text-red-600':'text-white'}`}>{contFmt(saldoAcum)}</p>
+                    </div>
+                    <div className={`rounded-xl px-4 py-2.5 ${saldoAcumUSD<0?'bg-red-50':'bg-blue-700'}`}>
+                      <p className={`text-[8px] font-black uppercase tracking-widest ${saldoAcumUSD<0?'text-red-500':'text-blue-200'}`}>Saldo $</p>
+                      <p className={`text-sm font-black font-mono ${saldoAcumUSD<0?'text-red-600':'text-white'}`}>${contFmt(saldoAcumUSD)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {!mayorCuentaSelApp ? (
                 <div className="text-center py-16 text-gray-400 text-sm">← Selecciona una cuenta para ver su detalle</div>
               ) : (
@@ -41431,8 +41450,8 @@ ${resumenHtml}
                     <thead><tr style={{background:'#0f172a'}}>
                       <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Fecha</th>
                       <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Comprobante</th>
-                      <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Módulo</th>
                       <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Concepto</th>
+                      <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Referencia</th>
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe Bs.</th>
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber Bs.</th>
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo Bs.</th>
@@ -41445,9 +41464,9 @@ ${resumenHtml}
                       {movsCuenta.map((m,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
                           <td className="px-3 py-2 whitespace-nowrap">{m.fecha||'—'}</td>
-                          <td className="px-3 py-2 font-mono text-gray-500">{m.comprobante||'—'}</td>
-                          <td className="px-3 py-2 text-gray-500">{m.modulo||'—'}</td>
+                          <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{LABEL_MODULO[m.modulo]||m.modulo||'—'}</td>
                           <td className="px-3 py-2 text-gray-500 max-w-[220px] truncate" title={m.concepto}>{m.concepto||'—'}</td>
+                          <td className="px-3 py-2 font-mono text-gray-400">{m.referencia||'—'}</td>
                           <td className="px-3 py-2 text-right font-mono">{parseNum(m.debeBs)>0.01?contFmt(parseNum(m.debeBs)):'—'}</td>
                           <td className="px-3 py-2 text-right font-mono">{parseNum(m.haberBs)>0.01?contFmt(parseNum(m.haberBs)):'—'}</td>
                           <td className={`px-3 py-2 text-right font-mono font-black ${m.saldoAcum<0?'text-red-600':'text-gray-800'}`}>{contFmt(m.saldoAcum)}</td>
