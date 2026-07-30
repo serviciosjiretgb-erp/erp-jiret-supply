@@ -5329,6 +5329,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     montoBase:0,aplicaIva:'SI',iva:0,total:0,saldoPendiente:0,
     tipoCompra:'PRODUCTO',categoriaCompra:'',cuentaServicioId:'',
     afectaLibroCompras:true,
+    afectaContabilidad:true,
     aplicaRetIVA:false,pctRetIVA:75,
     islrRetenciones:[], // lista: [{codigo,tipoContrib,activo}]
     status:'PENDIENTE',observaciones:'',itemsOC:[],
@@ -5396,6 +5397,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         periodoLibroMes:form.periodoLibroMes||(form.fecha||'').substring(0,7)||'',
         periodoLibroQ:form.periodoLibroQ||'1',
         afectaLibroCompras:form.afectaLibroCompras!==false,
+        afectaContabilidad:form.afectaContabilidad!==false,
         aplicaRetIVA:!!form.aplicaRetIVA,
         pctRetIVA:pNum(form.pctRetIVA||75),
         islrRetenciones:(form.islrRetenciones||[]).map(r=>({
@@ -5863,6 +5865,15 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                 {form.ocId&&<span className="text-[9px] bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded-full font-black uppercase">Pre-cargada desde {form.ocId}</span>}
               </div>
               <div className="flex items-center gap-2">
+                {/* Toggle afecta contabilidad — para facturas provisionales (p.ej. registradas
+                    solo con una nota de entrega/remisión, antes de que llegue la factura fiscal
+                    real) que deben generar el pasivo en Cuentas por Pagar, pero NO deben aparecer
+                    todavía en ningún reporte contable. */}
+                <button onClick={()=>setForm(f=>({...f,afectaContabilidad:!(f.afectaContabilidad!==false)}))}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[9px] font-black uppercase transition-all ${form.afectaContabilidad!==false?'bg-emerald-500/20 border-emerald-500/50 text-emerald-300':'bg-amber-500/20 border-amber-500/50 text-amber-300'}`}>
+                  <Calculator size={12}/>
+                  {form.afectaContabilidad!==false?'Afecta contabilidad':'No afecta contabilidad'}
+                </button>
                 {/* Toggle libro compras */}
                 <button onClick={()=>setForm(f=>({...f,afectaLibroCompras:!f.afectaLibroCompras}))}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[9px] font-black uppercase transition-all ${form.afectaLibroCompras!==false?'bg-emerald-500/20 border-emerald-500/50 text-emerald-300':'bg-slate-700 border-slate-600 text-slate-400'}`}>
@@ -10764,6 +10775,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // es un espejo fiel del que ya ves ahí, factura por factura.
   const construirLineasProcura = () => {
     const filtradas = facturasCompraC.filter(f => {
+      if (f.afectaContabilidad===false) return false;
       if (filtDesde && f.fecha < filtDesde) return false;
       if (filtHasta && f.fecha > filtHasta) return false;
       return true;
@@ -12690,7 +12702,7 @@ function App() {
       debeUSD: l.tipo==='DEBITO'?(l.montoUSD||0):0, haberUSD: l.tipo==='CREDITO'?(l.montoUSD||0):0,
     }));
     // 1) Procura — ya incluye retenciones IVA/ISLR dentro del mismo asiento
-    (facturasCompraApp||[]).forEach(f=>{
+    (facturasCompraApp||[]).filter(f=>f.afectaContabilidad!==false).forEach(f=>{
       try{
         const tot=calcTotalesFC(f);
         const retIVA=calcRetIVA(f,tot);
