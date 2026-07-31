@@ -2300,10 +2300,23 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [busy, setBusy]       = useState(false);
     const initF = ()=>({banco:'',numeroCuenta:'',tipoCuenta:'Corriente',tipoBanco:'Nacional-Bs',saldo:'0',mesSaldoInicial:getTodayDate().substring(0,7),titular:'',cuentaContableCod:'',cuentaContableNom:'',logoUrl:''});
     const [form, setForm] = useState(initF());
+    const [saldoLocked, setSaldoLocked] = useState(true);
+    const [showUnlockSaldo, setShowUnlockSaldo] = useState(false);
+    const [unlockPwd, setUnlockPwd] = useState('');
+    const [unlockPwdErr, setUnlockPwdErr] = useState(false);
     const monedaDe = tb => TIPO_BANCO.find(t=>t.id===tb)?.moneda||'BS';
 
-    const openNew  = ()=>{ setEdit(null); setForm(initF()); setModal(true); };
-    const openEdit = c  =>{ setEdit(c); setForm({banco:c.banco,numeroCuenta:c.numeroCuenta,tipoCuenta:c.tipoCuenta,tipoBanco:c.tipoBanco||'Nacional-Bs',saldo:String(c.saldo),mesSaldoInicial:c.mesSaldoInicial||getTodayDate().substring(0,7),titular:c.titular||'',cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',logoUrl:c.logoUrl||''}); setModal(true); };
+    const openNew  = ()=>{ setEdit(null); setForm(initF()); setSaldoLocked(false); setShowUnlockSaldo(false); setUnlockPwd(''); setModal(true); };
+    const openEdit = c  =>{ setEdit(c); setForm({banco:c.banco,numeroCuenta:c.numeroCuenta,tipoCuenta:c.tipoCuenta,tipoBanco:c.tipoBanco||'Nacional-Bs',saldo:String(c.saldo),mesSaldoInicial:c.mesSaldoInicial||getTodayDate().substring(0,7),titular:c.titular||'',cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',logoUrl:c.logoUrl||''}); setSaldoLocked(true); setShowUnlockSaldo(false); setUnlockPwd(''); setModal(true); };
+
+    const desbloquearSaldo = async()=>{
+      if(!await validarClaveAdmin(unlockPwd)){ setUnlockPwdErr(true); setTimeout(()=>setUnlockPwdErr(false),1500); return; }
+      setSaldoLocked(false); setShowUnlockSaldo(false); setUnlockPwd('');
+      try{
+        const auId=`AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+        await setDoc(getDocRef('auditoria_eventos',auId),{id:auId,fecha:getTodayDate(),ts:Date.now(),usuario:fbUser?.email||'Sistema',rol:'Banco',modulo:'Banco',tipo:'ACCESO',detalle:`Desbloqueado Saldo Inicial/Mes para editar cuenta ${edit?.banco||''} ${edit?.numeroCuenta||''}`});
+      }catch(e){ console.warn('No se pudo registrar en auditoría:', e); }
+    };
 
     const save = async()=>{
       if(!form.banco||!form.numeroCuenta) return alert('Banco y número requeridos');
@@ -2311,7 +2324,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       try {
         const moneda=monedaDe(form.tipoBanco);
         if(editando) {
-          await updateDoc(getDocRef('banco_cuentas',editando.id),{...form,moneda,saldo:Number(form.saldo)});
+          const { saldo:_omitSaldo, mesSaldoInicial:_omitMes, ...restoForm } = form;
+          const payload = saldoLocked ? {...restoForm,moneda} : {...form,moneda,saldo:Number(form.saldo)};
+          await updateDoc(getDocRef('banco_cuentas',editando.id),payload);
+          if(!saldoLocked && (String(editando.saldo)!==String(form.saldo) || editando.mesSaldoInicial!==form.mesSaldoInicial)){
+            try{
+              const auId=`AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+              await setDoc(getDocRef('auditoria_eventos',auId),{id:auId,fecha:getTodayDate(),ts:Date.now(),usuario:fbUser?.email||'Sistema',rol:'Banco',modulo:'Banco',tipo:'EDICIÓN',detalle:`Saldo Inicial corregido en ${form.banco} ${form.numeroCuenta}: ${editando.saldo} (${editando.mesSaldoInicial||'—'}) → ${form.saldo} (${form.mesSaldoInicial})`});
+            }catch(e){ console.warn('No se pudo registrar en auditoría:', e); }
+          }
         } else {
           const id=bancoGid(); await setDoc(getDocRef('banco_cuentas',id),{...form,id,moneda,saldo:Number(form.saldo),ts:serverTimestamp()});
         }
@@ -2510,8 +2531,27 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <BFG label="Número de Cuenta"><input className={inp} value={form.numeroCuenta} onChange={e=>setForm({...form,numeroCuenta:e.target.value})} placeholder="0134-0000-00-0000000000"/></BFG>
             <BFG label="Tipo de Cuenta"><select className={sel} value={form.tipoCuenta} onChange={e=>setForm({...form,tipoCuenta:e.target.value})}><option>Corriente</option><option>Ahorros</option><option>Nómina</option><option>Divisas</option><option>Custodia</option><option>Swift</option><option>Electrónica</option><option>Tarjeta de Débito Internacional</option></select></BFG>
             <BFG label="Titular de la Cuenta" full><input className={inp} value={form.titular} onChange={e=>setForm({...form,titular:e.target.value.toUpperCase()})} placeholder="SERVICIOS JIRET G&B C.A."/></BFG>
-            <BFG label={`Saldo Inicial (${monedaDe(form.tipoBanco)})`}><input type="number" step="0.01" className={inp} value={form.saldo} onChange={e=>setForm({...form,saldo:e.target.value})}/></BFG>
-            <BFG label="Mes al que corresponde el Saldo"><input type="month" className={inp} value={form.mesSaldoInicial} onChange={e=>setForm({...form,mesSaldoInicial:e.target.value})}/></BFG>
+            <div className="col-span-2 border-2 border-amber-200 bg-amber-50/50 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 flex items-center gap-1.5">
+                  {saldoLocked && editando && <Lock size={11}/>} Saldo Inicial Histórico
+                </p>
+                {editando && saldoLocked && !showUnlockSaldo && (
+                  <button type="button" onClick={()=>setShowUnlockSaldo(true)} className="text-[9px] font-black text-amber-700 underline hover:text-amber-900">Desbloquear para corregir</button>
+                )}
+              </div>
+              {editando && showUnlockSaldo && (
+                <div className="flex gap-2 mb-3">
+                  <input type="password" placeholder="Clave admin" value={unlockPwd} onChange={e=>setUnlockPwd(e.target.value)} className={`${inp} ${unlockPwdErr?'border-red-400 animate-pulse':''}`}/>
+                  <BBg sm onClick={desbloquearSaldo}>Confirmar</BBg>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <BFG label={`Saldo Inicial (${monedaDe(form.tipoBanco)})`}><input type="number" step="0.01" disabled={saldoLocked&&editando} className={`${inp} ${saldoLocked&&editando?'opacity-60 cursor-not-allowed':''}`} value={form.saldo} onChange={e=>setForm({...form,saldo:e.target.value})}/></BFG>
+                <BFG label="Mes al que corresponde el Saldo"><input type="month" disabled={saldoLocked&&editando} className={`${inp} ${saldoLocked&&editando?'opacity-60 cursor-not-allowed':''}`} value={form.mesSaldoInicial} onChange={e=>setForm({...form,mesSaldoInicial:e.target.value})}/></BFG>
+              </div>
+              {saldoLocked && editando && <p className="text-[9px] text-amber-600 mt-1.5">Bloqueado para no alterar sin querer el punto de partida histórico al editar otros datos. Solo se desbloquea con clave admin.</p>}
+            </div>
             <BFG label="Cuenta Contable Asociada (PUC)">
               <select className={sel} value={form.cuentaContableCod} onChange={e=>{const c=contCuentas.find(x=>x.codigo===e.target.value);setForm({...form,cuentaContableCod:e.target.value,cuentaContableNom:c?.nombre||''})}}>
                 <option value="">— Sin vincular al PUC —</option>
@@ -3251,7 +3291,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
         const v=Number(m[campo]||0);
         if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+v;
-        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-v;
+        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')  return s-v;
         return s;
       },0);
       const saldoInicialUSD = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoUSD');
@@ -3259,8 +3299,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
       const entradasUSD = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
       const entradasBs  = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
-      const salidasUSD  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      const salidasUSD  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado').reduce((s,m)=>s+Number(m.montoBs ||0),0);
       return {saldoInicialUSD,saldoInicialBs,entradasUSD,entradasBs,salidasUSD,salidasBs};
     };
     const esBsCuenta = (c) => c.moneda==='BS'||c.tipoBanco==='Nacional-Bs';
@@ -3637,10 +3677,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoBs);return a;},0))}</span>
                   ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
                     if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
                     return a;
                   },0))}
                 </td>
@@ -3691,10 +3731,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoBs);return a;},0))}</span>
                   ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
                     if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
                     return a;
                   },0))}
                 </td>
@@ -4123,7 +4163,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
-                <button onClick={()=>{setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
               </div>
 
               <div className="p-4 space-y-3 flex-1">
@@ -5933,7 +5972,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <div style={{width:340,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
-                <button onClick={()=>{setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
               </div>
 
               <div className="p-4 space-y-3 flex-1">
