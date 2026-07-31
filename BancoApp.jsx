@@ -2678,7 +2678,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         ];
         batch.set(getDocRef('cont_asientos',id),{
           id,comprobante:numComp,numero:numComp,mes:form.fecha.substring(5,7)+'/'+form.fecha.substring(0,4),
-          fecha:form.fecha,tipo:'Traslado',subTipo:'Rebancarización',
+          fecha:form.fecha,tipo:'Egreso',subTipo:'Rebancarización',
           descripcion:`REBANCARIZACIÓN: ${bOrigen.banco} | ${form.concepto||'Traslado'}`.toUpperCase(),
           nroDocumento:form.referencia||'',tasa:tBcv,niif:false,efectivo:false,modulo:'Bancos',
           lineas:todasLineas,
@@ -3020,7 +3020,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             id:asientoDestId, comprobante:`CB-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
             numero:`CB-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
             mes:form.fecha.substring(5,7)+'/'+form.fecha.substring(0,4), fecha:form.fecha,
-            tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
+            tipo:'Egreso', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
             descripcion:conceptoDest.toUpperCase(), tasa, niif:false, efectivo:false,
             modulo: destinoEsCaja?'Caja':'Bancos',
             movimientoBancoId: destinoEsCaja?'':idDestino, movimientoCajaId: destinoEsCaja?idDestino:'',
@@ -3291,7 +3291,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
         const v=Number(m[campo]||0);
         if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+v;
-        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')  return s-v;
+        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))  return s-v;
         return s;
       },0);
       const saldoInicialUSD = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoUSD');
@@ -3299,8 +3299,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
       const entradasUSD = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
       const entradasBs  = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
-      const salidasUSD  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado').reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      const salidasUSD  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado')).reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado')).reduce((s,m)=>s+Number(m.montoBs ||0),0);
       return {saldoInicialUSD,saldoInicialBs,entradasUSD,entradasBs,salidasUSD,salidasBs};
     };
     const esBsCuenta = (c) => c.moneda==='BS'||c.tipoBanco==='Nacional-Bs';
@@ -3654,7 +3654,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   {movRows.length===0&&<tr><td colSpan={9}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos nacionales" desc="Registre transacciones en cuentas Bs."/></td></tr>}
                                   {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
-                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
+                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':(m.tipo==='Egreso'||(m.tipo||'').includes('Traslado'))?'red':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo||'').includes('Traslado')?'Egreso':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
                   <BTd className="max-w-[200px]">
                     <p className="text-slate-800 text-[11px] font-medium truncate">{m.concepto}</p>
@@ -3677,10 +3677,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoBs);return a;},0))}</span>
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))return a-Number(m.montoBs);return a;},0))}</span>
                   ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
                     if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
                     return a;
                   },0))}
                 </td>
@@ -3708,7 +3708,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <tbody>
                   {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>{bancoDd(m.fecha)}</BTd>
-                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
+                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':(m.tipo==='Egreso'||(m.tipo||'').includes('Traslado'))?'red':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo||'').includes('Traslado')?'Egreso':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
                   <BTd className="max-w-[200px]">
                     <p className="text-slate-800 text-[11px] font-medium truncate">{m.concepto}</p>
@@ -3731,10 +3731,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')return a-Number(m.montoBs);return a;},0))}</span>
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))return a-Number(m.montoBs);return a;},0))}</span>
                   ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
                     if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||m.tipo==='Traslado')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||(m.tipo||'').includes('Traslado'))  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
                     return a;
                   },0))}
                 </td>
@@ -5332,7 +5332,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             id:asientoDestId, comprobante:`CC-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
             numero:`CC-${form.fecha.substring(0,7).replace('-','')}-${idDestino.slice(-4).toUpperCase()}`,
             mes:form.fecha.substring(5,7)+'/'+form.fecha.substring(0,4), fecha:form.fecha,
-            tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
+            tipo:'Egreso', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
             descripcion:conceptoDest.toUpperCase(), tasa, niif:false, efectivo:true,
             modulo: destinoEsCaja?'Caja':'Bancos',
             movimientoBancoId: destinoEsCaja?'':idDestino, movimientoCajaId: destinoEsCaja?idDestino:'',
@@ -6273,7 +6273,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             id:asientoId, comprobante:`CB-${(m.fecha||'').substring(0,7).replace('-','')}-${m.id.slice(-4).toUpperCase()}`,
             numero:`CB-${(m.fecha||'').substring(0,7).replace('-','')}-${m.id.slice(-4).toUpperCase()}`,
             mes:(m.fecha||'').substring(5,7)+'/'+(m.fecha||'').substring(0,4), fecha:m.fecha,
-            tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:m.referencia||'',
+            tipo:'Egreso', subTipo:'Traslado de Fondo', nroDocumento:m.referencia||'',
             descripcion:conc.toUpperCase(), tasa, niif:false, efectivo:m._origen==='caja',
             modulo: m._origen==='caja'?'Caja':'Bancos',
             movimientoBancoId: m._origen==='caja'?'':m.id, movimientoCajaId: m._origen==='caja'?m.id:'',
