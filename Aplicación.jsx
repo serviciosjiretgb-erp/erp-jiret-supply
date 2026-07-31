@@ -36947,11 +36947,12 @@ ${resumenHtml}
                                     {(()=>{
                                       // Show ALL categories — user selects what is needed for this phase
                                       // Categorías que coinciden exactamente con el inventario
-                                      const ALL_CATS = ['Materia Prima','Quimicos','Tintas','Pigmento','Semielaborado','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      // (usa normCatVal para tolerar variantes ya guardadas: 'Quimicos'/'QUIMICOS'/'Químicos')
+                                      const ALL_CATS = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       // Consolidate ALL inventory items (prefer ALMACEN ZI stock, show all with stock > 0)
                                       const seen = {};
-                                      (inventory||[]).filter(i => i.activo !== false && ALL_CATS.includes(i.category||'Otros')).forEach(i => {
+                                      (inventory||[]).filter(i => i.activo !== false && ALL_CATS.includes(normCatVal(i.category)||'Otros')).forEach(i => {
                                         const rawId = i.id||'';
                                         const alm = (i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '').toUpperCase();
                                         const isZI = alm.includes('ZI') || alm === '' || !rawId.includes('___');
@@ -36969,10 +36970,10 @@ ${resumenHtml}
                                       });
                                       const uniqueItems = Object.values(seen).sort((a,b)=>(a._cleanCode||'').localeCompare(b._cleanCode||''));
 
-                                      // Group by category
+                                      // Group by category (normalizada, para no separar 'Químicos' de 'Quimicos'/'QUIMICOS')
                                       const catGroups = {};
-                                      uniqueItems.forEach(i=>{ const c=i.category||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
-                                      const catOrder = ['Materia Prima','Quimicos','Tintas','Pigmento','Semielaborado','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      uniqueItems.forEach(i=>{ const c=normCatVal(i.category)||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
+                                      const catOrder = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       return (
                                         <div className="flex gap-2 mb-3">
