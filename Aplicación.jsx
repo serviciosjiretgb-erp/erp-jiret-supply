@@ -7480,7 +7480,7 @@ ${body}
                       style={{width:'100%',padding:'8px 10px',borderRadius:10,border:`2px solid ${pm.esAnticipo?'#16a34a':'#d1d5db'}`,background:pm.esAnticipo?'#16a34a':'#fff',color:pm.esAnticipo?'#fff':'#374151',fontSize:10,fontWeight:900,textTransform:'uppercase',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
                       {pm.esAnticipo?'✓':'＋'} Anticipo sin factura
                     </button>
-                    {pm.esAnticipo&&<p style={{fontSize:8,color:'#15803d',margin:'6px 2px 0',fontWeight:700}}>El dinero sale de banco/caja y queda a favor con el proveedor. Podrá aplicarlo a facturas más adelante.</p>}
+                    {pm.esAnticipo&&<p style={{fontSize:8,color:'#15803d',margin:'6px 2px 0',fontWeight:700}}>El dinero sale de banco/caja y queda a favor de <strong>{pm.nombre||'este proveedor'}</strong>. Podrá aplicarlo a facturas más adelante.</p>}
                   </div>
                   {/* Anticipos disponibles */}
                   {!pm.esAnticipo&&totalAnticiposProv>0.01&&(
@@ -7491,7 +7491,7 @@ ${body}
                         return(
                         <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
                           <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${fN(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}{(a.concepto&&a.concepto!=='Anticipo a proveedor')?` · ${a.concepto}`:''}</span>
-                          <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                          <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:a.fecha||hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                             style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                         </div>);
                       })}
@@ -12648,6 +12648,11 @@ function App() {
     const u = onSnapshot(getColRef('auditoria_eventos'), s=>setAuditoriaEventos(s.docs.map(d=>d.data())));
     return ()=>u();
   },[]);
+  const [papeleraItems, setPapeleraItems] = useState([]);
+  useEffect(()=>{
+    const u = onSnapshot(getColRef('papelera'), s=>setPapeleraItems(s.docs.map(d=>d.data())));
+    return ()=>u();
+  },[]);
   const [dispositivosAutorizados, setDispositivosAutorizados] = useState([]);
   useEffect(()=>{
     const u = onSnapshot(getColRef('dispositivos_autorizados'), s=>setDispositivosAutorizados(s.docs.map(d=>d.data())));
@@ -13063,8 +13068,12 @@ function App() {
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
-  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:settings?.tasaBCV?String(settings.tasaBCV):'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:settings?.tasaBCV?String(settings.tasaBCV):'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena!=='AMBAS'?libroQuincena:'1'});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
+  const [editingAnulInvId, setEditingAnulInvId] = useState(null);
+  const [editingAnulNcId, setEditingAnulNcId] = useState(null);
+  const [showAnulHistorial, setShowAnulHistorial] = useState(false);
+  const [anulVerId, setAnulVerId] = useState(null);
   const [anulCliQuery, setAnulCliQuery] = useState('');
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
@@ -13464,6 +13473,7 @@ function App() {
   const [kpiSelectedMonth, setKpiSelectedMonth] = useState('');
   // ── Auditoría module state ──
   const [auditSearch, setAuditSearch] = useState('');
+  const [mostrarPapelera, setMostrarPapelera] = useState(false);
   const [auditModuleFilter, setAuditModuleFilter] = useState('Todos');
   const [auditTipoFilter, setAuditTipoFilter] = useState('Todos');
   const [auditDate, setAuditDate] = useState('');
@@ -13827,6 +13837,44 @@ function App() {
     setAdminAction(null);
     setAdminActionName('');
   }, []);
+
+  // ── Borrado seguro (recuperable + con clave admin + con auditoría) ──────────
+  // Envuelve requireAdminPassword: antes de borrar el documento, guarda una copia
+  // completa en 'papelera' (con la colección/ID originales) para poder restaurarlo
+  // después, y deja registro permanente en Auditoría. Pensado para ir reemplazando,
+  // módulo por módulo, los deleteDoc(...) sueltos que hoy borran sin dejar rastro.
+  const eliminarConRespaldo = ({coleccion, docId, datos, modulo, detalle, actionName, onDone}) => {
+    requireAdminPassword(async () => {
+      try {
+        const papId = `PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+        const batch = writeBatch(db);
+        batch.set(getDocRef('papelera', papId), {
+          id: papId, coleccionOriginal: coleccion, docIdOriginal: String(docId), datos: datos||null,
+          modulo: modulo||'—', detalle: detalle||'', eliminadoPor: appUser?.name||'Sistema',
+          fecha: getTodayDate(), ts: Date.now(), restaurado: false,
+        });
+        batch.delete(getDocRef(coleccion, docId));
+        await batch.commit();
+        await logAuditoria(appUser, modulo||'—', 'ELIMINACIÓN', detalle||`Eliminado de ${coleccion}: ${docId}`);
+        setDialog({title:'Eliminado', text:'Se eliminó correctamente. Si fue un error, puedes recuperarlo desde Auditoría del Sistema → Papelera.', type:'alert'});
+        if (onDone) onDone();
+      } catch(e) {
+        setDialog({title:'Error', text:'No se pudo eliminar: '+e.message, type:'alert'});
+      }
+    }, actionName || `Eliminar registro de ${coleccion}`);
+  };
+
+  const restaurarDePapelera = (p) => {
+    requireAdminPassword(async () => {
+      try {
+        if (!p.datos) return setDialog({title:'Aviso', text:'Este registro no guardó una copia de los datos, no se puede restaurar automáticamente.', type:'alert'});
+        await setDoc(getDocRef(p.coleccionOriginal, p.docIdOriginal), p.datos);
+        await updateDoc(getDocRef('papelera', p.id), {restaurado:true, restauradoPor:appUser?.name||'Sistema', restauradoFecha:getTodayDate()});
+        await logAuditoria(appUser, p.modulo||'—', 'EDICIÓN', `Restaurado desde Papelera: ${p.detalle||p.docIdOriginal}`);
+        setDialog({title:'Restaurado', text:'El registro fue restaurado correctamente.', type:'alert'});
+      } catch(e) { setDialog({title:'Error', text:'No se pudo restaurar: '+e.message, type:'alert'}); }
+    }, 'Restaurar registro de la Papelera');
+  };
 
   // INICIO DE SESIÓN
   const [_sessionId] = useState(() => Math.random().toString(36).substring(2)+Date.now());
@@ -23452,7 +23500,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               </div>
                               <script>window.print();</script></body></html>`);
                             }} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button>
-                            <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
+                            <button onClick={()=>requireAdminPassword(async()=>{
+                              const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                              const batch=writeBatch(db);
+                              batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'cotizaciones',docIdOriginal:cot.id,datos:cot,modulo:'Ventas',detalle:`Cotización ${cot.documento||cot.id}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                              batch.delete(getDocRef('cotizaciones',cot.id));
+                              await batch.commit();
+                              await logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Cotización ${cot.documento||cot.id} eliminada`);
+                              setDialog({title:'Eliminada',text:`${cot.documento} eliminada. Recuperable desde Auditoría → Papelera.`,type:'alert'});
+                            },'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
                           </div>
                         </td>
                       </tr>
@@ -25405,10 +25461,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-600 hover:text-white transition-all">
                             <Download size={12}/> Excel
                           </button>
-                          <button onClick={()=>{
-                            if(window.confirm(`¿Eliminar reporte de ${r.vendedor} — ${r.mesLabel}?`))
-                              deleteDoc(getDocRef('comisionesReportes',r.id));
-                          }} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                          <button onClick={()=>requireAdminPassword(async()=>{
+                            const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                            const batch=writeBatch(db);
+                            batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'comisionesReportes',docIdOriginal:r.id,datos:r,modulo:'Ventas',detalle:`Reporte de comisiones ${r.vendedor||''} — ${r.mesLabel||''}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                            batch.delete(getDocRef('comisionesReportes',r.id));
+                            await batch.commit();
+                            await logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Reporte de comisiones ${r.vendedor||''} — ${r.mesLabel||''} eliminado`);
+                            setDialog({title:'Eliminado',text:'Reporte eliminado. Recuperable desde Auditoría → Papelera.',type:'alert'});
+                          },`Eliminar reporte de ${r.vendedor} — ${r.mesLabel}`)} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                             <Trash2 size={12}/> Eliminar
                           </button>
                         </div>
@@ -25552,7 +25613,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
-          const handleDeleteNE = (ne) => setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}? La mercancía será devuelta al inventario.`,type:'confirm',onConfirm:async()=>{
+          const handleDeleteNE = (ne) => requireAdminPassword(async()=>{
             try {
               const batch = writeBatch(db);
               // 1. Devolver inventario por almacén
@@ -25577,14 +25638,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   });
                 }
               }
-              // 2. Eliminar la NE
+              // 2. Respaldar en Papelera y eliminar la NE
+              const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+              batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'notasEntrega',docIdOriginal:ne.id,datos:ne,modulo:'Notas de Entrega',detalle:`NE ${ne.id} · Cliente: ${ne.clientName||'—'}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
               batch.delete(getDocRef('notasEntrega',ne.id));
               await batch.commit();
               logAuditoria(appUser,'Notas de Entrega','ELIMINACIÓN',`NE ELIMINADA: ${ne.id} · Cliente: ${ne.clientName||'—'} · Fecha: ${ne.fecha||'—'} · Total: $${formatNum(ne.total||ne.totalUSD||0)}`);
               // 3. Limpiar de comCobranza si existe
               setComCobranza(prev=>(prev||[]).filter(c=>c.neId!==ne.id));
+              setDialog({title:'✅ Eliminada',text:`NE ${ne.id} eliminada. Recuperable desde Auditoría → Papelera.`,type:'alert'});
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
-          }});
+          }, `Eliminar Nota de Entrega ${ne.id} (la mercancía vuelve al inventario)`);
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
           const handleConvertirFactura = (ne) => {
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
@@ -27079,30 +27143,36 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      handlePDFFromHTML(_h,n.tipo+'_'+_doc);
                                    }} className="p-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all" title="Ver PDF"><FileText size={13}/></button>
                                   <button onClick={()=>{setVentaNCForm({...n,monto:String(n.monto||''),ivaBs:String(n.ivaBs||''),totalBs:String(n.totalBs||'')});setVentaNCBusq('');setShowVentaNCModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={12}/></button>
-                                  <button onClick={()=>setDialog({title:`Eliminar ${n.tipo} — ${n.nroDocumento}`,text:`¿Eliminar ${n.nroDocumento}? ${n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0?'Se deshará la reversión de inventario.':'No afecta inventario.'}`,type:'confirm',onConfirm:async()=>{
-                                      try{
-                                        // 1. Revertir inventario si era NC Devolución
-                                        if(n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0){
-                                          const batch=writeBatch(db);
-                                          for(const it of (n.itemsRevertidos||[])){
-                                            const cantRev=parseNum(it.cantidad||0);
-                                            if(cantRev<=0) continue;
-                                            const cleanId=(it.invCode||it.fgId||'').split('___')[0].trim();
-                                            if(!cleanId) continue;
-                                            const invDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId);
-                                            if(invDocs.length>0){
-                                              batch.update(getDocRef('inventory',invDocs[0].id),{stock:Math.max(0,parseNum(invDocs[0].stock||0)-cantRev),timestamp:Date.now()});
-                                            }
-                                            const movId=`MOV-NC-REV-${Date.now().toString(36).slice(-6)}-${it.fgId||cleanId}`;
-                                            batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:cleanId,itemName:it.desc||cleanId,type:'SALIDA ANULACIÓN NC',qty:cantRev,cost:parseNum(it.costoUnit||0),totalValue:cantRev*parseNum(it.costoUnit||0),reference:n.nroDocumento,notes:`Anulación NC ${n.nroDocumento}`,user:appUser?.name||'Sistema'});
+                                  <button onClick={()=>requireAdminPassword(async()=>{
+                                    try{
+                                      // 1. Revertir inventario si era NC Devolución
+                                      if(n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0){
+                                        const batch=writeBatch(db);
+                                        for(const it of (n.itemsRevertidos||[])){
+                                          const cantRev=parseNum(it.cantidad||0);
+                                          if(cantRev<=0) continue;
+                                          const cleanId=(it.invCode||it.fgId||'').split('___')[0].trim();
+                                          if(!cleanId) continue;
+                                          const invDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId);
+                                          if(invDocs.length>0){
+                                            batch.update(getDocRef('inventory',invDocs[0].id),{stock:Math.max(0,parseNum(invDocs[0].stock||0)-cantRev),timestamp:Date.now()});
                                           }
-                                          await batch.commit();
+                                          const movId=`MOV-NC-REV-${Date.now().toString(36).slice(-6)}-${it.fgId||cleanId}`;
+                                          batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:cleanId,itemName:it.desc||cleanId,type:'SALIDA ANULACIÓN NC',qty:cantRev,cost:parseNum(it.costoUnit||0),totalValue:cantRev*parseNum(it.costoUnit||0),reference:n.nroDocumento,notes:`Anulación NC ${n.nroDocumento}`,user:appUser?.name||'Sistema'});
                                         }
-                                        // 2. Eliminar la NC/ND usando el key real de Firestore
-                                        await deleteDoc(getDocRef('notasVentaCreditoDebito', n._fsId||n.id));
-                                        setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${n.tipo==='NC'&&(n.itemsRevertidos||[]).length>0?' Inventario revertido.':''}`,type:'alert'});
-                                      }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
-                                    }})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                                        await batch.commit();
+                                      }
+                                      // 2. Respaldar en Papelera antes de eliminar la NC/ND
+                                      const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                                      const huboReversion=n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0;
+                                      const detalleNc=`${n.tipo} ${n.nroDocumento} eliminada${huboReversion?' (con reversión de inventario — restaurar este registro NO revierte el inventario automáticamente)':''}`;
+                                      await setDoc(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'notasVentaCreditoDebito',docIdOriginal:n._fsId||n.id,datos:n,modulo:'Ventas',detalle:detalleNc,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                                      // 3. Eliminar la NC/ND usando el key real de Firestore
+                                      await deleteDoc(getDocRef('notasVentaCreditoDebito', n._fsId||n.id));
+                                      await logAuditoria(appUser,'Ventas','ELIMINACIÓN',detalleNc);
+                                      setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${huboReversion?' Inventario revertido.':''} Recuperable desde Auditoría → Papelera.`,type:'alert'});
+                                    }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
+                                  }, `Eliminar ${n.tipo} — ${n.nroDocumento}`)} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
                                 </div>
                               </td>
                             </tr>
@@ -28762,12 +28832,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // ── REVERSAR COBRO ─────────────────────────────────────────────
           const reversarCobro=async(cobro)=>{
-            setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento de banco/caja vinculado también se ajustará. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
+            requireAdminPassword(async()=>{
               try{
                 const batch=writeBatch(db);
                 const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
 
-                // 1. Eliminar el cobro de cobros_cxc
+                // 1. Respaldar en Papelera y eliminar el cobro de cobros_cxc
+                const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'cobros_cxc',docIdOriginal:cobro.id,datos:cobro,modulo:'Cuentas por Cobrar',detalle:`Cobro $${formatNum(cobro.monto)} · Ref: ${cobro.referencia||'—'} · Cliente: ${cobro.clientName||'—'} (restaurar este registro NO revierte los ajustes de saldo bancario/NE hechos al reversar)`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
                 batch.delete(getDocRef('cobros_cxc',cobro.id));
 
                 // 2. Recalcular NE — saldo = total NE − NC/ND − retenciones − cobros restantes
@@ -28864,9 +28936,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 await batch.commit();
                 logAuditoria(appUser,'Cuentas por Cobrar','ELIMINACIÓN',`Cobro ELIMINADO: $${formatNum(cobro.monto)} · Ref: ${cobro.referencia||'—'} · NE: ${ne?.documento||cobro.neId||'—'} · Cliente: ${cobro.clientName||'—'}`);
-                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvEncontrado?'\nMovimiento de banco/caja también ajustado.':'\n⚠ No se encontró el movimiento bancario/caja asociado.'}`,type:'alert'});
+                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvEncontrado?'\nMovimiento de banco/caja también ajustado.':'\n⚠ No se encontró el movimiento bancario/caja asociado.'}\nRecuperable desde Auditoría → Papelera.`,type:'alert'});
               }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-            }});
+            }, `Eliminar cobro de $${formatNum(cobro.monto)} — ${cobro.clientName||''}`);
           };
 
           // ── MODAL COBRO MASIVO — pantalla completa horizontal ────────
@@ -29061,7 +29133,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             return(
                             <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
                               <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}</span>
-                              <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                              <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:a.fecha||getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                                 style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                             </div>);
                           })}
@@ -30305,6 +30377,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
             return true;
           });
+          // ── ND de cliente directo (sin NE, sin factura) — se cuentan como pseudo-NE, IGUAL que en
+          // Registrar Cobro (ndsDirectas). Antes Estado de Cuenta no las incluía en absoluto, por lo
+          // que el saldo del cliente salía más bajo aquí que en Registrar Cobro por ese monto exacto.
+          const ndsDirectasEc=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
+            .map(n=>({
+              id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,
+              clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
+              fecha:n.fecha||n.createdAt||getTodayDate(),
+              total:parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCVec||1),
+              nroFiscal:n.nroDocumento||n.id,tasa:parseNum(n.tasaFactura||0)||tasaBCVec,
+              montoBase:parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCVec||1),
+              _ndDescripcion:n.descripcion||'',
+            }))
+            .filter(nd=>{
+              if(ecDesde&&(nd.fecha||'')<ecDesde) return false;
+              if(ecHasta&&(nd.fecha||'')>ecHasta) return false;
+              const yaCobrado=(cobrosCxc||[]).filter(c=>c.neId===nd.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+              return (nd.total-yaCobrado)>0.01;
+            });
+          allNEs.push(...ndsDirectasEc);
           // ── Retenciones MANUALES (factura no registrada en el sistema) ──────────
           const _manualRetsPorClienteEc = new Map();
           for(const r of (retenciones||[])){
@@ -30765,11 +30857,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             return(
                             <React.Fragment key={ne.id}>
                               <tr className={`border-b border-gray-100 ${rowBg}`}>
-                                <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
+                                <td className="py-2 px-3 font-black text-orange-600">{ne._esNDDirecta?(ne.nroFiscal||ne.id):(ne.documento||ne.id)}</td>
                                 <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
                                 <td className="py-2 px-3 text-amber-600 font-bold">{getVenceEc(ne)}</td>
-                                <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span></td>
-                                <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
+                                <td className="py-2 px-3">{ne._esNDDirecta?<span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">ND directa</span>:<span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span>}</td>
+                                <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{ne._esNDDirecta?(ne._ndDescripcion||'Nota de Débito — sin factura asociada'):((ne.items||[])[0]?.desc||ne.descripcion||'—')}</td>
                                 <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
@@ -31358,10 +31450,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const mesesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
           const mesLabel = mesesLabel[parseInt(libroMes,10)-1]||'';
 
+          // ── Respeta el período/quincena EXPLÍCITO de una Anulación Fiscal (si lo tiene),
+          // igual que ya se hace con retenciones vía getQuincenaRet — solo cae a la fecha
+          // si el documento no trae periodoAnio/periodoMes guardado (registros viejos).
+          const matchPeriodo = (doc, fechaFallback) => {
+            if (doc.periodoAnio && doc.periodoMes) {
+              if (doc.periodoAnio!==libroAnio||doc.periodoMes!==libroMes) return false;
+              if (libroQuincena==='AMBAS') return true;
+              const q = (String(doc.quincena)==='1'||String(doc.quincena)==='2') ? String(doc.quincena) : (()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
+              return q===libroQuincena;
+            }
+            const f = fechaFallback||'';
+            return f>=periodoDesde&&f<=periodoHasta;
+          };
+
           // ── Facturas con nroFiscal en el período ──────────────────────────────
           const factsPeriodo = (invoices||[]).filter(inv=>{
             if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-            const f=inv.fechaFactura||inv.fecha||''; if(f<periodoDesde||f>periodoHasta) return false;
+            if(!matchPeriodo(inv, inv.fechaFactura||inv.fecha||'')) return false;
             if(libroFiltFact&&!(inv.nroFiscal||'').includes(libroFiltFact.toUpperCase())&&!(inv.nroControl||'').includes(libroFiltFact.toUpperCase())&&!(inv.documento||'').toUpperCase().includes(libroFiltFact.toUpperCase())) return false;
             if(libroFiltCliente&&!(inv.clientName||'').toUpperCase().includes(libroFiltCliente.toUpperCase())&&!(inv.clientRif||'').includes(libroFiltCliente.toUpperCase())) return false;
             return true;
@@ -31383,7 +31489,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
-          const ncndFiscales=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=periodoDesde&&n.fecha<=periodoHasta);
+          const ncndFiscales=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodo(n, n.fecha));
 
           // ── Filas del libro ───────────────────────────────────────────────────
           const rows=[]; let seq=1;
@@ -31874,7 +31980,8 @@ ${resumenHtml}
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
                 <button onClick={()=>{const _ctaIVA=settings?.retClienteCuentasCfg?.IVA;setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA',cuentaContableRetId:_ctaIVA?.cuentaContableId||'',cuentaContableRetNombre:_ctaIVA?.cuentaContableNombre||''});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
-                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
+                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setEditingAnulInvId(null);setEditingAnulNcId(null);setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
+                <button onClick={()=>setShowAnulHistorial(true)} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><History size={14}/>Historial Anulaciones</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
@@ -31884,7 +31991,7 @@ ${resumenHtml}
                   <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
                     <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
                       <Ban size={18} className="text-orange-400"/>
-                      <p className="text-white font-black text-sm uppercase">Registrar Anulación Fiscal</p>
+                      <p className="text-white font-black text-sm uppercase">{editingAnulInvId?'Editar Anulación Fiscal':'Registrar Anulación Fiscal'}</p>
                     </div>
                     <div className="p-5 space-y-4">
                       <div className="flex gap-2 flex-wrap">
@@ -31906,6 +32013,22 @@ ${resumenHtml}
                           <input type="number" value={anulFiscalForm.tasa} onChange={e=>setAnulFiscalForm(f=>({...f,tasa:e.target.value}))} placeholder={settings?.tasaBCV?`Ej. ${settings.tasaBCV}`:'Tasa del día de la factura'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
                           <p className="text-[9px] text-gray-400 mt-1">Usa la tasa vigente el día de la factura anulada, no necesariamente la de hoy — de esto depende el saldo en USD de la NC.</p>
                         </div>
+                        <div className="grid grid-cols-3 gap-3 mt-3">
+                          <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Año que afecta</label>
+                            <select value={anulFiscalForm.periodoAnio} onChange={e=>setAnulFiscalForm(f=>({...f,periodoAnio:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                              {(()=>{const cy=new Date().getFullYear();return Array.from({length:cy-2023+1},(_,i)=>String(2024+i)).map(y=>(<option key={y} value={y}>{y}</option>));})()}
+                            </select></div>
+                          <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Mes que afecta</label>
+                            <select value={anulFiscalForm.periodoMes} onChange={e=>setAnulFiscalForm(f=>({...f,periodoMes:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                              {mesesLabel.map((m,i)=>(<option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>))}
+                            </select></div>
+                          <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Quincena</label>
+                            <select value={anulFiscalForm.quincena} onChange={e=>setAnulFiscalForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                              <option value="1">I Quincena (01–15)</option>
+                              <option value="2">II Quincena (16–fin)</option>
+                            </select></div>
+                        </div>
+                        <p className="text-[9px] text-gray-400 mt-1">Esto es lo que decide en qué quincena del Libro de Ventas aparece — independiente de la Fecha de la factura.</p>
                         <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (RIF)</label>
                           <input value={anulFiscalForm.clientRif} onChange={e=>setAnulFiscalForm(f=>({...f,clientRif:e.target.value}))} placeholder="J-12345678-9" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         <div className="mt-3 relative"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (Razón Social)</label>
@@ -31933,6 +32056,7 @@ ${resumenHtml}
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total Bs.</label>
                             <input disabled value={formatNum((parseNum(anulFiscalForm.baseImponible)+parseNum(anulFiscalForm.iva)))} className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 text-xs font-black bg-gray-100 text-gray-500"/></div>
                         </div>
+                        <p className="text-[9px] text-gray-400 mt-1">Si se dañó el formato fiscal (no hubo venta), deja Base e IVA en 0 y el Cliente en blanco.</p>
                       </div>
                       <div className="bg-gray-50 rounded-xl p-4">
                         <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Nota de crédito de anulación (Bs.)</p>
@@ -31953,39 +32077,120 @@ ${resumenHtml}
                         if(!anulFiscalForm.nroControl||!anulFiscalForm.nroFiscal) return setDialog({title:'Aviso',text:'N° Control y N° Fiscal son obligatorios.',type:'alert'});
                         if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:'N° Control y N° de Crédito de la NC son obligatorios.',type:'alert'});
                         const tasa=parseNum(anulFiscalForm.tasa||0);
-                        if(!tasa||tasa<=1) return setDialog({title:'Aviso',text:'Ingresa la tasa de cambio (Bs./USD) vigente el día de la factura anulada. Sin esto, el saldo en USD de la NC queda mal calculado.',type:'alert'});
+                        const baseBsChk=parseNum(anulFiscalForm.baseImponible||0);
+                        const ivaBsChk=parseNum(anulFiscalForm.iva||0);
+                        if((baseBsChk+ivaBsChk)>0 && (!tasa||tasa<=1)) return setDialog({title:'Aviso',text:'Ingresa la tasa de cambio (Bs./USD) vigente el día de la factura anulada. Sin esto, el saldo en USD de la NC queda mal calculado.',type:'alert'});
+                        const tasaFinal = tasa>1?tasa:1;
                         const baseBs=parseNum(anulFiscalForm.baseImponible||0);
                         const ivaBs=parseNum(anulFiscalForm.iva||0);
                         const totalBs=baseBs+ivaBs;
-                        const invId=`ANUL-${Date.now().toString(36)}`;
-                        const ncId=`ANULNC-${Date.now().toString(36)}`;
+                        const esEdicion=!!editingAnulInvId;
+                        const invId=editingAnulInvId||`ANUL-${Date.now().toString(36)}`;
+                        const ncId=editingAnulNcId||`ANULNC-${Date.now().toString(36)}`;
                         const batch=writeBatch(db);
                         batch.set(getDocRef('maquilaInvoices',invId),{
                           id:invId,fecha:anulFiscalForm.fecha,fechaFactura:anulFiscalForm.fecha,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
                           nroFiscal:anulFiscalForm.nroFiscal,nroControl:anulFiscalForm.nroControl,
-                          tasa,montoBase:parseFloat((baseBs/tasa).toFixed(2)),iva:parseFloat((ivaBs/tasa).toFixed(2)),total:parseFloat((totalBs/tasa).toFixed(2)),
+                          tasa:tasaFinal,montoBase:parseFloat((baseBs/tasaFinal).toFixed(2)),iva:parseFloat((ivaBs/tasaFinal).toFixed(2)),total:parseFloat((totalBs/tasaFinal).toFixed(2)),
                           totalBs,baseGravableBs:baseBs,ivaBs,
-                          aplicaIva:'SI',esAnulacionFiscal:true,
-                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                          aplicaIva:'SI',esAnulacionFiscal:true,periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
+                          timestamp:esEdicion?(anulFiscalForm._timestamp||Date.now()):Date.now(),createdAt:esEdicion?(anulFiscalForm._createdAt||getTodayDate()):getTodayDate(),
+                          user:appUser?.name||'Sistema'
                         });
                         batch.set(getDocRef('notasVentaCreditoDebito',ncId),{
                           id:ncId,tipo:'NC',naturaleza:'FISCAL',
                           nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
                           fecha:anulFiscalForm.ncFecha,facturaId:invId,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
-                          monto:baseBs,ivaBs,totalBs,tasaFactura:tasa,
-                          esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',
-                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                          monto:baseBs,ivaBs,totalBs,tasaFactura:tasaFinal,
+                          esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
+                          timestamp:esEdicion?(anulFiscalForm._ncTimestamp||Date.now()):Date.now(),createdAt:esEdicion?(anulFiscalForm._ncCreatedAt||getTodayDate()):getTodayDate(),
+                          user:appUser?.name||'Sistema'
                         });
                         await batch.commit();
+                        await logAuditoria(appUser,'Ventas',esEdicion?'EDICIÓN':'CREACIÓN',`${esEdicion?'Anulación Fiscal editada':'Anulación Fiscal registrada'}: Factura ${anulFiscalForm.nroFiscal} + NC ${anulFiscalForm.ncNroCredito}`);
                         setShowAnulFiscalModal(false);
-                        setDialog({title:'Registrado',text:'La factura y su NC de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
-                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">Registrar solo en Libro de Ventas</button>
+                        setEditingAnulInvId(null); setEditingAnulNcId(null);
+                        setDialog({title:esEdicion?'Actualizado':'Registrado',text:esEdicion?'La Anulación Fiscal fue actualizada.':'La factura y su NC de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
+                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">{editingAnulInvId?'Guardar Cambios':'Registrar solo en Libro de Ventas'}</button>
                     </div>
                   </div>
                 </div>
               )}
+
+              {showAnulHistorial && (()=>{
+                const anulInvs=(invoices||[]).filter(i=>i.esAnulacionFiscal).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+                return (
+                  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>{setShowAnulHistorial(false);setAnulVerId(null);}}>
+                    <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                      <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
+                        <History size={18} className="text-orange-400"/>
+                        <p className="text-white font-black text-sm uppercase">Historial de Anulaciones Fiscales</p>
+                      </div>
+                      <div className="p-5 space-y-2">
+                        {anulInvs.length===0 ? (
+                          <p className="text-xs text-gray-400 font-bold text-center py-6">No hay anulaciones fiscales registradas.</p>
+                        ) : anulInvs.map(inv=>{
+                          const nc=(notasVentaCD||[]).find(n=>n.facturaId===inv.id);
+                          const expandido=anulVerId===inv.id;
+                          return (
+                            <div key={inv.id} className="border-2 border-gray-100 rounded-xl overflow-hidden">
+                              <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                                <div className="text-[11px]">
+                                  <span className="font-black text-gray-800">Factura {inv.nroFiscal}</span>
+                                  <span className="text-gray-400"> · Control {inv.nroControl} · {inv.fechaFactura||inv.fecha}</span>
+                                  <div className="text-gray-500">{inv.clientName||'Sin cliente'} — Bs. {formatNum(inv.totalBs||0)}</div>
+                                </div>
+                                <div className="flex gap-1.5 shrink-0">
+                                  <button onClick={()=>setAnulVerId(expandido?null:inv.id)} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-800 hover:text-white"><Eye size={13}/></button>
+                                  <button onClick={()=>{
+                                    setAnulFiscalForm({fecha:inv.fechaFactura||inv.fecha||getTodayDate(),nroFiscal:inv.nroFiscal||'',nroControl:inv.nroControl||'',clientRif:inv.clientRif||'',clientName:inv.clientName||'',baseImponible:String(inv.baseGravableBs||''),iva:String(inv.ivaBs||''),tasa:String(inv.tasa||''),ncNroControl:nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),periodoAnio:inv.periodoAnio||libroAnio,periodoMes:inv.periodoMes||libroMes,quincena:inv.quincena||'1',_timestamp:inv.timestamp,_createdAt:inv.createdAt,_ncTimestamp:nc?.timestamp,_ncCreatedAt:nc?.createdAt});
+                                    setEditingAnulInvId(inv.id); setEditingAnulNcId(nc?.id||null);
+                                    setShowAnulHistorial(false); setShowAnulFiscalModal(true);
+                                  }} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
+                                  <button onClick={()=>requireAdminPassword(async()=>{
+                                    try{
+                                      const detalleAnul=`Anulación Fiscal — Factura ${inv.nroFiscal} + NC ${nc?.nroCredito||''}`;
+                                      const batch=writeBatch(db);
+                                      const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                                      batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'maquilaInvoices',docIdOriginal:inv.id,datos:inv,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                                      batch.delete(getDocRef('maquilaInvoices',inv.id));
+                                      if(nc){
+                                        const papId2=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}b`;
+                                        batch.set(getDocRef('papelera',papId2),{id:papId2,coleccionOriginal:'notasVentaCreditoDebito',docIdOriginal:nc.id,datos:nc,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                                        batch.delete(getDocRef('notasVentaCreditoDebito',nc.id));
+                                      }
+                                      await batch.commit();
+                                      await logAuditoria(appUser,'Ventas','ELIMINACIÓN',detalleAnul);
+                                      setDialog({title:'Eliminado',text:'Anulación fiscal eliminada. Recuperable desde Auditoría → Papelera.',type:'alert'});
+                                    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                  }, `Eliminar Anulación Fiscal (Factura ${inv.nroFiscal})`)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                                </div>
+                              </div>
+                              {expandido && (
+                                <div className="px-4 pb-3 pt-1 bg-gray-50 text-[10px] text-gray-600 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-gray-100">
+                                  <div>Cliente RIF: <span className="font-bold">{inv.clientRif||'—'}</span></div>
+                                  <div>Tasa: <span className="font-bold">{formatNum(inv.tasa||0)}</span></div>
+                                  <div>Base / IVA / Total Bs.: <span className="font-bold">{formatNum(inv.baseGravableBs||0)} / {formatNum(inv.ivaBs||0)} / {formatNum(inv.totalBs||0)}</span></div>
+                                  <div>Total USD: <span className="font-bold">${formatNum(inv.total||0)}</span></div>
+                                  <div>Período: <span className="font-bold">{inv.periodoMes||'—'}/{inv.periodoAnio||'—'} · Q{inv.quincena||'—'}</span></div>
+                                  <div>NC: <span className="font-bold">{nc?nc.nroDocumento+' / Crédito '+nc.nroCredito:'— no encontrada —'}</span></div>
+                                  <div>Registrado por: <span className="font-bold">{inv.user||'—'}</span></div>
+                                  <div>Fecha NC: <span className="font-bold">{nc?.fecha||'—'}</span></div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="px-5 py-4 border-t">
+                        <button onClick={()=>{setShowAnulHistorial(false);setAnulVerId(null);}} className="w-full py-2.5 rounded-xl text-xs font-black uppercase text-gray-500 bg-gray-100 hover:bg-gray-200">Cerrar</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* TABLA */}
               <div className="bg-white rounded-2xl border overflow-hidden">
@@ -32031,15 +32236,27 @@ ${resumenHtml}
                             <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
                             <td className="py-1.5 px-2 text-center">
                               {r.esAnulacionFiscal && (
-                                <button title="Eliminar esta Anulación Fiscal (factura + NC)" onClick={()=>setDialog({title:'Eliminar Anulación Fiscal',text:`¿Eliminar este registro de anulación (Factura ${r.nroFactura||r.nroControl||''} + NC ${r.nroCredito||''})? Se borra de Libro de Ventas. No se puede deshacer.`,type:'confirm',onConfirm:async()=>{
+                                <button title="Eliminar esta Anulación Fiscal (factura + NC)" onClick={()=>requireAdminPassword(async()=>{
                                   try{
+                                    const invDatos=(invoices||[]).find(i=>i.id===r.anulInvId)||null;
+                                    const ncDatos=(notasVentaCD||[]).find(n=>n.id===r.anulNcId)||null;
+                                    const detalleAnul=`Anulación Fiscal — Factura ${r.nroFactura||r.nroControl||''} + NC ${r.nroCredito||''}`;
                                     const batch=writeBatch(db);
-                                    if(r.anulInvId) batch.delete(getDocRef('maquilaInvoices',r.anulInvId));
-                                    if(r.anulNcId) batch.delete(getDocRef('notasVentaCreditoDebito',r.anulNcId));
+                                    if(r.anulInvId){
+                                      const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                                      batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'maquilaInvoices',docIdOriginal:r.anulInvId,datos:invDatos,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                                      batch.delete(getDocRef('maquilaInvoices',r.anulInvId));
+                                    }
+                                    if(r.anulNcId){
+                                      const papId2=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}b`;
+                                      batch.set(getDocRef('papelera',papId2),{id:papId2,coleccionOriginal:'notasVentaCreditoDebito',docIdOriginal:r.anulNcId,datos:ncDatos,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                                      batch.delete(getDocRef('notasVentaCreditoDebito',r.anulNcId));
+                                    }
                                     await batch.commit();
-                                    setDialog({title:'Eliminado',text:'El registro de anulación fiscal fue eliminado del Libro de Ventas.',type:'alert'});
+                                    await logAuditoria(appUser,'Ventas','ELIMINACIÓN',detalleAnul);
+                                    setDialog({title:'Eliminado',text:'El registro de anulación fiscal fue eliminado del Libro de Ventas. Puedes recuperarlo desde Auditoría del Sistema → Papelera.',type:'alert'});
                                   }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                                }})} className="text-red-500 hover:text-red-700"><Trash2 size={12}/></button>
+                                }, `Eliminar Anulación Fiscal (Factura ${r.nroFactura||r.nroControl||''} + NC ${r.nroCredito||''})`)} className="text-red-500 hover:text-red-700"><Trash2 size={12}/></button>
                               )}
                             </td>
                           </tr>
@@ -32400,7 +32617,15 @@ ${resumenHtml}
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
                               <button onClick={()=>{setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
-                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                              <button onClick={()=>requireAdminPassword(async()=>{try{
+                                const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+                                const batch=writeBatch(db);
+                                batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'retencionesClientes',docIdOriginal:ret.id,datos:ret,modulo:'Ventas',detalle:`Comprobante de retención ${ret.nroRetencion}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                                batch.delete(getDocRef('retencionesClientes',ret.id));
+                                await batch.commit();
+                                await logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Comprobante de retención ${ret.nroRetencion} eliminado`);
+                                setDialog({title:'✅ Eliminada',text:'Recuperable desde Auditoría → Papelera.',type:'alert'});
+                              }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}},`Eliminar comprobante ${ret.nroRetencion}`)} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
                         });
@@ -41219,6 +41444,10 @@ ${resumenHtml}
                 className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors">
                 <Download size={15}/> Exportar Log
               </button>
+              <button onClick={()=>setMostrarPapelera(v=>!v)}
+                className={`font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors border-2 ${mostrarPapelera?'bg-emerald-600 text-white border-emerald-600':'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'}`}>
+                <RefreshCw size={15}/> Papelera ({(papeleraItems||[]).filter(p=>!p.restaurado).length})
+              </button>
               {(appUser?.role==='Master'||appUser?.role==='Administrador') && (
                 <button onClick={()=>{
                   if(!auditDate&&!auditMes) return setDialog({title:'Aviso',text:'Selecciona una fecha o un mes en el filtro para limpiar registros.',type:'alert'});
@@ -41237,6 +41466,29 @@ ${resumenHtml}
               )}
             </div>
           </div>
+          {mostrarPapelera && (
+            <div className="px-6 py-4 bg-emerald-50 border-b-2 border-emerald-200">
+              <p className="text-[10px] font-black text-emerald-700 uppercase mb-2">Papelera — registros eliminados que se pueden restaurar</p>
+              {(papeleraItems||[]).filter(p=>!p.restaurado).length===0 ? (
+                <p className="text-xs text-gray-400 font-bold">No hay registros en la papelera.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                  {(papeleraItems||[]).filter(p=>!p.restaurado).sort((a,b)=>(b.ts||0)-(a.ts||0)).map(p=>(
+                    <div key={p.id} className="bg-white rounded-xl border border-emerald-200 px-3 py-2 flex items-center justify-between gap-3">
+                      <div className="text-[10px]">
+                        <span className="font-black text-gray-700">{p.modulo}</span>
+                        <span className="text-gray-400"> · {p.fecha} · por {p.eliminadoPor}</span>
+                        <div className="text-gray-500">{p.detalle}</div>
+                      </div>
+                      <button onClick={()=>restaurarDePapelera(p)} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1">
+                        <RefreshCw size={11}/> Restaurar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {/* Filters */}
           <div className="px-6 py-4 bg-gray-50/50 border-b border-gray-200 flex flex-wrap gap-3">
             <div className="relative flex-1 min-w-48">
