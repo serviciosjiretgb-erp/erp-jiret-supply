@@ -11290,7 +11290,21 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const guardarAjuste = async () => {
     if(!ajusteForm.fecha||!ajusteForm.nroComprobante||!ajusteForm.concepto)
       return alert('Fecha, N° Comprobante y Concepto son obligatorios.');
-    const lineasValidas = (ajusteForm.lineas||[]).filter(l=>l.codigo && l.cuenta && (parseFloat(l.montoBs)>0 || parseFloat(l.montoUSD)>0));
+    // Si se escribió el nombre de la cuenta pero no se hizo clic en la sugerencia (el código
+    // quedó vacío), se intenta resolver aquí mismo contra el Plan de Cuentas antes de rechazar
+    // la línea — para que no se pierda un ajuste completo por no haber hecho clic.
+    const lineasConCodigo = (ajusteForm.lineas||[]).map(l=>{
+      if(l.codigo || !l.cuenta) return l;
+      const match = (planCuentasC||[]).find(c=>(c.nombre||'').trim().toLowerCase()===l.cuenta.trim().toLowerCase()) ||
+                    (planCuentasC||[]).find(c=>String(c.codigo||'').trim()===l.cuenta.trim());
+      return match ? {...l, codigo:match.codigo||'', cuenta:match.nombre||l.cuenta} : l;
+    });
+    const conMontoValidas = lineasConCodigo.filter(l=>l.cuenta && (parseFloat(l.montoBs)>0 || parseFloat(l.montoUSD)>0));
+    const sinCodigo = conMontoValidas.filter(l=>!l.codigo);
+    if(sinCodigo.length>0){
+      return alert(`La cuenta "${sinCodigo[0].cuenta}" no está seleccionada de la lista — vuelve a escribirla y esta vez haz clic en la sugerencia que aparece debajo, o verifica que el nombre esté escrito exactamente igual al del Plan de Cuentas.`);
+    }
+    const lineasValidas = conMontoValidas.filter(l=>l.codigo && l.cuenta);
     if(lineasValidas.length<2) return alert('Agrega al menos 2 líneas (una Debe y una Haber) con cuenta y monto.');
     setAjusteSaving(true);
     try{
@@ -12655,6 +12669,8 @@ function App() {
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
+  const [erMoneda, setErMoneda] = useState('ambas'); // 'bs' | 'ambas' | 'usd' — vista de Estado de Resultados
+  const [erExpandido, setErExpandido] = useState({}); // {codigo: true/false} — expandir/contraer cuenta en Estado de Resultados
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Contables (Procura + Ventas + Retenciones a Clientes + Banco + Caja), EXCLUYENDO
@@ -41579,36 +41595,82 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
+    const LABEL_MODULO_ER = {
+      'Procura':'📋 Procura', 'Ventas':'🧾 Ventas', 'Retenciones a Clientes':'📋 Ret. Clientes',
+      'Banco':'🏦 Banco', 'Caja':'💵 Caja', 'Relacionadas':'🤝 Relacionadas', 'Ajustes':'🛠️ Ajustes',
+    };
     const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
-    });
+    }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
     const porCuenta = {};
     asientosPeriodo.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
         const cod = l.codigo||'';
         if(!cod) return;
-        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0};
+        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
         porCuenta[cod].debeBs += parseNum(l.debeBs||0);
         porCuenta[cod].haberBs += parseNum(l.haberBs||0);
+        porCuenta[cod].debeUSD += parseNum(l.debeUSD||0);
+        porCuenta[cod].haberUSD += parseNum(l.haberUSD||0);
       });
     });
     const cuentas = Object.values(porCuenta);
-    const ingresos = cuentas.filter(c=>c.codigo.startsWith('4')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const costos = cuentas.filter(c=>c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const gastos = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    const ingresos = cuentas.filter(c=>c.codigo.startsWith('4')).map(c=>({...c,saldo:c.haberBs-c.debeBs,saldoUSD:c.haberUSD-c.debeUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    const costos = cuentas.filter(c=>c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    const gastos = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
     const totalIngresos = ingresos.reduce((s,c)=>s+c.saldo,0);
+    const totalIngresosUSD = ingresos.reduce((s,c)=>s+c.saldoUSD,0);
     const totalCostos = costos.reduce((s,c)=>s+c.saldo,0);
+    const totalCostosUSD = costos.reduce((s,c)=>s+c.saldoUSD,0);
     const totalGastos = gastos.reduce((s,c)=>s+c.saldo,0);
+    const totalGastosUSD = gastos.reduce((s,c)=>s+c.saldoUSD,0);
     const utilidadBruta = totalIngresos - totalCostos;
+    const utilidadBrutaUSD = totalIngresosUSD - totalCostosUSD;
     const utilidadNeta = utilidadBruta - totalGastos;
-    const FilaER = ({c}) => (
-      <tr className="border-b border-gray-100">
-        <td className="px-3 py-1.5 pl-8 font-mono text-[9px] text-gray-400">{c.codigo}</td>
-        <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
-        <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>
-      </tr>
+    const utilidadNetaUSD = utilidadBrutaUSD - totalGastosUSD;
+    const verBs = erMoneda!=='usd';
+    const verUSD = erMoneda!=='bs';
+    const nCols = 2 + (verBs?1:0) + (verUSD?1:0);
+    const toggleExp = (cod) => setErExpandido(prev=>({...prev,[cod]:!prev[cod]}));
+    const detalleCuenta = (cod) => asientosPeriodo.flatMap(a=>
+      (a.lineas||[]).filter(l=>l.codigo===cod).map(l=>({
+        fecha:a.fecha, modulo:a.modulo, concepto:a.concepto||'—', referencia:a.comprobante||'',
+        debeBs:parseNum(l.debeBs||0), haberBs:parseNum(l.haberBs||0), debeUSD:parseNum(l.debeUSD||0), haberUSD:parseNum(l.haberUSD||0),
+      }))
     );
+    const FilaER = ({c, esIngreso}) => {
+      const exp = !!erExpandido[c.codigo];
+      const detalle = exp ? detalleCuenta(c.codigo) : [];
+      return (
+        <>
+          <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer select-none" onClick={()=>toggleExp(c.codigo)}>
+            <td className="px-3 py-1.5 pl-8 font-mono text-[9px] text-gray-400">
+              <span className="inline-flex items-center gap-1"><ChevronRight size={11} className={`text-gray-400 transition-transform ${exp?'rotate-90':''}`}/>{c.codigo}</span>
+            </td>
+            <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
+            {verBs && <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>}
+            {verUSD && <td className="px-3 py-1.5 text-right font-mono text-blue-700">${contFmt(c.saldoUSD)}</td>}
+          </tr>
+          {exp && (detalle.length===0 ? (
+            <tr className="bg-gray-50/60"><td colSpan={nCols} className="px-3 py-2 pl-14 text-[9px] text-gray-400 italic">Sin líneas de detalle para esta cuenta en el rango.</td></tr>
+          ) : detalle.map((d,i)=>{
+            const mBs = esIngreso ? d.haberBs-d.debeBs : d.debeBs-d.haberBs;
+            const mUSD = esIngreso ? d.haberUSD-d.debeUSD : d.debeUSD-d.haberUSD;
+            return (
+              <tr key={i} className="bg-gray-50/60 border-b border-gray-100">
+                <td className="px-3 py-1 pl-14 text-[9px] text-gray-400 whitespace-nowrap">{d.fecha||'—'}</td>
+                <td className="px-3 py-1 text-[9px] text-gray-500">
+                  <span className="text-gray-400">{LABEL_MODULO_ER[d.modulo]||d.modulo||'—'}</span>{' · '}{d.concepto}{d.referencia?' · '+d.referencia:''}
+                </td>
+                {verBs && <td className="px-3 py-1 text-right font-mono text-[9px] text-gray-500">{mBs!==0?contFmt(mBs):'—'}</td>}
+                {verUSD && <td className="px-3 py-1 text-right font-mono text-[9px] text-blue-600">{mUSD!==0?'$'+contFmt(mUSD):'—'}</td>}
+              </tr>
+            );
+          }))}
+        </>
+      );
+    };
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -41621,28 +41683,56 @@ ${resumenHtml}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Moneda</label>
+                <div className="flex gap-1 bg-white border-2 border-gray-200 rounded-lg p-1">
+                  {[['bs','Bs.'],['ambas','Bs. y $'],['usd','$']].map(([val,label])=>(
+                    <button key={val} onClick={()=>setErMoneda(val)} className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase transition-colors ${erMoneda===val?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-600'}`}>{label}</button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-3xl">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-4xl">
               <table className="w-full text-xs">
                 <tbody>
-                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Ingresos</td></tr>
-                  {ingresos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin ingresos en el rango elegido.</td></tr>}
-                  {ingresos.map(c=><FilaER key={c.codigo} c={c}/>)}
-                  <tr className="bg-emerald-50 border-y-2 border-emerald-200"><td colSpan={2} className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Ingresos</td><td className="px-3 py-2 text-right font-mono font-black text-emerald-700">{contFmt(totalIngresos)}</td></tr>
+                  <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Ingresos</td></tr>
+                  {ingresos.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin ingresos en el rango elegido.</td></tr>}
+                  {ingresos.map(c=><FilaER key={c.codigo} c={c} esIngreso={true}/>)}
+                  <tr className="bg-emerald-50 border-y-2 border-emerald-200">
+                    <td colSpan={2} className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Ingresos</td>
+                    {verBs && <td className="px-3 py-2 text-right font-mono font-black text-emerald-700">{contFmt(totalIngresos)}</td>}
+                    {verUSD && <td className="px-3 py-2 text-right font-mono font-black text-emerald-700">${contFmt(totalIngresosUSD)}</td>}
+                  </tr>
 
-                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Costo de Ventas</td></tr>
-                  {costos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin costos en el rango elegido.</td></tr>}
-                  {costos.map(c=><FilaER key={c.codigo} c={c}/>)}
-                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Costo de Ventas</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalCostos)}</td></tr>
+                  <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Costo de Ventas</td></tr>
+                  {costos.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin costos en el rango elegido.</td></tr>}
+                  {costos.map(c=><FilaER key={c.codigo} c={c} esIngreso={false}/>)}
+                  <tr className="bg-red-50 border-y-2 border-red-200">
+                    <td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Costo de Ventas</td>
+                    {verBs && <td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalCostos)}</td>}
+                    {verUSD && <td className="px-3 py-2 text-right font-mono font-black text-red-700">${contFmt(totalCostosUSD)}</td>}
+                  </tr>
 
-                  <tr className="bg-gray-900"><td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td><td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBruta>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(utilidadBruta)}</td></tr>
+                  <tr className="bg-gray-900">
+                    <td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td>
+                    {verBs && <td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBruta>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(utilidadBruta)}</td>}
+                    {verUSD && <td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-400':'text-red-400'}`}>${contFmt(utilidadBrutaUSD)}</td>}
+                  </tr>
 
-                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Gastos Operativos</td></tr>
-                  {gastos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin gastos en el rango elegido.</td></tr>}
-                  {gastos.map(c=><FilaER key={c.codigo} c={c}/>)}
-                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Gastos Operativos</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalGastos)}</td></tr>
+                  <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Gastos Operativos</td></tr>
+                  {gastos.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin gastos en el rango elegido.</td></tr>}
+                  {gastos.map(c=><FilaER key={c.codigo} c={c} esIngreso={false}/>)}
+                  <tr className="bg-red-50 border-y-2 border-red-200">
+                    <td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Gastos Operativos</td>
+                    {verBs && <td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalGastos)}</td>}
+                    {verUSD && <td className="px-3 py-2 text-right font-mono font-black text-red-700">${contFmt(totalGastosUSD)}</td>}
+                  </tr>
 
-                  <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}><td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td><td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{contFmt(Math.abs(utilidadNeta))}</td></tr>
+                  <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}>
+                    <td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td>
+                    {verBs && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{contFmt(Math.abs(utilidadNeta))}</td>}
+                    {verUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">${contFmt(Math.abs(utilidadNetaUSD))}</td>}
+                  </tr>
                 </tbody>
               </table>
             </div>
