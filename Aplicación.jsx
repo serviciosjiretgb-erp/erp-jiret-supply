@@ -32108,7 +32108,7 @@ ${resumenHtml}
                         });
                         batch.set(getDocRef('notasVentaCreditoDebito',ncId),{
                           id:ncId,tipo:anulFiscalForm.tipoAnulacion||'NC',naturaleza:'FISCAL',
-                          nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
+                          nroDocumento:anulFiscalForm.ncNroCredito,nroControl:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
                           fecha:anulFiscalForm.ncFecha,facturaId:invId,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
                           monto:baseBs,ivaBs,totalBs,tasaFactura:tasaFinal,
@@ -32153,7 +32153,7 @@ ${resumenHtml}
                                 <div className="flex gap-1.5 shrink-0">
                                   <button onClick={()=>setAnulVerId(expandido?null:inv.id)} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-800 hover:text-white"><Eye size={13}/></button>
                                   <button onClick={()=>{
-                                    setAnulFiscalForm({fecha:inv.fechaFactura||inv.fecha||getTodayDate(),nroFiscal:inv.nroFiscal||'',nroControl:inv.nroControl||'',clientRif:inv.clientRif||'',clientName:inv.clientName||'',baseImponible:String(inv.baseGravableBs||''),iva:String(inv.ivaBs||''),tasa:String(inv.tasa||''),tipoAnulacion:nc?.tipo||'NC',ncNroControl:nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),periodoAnio:inv.periodoAnio||libroAnio,periodoMes:inv.periodoMes||libroMes,quincena:inv.quincena||'1',_timestamp:inv.timestamp,_createdAt:inv.createdAt,_ncTimestamp:nc?.timestamp,_ncCreatedAt:nc?.createdAt});
+                                    setAnulFiscalForm({fecha:inv.fechaFactura||inv.fecha||getTodayDate(),nroFiscal:inv.nroFiscal||'',nroControl:inv.nroControl||'',clientRif:inv.clientRif||'',clientName:inv.clientName||'',baseImponible:String(inv.baseGravableBs||''),iva:String(inv.ivaBs||''),tasa:String(inv.tasa||''),tipoAnulacion:nc?.tipo||'NC',ncNroControl:nc?.nroControl||nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),periodoAnio:inv.periodoAnio||libroAnio,periodoMes:inv.periodoMes||libroMes,quincena:inv.quincena||'1',_timestamp:inv.timestamp,_createdAt:inv.createdAt,_ncTimestamp:nc?.timestamp,_ncCreatedAt:nc?.createdAt});
                                     setEditingAnulInvId(inv.id); setEditingAnulNcId(nc?.id||null);
                                     setShowAnulHistorial(false); setShowAnulFiscalModal(true);
                                   }} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
