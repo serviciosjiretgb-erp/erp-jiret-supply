@@ -28254,8 +28254,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _manualNCPorCliente = new Map();
           for(const n of (notasVentaCD||[])){
             if(!n._clienteDirecto) continue;
-            // Evitar doble conteo: una ND sin neId/facturaId ya se agrega como pseudo-NE más abajo (ndsDirectas).
-            if(n.tipo==='ND'&&!n.neId&&!n.facturaId) continue;
             const rif=(n.clientRif||'').trim();
             if(!rif) continue;
             const tasa=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||0;
@@ -28664,7 +28662,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
             try{
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
-              const ndsDirectasCliente=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif===m.clientRif||n.clientName===m.clientName))
+              const ndsDirectasCliente=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&!n._clienteDirecto&&(n.clientRif===m.clientRif||n.clientName===m.clientName))
                 .map(n=>{
                   const total=parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCV||1);
                   const yaCobrado=(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -28949,7 +28947,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // Construir lista de clientes con saldo independiente de filtros
             const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&Math.abs(getSaldoNEAtFecha(ne,null))>0.01);
             // ND de cliente directo (sin NE, sin factura) — cuenta por cobrar propia, tratada como pseudo-NE
-            const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
+            const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&!n._clienteDirecto&&(n.clientRif||n.clientName))
               .map(n=>({
                 id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,
                 clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
@@ -30382,7 +30380,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── ND de cliente directo (sin NE, sin factura) — se cuentan como pseudo-NE, IGUAL que en
           // Registrar Cobro (ndsDirectas). Antes Estado de Cuenta no las incluía en absoluto, por lo
           // que el saldo del cliente salía más bajo aquí que en Registrar Cobro por ese monto exacto.
-          const ndsDirectasEc=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
+          const ndsDirectasEc=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&!n._clienteDirecto&&(n.clientRif||n.clientName))
             .map(n=>({
               id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,
               clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
@@ -30432,8 +30430,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _manualNCPorClienteEc = new Map();
           for(const n of (notasVentaCD||[])){
             if(!n._clienteDirecto) continue;
-            // Evitar doble conteo: una ND sin neId/facturaId ya se agrega como pseudo-NE (ndsDirectasEc).
-            if(n.tipo==='ND'&&!n.neId&&!n.facturaId) continue;
             const rif=(n.clientRif||'').trim();
             if(!rif) continue;
             const tasa=parseNum(n.tasaFactura||0)||tasaBCVec;
