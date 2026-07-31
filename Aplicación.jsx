@@ -28254,6 +28254,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _manualNCPorCliente = new Map();
           for(const n of (notasVentaCD||[])){
             if(!n._clienteDirecto) continue;
+            // Evitar doble conteo: una ND sin neId/facturaId ya se agrega como pseudo-NE más abajo (ndsDirectas).
+            if(n.tipo==='ND'&&!n.neId&&!n.facturaId) continue;
             const rif=(n.clientRif||'').trim();
             if(!rif) continue;
             const tasa=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||0;
@@ -30430,6 +30432,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _manualNCPorClienteEc = new Map();
           for(const n of (notasVentaCD||[])){
             if(!n._clienteDirecto) continue;
+            // Evitar doble conteo: una ND sin neId/facturaId ya se agrega como pseudo-NE (ndsDirectasEc).
+            if(n.tipo==='ND'&&!n.neId&&!n.facturaId) continue;
             const rif=(n.clientRif||'').trim();
             if(!rif) continue;
             const tasa=parseNum(n.tasaFactura||0)||tasaBCVec;
