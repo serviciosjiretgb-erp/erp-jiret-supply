@@ -41599,6 +41599,8 @@ ${resumenHtml}
       'Procura':'📋 Procura', 'Ventas':'🧾 Ventas', 'Retenciones a Clientes':'📋 Ret. Clientes',
       'Banco':'🏦 Banco', 'Caja':'💵 Caja', 'Relacionadas':'🤝 Relacionadas', 'Ajustes':'🛠️ Ajustes',
     };
+    const pdcMap = {};
+    planDeCuentas.forEach(p=>{ if(p.codigo) pdcMap[p.codigo]=p; });
     const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
@@ -41608,7 +41610,7 @@ ${resumenHtml}
       (a.lineas||[]).forEach(l=>{
         const cod = l.codigo||'';
         if(!cod) return;
-        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
+        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||(pdcMap[cod]&&pdcMap[cod].nombre)||'', debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
         porCuenta[cod].debeBs += parseNum(l.debeBs||0);
         porCuenta[cod].haberBs += parseNum(l.haberBs||0);
         porCuenta[cod].debeUSD += parseNum(l.debeUSD||0);
@@ -41616,9 +41618,13 @@ ${resumenHtml}
       });
     });
     const cuentas = Object.values(porCuenta);
-    const ingresos = cuentas.filter(c=>c.codigo.startsWith('4')).map(c=>({...c,saldo:c.haberBs-c.debeBs,saldoUSD:c.haberUSD-c.debeUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const costos = cuentas.filter(c=>c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const gastos = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    // Sección por el PRIMER segmento del código (4=Ingresos, 5=Costos, 6=Gastos).
+    // Antes "Gastos" buscaba 5.x-no-5.1, pero en el Plan de Cuentas real los Gastos
+    // usan prefijo 6.x (confirmado con el PDF de referencia) — por eso no aparecían.
+    const seccionDe = (cod) => (cod.split('.')[0]||'');
+    const ingresos = cuentas.filter(c=>seccionDe(c.codigo)==='4').map(c=>({...c,saldo:c.haberBs-c.debeBs,saldoUSD:c.haberUSD-c.debeUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01);
+    const costos = cuentas.filter(c=>seccionDe(c.codigo)==='5').map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01);
+    const gastos = cuentas.filter(c=>seccionDe(c.codigo)==='6').map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01);
     const totalIngresos = ingresos.reduce((s,c)=>s+c.saldo,0);
     const totalIngresosUSD = ingresos.reduce((s,c)=>s+c.saldoUSD,0);
     const totalCostos = costos.reduce((s,c)=>s+c.saldo,0);
@@ -41639,13 +41645,40 @@ ${resumenHtml}
         debeBs:parseNum(l.debeBs||0), haberBs:parseNum(l.haberBs||0), debeUSD:parseNum(l.debeUSD||0), haberUSD:parseNum(l.haberUSD||0),
       }))
     );
+    // Árbol Grupo → Subgrupo → Cuentas, usando los campos "grupo"/"subGrupo" que YA
+    // existen en Plan de Cuentas (los mismos que usa el reporte de Impuestos). Se
+    // ordena cada rama por el código más bajo que contiene, para respetar el orden
+    // numérico real del plan de cuentas.
+    const construirArbol = (cuentasArr) => {
+      const porGrupo = {};
+      cuentasArr.forEach(c=>{
+        const pdc = pdcMap[c.codigo];
+        const g = (pdc && pdc.grupo) || '(Sin grupo)';
+        const sg = (pdc && (pdc.subGrupo || pdc.grupo)) || '(Sin subgrupo)';
+        if(!porGrupo[g]) porGrupo[g] = {nombre:g, subgrupos:{}};
+        if(!porGrupo[g].subgrupos[sg]) porGrupo[g].subgrupos[sg] = {nombre:sg, cuentas:[]};
+        porGrupo[g].subgrupos[sg].cuentas.push(c);
+      });
+      return Object.values(porGrupo).map(g=>{
+        const subgrupos = Object.values(g.subgrupos).map(sg=>{
+          const cs = sg.cuentas.sort((a,b)=>a.codigo.localeCompare(b.codigo));
+          return {nombre:sg.nombre, cuentas:cs, minCod:cs[0].codigo,
+            totalBs:cs.reduce((s,c)=>s+c.saldo,0), totalUSD:cs.reduce((s,c)=>s+c.saldoUSD,0)};
+        }).sort((a,b)=>a.minCod.localeCompare(b.minCod));
+        return {nombre:g.nombre, subgrupos, minCod:subgrupos[0].minCod,
+          totalBs:subgrupos.reduce((s,sg)=>s+sg.totalBs,0), totalUSD:subgrupos.reduce((s,sg)=>s+sg.totalUSD,0)};
+      }).sort((a,b)=>a.minCod.localeCompare(b.minCod));
+    };
+    const arbolIngresos = construirArbol(ingresos);
+    const arbolCostos = construirArbol(costos);
+    const arbolGastos = construirArbol(gastos);
     const FilaER = ({c, esIngreso}) => {
       const exp = !!erExpandido[c.codigo];
       const detalle = exp ? detalleCuenta(c.codigo) : [];
       return (
         <>
           <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer select-none" onClick={()=>toggleExp(c.codigo)}>
-            <td className="px-3 py-1.5 pl-8 font-mono text-[9px] text-gray-400">
+            <td className="px-3 py-1.5 pl-12 font-mono text-[9px] text-gray-400">
               <span className="inline-flex items-center gap-1"><ChevronRight size={11} className={`text-gray-400 transition-transform ${exp?'rotate-90':''}`}/>{c.codigo}</span>
             </td>
             <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
@@ -41653,13 +41686,13 @@ ${resumenHtml}
             {verUSD && <td className="px-3 py-1.5 text-right font-mono text-blue-700">${contFmt(c.saldoUSD)}</td>}
           </tr>
           {exp && (detalle.length===0 ? (
-            <tr className="bg-gray-50/60"><td colSpan={nCols} className="px-3 py-2 pl-14 text-[9px] text-gray-400 italic">Sin líneas de detalle para esta cuenta en el rango.</td></tr>
+            <tr className="bg-gray-50/60"><td colSpan={nCols} className="px-3 py-2 pl-20 text-[9px] text-gray-400 italic">Sin líneas de detalle para esta cuenta en el rango.</td></tr>
           ) : detalle.map((d,i)=>{
             const mBs = esIngreso ? d.haberBs-d.debeBs : d.debeBs-d.haberBs;
             const mUSD = esIngreso ? d.haberUSD-d.debeUSD : d.debeUSD-d.haberUSD;
             return (
               <tr key={i} className="bg-gray-50/60 border-b border-gray-100">
-                <td className="px-3 py-1 pl-14 text-[9px] text-gray-400 whitespace-nowrap">{d.fecha||'—'}</td>
+                <td className="px-3 py-1 pl-20 text-[9px] text-gray-400 whitespace-nowrap">{d.fecha||'—'}</td>
                 <td className="px-3 py-1 text-[9px] text-gray-500">
                   <span className="text-gray-400">{LABEL_MODULO_ER[d.modulo]||d.modulo||'—'}</span>{' · '}{d.concepto}{d.referencia?' · '+d.referencia:''}
                 </td>
@@ -41671,6 +41704,38 @@ ${resumenHtml}
         </>
       );
     };
+    const BloqueSeccion = ({titulo, arbol, total, totalUSDv, esIngreso, vacioMsg, colorTotal}) => (
+      <>
+        <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">{titulo}</td></tr>
+        {arbol.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">{vacioMsg}</td></tr>}
+        {arbol.map(g=>(
+          <React.Fragment key={g.nombre}>
+            <tr className="bg-gray-100 border-b border-gray-200">
+              <td colSpan={2} className="px-3 py-1.5 pl-4 font-black text-gray-500 text-[9px] uppercase tracking-wide">{g.nombre}</td>
+              {verBs && <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-500 text-[10px]">{contFmt(g.totalBs)}</td>}
+              {verUSD && <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-500 text-[10px]">${contFmt(g.totalUSD)}</td>}
+            </tr>
+            {g.subgrupos.map(sg=>(
+              <React.Fragment key={sg.nombre}>
+                {sg.nombre!==g.nombre && (
+                  <tr className="bg-gray-50/80 border-b border-gray-100">
+                    <td colSpan={2} className="px-3 py-1 pl-8 font-bold text-gray-400 text-[9px] uppercase">{sg.nombre}</td>
+                    {verBs && <td className="px-3 py-1 text-right font-mono text-gray-400 text-[9px]">{contFmt(sg.totalBs)}</td>}
+                    {verUSD && <td className="px-3 py-1 text-right font-mono text-gray-400 text-[9px]">${contFmt(sg.totalUSD)}</td>}
+                  </tr>
+                )}
+                {sg.cuentas.map(c=><FilaER key={c.codigo} c={c} esIngreso={esIngreso}/>)}
+              </React.Fragment>
+            ))}
+          </React.Fragment>
+        ))}
+        <tr className={colorTotal==='emerald'?'bg-emerald-50 border-y-2 border-emerald-200':'bg-red-50 border-y-2 border-red-200'}>
+          <td colSpan={2} className={`px-3 py-2 font-black text-[10px] uppercase ${colorTotal==='emerald'?'text-emerald-700':'text-red-700'}`}>{'Total '+titulo}</td>
+          {verBs && <td className={`px-3 py-2 text-right font-mono font-black ${colorTotal==='emerald'?'text-emerald-700':'text-red-700'}`}>{contFmt(total)}</td>}
+          {verUSD && <td className={`px-3 py-2 text-right font-mono font-black ${colorTotal==='emerald'?'text-emerald-700':'text-red-700'}`}>${contFmt(totalUSDv)}</td>}
+        </tr>
+      </>
+    );
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -41695,23 +41760,8 @@ ${resumenHtml}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-4xl">
               <table className="w-full text-xs">
                 <tbody>
-                  <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Ingresos</td></tr>
-                  {ingresos.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin ingresos en el rango elegido.</td></tr>}
-                  {ingresos.map(c=><FilaER key={c.codigo} c={c} esIngreso={true}/>)}
-                  <tr className="bg-emerald-50 border-y-2 border-emerald-200">
-                    <td colSpan={2} className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Ingresos</td>
-                    {verBs && <td className="px-3 py-2 text-right font-mono font-black text-emerald-700">{contFmt(totalIngresos)}</td>}
-                    {verUSD && <td className="px-3 py-2 text-right font-mono font-black text-emerald-700">${contFmt(totalIngresosUSD)}</td>}
-                  </tr>
-
-                  <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Costo de Ventas</td></tr>
-                  {costos.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin costos en el rango elegido.</td></tr>}
-                  {costos.map(c=><FilaER key={c.codigo} c={c} esIngreso={false}/>)}
-                  <tr className="bg-red-50 border-y-2 border-red-200">
-                    <td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Costo de Ventas</td>
-                    {verBs && <td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalCostos)}</td>}
-                    {verUSD && <td className="px-3 py-2 text-right font-mono font-black text-red-700">${contFmt(totalCostosUSD)}</td>}
-                  </tr>
+                  <BloqueSeccion titulo="Ingresos" arbol={arbolIngresos} total={totalIngresos} totalUSDv={totalIngresosUSD} esIngreso={true} vacioMsg="Sin ingresos en el rango elegido." colorTotal="emerald"/>
+                  <BloqueSeccion titulo="Costo de Ventas" arbol={arbolCostos} total={totalCostos} totalUSDv={totalCostosUSD} esIngreso={false} vacioMsg="Sin costos en el rango elegido." colorTotal="red"/>
 
                   <tr className="bg-gray-900">
                     <td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td>
@@ -41719,14 +41769,7 @@ ${resumenHtml}
                     {verUSD && <td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-400':'text-red-400'}`}>${contFmt(utilidadBrutaUSD)}</td>}
                   </tr>
 
-                  <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Gastos Operativos</td></tr>
-                  {gastos.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin gastos en el rango elegido.</td></tr>}
-                  {gastos.map(c=><FilaER key={c.codigo} c={c} esIngreso={false}/>)}
-                  <tr className="bg-red-50 border-y-2 border-red-200">
-                    <td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Gastos Operativos</td>
-                    {verBs && <td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalGastos)}</td>}
-                    {verUSD && <td className="px-3 py-2 text-right font-mono font-black text-red-700">${contFmt(totalGastosUSD)}</td>}
-                  </tr>
+                  <BloqueSeccion titulo="Gastos Operativos" arbol={arbolGastos} total={totalGastos} totalUSDv={totalGastosUSD} esIngreso={false} vacioMsg="Sin gastos en el rango elegido." colorTotal="red"/>
 
                   <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}>
                     <td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td>
@@ -41763,8 +41806,8 @@ ${resumenHtml}
     const pasivos = cuentas.filter(c=>c.codigo.startsWith('2')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
     const patrimonio = cuentas.filter(c=>c.codigo.startsWith('3')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
     const ingresosTot = cuentas.filter(c=>c.codigo.startsWith('4')).reduce((s,c)=>s+(c.haberBs-c.debeBs),0);
-    const costosTot = cuentas.filter(c=>c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const gastosTot = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+    const costosTot = cuentas.filter(c=>c.codigo.startsWith('5')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+    const gastosTot = cuentas.filter(c=>c.codigo.startsWith('6')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
     const utilidadEjercicio = ingresosTot - costosTot - gastosTot;
     const totalActivo = activos.reduce((s,c)=>s+c.saldo,0);
     const totalPasivo = pasivos.reduce((s,c)=>s+c.saldo,0);
