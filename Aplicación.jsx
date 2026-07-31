@@ -13068,7 +13068,7 @@ function App() {
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
-  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:settings?.tasaBCV?String(settings.tasaBCV):'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena!=='AMBAS'?libroQuincena:'1'});
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:settings?.tasaBCV?String(settings.tasaBCV):'',tipoAnulacion:'NC',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena!=='AMBAS'?libroQuincena:'1'});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
   const [editingAnulInvId, setEditingAnulInvId] = useState(null);
   const [editingAnulNcId, setEditingAnulNcId] = useState(null);
@@ -32059,16 +32059,23 @@ ${resumenHtml}
                         <p className="text-[9px] text-gray-400 mt-1">Si se dañó el formato fiscal (no hubo venta), deja Base e IVA en 0 y el Cliente en blanco.</p>
                       </div>
                       <div className="bg-gray-50 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Nota de crédito de anulación (Bs.)</p>
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[10px] font-black text-orange-600 uppercase">Nota de anulación (Bs.)</p>
+                          <div className="flex gap-1 bg-white border-2 border-gray-200 rounded-lg p-1">
+                            {[['NC','Nota de Crédito'],['ND','Nota de Débito']].map(([val,label])=>(
+                              <button key={val} type="button" onClick={()=>setAnulFiscalForm(f=>({...f,tipoAnulacion:val}))} className={`px-3 py-1.5 rounded-md text-[9px] font-black uppercase transition-colors ${anulFiscalForm.tipoAnulacion===val?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-600'}`}>{label}</button>
+                            ))}
+                          </div>
+                        </div>
                         <div className="grid grid-cols-2 gap-3">
-                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control NC</label>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control {anulFiscalForm.tipoAnulacion}</label>
                             <input value={anulFiscalForm.ncNroControl} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroControl:e.target.value}))} placeholder="00-000045" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Crédito</label>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° {anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'}</label>
                             <input value={anulFiscalForm.ncNroCredito} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroCredito:e.target.value}))} placeholder="0000028" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         </div>
-                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha NC</label>
+                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha {anulFiscalForm.tipoAnulacion}</label>
                           <input type="date" value={anulFiscalForm.ncFecha} onChange={e=>setAnulFiscalForm(f=>({...f,ncFecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        <p className="text-[9px] text-gray-400 mt-2">El monto de la NC toma el total de la factura automáticamente.</p>
+                        <p className="text-[9px] text-gray-400 mt-2">{anulFiscalForm.tipoAnulacion==='ND'?'Usa Nota de Débito cuando lo que se dañó fue el formato de una ND o similar (no una factura) — deja Base e IVA en 0 igual que arriba.':'El monto de la NC toma el total de la factura automáticamente.'}</p>
                       </div>
                     </div>
                     <div className="px-5 py-4 border-t flex gap-2">
@@ -32099,7 +32106,7 @@ ${resumenHtml}
                           user:appUser?.name||'Sistema'
                         });
                         batch.set(getDocRef('notasVentaCreditoDebito',ncId),{
-                          id:ncId,tipo:'NC',naturaleza:'FISCAL',
+                          id:ncId,tipo:anulFiscalForm.tipoAnulacion||'NC',naturaleza:'FISCAL',
                           nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
                           fecha:anulFiscalForm.ncFecha,facturaId:invId,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
@@ -32145,7 +32152,7 @@ ${resumenHtml}
                                 <div className="flex gap-1.5 shrink-0">
                                   <button onClick={()=>setAnulVerId(expandido?null:inv.id)} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-800 hover:text-white"><Eye size={13}/></button>
                                   <button onClick={()=>{
-                                    setAnulFiscalForm({fecha:inv.fechaFactura||inv.fecha||getTodayDate(),nroFiscal:inv.nroFiscal||'',nroControl:inv.nroControl||'',clientRif:inv.clientRif||'',clientName:inv.clientName||'',baseImponible:String(inv.baseGravableBs||''),iva:String(inv.ivaBs||''),tasa:String(inv.tasa||''),ncNroControl:nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),periodoAnio:inv.periodoAnio||libroAnio,periodoMes:inv.periodoMes||libroMes,quincena:inv.quincena||'1',_timestamp:inv.timestamp,_createdAt:inv.createdAt,_ncTimestamp:nc?.timestamp,_ncCreatedAt:nc?.createdAt});
+                                    setAnulFiscalForm({fecha:inv.fechaFactura||inv.fecha||getTodayDate(),nroFiscal:inv.nroFiscal||'',nroControl:inv.nroControl||'',clientRif:inv.clientRif||'',clientName:inv.clientName||'',baseImponible:String(inv.baseGravableBs||''),iva:String(inv.ivaBs||''),tasa:String(inv.tasa||''),tipoAnulacion:nc?.tipo||'NC',ncNroControl:nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),periodoAnio:inv.periodoAnio||libroAnio,periodoMes:inv.periodoMes||libroMes,quincena:inv.quincena||'1',_timestamp:inv.timestamp,_createdAt:inv.createdAt,_ncTimestamp:nc?.timestamp,_ncCreatedAt:nc?.createdAt});
                                     setEditingAnulInvId(inv.id); setEditingAnulNcId(nc?.id||null);
                                     setShowAnulHistorial(false); setShowAnulFiscalModal(true);
                                   }} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
@@ -32175,9 +32182,9 @@ ${resumenHtml}
                                   <div>Base / IVA / Total Bs.: <span className="font-bold">{formatNum(inv.baseGravableBs||0)} / {formatNum(inv.ivaBs||0)} / {formatNum(inv.totalBs||0)}</span></div>
                                   <div>Total USD: <span className="font-bold">${formatNum(inv.total||0)}</span></div>
                                   <div>Período: <span className="font-bold">{inv.periodoMes||'—'}/{inv.periodoAnio||'—'} · Q{inv.quincena||'—'}</span></div>
-                                  <div>NC: <span className="font-bold">{nc?nc.nroDocumento+' / Crédito '+nc.nroCredito:'— no encontrada —'}</span></div>
+                                  <div>{nc?.tipo||'NC'}: <span className="font-bold">{nc?nc.nroDocumento+' / '+(nc.tipo==='ND'?'Débito ':'Crédito ')+nc.nroCredito:'— no encontrada —'}</span></div>
                                   <div>Registrado por: <span className="font-bold">{inv.user||'—'}</span></div>
-                                  <div>Fecha NC: <span className="font-bold">{nc?.fecha||'—'}</span></div>
+                                  <div>Fecha {nc?.tipo||'NC'}: <span className="font-bold">{nc?.fecha||'—'}</span></div>
                                 </div>
                               )}
                             </div>
