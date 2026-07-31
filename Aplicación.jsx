@@ -13063,7 +13063,7 @@ function App() {
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
-  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:settings?.tasaBCV?String(settings.tasaBCV):'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
   const [anulCliQuery, setAnulCliQuery] = useState('');
   const [retBusqFact, setRetBusqFact] = useState('');
@@ -31393,11 +31393,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ivaAmt=parseNum(inv.iva||0)||(inv.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0);
             const total=parseNum(inv.total||0)||base+ivaAmt;
             const ret=retPeriodo.find(r=>r.facturaId===inv.id);
+            const ncLink=inv.esAnulacionFiscal?(notasVentaCD||[]).find(n=>n.facturaId===inv.id):null;
             rows.push({seq:seq++,fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
               totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, alicuota:inv.aplicaIva==='SI'?'16%':'0%',
               ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
-              nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
+              nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||'',
+              esAnulacionFiscal:!!inv.esAnulacionFiscal,anulInvId:inv.id,anulNcId:ncLink?.id||null});
           });
           retPeriodo.forEach(ret=>{
             const isManual=(ret.facturaId||'').startsWith('MANUAL-');
@@ -31484,7 +31486,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ivaRetDb: 0,                                 // ← vacío: solo para retenciones
               nroFactAfecta: '',                           // ← vacío: solo para retenciones
               nroComprobante: '',                          // ← vacío: solo para retenciones
-              invId: n.id
+              invId: n.id,
+              esAnulacionFiscal: !!n.esAnulacionFiscal, anulInvId: n.facturaId||null, anulNcId: n.id
             });
           });
 
@@ -31899,6 +31902,10 @@ ${resumenHtml}
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                             <input type="date" value={anulFiscalForm.fecha} onChange={e=>setAnulFiscalForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         </div>
+                        <div className="mt-3"><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Tasa de Cambio (Bs./USD)</label>
+                          <input type="number" value={anulFiscalForm.tasa} onChange={e=>setAnulFiscalForm(f=>({...f,tasa:e.target.value}))} placeholder={settings?.tasaBCV?`Ej. ${settings.tasaBCV}`:'Tasa del día de la factura'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                          <p className="text-[9px] text-gray-400 mt-1">Usa la tasa vigente el día de la factura anulada, no necesariamente la de hoy — de esto depende el saldo en USD de la NC.</p>
+                        </div>
                         <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (RIF)</label>
                           <input value={anulFiscalForm.clientRif} onChange={e=>setAnulFiscalForm(f=>({...f,clientRif:e.target.value}))} placeholder="J-12345678-9" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         <div className="mt-3 relative"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (Razón Social)</label>
@@ -31945,9 +31952,11 @@ ${resumenHtml}
                       <button onClick={async()=>{
                         if(!anulFiscalForm.nroControl||!anulFiscalForm.nroFiscal) return setDialog({title:'Aviso',text:'N° Control y N° Fiscal son obligatorios.',type:'alert'});
                         if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:'N° Control y N° de Crédito de la NC son obligatorios.',type:'alert'});
-                        const base=parseNum(anulFiscalForm.baseImponible||0);
-                        const iva=parseNum(anulFiscalForm.iva||0);
-                        const total=base+iva;
+                        const tasa=parseNum(anulFiscalForm.tasa||0);
+                        if(!tasa||tasa<=1) return setDialog({title:'Aviso',text:'Ingresa la tasa de cambio (Bs./USD) vigente el día de la factura anulada. Sin esto, el saldo en USD de la NC queda mal calculado.',type:'alert'});
+                        const baseBs=parseNum(anulFiscalForm.baseImponible||0);
+                        const ivaBs=parseNum(anulFiscalForm.iva||0);
+                        const totalBs=baseBs+ivaBs;
                         const invId=`ANUL-${Date.now().toString(36)}`;
                         const ncId=`ANULNC-${Date.now().toString(36)}`;
                         const batch=writeBatch(db);
@@ -31955,7 +31964,8 @@ ${resumenHtml}
                           id:invId,fecha:anulFiscalForm.fecha,fechaFactura:anulFiscalForm.fecha,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
                           nroFiscal:anulFiscalForm.nroFiscal,nroControl:anulFiscalForm.nroControl,
-                          tasa:1,montoBase:base,iva,total,totalBs:total,baseGravableBs:base,ivaBs:iva,
+                          tasa,montoBase:parseFloat((baseBs/tasa).toFixed(2)),iva:parseFloat((ivaBs/tasa).toFixed(2)),total:parseFloat((totalBs/tasa).toFixed(2)),
+                          totalBs,baseGravableBs:baseBs,ivaBs,
                           aplicaIva:'SI',esAnulacionFiscal:true,
                           timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
@@ -31964,7 +31974,7 @@ ${resumenHtml}
                           nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
                           fecha:anulFiscalForm.ncFecha,facturaId:invId,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
-                          monto:base,ivaBs:iva,totalBs:total,tasaFactura:1,
+                          monto:baseBs,ivaBs,totalBs,tasaFactura:tasa,
                           esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',
                           timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
@@ -31983,7 +31993,7 @@ ${resumenHtml}
                   <table className="w-full text-[9px] whitespace-nowrap border-collapse">
                     <thead>
                       <tr className="bg-gray-800 text-white text-center">
-                        {['Nº','Fecha','N° RIF','Razón Social','Tipo','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afect.','Total Ventas Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. Afecta','N° Comprobante'].map((h,i)=>(
+                        {['Nº','Fecha','N° RIF','Razón Social','Tipo','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afect.','Total Ventas Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. Afecta','N° Comprobante',''].map((h,i)=>(
                           <th key={i} className="py-2 px-2 border-r border-white/20 font-black">{h}</th>
                         ))}
                       </tr>
@@ -32019,6 +32029,19 @@ ${resumenHtml}
                             <td className="py-1.5 px-2 text-right font-bold text-red-600">{r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.nroFactAfecta||'—'}</td>
                             <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
+                            <td className="py-1.5 px-2 text-center">
+                              {r.esAnulacionFiscal && (
+                                <button title="Eliminar esta Anulación Fiscal (factura + NC)" onClick={()=>setDialog({title:'Eliminar Anulación Fiscal',text:`¿Eliminar este registro de anulación (Factura ${r.nroFactura||r.nroControl||''} + NC ${r.nroCredito||''})? Se borra de Libro de Ventas. No se puede deshacer.`,type:'confirm',onConfirm:async()=>{
+                                  try{
+                                    const batch=writeBatch(db);
+                                    if(r.anulInvId) batch.delete(getDocRef('maquilaInvoices',r.anulInvId));
+                                    if(r.anulNcId) batch.delete(getDocRef('notasVentaCreditoDebito',r.anulNcId));
+                                    await batch.commit();
+                                    setDialog({title:'Eliminado',text:'El registro de anulación fiscal fue eliminado del Libro de Ventas.',type:'alert'});
+                                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                }})} className="text-red-500 hover:text-red-700"><Trash2 size={12}/></button>
+                              )}
+                            </td>
                           </tr>
                         ));
                       })()}
@@ -32033,7 +32056,7 @@ ${resumenHtml}
                         <td></td>
                         <td className="py-2 px-2 text-right">{fmtVen(totIva)}</td>
                         <td className="py-2 px-2 text-right text-red-300">{fmtVen(totRetDb)}</td>
-                        <td colSpan={2}></td>
+                        <td colSpan={3}></td>
                       </tr>
                     </tfoot>
                   </table>
@@ -40401,11 +40424,19 @@ ${resumenHtml}
     try {
       const ts = getTodayDate();
       const backup = {
-        _meta: { fecha: ts, timestamp: Date.now(), version: '1.0', empresa: 'SERVICIOS JIRET G&B, C.A.' },
+        _meta: { fecha: ts, timestamp: Date.now(), version: '1.1', empresa: 'SERVICIOS JIRET G&B, C.A.' },
         inventory, inventoryMovements: invMovements, clientes: clients, requirements,
         maquilaInvoices: invoices, inventoryRequisitions: invRequisitions,
         operatingCosts: opCosts, purchaseOrders, wipInventory, finishedGoodsInventory,
-        planDeCuentas, asientosContables,
+        planDeCuentas, asientosContables, formulas,
+        // ── Agregado: colecciones de Contabilidad / Ventas / Procura / Banco-Caja / Auditoría ──
+        cotizaciones, actasReclamo, cobrosCxc, notasEntrega, tomasFisicas, bobinaProductions, consignaciones,
+        notasVentaCreditoDebito: notasVentaCD, retencionesClientes: retenciones, notifications,
+        cont_asientos: asientosApp, indices_inflacion: indicesInflacionApp, comprobantes_ajustes: ajustesApp,
+        cxp_terceros_relacionados: tercerosRelApp, cxp_pagos_relacionados: pagosRelApp,
+        procura_facturas_compra: facturasCompraApp, procura_proveedores: proveedoresApp, procura_servicios: serviciosApp,
+        banco_cuentas: cuentasBanco, caja_cuentas: cajasCuentas, banco_movimientos: bancoMovsFin, caja_movimientos: movCajaApp,
+        auditoria_eventos: auditoriaEventos,
       };
       // Descargar JSON de datos
       const jsonBlob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -40447,6 +40478,19 @@ ${resumenHtml}
                 ['wipInventory', data.wipInventory], ['finishedGoodsInventory', data.finishedGoodsInventory],
                 ['planDeCuentas', data.planDeCuentas], ['asientosContables', data.asientosContables],
                 ['formulas', data.formulas],
+                ['cotizaciones', data.cotizaciones], ['actasReclamo', data.actasReclamo], ['cobros_cxc', data.cobrosCxc],
+                ['notasEntrega', data.notasEntrega], ['tomasFisicas', data.tomasFisicas],
+                ['bobinaProductions', data.bobinaProductions], ['consignaciones', data.consignaciones],
+                ['notasVentaCreditoDebito', data.notasVentaCreditoDebito], ['retencionesClientes', data.retencionesClientes],
+                ['notifications', data.notifications],
+                ['cont_asientos', data.cont_asientos], ['indices_inflacion', data.indices_inflacion],
+                ['comprobantes_ajustes', data.comprobantes_ajustes],
+                ['cxp_terceros_relacionados', data.cxp_terceros_relacionados], ['cxp_pagos_relacionados', data.cxp_pagos_relacionados],
+                ['procura_facturas_compra', data.procura_facturas_compra], ['procura_proveedores', data.procura_proveedores],
+                ['procura_servicios', data.procura_servicios],
+                ['banco_cuentas', data.banco_cuentas], ['caja_cuentas', data.caja_cuentas],
+                ['banco_movimientos', data.banco_movimientos], ['caja_movimientos', data.caja_movimientos],
+                ['auditoria_eventos', data.auditoria_eventos],
               ];
               let total = 0;
               for (const [col, items] of collections) {
@@ -40481,7 +40525,13 @@ ${resumenHtml}
     'inventory', 'inventoryMovements', 'clientes', 'requirements',
     'maquilaInvoices', 'inventoryRequisitions', 'operatingCosts',
     'purchaseOrders', 'wipInventory', 'finishedGoodsInventory',
-    'planDeCuentas', 'asientosContables',
+    'planDeCuentas', 'asientosContables', 'formulas',
+    'cotizaciones', 'actasReclamo', 'cobros_cxc', 'notasEntrega', 'tomasFisicas',
+    'bobinaProductions', 'consignaciones', 'notasVentaCreditoDebito', 'retencionesClientes',
+    'cont_asientos', 'indices_inflacion', 'comprobantes_ajustes',
+    'cxp_terceros_relacionados', 'cxp_pagos_relacionados',
+    'procura_facturas_compra', 'procura_proveedores', 'procura_servicios',
+    'banco_cuentas', 'caja_cuentas', 'banco_movimientos', 'caja_movimientos',
   ];
 
   const handleResetSystem = () => {
@@ -41101,7 +41151,7 @@ ${resumenHtml}
     const allLogs = (() => {
       const logs = [];
       (invoices||[]).forEach(inv=>{
-        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.vendedor||inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
+        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'}${inv.vendedor?' — Vendedor: '+inv.vendedor:''} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
       });
       (invMovements||[]).forEach(m=>{
         const t={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'}[m.type]||'EDICIÓN';
@@ -43419,7 +43469,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
               {/* Contenido del respaldo */}
               <div className="text-[9px] font-bold text-green-600 bg-green-100 rounded-xl p-3 space-y-0.5">
-                {['Inventario y Movimientos (Kardex)', 'Clientes, OPs y Facturas', 'Asientos Contables y Plan de Cuentas', 'Costos Operativos y Órdenes de Compra', 'Productos Terminados', 'Requisiciones de Planta'].map(item => (
+                {['Inventario y Movimientos (Kardex)', 'Clientes, Cotizaciones y Facturas', 'Notas de Entrega y NC/ND', 'Asientos Contables, Ajustes y Plan de Cuentas', 'Retenciones de Clientes', 'Costos Operativos y Órdenes de Compra', 'Proveedores y Facturas de Compra (Procura)', 'Movimientos de Banco y Caja', 'Productos Terminados y Bobinas', 'Tomas Físicas y Consignaciones', 'Requisiciones de Planta', 'Auditoría del Sistema'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><CheckCircle size={10} className="text-green-500 shrink-0"/> {item}</div>
                 ))}
               </div>
@@ -43524,7 +43574,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                 Elimina <span className="font-black">permanentemente</span> todos los datos operativos y deja el sistema limpio. <span className="font-black underline">Los usuarios y la configuración se conservan.</span>
               </p>
               <div className="text-[9px] font-bold text-red-600 bg-red-100 rounded-xl p-3 mb-4 space-y-0.5">
-                {['Inventario y Movimientos', 'Clientes, OPs y Facturas', 'Asientos Contables', 'Costos Operativos', 'Órdenes de Compra', 'Productos Terminados'].map(item => (
+                {['Inventario y Movimientos', 'Clientes, Cotizaciones y Facturas', 'Notas de Entrega y NC/ND', 'Asientos Contables y Ajustes', 'Retenciones de Clientes', 'Costos Operativos', 'Órdenes de Compra', 'Proveedores y Facturas de Compra', 'Movimientos de Banco y Caja', 'Productos Terminados y Bobinas', 'Tomas Físicas y Consignaciones'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><Trash2 size={10} className="text-red-500 shrink-0"/> Se borrará: {item}</div>
                 ))}
               </div>
