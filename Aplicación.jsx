@@ -31584,7 +31584,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               nroControl: n.nroControl||'',                // N° Control del doc NC/ND
               nroDebito:  n.tipo==='ND' ? n.nroDocumento : '',   // N° Débito solo si ND
               nroCredito: n.tipo==='NC' ? n.nroDocumento : '',   // N° Crédito solo si NC
-              facAfectada: padNum(inv.nroFiscal,8),        // Factura afectada
+              facAfectada: inv.nroFiscal?padNum(inv.nroFiscal,8):'—', // Factura afectada (— si es NC/ND suelta)
               totalVentasBs: totalBsNC,
               baseImponibleBs: baseConSigno,               // Base en Bs con signo
               alicuota: '16%',
@@ -32000,7 +32000,8 @@ ${resumenHtml}
                         <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta reporte financiero</span>
                       </div>
                       <div className="bg-gray-50 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.)</p>
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.) — opcional</p>
+                        <p className="text-[9px] text-gray-400 -mt-2 mb-3">Deja N° Control y N° Fiscal en blanco si es una NC/ND suelta, sin factura asociada (solo para no perder el correlativo).</p>
                         <div className="grid grid-cols-3 gap-3">
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control</label>
                             <input value={anulFiscalForm.nroControl} onChange={e=>setAnulFiscalForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-001234" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
@@ -32081,8 +32082,8 @@ ${resumenHtml}
                     <div className="px-5 py-4 border-t flex gap-2">
                       <button onClick={()=>setShowAnulFiscalModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-gray-500 bg-gray-100 hover:bg-gray-200">Cancelar</button>
                       <button onClick={async()=>{
-                        if(!anulFiscalForm.nroControl||!anulFiscalForm.nroFiscal) return setDialog({title:'Aviso',text:'N° Control y N° Fiscal son obligatorios.',type:'alert'});
-                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:'N° Control y N° de Crédito de la NC son obligatorios.',type:'alert'});
+                        if(anulFiscalForm.nroFiscal&&!anulFiscalForm.nroControl) return setDialog({title:'Aviso',text:'Si pones N° Fiscal, pon también su N° Control.',type:'alert'});
+                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:`N° Control y N° de ${anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'} de la ${anulFiscalForm.tipoAnulacion} son obligatorios (esto es lo que mantiene el correlativo).`,type:'alert'});
                         const tasa=parseNum(anulFiscalForm.tasa||0);
                         const baseBsChk=parseNum(anulFiscalForm.baseImponible||0);
                         const ivaBsChk=parseNum(anulFiscalForm.iva||0);
@@ -32119,7 +32120,7 @@ ${resumenHtml}
                         await logAuditoria(appUser,'Ventas',esEdicion?'EDICIÓN':'CREACIÓN',`${esEdicion?'Anulación Fiscal editada':'Anulación Fiscal registrada'}: Factura ${anulFiscalForm.nroFiscal} + NC ${anulFiscalForm.ncNroCredito}`);
                         setShowAnulFiscalModal(false);
                         setEditingAnulInvId(null); setEditingAnulNcId(null);
-                        setDialog({title:esEdicion?'Actualizado':'Registrado',text:esEdicion?'La Anulación Fiscal fue actualizada.':'La factura y su NC de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
+                        setDialog({title:esEdicion?'Actualizado':'Registrado',text:esEdicion?'La Anulación Fiscal fue actualizada.':`Quedó registrada en el Libro de Ventas${anulFiscalForm.nroFiscal?' junto con la factura anulada':''}.`,type:'alert'});
                       }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">{editingAnulInvId?'Guardar Cambios':'Registrar solo en Libro de Ventas'}</button>
                     </div>
                   </div>
