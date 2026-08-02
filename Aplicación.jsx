@@ -23782,6 +23782,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'reporte_ventas' && (() => {
           const filtInvs = (invoices||[]).filter(inv=>{
             if(!inv) return false;
+            if(inv.esAnulacionFiscal) return false;
+            if(!inv.nroFiscal&&!inv.nroControl) return false;
             const _fechaMostrada=inv.fechaFactura||inv.fecha||'';
             if(pvFilter && pvFilter !== 'general') { if(!_fechaMostrada.startsWith(pvFilter)) return false; }
             // Respetar filtros activos de Facturación (año + mes)
@@ -23801,14 +23803,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
               })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
+              // Prorratear contra el monto REAL de la factura (inv.montoBase): así la suma de los
+              // ítems nunca puede ser distinta al total verdaderamente facturado, aunque el precio
+              // de catálogo guardado en cada ítem no coincida exactamente (descuentos, ajustes, etc.)
+              const _sumaCatalogoInv = items.reduce((s,it)=>{
+                const q=parseNum(it.cantidad||1);
+                const p=parseNum(it.precioUnit||0)>0?parseNum(it.precioUnit):(parseNum(inv.montoBase||0)/items.length/q);
+                return s+p*q;
+              },0);
+              const _montoRealInv = parseNum(inv.montoBase||0);
+              const _factorProrateoInv = (_sumaCatalogoInv>0 && _montoRealInv>0) ? (_montoRealInv/_sumaCatalogoInv) : 1;
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
                 // precio de venta: from saved precioUnit, or derive from invoice total / items
-                const precioVenta = parseNum(it.precioUnit||0) > 0
+                const precioVenta = (parseNum(it.precioUnit||0) > 0
                   ? parseNum(it.precioUnit)
                   : (inv.itemsFacturados||[]).length > 0
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
-                    : parseNum(inv.montoBase||0) / qty;
+                    : parseNum(inv.montoBase||0) / qty) * _factorProrateoInv;
                 const total = precioVenta * qty;
                 // ── CÓDIGO: usar exactamente el mismo código que aparece en Inventario de Productos Terminados ──
                 // Estrategia: construir el mismo mapa consolidado (cleanCode) que usa el módulo de inventario
