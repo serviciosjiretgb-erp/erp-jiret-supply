@@ -23934,6 +23934,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
+            if(nc.esAnulacionFiscal) return false;
             if(nc.naturaleza!=='FISCAL') return false;
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
             // Fecha efectiva para filtrar por período: la propia de la nota, o si no coincide con nada,
@@ -24158,6 +24159,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const facturasEnNEDash = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
           const nesMes = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ymD));
           const factsDirect = (invoices||[]).filter(inv => {
+            if(inv.esAnulacionFiscal) return false;
             if(!(inv.fecha||'').startsWith(ymD)) return false;
             if(inv.neOrigen) return false;
             const invId = inv.id||inv.documento||'';
@@ -24201,7 +24203,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           (notasEntrega||[]).forEach(ne=>{const v=(ne.vendedor||'—').toUpperCase();[ne.id,ne.documento,ne.facturaId].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
           (invoices||[]).forEach(inv=>{const v=(inv.vendedor||'—').toUpperCase();[inv.id,inv.documento,inv.nroFiscal].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
           let ajusteNCDash=0;
-          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).forEach(nc=>{
+          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)&&!nc.esAnulacionFiscal).forEach(nc=>{
             const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
             const signed=nc.tipo==='NC'?-baseUsd:baseUsd;
@@ -24773,7 +24775,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // NC del mes aplicadas a las NEs/facturas del vendedor — descuentan de la meta (base sin IVA)
           const _idsNEVend=new Set(nesMesCom.flatMap(ne=>[ne.id,ne.documento,ne.facturaId].filter(Boolean)));
           const _idsFactVend=new Set(factsDirCom.flatMap(inv=>[inv.id,inv.documento,inv.nroFiscal].filter(Boolean)));
-          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
+          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>!n.esAnulacionFiscal&&n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
               _idsNEVend.has(n.neId)||_idsNEVend.has(n.neOrigen)||_idsNEVend.has(n.facturaId)||
               _idsFactVend.has(n.facturaId)
             )).reduce((s,n)=>{
@@ -26084,7 +26086,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
           // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
-          (notasVentaCD||[]).forEach(nc=>{
+          (notasVentaCD||[]).filter(nc=>!nc.esAnulacionFiscal).forEach(nc=>{
             const fecha=nc.fecha||'';
             if(fecha<tvDesde||fecha>tvHasta) return;
             if(tvBuscarDoc && !(nc.nroDocumento||'').toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
@@ -27731,6 +27733,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Ajuste NC para el período filtrado
           const ajusteNCGraf = (notasVentaCD||[]).filter(nc=>{
+            if(nc.esAnulacionFiscal) return false;
             if(fVF.anio && !(nc.fecha||'').startsWith(fVF.anio)) return false;
             if(fVF.mes && (nc.fecha||'').substring(5,7) !== fVF.mes) return false;
             return true;
@@ -28876,6 +28879,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   // Pero mejor recalcular desde el total bruto:
                   const totalNE=parseNum(ne.total||ne.totalUSD||0);
                   const totalNCs=(notasVentaCD||[]).filter(n=>{
+                    if(n.esAnulacionFiscal) return false;
                     const ni=n.neId||'',no=n.neOrigen||'';
                     return ni===ne.id||no===ne.id||ni===(ne.documento||'')||no===(ne.documento||'');
                   }).reduce((s,n)=>s+parseNum(n.montoUSD||0),0);
@@ -29820,6 +29824,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           ]);
                                           // NCs/NDs para sub-filas — lookup completo igual que getNCUSDNEAtFecha
                                           const ncsNE=(notasVentaCD||[]).filter(n=>{
+                                            if(n.esAnulacionFiscal) return false;
                                             const ni=n.neId||'',no=n.neOrigen||'',nf=n.facturaId||'';
                                             return ((_neId2&&(ni===_neId2||no===_neId2))||(_neDoc2&&(ni===_neDoc2||no===_neDoc2))||(nf&&_lnkIds.has(nf)))
                                                    &&(!fechaRef||(n.fecha||'')<=fechaRef);
@@ -33371,7 +33376,7 @@ ${resumenHtml}
                             return s;
                           },0);
                         // Ajuste NC del período
-                        const ajusteNC = (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ym)).reduce((s,nc)=>{
+                        const ajusteNC = (notasVentaCD||[]).filter(nc=>!nc.esAnulacionFiscal&&(nc.fecha||'').startsWith(ym)).reduce((s,nc)=>{
                           const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
                           const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
                           return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
@@ -40172,6 +40177,7 @@ ${resumenHtml}
     // reporte es específicamente de Producción y no debe mezclarse con ajustes que no afectan
     // ninguna orden de producción (a menos que la propia NC/ND lo indique explícitamente).
     const notasPeriodo = (notasVentaCD||[]).filter(nc => {
+      if(nc.esAnulacionFiscal) return false;
       if(!(nc.fecha||'').startsWith(ym)) return false;
       const neNC = (notasEntrega||[]).find(e=>e.id===nc.neId);
       return !!(neNC && neNC.opRelacionada);
