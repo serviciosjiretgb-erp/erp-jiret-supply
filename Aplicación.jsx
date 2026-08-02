@@ -12737,7 +12737,7 @@ function App() {
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
+        out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -41729,8 +41729,20 @@ ${resumenHtml}
     const listaCuentas = Object.values(cuentasConMov)
       .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()))
       .sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    let saldoAcum = 0;
-    let saldoAcumUSD = 0;
+    let saldoInicialCuenta = 0;
+    let saldoInicialCuentaUSD = 0;
+    if (mayorCuentaSelApp && contFiltDesde) {
+      getAsientosReales().forEach(a=>{
+        if ((a.fecha||'') >= contFiltDesde) return;
+        (a.lineas||[]).forEach(l=>{
+          if (l.codigo !== mayorCuentaSelApp) return;
+          saldoInicialCuenta += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
+          saldoInicialCuentaUSD += parseNum(l.debeUSD||0) - parseNum(l.haberUSD||0);
+        });
+      });
+    }
+    let saldoAcum = saldoInicialCuenta;
+    let saldoAcumUSD = saldoInicialCuentaUSD;
     const movsCuenta = !mayorCuentaSelApp ? [] : asientosPeriodo.flatMap(a=>
       (a.lineas||[]).filter(l=>l.codigo===mayorCuentaSelApp).map(l=>{
         saldoAcum += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
@@ -41799,6 +41811,15 @@ ${resumenHtml}
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo $</th>
                     </tr></thead>
                     <tbody>
+                      {contFiltDesde && (
+                        <tr className="bg-purple-50 border-b-2 border-purple-200">
+                          <td colSpan={6} className="px-3 py-2 font-black text-purple-700 text-[10px] uppercase">Saldo Inicial (al {contFiltDesde})</td>
+                          <td className={`px-3 py-2 text-right font-mono font-black ${saldoInicialCuenta<0?'text-red-600':'text-purple-700'}`}>{contFmt(saldoInicialCuenta)}</td>
+                          <td className="px-3 py-2 border-l border-purple-100"></td>
+                          <td className="px-3 py-2"></td>
+                          <td className={`px-3 py-2 text-right font-mono font-black ${saldoInicialCuentaUSD<0?'text-red-600':'text-purple-700'}`}>{contFmt(saldoInicialCuentaUSD)}</td>
+                        </tr>
+                      )}
                       {movsCuenta.length===0 && <tr><td colSpan={10} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
                       {movsCuenta.map((m,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
