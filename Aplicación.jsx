@@ -12733,11 +12733,36 @@ function App() {
         out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
-    // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
-    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+    // 2) Ventas — SOLO lo realmente facturado fiscalmente (mismo criterio que Libro de Ventas:
+    // requiere N° Fiscal o N° Control). Antes no exigía esto, así que Estado de Resultados
+    // incluía ventas/NE que aún no tenían factura fiscal real, inflando los Ingresos.
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal&&(f.nroFiscal||f.nroControl)).forEach(f=>{
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
         out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
+      }catch(e){}
+    });
+    // 2b) NC/ND fiscales REALES (ajustan Ingresos) — excluye Anulación Fiscal (esa no es venta real).
+    // Antes faltaba por completo aquí, por eso Estado de Resultados no bajaba con las NC reales
+    // aunque Libro de Ventas y Reporte General sí las restan.
+    (notasVentaCD||[]).filter(nc=>nc.naturaleza==='FISCAL'&&!nc.esAnulacionFiscal&&(nc.tipo==='NC'||nc.tipo==='ND')).forEach(nc=>{
+      try{
+        const invLink=(invoices||[]).find(i=>i.id===nc.facturaId);
+        const tasaNc=parseNum(nc.tasaFactura||invLink?.tasa||0)||1;
+        const montoBs=parseNum(nc.monto||0);
+        const montoUSD=tasaNc>1?montoBs/tasaNc:0;
+        const rifNc=(nc.clientRif||invLink?.clientRif||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const clienteNc=(clients||[]).find(c=>rifNc&&(c.rif||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===rifNc);
+        const ctaCliente=clienteNc?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
+        const tieneOpNc=!!(invLink?.opAsignada||(invLink?.opsAsignadas&&invLink.opsAsignadas.length>0));
+        const cfgIngresoNc=tieneOpNc?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
+        const ctaIngresoNc=cfgIngresoNc||(tieneOpNc?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
+        const esNC=nc.tipo==='NC';
+        out.push({fecha:nc.fecha||'', comprobante:nc.nroDocumento||nc.id, modulo:'Ventas', concepto:`${esNC?'Nota de Crédito':'Nota de Débito'} ${nc.nroDocumento||''} — ${nc.clientName||clienteNc?.razonSocial||clienteNc?.nombre||'—'}`,
+          lineas: mapLineas([
+            {tipo:esNC?'DEBITO':'CREDITO',cuenta:ctaIngresoNc,montoUSD,montoBs},
+            {tipo:esNC?'CREDITO':'DEBITO',cuenta:ctaCliente,montoUSD,montoBs},
+          ])});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
