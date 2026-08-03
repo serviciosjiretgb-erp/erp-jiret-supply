@@ -14582,7 +14582,7 @@ function App() {
       });
     });
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial}table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:5px 8px;font-size:10px}th{background:#e8e8e8;font-weight:bold;text-align:center}</style></head><body>
-    <div style="text-align:center;margin-bottom:16px"><h2 style="margin:2px 0;font-size:14px">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px"><strong>RIF: J-412309374</strong> | Pto. La Cruz, Anzoategui</p><h3 style="margin:4px 0;font-size:13px">REPORTE DE TOMA FISICA DE INVENTARIO</h3><p style="font-size:11px"><strong>Fecha:</strong> ${toma.fecha} | <strong>Realizado por:</strong> ${toma.realizadaPor} | <strong>Ref.:</strong> TF-${String(toma.timestamp).slice(-6)}</p>${toma.observaciones?`<p style="font-size:10px;color:#555">Obs: ${toma.observaciones}</p>`:''}</div>
+    <div style="text-align:center;margin-bottom:16px"><h2 style="margin:2px 0;font-size:14px">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px"><strong>RIF: J-412309374</strong> | Maracaibo, Zulia</p><h3 style="margin:4px 0;font-size:13px">REPORTE DE TOMA FISICA DE INVENTARIO</h3><p style="font-size:11px"><strong>Fecha:</strong> ${toma.fecha} | <strong>Realizado por:</strong> ${toma.realizadaPor} | <strong>Ref.:</strong> TF-${String(toma.timestamp).slice(-6)}</p>${toma.observaciones?`<p style="font-size:10px;color:#555">Obs: ${toma.observaciones}</p>`:''}</div>
     <table><thead><tr><th style="width:12%">Codigo</th><th style="width:32%">Descripcion</th><th style="width:8%">Unidad</th><th style="width:13%">Stock Sistema</th><th style="width:13%">Conteo Fisico</th><th style="width:13%">Diferencia</th></tr></thead><tbody>${rows}</tbody></table>
     <div style="margin-top:40px;font-size:11px"><p><strong>Total items contados:</strong> ${toma.totalItems} | <strong>Ajustes aplicados:</strong> ${toma.totalAjustes}</p><br/><table style="width:100%;border:none"><tr><td style="border:none;width:50%"><strong>Realizado por:</strong> ${toma.realizadaPor}<br/><br/>Firma: _______________________<br/>Fecha: ${toma.fecha}</td><td style="border:none;width:50%"><strong>Supervisado por:</strong> _______________________<br/><br/>Firma: _______________________<br/>Fecha: _______________</td></tr></table></div></body></html>`;
     const blob = new Blob([html], {type:'application/vnd.ms-excel'});
@@ -47695,7 +47695,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                     <div className="flex items-start justify-between">
                       <div>
                         <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tight">SERVICIOS JIRET G&B, C.A.</h1>
-                        <p className="text-sm font-bold text-gray-600 mt-0.5">RIF: J-412309374 &nbsp;|&nbsp; Puerto La Cruz, Anzoátegui</p>
+                        <p className="text-sm font-bold text-gray-600 mt-0.5">RIF: J-412309374 &nbsp;|&nbsp; Maracaibo, Zulia</p>
                         <p className="text-xs text-gray-500">Fabricación y Maquila de Empaques Plásticos</p>
                       </div>
                       <div className="text-right">
