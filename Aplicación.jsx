@@ -10093,6 +10093,31 @@ ${resumenHtml}
 
 
 function ProcuraApp({fbUser,onBack,settings,appUser}) {
+  // ── Clave Admin + Papelera (mismo estándar que Ventas) — Procura no la tenía ──
+  const [systemUsersIA,setSystemUsersIA]=useState([]);
+  useEffect(()=>{ const u=onSnapshot(getColRef('users'), s=>setSystemUsersIA(s.docs.map(d=>({id:d.id,...d.data()})))); return ()=>u(); },[]);
+  const requireAdminPasswordIA=(action,actionName='esta acción')=>{
+    const clave=window.prompt(`Clave de administrador para: ${actionName}`);
+    if(clave===null) return; // cancelado
+    const adminUsers=(systemUsersIA||[]).filter(u=>u.role==='Master'||u.username==='admin');
+    const validPasswords=adminUsers.map(u=>u.password).filter(Boolean);
+    validPasswords.push('Supply2026.Admin','1234');
+    if(validPasswords.includes(clave)){ action(); }
+    else { window.alert('Clave admin incorrecta.'); }
+  };
+  const eliminarConRespaldoIA=({coleccion,docId,datos,modulo,detalle,actionName,onOk})=>{
+    requireAdminPasswordIA(async()=>{
+      try{
+        const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+        const batch=writeBatch(db);
+        batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:coleccion,docIdOriginal:String(docId),datos:datos||null,modulo:modulo||'—',detalle:detalle||'',eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+        batch.delete(getDocRef(coleccion,docId));
+        await batch.commit();
+        await logAuditoria(appUser,modulo||'—','ELIMINACIÓN',detalle||`Eliminado de ${coleccion}: ${docId}`);
+        if(onOk) onOk(); else window.alert('Eliminado. Recuperable desde Auditoría del Sistema → Papelera.');
+      }catch(e){ window.alert('No se pudo eliminar: '+e.message); }
+    }, actionName||`Eliminar registro de ${coleccion}`);
+  };
   const [sec,setSec]=useState('dashboard');
   const [facturaPreload,setFacturaPreload]=useState(null);
   const [proveedores,setProveedores]=useState([]);
