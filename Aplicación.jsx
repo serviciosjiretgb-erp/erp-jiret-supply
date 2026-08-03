@@ -1759,11 +1759,19 @@ table{border-collapse:collapse;width:100%}
           const rango=(q)=>({desde:q===2?`${aeAnio}-${aeMes}-16`:`${aeAnio}-${aeMes}-01`,hasta:q===1?`${aeAnio}-${aeMes}-15`:`${aeAnio}-${aeMes}-${String(lastDay).padStart(2,'0')}`});
           const ventasBrutasQ=(q)=>{
             const {desde,hasta}=rango(q);
+            const matchPeriodoAe=(doc,fechaFallback)=>{
+              if(doc.periodoAnio&&doc.periodoMes){
+                if(doc.periodoAnio!==aeAnio||doc.periodoMes!==aeMes) return false;
+                const qd=(String(doc.quincena)==='1'||String(doc.quincena)==='2')?String(doc.quincena):(()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
+                return qd===String(q);
+              }
+              const f=fechaFallback||''; return f>=desde&&f<=hasta;
+            };
             const facts=(aeInvoices||[]).filter(inv=>{
               if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-              const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+              return matchPeriodoAe(inv, inv.fechaFactura||inv.fecha||'');
             });
-            const ncnd=(aeNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+            const ncnd=(aeNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodoAe(n, n.fecha||''));
             let tot=0;
             facts.forEach(inv=>{
               const tasa=pNum(inv.tasa||0)||pNum(settings?.tasaBCV||0)||1;
