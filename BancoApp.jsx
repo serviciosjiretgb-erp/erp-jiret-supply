@@ -5077,7 +5077,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // por cada línea de cobro/pago que pasó por caja — si además re-derivamos desde cobros_cxc/procura_pagos_cxp,
     // el mismo dinero aparece dos veces. Cualquier registro con ese grupo YA tiene su movimiento directo,
     // así que se excluye siempre (no solo cuando el grupo ya cargó en pantalla).
-    const movDesdeCobrosCaja = cobrosCajaCxc.filter(c=>!c.grupoCobroId).map(c=>{
+    const movDesdeCobrosCaja = cobrosCajaCxc.filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')).map(c=>{
       const cajaId = (c.cuentaBancariaId||'').replace('CAJA::','');
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(c.tasa||tasaActiva)||tasaActiva;
@@ -5101,7 +5101,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     });
 
     // ── Pagos CxP registrados a través de cajas (procura_pagos_cxp con CAJA::) ──
-    const movDesdePagosCaja = pagosCajaCxP.filter(p=>!p.grupoPagoId).map(p=>{
+    const movDesdePagosCaja = pagosCajaCxP.filter(p=>(p.cuentaId||'').startsWith('CAJA::')).map(p=>{
       const cajaId = (p.cuentaId||'').replace('CAJA::','');
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(p.tasa||tasaActiva)||tasaActiva;
