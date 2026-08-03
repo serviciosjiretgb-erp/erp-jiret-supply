@@ -26182,7 +26182,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const rows=[];
           // ── Fuente 1: Notas de Entrega ──────────────────────────────────────
           (notasEntrega||[]).forEach(ne=>{
-            if(ne.fecha&&(ne.fecha<tvDesde||ne.fecha>tvHasta)) return;
+            // Si ya está facturada, usar la fecha FISCAL de su factura (igual que Reporte General
+            // y Libro de Ventas) para el filtro de mes — si no, usar la propia fecha de la NE.
+            const invNe=ne.facturaId?(invoices||[]).find(i=>i.id===ne.facturaId):null;
+            const fechaEfectivaNe=(invNe&&!invNe.esAnulacionFiscal&&(invNe.nroFiscal||invNe.nroControl))?(invNe.fechaFactura||invNe.fecha||ne.fecha):ne.fecha;
+            if(fechaEfectivaNe&&(fechaEfectivaNe<tvDesde||fechaEfectivaNe>tvHasta)) return;
             if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
@@ -26190,7 +26194,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const costo=parseNum(ne.costoTotal||0)||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
-            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
+            rows.push({fecha:fechaEfectivaNe||ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
           // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
           (notasVentaCD||[]).filter(nc=>!nc.esAnulacionFiscal).forEach(nc=>{
