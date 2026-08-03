@@ -13226,6 +13226,7 @@ function App() {
   const [tvPagina, setTvPagina] = useState(0);
   const [tvBuscarDoc, setTvBuscarDoc] = useState('');
   const [tvBuscarDesc, setTvBuscarDesc] = useState('');
+  const [tvVendedor, setTvVendedor] = useState(''); // '' = Todos los vendedores
   const [facturaPagina, setFacturaPagina] = useState(0);
   const [cotizPagina, setCotizPagina] = useState(0);
   const [clientesPagina, setClientesPagina] = useState(0);
@@ -24267,7 +24268,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const nesMes = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ymD));
           const factsDirect = (invoices||[]).filter(inv => {
             if(inv.esAnulacionFiscal) return false;
-            if(!(inv.fecha||'').startsWith(ymD)) return false;
+            if(!(inv.fechaFactura||inv.fecha||'').startsWith(ymD)) return false;
             if(inv.neOrigen) return false;
             const invId = inv.id||inv.documento||'';
             const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
@@ -24315,8 +24316,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
             const signed=nc.tipo==='NC'?-baseUsd:baseUsd;
             ajusteNCDash+=signed;
-            const vDoc=_vendPorDoc.get(nc.neId)||_vendPorDoc.get(nc.neOrigen)||_vendPorDoc.get(nc.facturaId)||'—';
-            porVend[vDoc]=(porVend[vDoc]||0)+signed;
+            // Si no se puede vincular a un vendedor real (NE/factura), se cuenta en el total general
+            // pero NO se agrega como una fila de "vendedor" en blanco — evita el renglón fantasma "—".
+            const vDoc=_vendPorDoc.get(nc.neId)||_vendPorDoc.get(nc.neOrigen)||_vendPorDoc.get(nc.facturaId)||null;
+            if(vDoc) porVend[vDoc]=(porVend[vDoc]||0)+signed;
           });
           const totalVentas = totalVentasBruto + ajusteNCDash;
           const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
@@ -26182,19 +26185,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const rows=[];
           // ── Fuente 1: Notas de Entrega ──────────────────────────────────────
           (notasEntrega||[]).forEach(ne=>{
-            // Si ya está facturada, usar la fecha FISCAL de su factura (igual que Reporte General
-            // y Libro de Ventas) para el filtro de mes — si no, usar la propia fecha de la NE.
-            const invNe=ne.facturaId?(invoices||[]).find(i=>i.id===ne.facturaId):null;
-            const fechaEfectivaNe=(invNe&&!invNe.esAnulacionFiscal&&(invNe.nroFiscal||invNe.nroControl))?(invNe.fechaFactura||invNe.fecha||ne.fecha):ne.fecha;
-            if(fechaEfectivaNe&&(fechaEfectivaNe<tvDesde||fechaEfectivaNe>tvHasta)) return;
+            if(ne.fecha&&(ne.fecha<tvDesde||ne.fecha>tvHasta)) return;
             if(tvStatus!=='TODAS'&&ne.status!==tvStatus) return;
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(ne.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
+            if(tvVendedor && (ne.vendedor||'').trim()!==tvVendedor) return;
             const costo=parseNum(ne.costoTotal||0)||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
-            rows.push({fecha:fechaEfectivaNe||ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
+            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
           // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
           (notasVentaCD||[]).filter(nc=>!nc.esAnulacionFiscal).forEach(nc=>{
@@ -26205,6 +26205,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ne=(notasEntrega||[]).find(e=>e.id===nc.neId);
             const cliente=inv?.clientName||ne?.clientName||'—';
             if(tvBuscarDesc && !cliente.toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
+            if(tvVendedor && (inv?.vendedor||ne?.vendedor||'').trim()!==tvVendedor) return;
             const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseImpBs=parseNum(nc.monto||0);   // stored as Base Imponible Bs.
             const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
@@ -26266,6 +26267,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente / Descripción</label>
                   <input value={tvBuscarDesc} onChange={e=>{setTvBuscarDesc(e.target.value);setTvPagina(0);}} placeholder="Buscar cliente..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Vendedor</label>
+                  <select value={tvVendedor} onChange={e=>{setTvVendedor(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 min-w-36">
+                    <option value="">Todos los vendedores</option>
+                    {[...new Set((notasEntrega||[]).concat(invoices||[]).map(i=>(i.vendedor||'').trim()).filter(Boolean))].sort().map(v=>(<option key={v} value={v}>{v}</option>))}
+                  </select>
                 </div>
                 <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.montoBruto)}</div><div className="text-[10px] text-gray-400 font-bold">{rows.length} ops. · Base sin IVA</div></div>
               </div>
