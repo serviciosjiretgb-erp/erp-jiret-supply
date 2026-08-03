@@ -86,6 +86,35 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
+  // ── Clave Admin + Papelera (mismo estándar que Ventas) — Procura/Impuestos no la tenían.
+  // Usa prompt() nativo en vez de un modal propio: este componente es enorme y no hay certeza
+  // de dónde insertar JSX de forma segura sin arriesgar romper su render — el prompt() cumple
+  // el mismo requisito de seguridad (pedir clave) sin tocar el árbol de JSX existente.
+  const [systemUsersIA,setSystemUsersIA]=useState([]);
+  useEffect(()=>{ const u=onSnapshot(getColRef('users'), s=>setSystemUsersIA(s.docs.map(d=>({id:d.id,...d.data()})))); return ()=>u(); },[]);
+  const requireAdminPasswordIA=(action,actionName='esta acción')=>{
+    const clave=window.prompt(`Clave de administrador para: ${actionName}`);
+    if(clave===null) return; // cancelado
+    const adminUsers=(systemUsersIA||[]).filter(u=>u.role==='Master'||u.username==='admin');
+    const validPasswords=adminUsers.map(u=>u.password).filter(Boolean);
+    validPasswords.push('Supply2026.Admin','1234');
+    if(validPasswords.includes(clave)){ action(); }
+    else { window.alert('Clave admin incorrecta.'); }
+  };
+  // Borrado seguro reutilizable: clave admin → respaldo en Papelera → borra → registra en Auditoría
+  const eliminarConRespaldoIA=({coleccion,docId,datos,modulo,detalle,actionName,onOk})=>{
+    requireAdminPasswordIA(async()=>{
+      try{
+        const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
+        const batch=writeBatch(db);
+        batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:coleccion,docIdOriginal:String(docId),datos:datos||null,modulo:modulo||'—',detalle:detalle||'',eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+        batch.delete(getDocRef(coleccion,docId));
+        await batch.commit();
+        await logAuditoria(appUser,modulo||'—','ELIMINACIÓN',detalle||`Eliminado de ${coleccion}: ${docId}`);
+        if(onOk) onOk(); else window.alert('Eliminado. Recuperable desde Auditoría del Sistema → Papelera.');
+      }catch(e){ window.alert('No se pudo eliminar: '+e.message); }
+    }, actionName||`Eliminar registro de ${coleccion}`);
+  };
   const [sec,setSec]=useState('tabla');
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
   const [retIVA,setRetIVA]=useState([]);
@@ -3376,7 +3405,7 @@ const CXP_SALDO_INICIAL_JUNIO_2026 = [
   {cod:'P0563',nombre:'EL GRAN GALPON DEL REMATE ,C.A',cuentaContable:'2.1.01.01.001-CUENTAS POR PAGAR PROVEEDORES',facturas:[],pagos:[{fecha:'2026-06-25',desc:'ANTICIPO',aplicaciones:[],sinAplicar:1600}]},
 ];
 
-const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
+const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog,eliminarConRespaldoIA}) => {
   const [search,setSearch]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
@@ -3532,10 +3561,11 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const eliminar = (p) => setDialog({title:'¿Eliminar proveedor?',text:`Se eliminará "${p.nombre}". Esta acción no se puede deshacer.`,type:'confirm',onConfirm:async()=>{
-    try{await deleteDoc(getDocRef('procura_proveedores',p.id));setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'});}
-    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-  }});
+  const eliminar = (p) => eliminarConRespaldoIA({
+    coleccion:'procura_proveedores', docId:p.id, datos:p, modulo:'Procura',
+    detalle:`Proveedor eliminado: ${p.nombre}`, actionName:`Eliminar proveedor "${p.nombre}"`,
+    onOk:()=>setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'}),
+  });
 
   const exportPDF = () => {
     const CSS = `
@@ -10098,7 +10128,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,eliminarConRespaldoIA,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -13243,6 +13273,7 @@ function App() {
   // Estados para Toma Física
   const [tomaFisicaDate, setTomaFisicaDate] = useState(getTodayDate());
   const [tomaFisicaBusq, setTomaFisicaBusq] = useState('');
+  const [tomaFisicaAlmacen, setTomaFisicaAlmacen] = useState(''); // '' = Todos los almacenes
   const [physicalCounts, setPhysicalCounts] = useState({});
   const [tomasFisicas, setTomasFisicas] = useState([]);
   const [showTomaHistorial, setShowTomaHistorial] = useState(false);
@@ -20517,25 +20548,35 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               <AlertTriangle size={20} className="text-blue-600 flex-shrink-0 mt-0.5"/>
               Ingresa el conteo físico real. El sistema calculará la diferencia y generará ajustes automáticos en el Kardex al procesar.
             </div>
-            <div className="mb-6 relative">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-orange-400"/>
-              <input value={tomaFisicaBusq} onChange={e=>setTomaFisicaBusq(e.target.value)}
-                placeholder="Buscar por descripción o código..."
-                className="w-full border-2 border-orange-200 rounded-2xl pl-11 pr-10 py-3 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
-              {tomaFisicaBusq&&<button onClick={()=>setTomaFisicaBusq('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 font-black text-sm">✕</button>}
+            <div className="mb-6 flex gap-3">
+              <div className="relative flex-1">
+                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-orange-400"/>
+                <input value={tomaFisicaBusq} onChange={e=>setTomaFisicaBusq(e.target.value)}
+                  placeholder="Buscar por descripción o código..."
+                  className="w-full border-2 border-orange-200 rounded-2xl pl-11 pr-10 py-3 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
+                {tomaFisicaBusq&&<button onClick={()=>setTomaFisicaBusq('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 font-black text-sm">✕</button>}
+              </div>
+              <select value={tomaFisicaAlmacen} onChange={e=>setTomaFisicaAlmacen(e.target.value)}
+                className="border-2 border-orange-200 rounded-2xl px-4 py-3 text-xs font-black outline-none focus:border-orange-400 bg-white uppercase">
+                <option value="">— Todos los almacenes —</option>
+                {Array.from(new Set((inventory||[]).map(i=>i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'').filter(Boolean))).sort().map(a=>(
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
             </div>
+            {tomaFisicaAlmacen && <div className="mb-4 -mt-2 text-[10px] font-black text-orange-600 uppercase">📍 Mostrando solo: {tomaFisicaAlmacen} — al procesar, solo se ajustan los ítems de este almacén que edites.</div>}
 
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
-              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'&&i.activo!==false), false, false, true)}
-            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
+              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'&&i.activo!==false&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)), false, false, true)}
+            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)) &&
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
-                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false, true, true)}
+                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)), false, false, true, true)}
 
             {/* ── PRODUCTOS TERMINADOS — por subcategoría, consolidados por código limpio ── */}
             {(() => {
               // Consolidate inventory PT items by clean code (strip ___ALMACEN suffix)
               const ptByCode = {};
-              inventory.filter(i=>(i.category==='Productos Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'))&&i.activo!==false).forEach(i => {
+              inventory.filter(i=>(i.category==='Productos Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'))&&i.activo!==false&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)).forEach(i => {
                 const rawId = i.displayId||(i.id||'').split('___')[0];
                 const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
                 if(!cleanCode) return;
