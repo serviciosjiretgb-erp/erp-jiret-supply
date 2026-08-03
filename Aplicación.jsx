@@ -14451,10 +14451,15 @@ function App() {
       } else if (!pfId.startsWith('INV-PT-')) {
         // PT inventory by cleanCode OR regular inventory item
         const cleanCode = pfId;
-        const ptDocs = (inventory||[]).filter(i => {
+        const ptDocsAll = (inventory||[]).filter(i => {
           const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
           return cc === cleanCode;
         });
+        // Si la Toma Física se filtró a un almacén específico, el "stock sistema" a comparar
+        // debe ser SOLO el de ese almacén — no la suma de todos los almacenes del producto.
+        const ptDocs = tomaFisicaAlmacen
+          ? ptDocsAll.filter(d=>(d.almacen||(d.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)
+          : ptDocsAll;
         if(ptDocs.length > 0) {
           const wh = {};
           ptDocs.forEach(d=>{ const alm=d.almacen||(d.id||'').split('___')[1]?.replace(/-/g,' ')||''; const qty=parseNum(d.stock||0); if(!wh[alm]||qty>wh[alm]) wh[alm]=qty; });
