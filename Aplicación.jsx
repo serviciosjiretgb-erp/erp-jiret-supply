@@ -430,11 +430,19 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       const lastDay=new Date(parseInt(detAnio),parseInt(detMes),0).getDate();
       const desde=detQ==='2'?`${detAnio}-${detMes}-16`:`${detAnio}-${detMes}-01`;
       const hasta=detQ==='1'?`${detAnio}-${detMes}-15`:`${detAnio}-${detMes}-${String(lastDay).padStart(2,'0')}`;
+      const matchPeriodoDet=(doc,fechaFallback)=>{
+        if(doc.periodoAnio&&doc.periodoMes){
+          if(doc.periodoAnio!==detAnio||doc.periodoMes!==detMes) return false;
+          const q=(String(doc.quincena)==='1'||String(doc.quincena)==='2')?String(doc.quincena):(()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
+          return q===detQ;
+        }
+        const f=fechaFallback||''; return f>=desde&&f<=hasta;
+      };
       const ventasFact=(detInvoices||[]).filter(inv=>{
         if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-        const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+        return matchPeriodoDet(inv, inv.fechaFactura||inv.fecha||'');
       });
-      const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+      const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodoDet(n, n.fecha||''));
       // Solo retenciones de IVA — el mismo criterio que ya usa Libro de Ventas. Sin este filtro se
       // sumaban también ISLR/Municipal/Otras retenciones, inflando "Retenciones del Período".
       // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
@@ -1377,12 +1385,20 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const hasta=detQ==='1'?`${detAnio}-${detMes}-15`:`${detAnio}-${detMes}-${String(lastDay).padStart(2,'0')}`;
           const fmtD=d=>d.split('-').reverse().join('/');
 
-          // ── Ventas (Débitos Fiscales) — misma lógica que Libro de Ventas ──
+          const matchPeriodoDet=(doc,fechaFallback)=>{
+            if(doc.periodoAnio&&doc.periodoMes){
+              if(doc.periodoAnio!==detAnio||doc.periodoMes!==detMes) return false;
+              const q=(String(doc.quincena)==='1'||String(doc.quincena)==='2')?String(doc.quincena):(()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
+              return q===detQ;
+            }
+            const f=fechaFallback||''; return f>=desde&&f<=hasta;
+          };
+          // ── Ventas (Débitos Fiscales) — mismo criterio de período/quincena que Libro de Ventas ──
           const ventasFact=(detInvoices||[]).filter(inv=>{
             if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-            const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
+            return matchPeriodoDet(inv, inv.fechaFactura||inv.fecha||'');
           });
-          const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
+          const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodoDet(n, n.fecha||''));
           // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
           const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f.substring(0,7)===`${detAnio}-${detMes}`&&getQuincenaRetMod(r)===detQ&&(r.tipoRetencion||'IVA')==='IVA';});
           let ventasGravadasBs=0, ivaDebitosBs=0;
@@ -20943,7 +20959,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                        return (
                        <tr key={r.id} className="hover:bg-gray-50">
                          <td className="py-4 px-4 font-black border-r text-orange-600 text-lg">
-                           {String(r.opId).replace('OP-', '').padStart(5, '0')}<br/>
+                           {r.opId ? String(r.opId).replace('OP-', '').padStart(5, '0') : <span className="text-gray-400 text-sm">Solicitud directa</span>}<br/>
                            <span className="text-[10px] text-gray-500 block text-black">{r.phase}</span>
                          </td>
                          <td className="py-4 px-4 border-r">
@@ -46045,7 +46061,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── PRODUCCIÓN SUB-NAV ── */}
            {activeTab === 'produccion' && renderProduccionModule()}
-           {activeTab === 'inventario' && renderInventoryModule()}
+           {activeTab === 'inventario' && hasPerm('inventario') && renderInventoryModule()}
 
            {/* ── SIMULADOR SUB-NAV ── */}
            {activeTab === 'simulador' && (
