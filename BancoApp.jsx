@@ -3108,6 +3108,25 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
           asientoCredito:form.tipo==='Ingreso'?ctaContra:ctaBanco,
         });
+        // Regenerar también el asiento formal (cont_asientos) vinculado, si existe, para que
+        // quede Debe/Haber alternado correctamente según el tipo — antes esta edición no lo tocaba.
+        if(movOriginal?.asientoContableId){
+          const esIngresoEd = form.tipo==='Ingreso';
+          const ctaBCod=(cuentaSel?.cuentaContableCod||cuentaSel?.cuentaContable?.split('·')[0]||'').trim();
+          const ctaBNom=(cuentaSel?.cuentaContableNom||cuentaSel?.cuentaContable?.split('·')[1]||`Banco ${cuentaNueva?.banco||''}`).trim();
+          const ctaCCod=(form.ctaContraNombre?.split('·')[0]||'').trim();
+          const ctaCNom=(form.ctaContraNombre?.split('·')[1]||form.ctaContraNombre||ctaContra).trim();
+          const lineasEd=[
+            {codigo:ctaBCod,cuenta:ctaBNom,tipoLinea:esIngresoEd?'D':'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:esIngresoEd?montoBs:0,haberBs:esIngresoEd?0:montoBs,debeUSD:esIngresoEd?montoUSD:0,haberUSD:esIngresoEd?0:montoUSD},
+            {codigo:ctaCCod,cuenta:ctaCNom,tipoLinea:esIngresoEd?'H':'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:esIngresoEd?0:montoBs,haberBs:esIngresoEd?montoBs:0,debeUSD:esIngresoEd?0:montoUSD,haberUSD:esIngresoEd?montoUSD:0},
+          ];
+          batch.update(getDocRef('cont_asientos',movOriginal.asientoContableId),{
+            fecha:form.fecha,descripcion:form.concepto.toUpperCase(),tasa,nroDocumento:form.referencia||'',
+            lineas:lineasEd,
+            totalDebeBs:lineasEd.reduce((a,l)=>a+l.debeBs,0),totalHaberBs:lineasEd.reduce((a,l)=>a+l.haberBs,0),
+            totalDebeUSD:lineasEd.reduce((a,l)=>a+l.debeUSD,0),totalHaberUSD:lineasEd.reduce((a,l)=>a+l.haberUSD,0),
+          });
+        }
         await batch.commit();
         setEditId(null); setDetalle(null); setForm(initF());
       } catch(e) {
