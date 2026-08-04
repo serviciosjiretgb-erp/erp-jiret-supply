@@ -87,14 +87,27 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [fetchingBCV, setFetchingBCV] = useState(false);
-  const fetchTasaBCV = async () => {
+  const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
     try{
-      const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-      if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
-      const d = await r.json();
-      const tasa = parseFloat(d.promedio || d.venta || 0);
-      if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: se busca en el histórico diario y se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, así que ese día usa la última tasa vigente).
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
       return tasa;
     } catch(e){
       window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
@@ -6047,7 +6060,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1">Tasa Bs./$
-                        <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setForm(f=>({...f,tasa:String(t)}));}}
+                        <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(form.fecha);if(t)setForm(f=>({...f,tasa:String(t)}));}}
                           className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
                       </label>
                       <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))} placeholder="0 = solo USD"/>
@@ -7730,7 +7743,7 @@ ${body}
 
                   <div style={{marginBottom:10}}>
                     <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'flex',alignItems:'center',gap:4,marginBottom:4}}>Tasa Bs/$
-                      <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setPM(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
+                      <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(pm.lineaActual?.fecha);if(t)setPM(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
                         style={{color:'#E8541A',background:'none',border:'none',cursor:'pointer',opacity:fetchingBCV?0.4:1}} title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
                     </label>
                     <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
@@ -14482,14 +14495,27 @@ function App() {
   //   4.1.01.01.000 INGRESOS POR MAQUILA                — ingresos al facturar
   // ============================================================================
   const [fetchingBCV, setFetchingBCV] = useState(false);
-  const fetchTasaBCV = async () => {
+  const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
     try{
-      const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-      if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
-      const d = await r.json();
-      const tasa = parseFloat(d.promedio || d.venta || 0);
-      if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: se busca en el histórico diario y se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, así que ese día usa la última tasa vigente).
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
       return tasa;
     } catch(e){
       setDialog({title:'⚠️ Tasa BCV',text:'No se pudo traer la tasa automáticamente ('+e.message+'). Escríbela a mano por esta vez.',type:'alert'});
@@ -21981,7 +22007,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
 
                      <div>
                        <label className="text-[10px] font-black text-gray-500 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
-                         <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setNewMovementForm(f=>({...f,tasa:String(t)}));}}
+                         <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(newMovementForm.date);if(t)setNewMovementForm(f=>({...f,tasa:String(t)}));}}
                            className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
                        </label>
                        <input type="number" step="0.0001" value={newMovementForm.tasa||''} onChange={e=>setNewMovementForm({...newMovementForm, tasa: e.target.value})} placeholder={`${formatNum(settings?.tasaBCV||0)}`} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
@@ -26967,7 +26993,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
-                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setNewInvoiceForm(f=>({...f,tasa:String(t)}));}}
+                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(newInvoiceForm.fecha);if(t)setNewInvoiceForm(f=>({...f,tasa:String(t)}));}}
                             className="text-orange-500 hover:text-orange-600 disabled:opacity-40" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
                         </label>
                         <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
@@ -29653,7 +29679,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                       <div style={{marginBottom:10}}>
                         <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'flex',alignItems:'center',gap:4,marginBottom:4}}>Tasa Bs/$
-                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
+                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(pm.lineaActual?.fecha);if(t)setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
                             style={{color:'#E8541A',background:'none',border:'none',cursor:'pointer',opacity:fetchingBCV?0.4:1}} title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
                         </label>
                         <input type="number" step="0.01"
