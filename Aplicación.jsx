@@ -86,6 +86,21 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async () => {
+    setFetchingBCV(true);
+    try{
+      const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+      const d = await r.json();
+      const tasa = parseFloat(d.promedio || d.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   // ── Clave Admin + Papelera (mismo estándar que Ventas) — Procura/Impuestos no la tenían.
   // Usa prompt() nativo en vez de un modal propio: este componente es enorme y no hay certeza
   // de dónde insertar JSX de forma segura sin arriesgar romper su render — el prompt() cumple
@@ -7711,7 +7726,10 @@ ${body}
                   </div>
 
                   <div style={{marginBottom:10}}>
-                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'flex',alignItems:'center',gap:4,marginBottom:4}}>Tasa Bs/$
+                      <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setPM(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
+                        style={{color:'#E8541A',background:'none',border:'none',cursor:'pointer',opacity:fetchingBCV?0.4:1}} title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
+                    </label>
                     <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
                       onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
                       style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
@@ -12936,6 +12954,28 @@ function App() {
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
         lineas:(a.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0}))});
     });
+    // 8) Operaciones de Inventario — salidas de almacén por Autoconsumo o Muestra, usando las
+    // cuentas configuradas en Producción (⚙ Config. Cuentas). Sin cuenta configurada para ese
+    // motivo, no genera asiento (evita usar una cuenta genérica no elegida por la persona).
+    (inventoryMovements||[]).filter(m=>m.type==='AUTOCONSUMO'||m.type==='MUESTRA').forEach(m=>{
+      const ctaGastoM=m.type==='AUTOCONSUMO'?(cuentasProduccionCfg.consumosInternosNombre||''):(cuentasProduccionCfg.muestrasAveriasNombre||'');
+      if(!ctaGastoM) return;
+      const itemM=(inventory||[]).find(i=>i.id===m.itemId);
+      const catM=(itemM?.category||'').toLowerCase();
+      const ctaInvM=catM.includes('materia prima')?cuentasProduccionCfg.inventarioMateriaPrimaNombre
+        :catM.includes('terminado')?cuentasProduccionCfg.inventarioMercanciaNombre
+        :cuentasProduccionCfg.inventarioConsumiblesNombre;
+      if(!ctaInvM) return;
+      const montoM=parseNum(m.totalValue||0);
+      if(montoM<=0) return;
+      const tasaM=parseNum(m.tasa||settings?.tasaBCV||0);
+      out.push({fecha:m.date||'', comprobante:m.reference||'SAL', modulo:'Operaciones de Inventario',
+        concepto:`Salida por ${m.type==='AUTOCONSUMO'?'Autoconsumo':'Muestra'} — ${m.itemName||'—'}`,
+        lineas:[
+          {codigo:(ctaGastoM.split('—')[0]||'').trim(),cuenta:(ctaGastoM.split('—')[1]||ctaGastoM).trim(),debeBs:tasaM?montoM*tasaM:0,haberBs:0,debeUSD:montoM,haberUSD:0},
+          {codigo:(ctaInvM.split('—')[0]||'').trim(),cuenta:(ctaInvM.split('—')[1]||ctaInvM).trim(),debeBs:0,haberBs:tasaM?montoM*tasaM:0,debeUSD:0,haberUSD:montoM},
+        ]});
+    });
     return out;
   };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
@@ -14438,6 +14478,22 @@ function App() {
   //   5.1.01.01.001 COSTO DE PRODUCCIÓN Y VENTAS        — costo al facturar
   //   4.1.01.01.000 INGRESOS POR MAQUILA                — ingresos al facturar
   // ============================================================================
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async () => {
+    setFetchingBCV(true);
+    try{
+      const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+      const d = await r.json();
+      const tasa = parseFloat(d.promedio || d.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+      return tasa;
+    } catch(e){
+      setDialog({title:'⚠️ Tasa BCV',text:'No se pudo traer la tasa automáticamente ('+e.message+'). Escríbela a mano por esta vez.',type:'alert'});
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
+
   const getCtaInventario = (categoria) => {
     const cat = (categoria || '').toLowerCase();
     if (cat.includes('materia prima')) return '1.1.03.01.004';
@@ -15498,7 +15554,7 @@ function App() {
     const movId = Date.now().toString();
     try {
       const batch = writeBatch(db);
-      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
+      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, tasa: parseNum(newMovementForm.tasa||settings?.tasaBCV||0), reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
       batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: updatedCost });
       await batch.commit();
 
@@ -15514,13 +15570,16 @@ function App() {
           referencia: newMovementForm.reference || 'ENT',
           fecha: newMovementForm.date,
         });
-      } else if (newMovementForm.type === 'SALIDA' || newMovementForm.type === 'AUTOCONSUMO') {
-        // Crédito inventario / Débito gasto
+      } else if (newMovementForm.type === 'SALIDA' || newMovementForm.type === 'AUTOCONSUMO' || newMovementForm.type === 'MUESTRA' || newMovementForm.type === 'AVERIA' || newMovementForm.type === 'DEVOLUCION' || newMovementForm.type === 'PERDIDA') {
+        // Crédito inventario / Débito gasto — usa la cuenta configurada en Producción según el motivo
+        const debitoMotivo = newMovementForm.type==='AUTOCONSUMO' ? (cuentasProduccionCfg.consumosInternosNombre||'GASTO/EXTERNO')
+          : newMovementForm.type==='MUESTRA' ? (cuentasProduccionCfg.muestrasAveriasNombre||'GASTO/EXTERNO')
+          : 'GASTO/EXTERNO';
         await registrarAsientoContable(null, {
-          debito: 'GASTO/EXTERNO',
+          debito: debitoMotivo,
           credito: ctaInventario,
           monto: qty * movCost,
-          descripcion: `SALIDA INVENTARIO — ${item.desc}`,
+          descripcion: `SALIDA INVENTARIO (${newMovementForm.type}) — ${item.desc}`,
           referencia: newMovementForm.reference || 'SAL',
           fecha: newMovementForm.date,
         });
@@ -21917,6 +21976,13 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                        <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} disabled={invView !== 'cargo'} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black disabled:opacity-60" />
                      </div>
 
+                     <div>
+                       <label className="text-[10px] font-black text-gray-500 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
+                         <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setNewMovementForm(f=>({...f,tasa:String(t)}));}}
+                           className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
+                       </label>
+                       <input type="number" step="0.0001" value={newMovementForm.tasa||''} onChange={e=>setNewMovementForm({...newMovementForm, tasa: e.target.value})} placeholder={`${formatNum(settings?.tasaBCV||0)}`} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
+                     </div>
                      <div className="md:col-span-2">
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Documento Referencia (Factura, OP, Guía)</label>
                        <input type="text" required value={newMovementForm.reference} onChange={e=>setNewMovementForm({...newMovementForm, reference: e.target.value.toUpperCase()})} placeholder="EJ: FACT-001 o OP-005" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
@@ -26897,7 +26963,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
 
                       <div>
-                        <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Tasa Bs/$</label>
+                        <label className="text-[9px] font-black text-gray-600 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
+                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setNewInvoiceForm(f=>({...f,tasa:String(t)}));}}
+                            className="text-orange-500 hover:text-orange-600 disabled:opacity-40" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
+                        </label>
                         <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
                           onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
                           className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
@@ -29580,7 +29649,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
 
                       <div style={{marginBottom:10}}>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'flex',alignItems:'center',gap:4,marginBottom:4}}>Tasa Bs/$
+                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
+                            style={{color:'#E8541A',background:'none',border:'none',cursor:'pointer',opacity:fetchingBCV?0.4:1}} title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
+                        </label>
                         <input type="number" step="0.01"
                           value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
                           style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
