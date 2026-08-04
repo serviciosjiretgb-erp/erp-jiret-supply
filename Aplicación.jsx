@@ -15819,6 +15819,27 @@ function App() {
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
   const [showCuentasIngresoModal, setShowCuentasIngresoModal] = useState(false);
   const [cuentasIngresoCfg, setCuentasIngresoCfg] = useState({conOpId:'',conOpNombre:'',sinOpId:'',sinOpNombre:''});
+  const [showCfgCuentasProduccion, setShowCfgCuentasProduccion] = useState(false);
+  const [cuentasProduccionCfg, setCuentasProduccionCfg] = useState({
+    costoVentaProduccionId:'',costoVentaProduccionNombre:'',
+    costoVentaMercanciaId:'',costoVentaMercanciaNombre:'',
+    inventarioConsumiblesId:'',inventarioConsumiblesNombre:'',
+    consumosInternosId:'',consumosInternosNombre:'',
+    muestrasAveriasId:'',muestrasAveriasNombre:'',
+    inventarioMateriaPrimaId:'',inventarioMateriaPrimaNombre:'',
+    inventarioMercanciaId:'',inventarioMercanciaNombre:'',
+  });
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','produccionCuentasCfg'),d=>d.exists()&&setCuentasProduccionCfg(x=>({...x,...d.data()})));
+    return()=>u();
+  },[]);
+  const guardarCuentasProduccion=async()=>{
+    try{
+      await setDoc(doc(db,'settings','produccionCuentasCfg'),cuentasProduccionCfg,{merge:true});
+      setShowCfgCuentasProduccion(false);
+      setDialog({title:'✅ Guardado',text:'Cuentas de Producción guardadas. Se usarán para armar los asientos de Operaciones de Inventario.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
   useEffect(()=>{
     const u=onSnapshot(doc(db,'settings','ventasCuentasIngreso'),d=>d.exists()&&setCuentasIngresoCfg(x=>({...x,...d.data()})));
     return()=>u();
@@ -17698,11 +17719,17 @@ function App() {
 
         <div className="relative" style={{zIndex:2}}>
           {/* Title */}
-          <div className="text-center pt-7 pb-5">
+          <div className="relative text-center pt-7 pb-5">
             <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900">
               PANEL PRINCIPAL ERP{selectedPortal ? ` — ${{produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',configuracion_portal:'CONFIGURACIÓN'}[selectedPortal]||selectedPortal.toUpperCase()}` : ''}
             </h1>
             <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
+            {selectedPortal==='produccion' && (
+              <button onClick={()=>setShowCfgCuentasProduccion(true)}
+                className="absolute top-4 right-4 sm:right-6 flex items-center gap-1.5 bg-white border-2 border-gray-200 hover:border-orange-400 text-gray-500 hover:text-orange-600 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-sm transition-colors">
+                <Settings size={13}/> Config. Cuentas
+              </button>
+            )}
           </div>
 
           {/* Grid — responsive: 1 col mobile, 2 tablet, 3 desktop */}
@@ -26617,6 +26644,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
               </div>
             )}
+            {showCfgCuentasProduccion && (
+              <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCfgCuentasProduccion(false)}>
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas Contables de Producción</h3>
+                    <button onClick={()=>setShowCfgCuentasProduccion(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                  </div>
+                  <p className="text-[11px] text-gray-500">Se configuran una sola vez. Se usan para armar correctamente los asientos de Operaciones de Inventario (salidas de almacén por autoconsumo, muestras, averías, etc.).</p>
+                  {[
+                    ['costoVentaProduccionId','costoVentaProduccionNombre','Costo de Venta (Producción)'],
+                    ['costoVentaMercanciaId','costoVentaMercanciaNombre','Costo de Venta (Mercancía)'],
+                    ['inventarioConsumiblesId','inventarioConsumiblesNombre','Inventario de Consumibles'],
+                    ['consumosInternosId','consumosInternosNombre','Consumos Internos'],
+                    ['muestrasAveriasId','muestrasAveriasNombre','Muestras Clientes - Averías'],
+                    ['inventarioMateriaPrimaId','inventarioMateriaPrimaNombre','Inventario de Materia Prima'],
+                    ['inventarioMercanciaId','inventarioMercanciaNombre','Inventario de Mercancía'],
+                  ].map(([idKey,nomKey,label])=>(
+                    <div key={idKey}>
+                      <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
+                      <select value={cuentasProduccionCfg[idKey]||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setCuentasProduccionCfg(x=>({...x,[idKey]:e.target.value,[nomKey]:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                        <option value="">— Seleccionar cuenta —</option>
+                        {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={()=>setShowCfgCuentasProduccion(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                    <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                  </div>
+                </div>
+              </div>
+            )}
              {showNewInvoicePanel && (
                 <div className="p-8 bg-gray-50/50 border-b">
                   <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
@@ -29246,14 +29305,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <div style={{background:'#fff',border:'2px solid #e5e7eb',borderRadius:10,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
                           {clientesFiltrados.map(cl=>(
                             <button key={cl.clientRif} onClick={()=>{
-                              // Saldo a favor existente del cliente: se pre-aplica solo (misma cascada que guardarPagoMasivo,
-                              // más antigua primero). El usuario puede quitarlo/reasignarlo en "3 · Métodos de Pago" — no se
-                              // guarda nada hasta pulsar Guardar.
-                              const antsCliente=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif===cl.clientRif||c.clientName===cl.clientName))
-                                .map(a=>({...a,_saldoAnt:parseNum(a.monto||0)-parseNum(a.montoAplicado||0)}))
-                                .filter(a=>a._saldoAnt>0.01);
+                              // Ya NO se pre-aplican los anticipos automáticamente al elegir cliente — el
+                              // usuario debe pulsar "Usar" en cada uno que realmente quiera aplicar. Antes
+                              // se auto-rellenaban todos, con riesgo de guardarse sin elección consciente.
                               setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{},distribucionManual:{},
-                                lineasPago:[...(m.lineasPago||[]).filter(l=>!l.anticipoId),...antsCliente.map(a=>({moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo (automática)',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}))]
+                                lineasPago:(m.lineasPago||[]).filter(l=>!l.anticipoId)
                               }));
                             }}
                               style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',border:'none',borderBottom:'1px solid #f9fafb',background:'transparent',cursor:'pointer',textAlign:'left'}}
