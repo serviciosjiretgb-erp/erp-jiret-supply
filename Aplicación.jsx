@@ -5469,7 +5469,15 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         tipoCompra:form.tipoCompra||'PRODUCTO',
         categoriaCompra:form.categoriaCompra||'',
         cuentaServicioId:form.cuentaServicioId||'',
-        itemsOC:(form.itemsOC||[]).map(it=>clean(it)),
+        itemsOC:(form.itemsOC||[]).map(it=>{
+          const esBsSave=String(form.moneda||'').toUpperCase()==='BS';
+          if(esBsSave){
+            const tasaSave=Math.max(pNum(form.tasa||0),0.0001);
+            const totalBs=pNum(it._totalBsOriginal||(pNum(it.cantidad||0)*pNum(it.precioUnit||0)));
+            return clean({...it,total:parseFloat((totalBs/tasaSave).toFixed(2)),_totalBsOriginal:totalBs,_precioBsOriginal:pNum(it.precioUnit||0)});
+          }
+          return clean(it);
+        }),
         diasCredito:form.diasCredito||'',
         condPago:form.condPago||'',
         esImportacion:!!form.esImportacion,
@@ -6088,7 +6096,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                               };
                               const codigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
                               // Columna secundaria: si la factura es en Bs, mostrar el equivalente en USD (dividir); si es en USD, mostrar el equivalente en Bs (multiplicar)
-                              const totSecundario=hasTasa?(esBsIt?pNum(it._totalBsOriginal||(pNum(it.total||0)*pNum(form.tasa||0))):pNum(it.total||0)*pNum(form.tasa||0)):0;
+                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0):pNum(it.total||0)*pNum(form.tasa||0)):0;
                               return(
                               <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                                 <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
@@ -29527,7 +29535,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Método</label>
                           <select value={pm.lineaActual?.metodo||'Transferencia'} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,metodo:e.target.value}}))}
                             style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',background:'#fff',boxSizing:'border-box'}}>
-                            {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
+                            {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Punto de Venta','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
@@ -29723,7 +29731,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </div>
                     <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método de pago</label>
                       <select value={cxcCobroModal.metodo} onChange={e=>setCxcCobroModal(m=>({...m,metodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                        <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option><option>Zelle</option><option>Cheque</option><option>Pago Móvil</option></select></div>
+                        <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option><option>Zelle</option><option>Punto de Venta</option><option>Cheque</option><option>Pago Móvil</option></select></div>
                   </div>
                   <div><label className="text-[9px] font-black text-blue-600 uppercase block mb-1">Cuenta bancaria destino</label>
                     <select value={cxcCobroModal.cuentaId||''} onChange={e=>{const ct=(cuentasBanco||[]).find(c=>c.id===e.target.value);setCxcCobroModal(m=>({...m,cuentaId:e.target.value,cuentaNombre:ct?`${ct.banco} · ${ct.numeroCuenta}`:''}));}} className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400">
