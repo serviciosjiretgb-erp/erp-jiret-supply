@@ -3025,11 +3025,13 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
   const tasa=pNum(f.tasa||0);
   const lineas=[];
   const items=f.itemsOC||[];
+  const esBsFCitems=String(f.moneda||'USD').toUpperCase()==='BS';
   if(items.length>0){
     items.forEach(it=>{
       const cta=resolverCuentaFC(it,servicios,planDeCuentasArg);
+      const bsDirecto=pNum(it._totalBsOriginal||0)>0?pNum(it._totalBsOriginal):(esBsFCitems?pNum(it.cantidad||0)*pNum(it.precioUnit||0):0);
       lineas.push({tipo:'DEBITO',cuenta:cta,concepto:`${it.desc||'—'} (${it.unidad||'Und'} × ${pNum(it.cantidad).toFixed(2)})`,
-        montoUSD:pNum(it.total||0),montoBs:tasa?pNum(it.total||0)*tasa:0});
+        montoUSD:pNum(it.total||0),montoBs:bsDirecto>0?bsDirecto:(tasa?pNum(it.total||0)*tasa:0)});
     });
   } else {
     const ctaManual=resolverCuentaManualFC(f,planDeCuentasArg);
@@ -3039,7 +3041,7 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
   if(tot.ivaTotal>0){
     lineas.push({tipo:'DEBITO',cuenta:'1.1.02.03.001 — IVA Crédito Fiscal',
       concepto:`IVA${tot.iva16>0?' 16%':''}${tot.iva8>0?' 8%':''} soportado`,
-      montoUSD:tot.ivaTotal,montoBs:tasa?tot.ivaTotal*tasa:0});
+      montoUSD:tot.ivaTotal,montoBs:(pNum(tot.iva16Bs||0)+pNum(tot.iva8Bs||0))||(tasa?tot.ivaTotal*tasa:0)});
   }
   const prov=(proveedoresArg||[]).find(p=>p.id===f.proveedorId);
   const ctaProv=prov?.cuentaContableNombre||'2.1.01.01.002 — Cuentas por Pagar Proveedores';
