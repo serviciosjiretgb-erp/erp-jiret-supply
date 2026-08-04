@@ -46080,7 +46080,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
            {/* ── PRODUCCIÓN SUB-NAV ── */}
            {activeTab === 'produccion' && renderProduccionModule()}
-           {activeTab === 'inventario' && hasPerm('inventario') && renderInventoryModule()}
+           {activeTab === 'inventario' && renderInventoryModule()}
 
            {/* ── SIMULADOR SUB-NAV ── */}
            {activeTab === 'simulador' && (
