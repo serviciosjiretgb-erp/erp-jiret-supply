@@ -2005,6 +2005,21 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
 }
 
 function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [] }) {
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async () => {
+    setFetchingBCV(true);
+    try{
+      const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+      const d = await r.json();
+      const tasa = parseFloat(d.promedio || d.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
   const [submodulo, setSubmodulo] = useState(null); // null | 'banco' | 'caja'
@@ -3420,7 +3435,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 {cuentaSel&&<div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
                   <div className="grid grid-cols-3 gap-4">
                     <BFG label={`Monto (${cuentaSel.moneda})`}><input type="number" step="0.01" min="0.01" className={`${inp} font-black text-lg`} value={form.montoNativo} onChange={e=>setForm({...form,montoNativo:e.target.value})} placeholder="0.00"/></BFG>
-                    <BFG label="Tasa Bs/$"><input type="number" step="0.01" className={inp} value={form.tasa} onChange={e=>setForm({...form,tasa:e.target.value})}/></BFG>
+                    <BFG label={<span className="flex items-center gap-1">Tasa Bs/$<button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setForm(f=>({...f,tasa:String(t)}));}} className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button></span>}><input type="number" step="0.01" className={inp} value={form.tasa} onChange={e=>setForm({...form,tasa:e.target.value})}/></BFG>
                     <div className="flex flex-col justify-end pb-0.5">
                       <div className="rounded-xl p-3 text-center" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}>
                         <p className="text-emerald-400 font-mono font-black text-lg leading-none">{'$'+bancoFmt(montoUSD)}</p>
@@ -3968,13 +3983,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div>
         <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV</label>
         <div className="relative">
-          <input type="number" step="0.01" className={`${inp} bg-white`} value={form.tasa} onChange={e=>{
+          <input type="number" step="0.01" className={`${inp} bg-white pr-9`} value={form.tasa} onChange={e=>{
             const v=e.target.value; const tasaN=Number(v)||tasaActiva; const montoOpN=Number(form.montoOp)||0;
             const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
             const nativo=bs?(usdEq*tasaN):usdEq;
             setForm({...form,tasa:v,montoUSD:String(usdEq),montoNativo:String(nativo)});
           }}/>
-          <RefreshCw size={14} className="absolute right-3 top-2.5 text-blue-400"/>
+          <button type="button" disabled={fetchingBCV} onClick={async()=>{
+            const t=await fetchTasaBCV(); if(!t) return;
+            const montoOpN=Number(form.montoOp)||0;
+            const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/t);
+            const nativo=bs?(usdEq*t):usdEq;
+            setForm({...form,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)});
+          }} className="absolute right-2 top-2 disabled:opacity-40" title="Traer tasa oficial BCV de hoy">
+            <RefreshCw size={14} className={`text-blue-400 hover:text-blue-600 ${fetchingBCV?'animate-spin':''}`}/>
+          </button>
         </div>
       </div>
       <div>
@@ -5818,13 +5841,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       <div>
                         <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV</label>
                         <div className="relative">
-                          <input type="number" step="0.01" className={`${inp} bg-white`} value={form.tasa} onChange={e=>{
+                          <input type="number" step="0.01" className={`${inp} bg-white pr-9`} value={form.tasa} onChange={e=>{
                             const v=e.target.value; const tasaN=Number(v)||tasaActiva; const montoOpN=Number(form.montoOp)||0;
                             const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
                             const nativo=bs?(usdEq*tasaN):usdEq;
                             setForm({...form,tasa:v,montoUSD:String(usdEq),montoNativo:String(nativo)});
                           }}/>
-                          <RefreshCw size={14} className="absolute right-3 top-2.5 text-blue-400"/>
+                          <button type="button" disabled={fetchingBCV} onClick={async()=>{
+                            const t=await fetchTasaBCV(); if(!t) return;
+                            const montoOpN=Number(form.montoOp)||0;
+                            const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/t);
+                            const nativo=bs?(usdEq*t):usdEq;
+                            setForm({...form,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)});
+                          }} className="absolute right-2 top-2 disabled:opacity-40" title="Traer tasa oficial BCV de hoy">
+                            <RefreshCw size={14} className={`text-blue-400 hover:text-blue-600 ${fetchingBCV?'animate-spin':''}`}/>
+                          </button>
                         </div>
                       </div>
                       <div>
