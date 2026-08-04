@@ -5023,6 +5023,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [cajBusqRef,    setCajBusqRef]    = useState('');
     const [cajaDet, setCajaDet]   = useState(null);   // movimiento seleccionado para ver/editar
     const [cajaEdit, setCajaEdit] = useState(false);   // modo edición
+    const [cajaEditCta, setCajaEditCta] = useState(false); // editando solo la cuenta contable (movimientos derivados de CxP/CxC)
+    const [cajaCtaContraId, setCajaCtaContraId] = useState('');
     const [cajaPwdModal, setCajaPwdModal] = useState(null); // movimiento a eliminar
     const [cajaPwd, setCajaPwd]   = useState('');
     const [cajaPwdErr, setCajaPwdErr] = useState(false);
@@ -5453,6 +5455,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       } finally { setBusy(false); }
     };
 
+    const guardarCtaContraDerivado = async() => {
+      if(!cajaDet||!cajaCtaContraId) return;
+      setBusy(true);
+      try {
+        const c=contCuentas.find(x=>x.id===cajaCtaContraId);
+        const nombre=c?`${c.codigo} · ${c.nombre}`:'';
+        const coleccion = cajaDet.origen==='CxP' ? 'procura_pagos_cxp' : 'cobros_cxc';
+        await updateDoc(getDocRef(coleccion,cajaDet.id),{ctaContraId:cajaCtaContraId,ctaContraNombre:nombre});
+        setCajaDet({...cajaDet,ctaContraId:cajaCtaContraId,ctaContraNombre:nombre});
+        setCajaEditCta(false); setCajaCtaContraId('');
+      } catch(e){ alert('No se pudo guardar: '+e.message); }
+      finally { setBusy(false); }
+    };
+
     const confirmarElimCaja = async() => {
       if(!await validarClaveAdmin(cajaPwd)){setCajaPwdErr(true);setTimeout(()=>setCajaPwdErr(false),1500);return;}
       const m = cajaPwdModal; if(!m) return;
@@ -5626,11 +5642,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
         {/* ── MODAL VER / EDITAR MOVIMIENTO CAJA ── */}
         {cajaDet&&(
-          <BModal open={!!cajaDet} onClose={()=>{setCajaDet(null);setCajaEdit(false);setForm(initF());}}
-            title={cajaEdit?`✏ Editando — ${cajaDet.concepto}`:`Movimiento — ${cajaDet.concepto}`} wide
+          <BModal open={!!cajaDet} onClose={()=>{setCajaDet(null);setCajaEdit(false);setCajaEditCta(false);setCajaCtaContraId('');setForm(initF());}}
+            title={cajaEdit?`✏ Editando — ${cajaDet.concepto}`:cajaEditCta?`✏ Cuenta Contable — ${cajaDet.concepto}`:`Movimiento — ${cajaDet.concepto}`} wide
             footer={cajaEdit
               ?<><BBo onClick={()=>{setCajaEdit(false);setForm(initF());}}>Cancelar</BBo><BBg onClick={guardarEditCaja} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
-              :<><BBd onClick={()=>{if(cajaDet._fromBanco)return alert('Este movimiento viene de CxC/CxP. Elim. desde el módulo origen.');setCajaPwdModal(cajaDet);setCajaDet(null);}}>🗑 Eliminar</BBd><div className="flex-1"/>{!cajaDet._fromBanco&&<BBg onClick={()=>abrirEditCaja(cajaDet)}>✏ Editar</BBg>}</>
+              :cajaEditCta
+              ?<><BBo onClick={()=>{setCajaEditCta(false);setCajaCtaContraId('');}}>Cancelar</BBo><BBg onClick={guardarCtaContraDerivado} disabled={busy||!cajaCtaContraId}>{busy?'Guardando...':'Guardar Cuenta'}</BBg></>
+              :<><BBd onClick={()=>{if(cajaDet._fromBanco)return alert('Este movimiento viene de CxC/CxP. Elim. desde el módulo origen.');setCajaPwdModal(cajaDet);setCajaDet(null);}}>🗑 Eliminar</BBd><div className="flex-1"/>
+                {cajaDet._fromBanco
+                  ?<BBg onClick={()=>{setCajaCtaContraId(cajaDet.ctaContraId||'');setCajaEditCta(true);}}>✏ Editar Cuenta Contable</BBg>
+                  :<BBg onClick={()=>abrirEditCaja(cajaDet)}>✏ Editar</BBg>}
+                </>
             }>
             {cajaEdit?(
               <div className="space-y-4">
@@ -5640,14 +5662,25 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 </div>
                 <BFG label="Concepto" full><input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})}/></BFG>
               </div>
+            ):cajaEditCta?(
+              <div className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] font-black text-blue-700">Este movimiento viene de {cajaDet.origen==='CxP'?'Cuentas por Pagar':'Cuentas por Cobrar'} — aquí solo se corrige la cuenta contable con la que se refleja en Contabilidad. Fecha, monto y demás datos se editan desde el módulo de origen.</div>
+                <BFG label="Cuenta Contrapartida (PUC)">
+                  <select className={sel} value={cajaCtaContraId} onChange={e=>setCajaCtaContraId(e.target.value)}>
+                    <option value="">— Seleccionar del Plan de Cuentas —</option>
+                    {[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
+                  </select>
+                </BFG>
+              </div>
             ):(
               <div className="space-y-3">
-                {cajaDet._fromBanco&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] font-black text-blue-700">📌 Movimiento originado en {cajaDet.origen==='CxP'?'Cuentas por Pagar':'Cuentas por Cobrar'} — solo lectura</div>}
+                {cajaDet._fromBanco&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] font-black text-blue-700">📌 Movimiento originado en {cajaDet.origen==='CxP'?'Cuentas por Pagar':'Cuentas por Cobrar'} — solo lectura salvo la cuenta contable</div>}
                 <div className="grid grid-cols-2 gap-3">
                   {[['Fecha',bancoDd(cajaDet.fecha)],['Tipo',cajaDet.tipo],['Moneda',cajaDet.moneda==='BS'?'Bolívares':'USD'],
                     ['Monto Bs.',`Bs.${bancoFmt(cajaDet.montoBs)}`],['Monto USD',`$${bancoFmt(cajaDet.montoUSD)}`],['Tasa',cajaDet.tasa],
                     ['Concepto',cajaDet._concepto||cajaDet.concepto],['Referencia',cajaDet.referencia||'—'],
                     ['Tercero',cajaDet._tercero||cajaDet.terceroNombre||'—'],
+                    ...(cajaDet._fromBanco?[['Cuenta Contable',cajaDet.ctaContraNombre||'⚠ Sin asignar']]:[]),
                   ].map(([k,v])=>(
                     <div key={k} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                       <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-0.5">{k}</p>
