@@ -3073,6 +3073,12 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const montoBase=pNum(f.montoBase||0);
   const iva=pNum(f.iva||0);
   const total=pNum(f.total||(montoBase+iva));
+  // Si se ingresó manualmente el monto en Bs. (Registro en Bolívares — Libro de Ventas), usar
+  // ese valor exacto para el asiento en vez de recalcular USD×tasa, que puede diferir por
+  // redondeo respecto a lo que realmente aparece en la factura/Libro de Ventas.
+  const totalBsManual=pNum(f.totalBs||0);
+  const baseBsManual=pNum(f.baseGravableBs||0);
+  const ivaBsManual=pNum(f.ivaBs||0);
   const lineas=[];
   const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const rifFactura=normRif(f.clientRif);
@@ -3080,17 +3086,17 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const ctaCliente=cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
   lineas.push({tipo:'DEBITO',cuenta:ctaCliente,
     concepto:`${f.clientName||'—'} · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:total,montoBs:tasa?total*tasa:0});
+    montoUSD:total,montoBs:totalBsManual>0?totalBsManual:(tasa?total*tasa:0)});
   const tieneOp=!!(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas.length>0));
   const cfgIngreso=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
   const ctaIngreso=cfgIngreso||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
   lineas.push({tipo:'CREDITO',cuenta:ctaIngreso,
     concepto:`Venta ${tieneOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:montoBase,montoBs:tasa?montoBase*tasa:0});
+    montoUSD:montoBase,montoBs:baseBsManual>0?baseBsManual:(tasa?montoBase*tasa:0)});
   if(iva>0){
     lineas.push({tipo:'CREDITO',cuenta:'2.1.02.01.001 — IVA Débito Fiscal',
       concepto:`IVA 16% repercutido · Fact. ${f.nroFiscal||f.documento||'—'}`,
-      montoUSD:iva,montoBs:tasa?iva*tasa:0});
+      montoUSD:iva,montoBs:ivaBsManual>0?ivaBsManual:(tasa?iva*tasa:0)});
   }
   const totDeb=lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoUSD,0);
   const totCred=lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoUSD,0);
@@ -11048,6 +11054,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       const nombreNorm = contNormNombre(nombreEnConcepto);
       const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
       const tercero = (esProveedorMov ? provsC.find(p=>p.id===m.terceroId) : clientesC.find(c=>c.id===m.terceroId))
+        || (m.terceroId ? (clientesC.find(c=>c.id===m.terceroId)||provsC.find(p=>p.id===m.terceroId)) : null)
         || clientesC.find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
         || provsC.find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
       const [codTercero, nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
@@ -27023,10 +27030,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                             <div className="px-4 py-3 border-b flex items-center justify-between" style={{background:asientoV.cuadrado?'#ecfdf5':'#fef2f2'}}>
                               <span className={`text-xs font-black uppercase ${asientoV.cuadrado?'text-emerald-700':'text-red-700'}`}>{asientoV.cuadrado?'✓ Asiento Cuadrado':'⚠ Asiento Descuadrado'}</span>
-                              <span className="text-[10px] text-gray-500">Débitos: ${formatNum(asientoV.totDeb)} · Créditos: ${formatNum(asientoV.totCred)}</span>
+                              <span className="text-[10px] text-gray-500">Débitos: ${formatNum(asientoV.totDeb)} (Bs.{formatNum(asientoV.lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+(l.montoBs||0),0))}) · Créditos: ${formatNum(asientoV.totCred)} (Bs.{formatNum(asientoV.lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+(l.montoBs||0),0))})</span>
                             </div>
                             <table className="w-full text-xs">
-                              <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase font-black"><th className="px-3 py-2 text-left">Cuenta Contable</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center">Tipo</th><th className="px-3 py-2 text-right">Débito USD</th><th className="px-3 py-2 text-right">Crédito USD</th></tr></thead>
+                              <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase font-black"><th className="px-3 py-2 text-left">Cuenta Contable</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center">Tipo</th><th className="px-3 py-2 text-right">Débito USD</th><th className="px-3 py-2 text-right">Crédito USD</th><th className="px-3 py-2 text-right border-l">Débito Bs.</th><th className="px-3 py-2 text-right">Crédito Bs.</th></tr></thead>
                               <tbody>
                                 {asientoV.lineas.map((l,i)=>(
                                   <tr key={i} className="border-t border-gray-100">
@@ -27035,6 +27042,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${l.tipo==='DEBITO'?'bg-orange-100 text-orange-700':'bg-blue-100 text-blue-700'}`}>{l.tipo}</span></td>
                                     <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{l.tipo==='DEBITO'?'$'+formatNum(l.montoUSD):'—'}</td>
                                     <td className="px-3 py-2 text-right font-mono font-black text-blue-600">{l.tipo==='CREDITO'?'$'+formatNum(l.montoUSD):'—'}</td>
+                                    <td className="px-3 py-2 text-right font-mono text-orange-500 border-l">{l.tipo==='DEBITO'?'Bs.'+formatNum(l.montoBs||0):'—'}</td>
+                                    <td className="px-3 py-2 text-right font-mono text-blue-500">{l.tipo==='CREDITO'?'Bs.'+formatNum(l.montoBs||0):'—'}</td>
                                   </tr>
                                 ))}
                               </tbody>
