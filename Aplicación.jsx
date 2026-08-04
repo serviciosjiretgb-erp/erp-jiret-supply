@@ -5330,7 +5330,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
 };
 
 
-const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings,appUser}) => {
+const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings,appUser,fetchingBCV,fetchTasaBCV}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
@@ -6761,7 +6761,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // ══════════════════════════════════════════════════════════════════════════
 const CxPView = ({
   facturasCompra, pagosCxP, proveedores, retIVACompra, retISLR, notasCompraCD,
-  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal, appUser
+  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal, appUser, fetchingBCV, fetchTasaBCV
 }) => {
   const [cxpSearch, setCxpSearch] = useState('');
   const [cxpFechaRef, setCxpFechaRef] = useState('');
@@ -10170,6 +10170,32 @@ ${resumenHtml}
 
 
 function ProcuraApp({fbUser,onBack,settings,appUser}) {
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   // ── Clave Admin + Papelera (mismo estándar que Ventas) — Procura no la tenía ──
   const [systemUsersIA,setSystemUsersIA]=useState([]);
   useEffect(()=>{ const u=onSnapshot(getColRef('users'), s=>setSystemUsersIA(s.docs.map(d=>({id:d.id,...d.data()})))); return ()=>u(); },[]);
@@ -10230,7 +10256,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,eliminarConRespaldoIA,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,eliminarConRespaldoIA,fetchingBCV,fetchTasaBCV,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -26993,7 +27019,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
-                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(newInvoiceForm.fecha);if(t)setNewInvoiceForm(f=>({...f,tasa:String(t)}));}}
+                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(newInvoiceForm.fechaFactura||newInvoiceForm.fecha);if(t)setNewInvoiceForm(f=>({...f,tasa:String(t)}));}}
                             className="text-orange-500 hover:text-orange-600 disabled:opacity-40" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
                         </label>
                         <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
