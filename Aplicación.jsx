@@ -6046,7 +6046,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                       </select>
                     </div>
                     <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Bs./$</label>
+                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1">Tasa Bs./$
+                        <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV();if(t)setForm(f=>({...f,tasa:String(t)}));}}
+                          className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
+                      </label>
                       <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))} placeholder="0 = solo USD"/>
                     </div>
                   </div>
