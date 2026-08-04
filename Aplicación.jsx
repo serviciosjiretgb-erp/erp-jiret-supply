@@ -6072,8 +6072,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                 const newIt={...updated[i],...patch};
                                 const totalCampo=parseFloat((pNum(newIt.cantidad)*pNum(newIt.precioUnit)).toFixed(2));
                                 if(esBsIt){
-                                  // El valor tecleado ES Bs — se guarda tal cual y también su equivalente USD
-                                  newIt.total=totalCampo;
+                                  // El valor tecleado ES Bs — se preserva tal cual en _totalBsOriginal, pero
+                                  // 'total' (el campo que usa TODO el sistema, incluido el asiento contable,
+                                  // como monto en USD) debe quedar convertido a USD, no en Bs.
+                                  const tasaIt=Math.max(pNum(form.tasa||0),0.0001);
+                                  newIt.total=parseFloat((totalCampo/tasaIt).toFixed(2));
                                   newIt._totalBsOriginal=totalCampo;
                                   newIt._precioBsOriginal=pNum(newIt.precioUnit);
                                 } else {
@@ -6085,7 +6088,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                               };
                               const codigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
                               // Columna secundaria: si la factura es en Bs, mostrar el equivalente en USD (dividir); si es en USD, mostrar el equivalente en Bs (multiplicar)
-                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0)/Math.max(pNum(form.tasa||0),1):pNum(it.total||0)*pNum(form.tasa||0)):0;
+                              const totSecundario=hasTasa?(esBsIt?pNum(it._totalBsOriginal||(pNum(it.total||0)*pNum(form.tasa||0))):pNum(it.total||0)*pNum(form.tasa||0)):0;
                               return(
                               <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                                 <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
@@ -6109,7 +6112,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                   <input type="number" className="w-20 text-right text-[10px] font-mono border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-orange-400"
                                     value={it.precioUnit||''} onChange={e=>updateItem({precioUnit:pNum(e.target.value)})}/>
                                 </td>
-                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(it.total||0)}</td>
+                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(esBsIt?pNum(it._totalBsOriginal||0):pNum(it.total||0))}</td>
                                 {hasTasa&&<td className="px-2 py-1 text-right font-mono text-blue-700 text-[10px]">{pFmt(totSecundario)}</td>}
                               </tr>);
                             })}
@@ -12195,7 +12198,7 @@ ${valoresHtml}
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
+                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
@@ -27033,17 +27036,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <span className="text-[10px] text-gray-500">Débitos: ${formatNum(asientoV.totDeb)} (Bs.{formatNum(asientoV.lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+(l.montoBs||0),0))}) · Créditos: ${formatNum(asientoV.totCred)} (Bs.{formatNum(asientoV.lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+(l.montoBs||0),0))})</span>
                             </div>
                             <table className="w-full text-xs">
-                              <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase font-black"><th className="px-3 py-2 text-left">Cuenta Contable</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center">Tipo</th><th className="px-3 py-2 text-right">Débito USD</th><th className="px-3 py-2 text-right">Crédito USD</th><th className="px-3 py-2 text-right border-l">Débito Bs.</th><th className="px-3 py-2 text-right">Crédito Bs.</th></tr></thead>
+                              <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase font-black"><th className="px-3 py-2 text-left">Cuenta Contable</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center">Tipo</th><th className="px-3 py-2 text-right">Débito</th><th className="px-3 py-2 text-right">Crédito</th></tr></thead>
                               <tbody>
                                 {asientoV.lineas.map((l,i)=>(
                                   <tr key={i} className="border-t border-gray-100">
                                     <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{l.cuenta}</td>
                                     <td className="px-3 py-2 text-[10px] text-gray-500">{l.concepto}</td>
                                     <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${l.tipo==='DEBITO'?'bg-orange-100 text-orange-700':'bg-blue-100 text-blue-700'}`}>{l.tipo}</span></td>
-                                    <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{l.tipo==='DEBITO'?'$'+formatNum(l.montoUSD):'—'}</td>
-                                    <td className="px-3 py-2 text-right font-mono font-black text-blue-600">{l.tipo==='CREDITO'?'$'+formatNum(l.montoUSD):'—'}</td>
-                                    <td className="px-3 py-2 text-right font-mono text-orange-500 border-l">{l.tipo==='DEBITO'?'Bs.'+formatNum(l.montoBs||0):'—'}</td>
-                                    <td className="px-3 py-2 text-right font-mono text-blue-500">{l.tipo==='CREDITO'?'Bs.'+formatNum(l.montoBs||0):'—'}</td>
+                                    <td className="px-3 py-2 text-right">{l.tipo==='DEBITO'?<><p className="font-mono font-black text-orange-600">{'$'+formatNum(l.montoUSD)}</p><p className="font-mono text-orange-400 text-[9px]">{'Bs.'+formatNum(l.montoBs||0)}</p></>:'—'}</td>
+                                    <td className="px-3 py-2 text-right">{l.tipo==='CREDITO'?<><p className="font-mono font-black text-blue-600">{'$'+formatNum(l.montoUSD)}</p><p className="font-mono text-blue-400 text-[9px]">{'Bs.'+formatNum(l.montoBs||0)}</p></>:'—'}</td>
                                   </tr>
                                 ))}
                               </tbody>
