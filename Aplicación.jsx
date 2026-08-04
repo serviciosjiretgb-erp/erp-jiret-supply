@@ -10851,6 +10851,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [serviciosC, setServiciosC] = useState([]);
   const [facturasVentaC, setFacturasVentaC] = useState([]);
   const [cuentasIngresoCfgC, setCuentasIngresoCfgC] = useState({conOpId:'',conOpNombre:'',sinOpId:'',sinOpNombre:''});
+  const [inventoryMovementsC, setInventoryMovementsC] = useState([]);
+  const [inventoryC, setInventoryC] = useState([]);
+  const [cuentasProduccionCfgC, setCuentasProduccionCfgC] = useState({});
   const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [filtHasta, setFiltHasta] = useState(getTodayDate());
   const [filtCuenta, setFiltCuenta] = useState('');
@@ -10914,6 +10917,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       onSnapshot(getColRef('procura_facturas_compra'), s => setFacturasCompraC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_servicios'), s => setServiciosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('maquilaInvoices'), s => setFacturasVentaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('inventoryMovements'), s => setInventoryMovementsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('inventory'), s => setInventoryC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(doc(db,'settings','produccionCuentasCfg'), d => d.exists() && setCuentasProduccionCfgC(d.data())),
       onSnapshot(doc(db,'settings','ventasCuentasIngreso'), d => d.exists() && setCuentasIngresoCfgC(x=>({...x,...d.data()}))),
     ];
     return () => subs.forEach(u => u());
@@ -11347,6 +11353,58 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // Relacionados. Dos formatos posibles en cxp_pagos_relacionados: los que vienen de un
   // movimiento real (origen+movimientoId, monto ya con signo) y los manuales (con campo
   // tipo aparte, monto sin signo) — se normalizan ambos aquí.
+  const construirLineasOperacionesInventario = () => {
+    const filtradas = (inventoryMovementsC||[]).filter(m=>(m.type==='AUTOCONSUMO'||m.type==='MUESTRA')&&(!filtDesde||(m.date||'')>=filtDesde)&&(!filtHasta||(m.date||'')<=filtHasta))
+      .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    return filtradas.map(m=>{
+      const ctaGastoM=m.type==='AUTOCONSUMO'?(cuentasProduccionCfgC.consumosInternosNombre||''):(cuentasProduccionCfgC.muestrasAveriasNombre||'');
+      const itemM=(inventoryC||[]).find(i=>i.id===m.itemId);
+      const catM=(itemM?.category||'').toLowerCase();
+      const ctaInvM=catM.includes('materia prima')?cuentasProduccionCfgC.inventarioMateriaPrimaNombre
+        :catM.includes('terminado')?cuentasProduccionCfgC.inventarioMercanciaNombre
+        :cuentasProduccionCfgC.inventarioConsumiblesNombre;
+      const montoM=parseNum(m.totalValue||0);
+      const tasaM=parseNum(m.tasa||settingsCC?.tasaBCV||0);
+      const lineas = (!ctaGastoM||!ctaInvM||montoM<=0) ? [] : [
+        {codigo:(ctaGastoM.split('—')[0]||'').trim(), cuenta:(ctaGastoM.split('—')[1]||ctaGastoM).trim(), tipo:'D', dBs:tasaM?montoM*tasaM:0, hBs:0, dUSD:montoM, hUSD:0},
+        {codigo:(ctaInvM.split('—')[0]||'').trim(), cuenta:(ctaInvM.split('—')[1]||ctaInvM).trim(), tipo:'H', dBs:0, hBs:tasaM?montoM*tasaM:0, dUSD:0, hUSD:montoM},
+      ];
+      return { id:m.id, comprobante:m.itemName||'—', fecha:m.date||'', doc:m.reference||'—',
+        conc:`Salida por ${m.type==='AUTOCONSUMO'?'Autoconsumo':'Muestra'}${!ctaGastoM||!ctaInvM?' — ⚠ falta configurar cuenta':''}`,
+        tasa:tasaM, lineas };
+    }).filter(r=>r.lineas.length>0);
+  };
+
+  const construirLineasCostoVenta = () => {
+    const filtradas = (facturasVentaC||[]).filter(f=>!f.esAnulacionFiscal&&(f.nroFiscal||f.nroControl)&&(f.itemsFacturados||[]).length>0
+      &&(!filtDesde||(f.fechaFactura||f.fecha||'')>=filtDesde)&&(!filtHasta||(f.fechaFactura||f.fecha||'')<=filtHasta))
+      .sort((a,b)=>(b.fechaFactura||b.fecha||'').localeCompare(a.fechaFactura||a.fecha||''));
+    return filtradas.map(f=>{
+      let costoProd=0, costoMerc=0;
+      (f.itemsFacturados||[]).forEach(it=>{
+        const itemInv=(inventoryC||[]).find(i=>(i.displayId||i.id)===it.invCode||(i.displayId||i.id)===it.codigo);
+        const cat=(itemInv?.category||it.category||'').toLowerCase();
+        const costoIt=parseNum(it.cantidad||0)*parseNum(it.costoUnit||0);
+        if(cat.includes('mercanc')) costoMerc+=costoIt; else costoProd+=costoIt;
+      });
+      const tasaCV=parseNum(f.tasa||0)||parseNum(settingsCC?.tasaBCV||0);
+      const lineas=[];
+      if(costoProd>0.01 && cuentasProduccionCfgC.costoVentaProduccionNombre && cuentasProduccionCfgC.inventarioMateriaPrimaNombre){
+        const ctaD=cuentasProduccionCfgC.costoVentaProduccionNombre, ctaC=cuentasProduccionCfgC.inventarioMateriaPrimaNombre;
+        lineas.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),tipo:'D',dBs:tasaCV?costoProd*tasaCV:0,hBs:0,dUSD:costoProd,hUSD:0});
+        lineas.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),tipo:'H',dBs:0,hBs:tasaCV?costoProd*tasaCV:0,dUSD:0,hUSD:costoProd});
+      }
+      if(costoMerc>0.01 && cuentasProduccionCfgC.costoVentaMercanciaNombre && cuentasProduccionCfgC.inventarioMercanciaNombre){
+        const ctaD=cuentasProduccionCfgC.costoVentaMercanciaNombre, ctaC=cuentasProduccionCfgC.inventarioMercanciaNombre;
+        lineas.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),tipo:'D',dBs:tasaCV?costoMerc*tasaCV:0,hBs:0,dUSD:costoMerc,hUSD:0});
+        lineas.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),tipo:'H',dBs:0,hBs:tasaCV?costoMerc*tasaCV:0,dUSD:0,hUSD:costoMerc});
+      }
+      return { id:f.id, comprobante:f.clientName||'—', fecha:f.fechaFactura||f.fecha||'', doc:f.nroFiscal||f.documento||'—',
+        conc:`Costo de venta — Fact. ${f.nroFiscal||f.documento||''}${lineas.length===0?' — ⚠ falta configurar cuenta':''}`,
+        tasa:tasaCV, lineas };
+    }).filter(r=>r.lineas.length>0);
+  };
+
   const construirLineasRelacionadas = () => {
     const montoConSigno = (p) => {
       if (p.origen) return Number(p.monto||0);
@@ -11703,6 +11761,10 @@ ${valoresHtml}
         return {...comunes, titulo:'Ajustes Contables', primeraCol:'Comprobante', docLabel:'Nro Comp.', tasa:true, ordenBsPrimero:true, unidad:'ajuste(s)', lineas:aplicarReclasCC('ajustes',construirLineasAjustes())};
       case 'relacionadas':
         return {...comunes, titulo:'Cuentas por Pagar Relacionadas', primeraCol:'Tercero', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('relacionadas',construirLineasRelacionadas())};
+      case 'op_inventario':
+        return {...comunes, titulo:'Operaciones de Inventario', primeraCol:'Artículo', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('op_inventario',construirLineasOperacionesInventario())};
+      case 'costo_venta':
+        return {...comunes, titulo:'Costo de Venta', primeraCol:'Cliente', docLabel:'Nro Fact.', tasa:true, ordenBsPrimero:true, unidad:'factura(s)', lineas:aplicarReclasCC('costo_venta',construirLineasCostoVenta())};
       default: return null;
     }
   };
@@ -11728,6 +11790,8 @@ ${valoresHtml}
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
+    { id:'op_inventario', label:'Operaciones de Inventario', icon:'📦', activo:true },
+    { id:'costo_venta', label:'Costo de Venta', icon:'📉', activo:true },
   ];
   const activo = sub || initialSub || 'banco';
 
@@ -12273,6 +12337,117 @@ ${valoresHtml}
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (activo === 'op_inventario') {
+      const lineasOI = filtrarPorBusquedaCC(construirLineasOperacionesInventario());
+      const totOIUSD = lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Artículo, código, cuenta, referencia..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasOI.length} movimiento(s) · Total ${contFmt(totOIUSD)}</p>
+            <BotonesExportCC tabId="op_inventario"/>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Salidas de almacén por Autoconsumo (uso interno) o Muestra a clientes — usa las cuentas configuradas en Producción → ⚙ Config. Cuentas. Si un movimiento no aparece aquí, revisa que tenga las cuentas de contrapartida asignadas.</div>
+          {lineasOI.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
+              <p className="text-[10px] mt-1">Se generan desde Control Inventario → Salidas, con motivo Autoconsumo o Muestra</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Artículo','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasOI.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <CeldaCuentaCC tabId='op_inventario' compId={r.id} li={li} l={l}/>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
+                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasOI.length} movimiento(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (activo === 'costo_venta') {
+      const lineasCoV = filtrarPorBusquedaCC(construirLineasCostoVenta());
+      const totCoVUSD = lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Cliente, código, cuenta, factura..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasCoV.length} factura(s) · Total ${contFmt(totCoVUSD)}</p>
+            <BotonesExportCC tabId="costo_venta"/>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Costo de lo vendido por factura fiscal, tomado directo del costoUnit de cada ítem facturado — el mismo dato que usa Reporte General de Ventas y Costos. Producción y Mercancía usan cuentas distintas, configuradas en Producción → ⚙ Config. Cuentas.</div>
+          {lineasCoV.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Cliente','Fecha','Código','Cuenta','T','Nro Fact.','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasCoV.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <CeldaCuentaCC tabId='costo_venta' compId={r.id} li={li} l={l}/>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
+                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasCoV.length} factura(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -13017,6 +13192,35 @@ function App() {
           {codigo:(ctaGastoM.split('—')[0]||'').trim(),cuenta:(ctaGastoM.split('—')[1]||ctaGastoM).trim(),debeBs:tasaM?montoM*tasaM:0,haberBs:0,debeUSD:montoM,haberUSD:0},
           {codigo:(ctaInvM.split('—')[0]||'').trim(),cuenta:(ctaInvM.split('—')[1]||ctaInvM).trim(),debeBs:0,haberBs:tasaM?montoM*tasaM:0,debeUSD:0,haberUSD:montoM},
         ]});
+    });
+    // 9) Costo de Venta — por cada factura real (excluye Anulación Fiscal), toma el costoUnit
+    // guardado DIRECTO en los ítems de la factura (itemsFacturados) — el mismo campo que usa
+    // Reporte General de Ventas y Costos — para que el costo nunca difiera entre ambos reportes.
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal&&(f.nroFiscal||f.nroControl)).forEach(f=>{
+      const itemsF=f.itemsFacturados||[];
+      if(!itemsF.length) return;
+      let costoProd=0, costoMerc=0;
+      itemsF.forEach(it=>{
+        const itemInv=(inventory||[]).find(i=>(i.displayId||i.id)===it.invCode||(i.displayId||i.id)===it.codigo);
+        const cat=(itemInv?.category||it.category||'').toLowerCase();
+        const costoIt=parseNum(it.cantidad||0)*parseNum(it.costoUnit||0);
+        if(cat.includes('mercanc')) costoMerc+=costoIt; else costoProd+=costoIt;
+      });
+      const tasaCV=parseNum(f.tasa||0)||parseNum(settings?.tasaBCV||0);
+      const fechaCV=f.fechaFactura||f.fecha||'';
+      const lineasCV=[];
+      if(costoProd>0.01 && cuentasProduccionCfg.costoVentaProduccionNombre && cuentasProduccionCfg.inventarioMateriaPrimaNombre){
+        const ctaD=cuentasProduccionCfg.costoVentaProduccionNombre, ctaC=cuentasProduccionCfg.inventarioMateriaPrimaNombre;
+        lineasCV.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),debeBs:tasaCV?costoProd*tasaCV:0,haberBs:0,debeUSD:costoProd,haberUSD:0});
+        lineasCV.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),debeBs:0,haberBs:tasaCV?costoProd*tasaCV:0,debeUSD:0,haberUSD:costoProd});
+      }
+      if(costoMerc>0.01 && cuentasProduccionCfg.costoVentaMercanciaNombre && cuentasProduccionCfg.inventarioMercanciaNombre){
+        const ctaD=cuentasProduccionCfg.costoVentaMercanciaNombre, ctaC=cuentasProduccionCfg.inventarioMercanciaNombre;
+        lineasCV.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),debeBs:tasaCV?costoMerc*tasaCV:0,haberBs:0,debeUSD:costoMerc,haberUSD:0});
+        lineasCV.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),debeBs:0,haberBs:tasaCV?costoMerc*tasaCV:0,debeUSD:0,haberUSD:costoMerc});
+      }
+      if(lineasCV.length) out.push({fecha:fechaCV, comprobante:f.nroFiscal||f.documento||f.id, modulo:'Costo de Venta',
+        concepto:`Costo de venta — Fact. ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:lineasCV});
     });
     return out;
   };
