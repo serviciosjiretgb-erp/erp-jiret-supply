@@ -17732,6 +17732,38 @@ function App() {
             )}
           </div>
 
+          {showCfgCuentasProduccion && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCfgCuentasProduccion(false)}>
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas Contables de Producción</h3>
+                  <button onClick={()=>setShowCfgCuentasProduccion(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                </div>
+                <p className="text-[11px] text-gray-500">Se configuran una sola vez. Se usan para armar correctamente los asientos de Operaciones de Inventario (salidas de almacén por autoconsumo, muestras, averías, etc.).</p>
+                {[
+                  ['costoVentaProduccionId','costoVentaProduccionNombre','Costo de Venta (Producción)'],
+                  ['costoVentaMercanciaId','costoVentaMercanciaNombre','Costo de Venta (Mercancía)'],
+                  ['inventarioConsumiblesId','inventarioConsumiblesNombre','Inventario de Consumibles'],
+                  ['consumosInternosId','consumosInternosNombre','Consumos Internos'],
+                  ['muestrasAveriasId','muestrasAveriasNombre','Muestras Clientes - Averías'],
+                  ['inventarioMateriaPrimaId','inventarioMateriaPrimaNombre','Inventario de Materia Prima'],
+                  ['inventarioMercanciaId','inventarioMercanciaNombre','Inventario de Mercancía'],
+                ].map(([idKey,nomKey,label])=>(
+                  <div key={idKey}>
+                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
+                    <select value={cuentasProduccionCfg[idKey]||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setCuentasProduccionCfg(x=>({...x,[idKey]:e.target.value,[nomKey]:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                      <option value="">— Seleccionar cuenta —</option>
+                      {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                    </select>
+                  </div>
+                ))}
+                <div className="flex gap-2 pt-2">
+                  <button onClick={()=>setShowCfgCuentasProduccion(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                  <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Grid — responsive: 1 col mobile, 2 tablet, 3 desktop */}
           <div className="px-4 sm:px-6 pb-8">
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,340px),1fr))', gap:16}}>
@@ -26640,38 +26672,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div className="flex gap-2 pt-2">
                     <button onClick={()=>setShowCuentasIngresoModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
                     <button onClick={guardarCuentasIngreso} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
-                  </div>
-                </div>
-              </div>
-            )}
-            {showCfgCuentasProduccion && (
-              <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCfgCuentasProduccion(false)}>
-                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas Contables de Producción</h3>
-                    <button onClick={()=>setShowCfgCuentasProduccion(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
-                  </div>
-                  <p className="text-[11px] text-gray-500">Se configuran una sola vez. Se usan para armar correctamente los asientos de Operaciones de Inventario (salidas de almacén por autoconsumo, muestras, averías, etc.).</p>
-                  {[
-                    ['costoVentaProduccionId','costoVentaProduccionNombre','Costo de Venta (Producción)'],
-                    ['costoVentaMercanciaId','costoVentaMercanciaNombre','Costo de Venta (Mercancía)'],
-                    ['inventarioConsumiblesId','inventarioConsumiblesNombre','Inventario de Consumibles'],
-                    ['consumosInternosId','consumosInternosNombre','Consumos Internos'],
-                    ['muestrasAveriasId','muestrasAveriasNombre','Muestras Clientes - Averías'],
-                    ['inventarioMateriaPrimaId','inventarioMateriaPrimaNombre','Inventario de Materia Prima'],
-                    ['inventarioMercanciaId','inventarioMercanciaNombre','Inventario de Mercancía'],
-                  ].map(([idKey,nomKey,label])=>(
-                    <div key={idKey}>
-                      <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
-                      <select value={cuentasProduccionCfg[idKey]||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setCuentasProduccionCfg(x=>({...x,[idKey]:e.target.value,[nomKey]:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
-                        <option value="">— Seleccionar cuenta —</option>
-                        {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                      </select>
-                    </div>
-                  ))}
-                  <div className="flex gap-2 pt-2">
-                    <button onClick={()=>setShowCfgCuentasProduccion(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
-                    <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
                   </div>
                 </div>
               </div>
