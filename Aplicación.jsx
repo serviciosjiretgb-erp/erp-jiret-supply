@@ -13630,6 +13630,7 @@ function App() {
   const [bobinaPhaseForm, setBobinaPhaseForm] = useState({ date:getTodayDate(), insumos:[], producedKg:'', mermaKg:'', mermaTroquelTransp:'', mermaTroquelPigm:'', mermaTorta:'', observaciones:'', operadorExt:'', zona1:'', zona2:'', zona3:'', zona4:'', zona5:'', zona6:'', cabezalA:'', cabezalB:'', motorExt:'', ventilador:'', jalador:'', tratado:'' });
   // ── Stock mínimo (edición admin en Proyección MP) ──
   const [editingMinStock, setEditingMinStock] = useState(null); // {id, value}
+  const [editingMaxStock, setEditingMaxStock] = useState(null); // {id, value}
   // ============================================================================
   // ── UTILIDAD: abre ventana membretada con botón IMPRIMIR / GUARDAR PDF ───────
   const _abrirVentanaReporte = (contenidoHtml, titulo = 'Reporte') => {
@@ -16883,29 +16884,70 @@ function App() {
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
     const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
-    return inventory.filter(i => i.category === 'Materia Prima').map(mp => {
-       const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
-       const dailyAvg = consumedIn30Days / 30;
-       
-       let committedStock = 0;
-       pendingReqs.forEach(req => {
-            const item = req.items.find(i => i.id === mp.id);
-            if (item) committedStock += parseNum(item.qty);
-       });
+    const calcItem = (mp) => {
+      const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
+      const dailyAvg = consumedIn30Days / 30;
 
-       const availableReal = mp.stock - committedStock;
-       const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
-       const minStock = parseNum(mp.minStock || 0);
-       
-       // Crítico si: stock disponible <= stock mínimo, O días de cobertura <= 30 (si no hay minStock)
-       const isCritical = availableReal <= 0 || (minStock > 0 ? mp.stock <= minStock : daysRemaining <= 30);
-       const deficit = minStock > 0 ? Math.max(0, minStock - mp.stock) : 0;
-       const suggestOrder = isCritical
-         ? Math.ceil(deficit > 0 ? deficit + (dailyAvg * 15) : Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45))
-         : 0;
+      let committedStock = 0;
+      pendingReqs.forEach(req => {
+           const item = req.items.find(i => i.id === mp.id);
+           if (item) committedStock += parseNum(item.qty);
+      });
 
-       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock };
+      const availableReal = mp.stock - committedStock;
+      const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
+      const minStock = parseNum(mp.minStock || 0);
+      const maxStock = parseNum(mp.maxStock || 0);
+
+      // Crítico si: stock disponible <= stock mínimo, O días de cobertura <= 30 (si no hay minStock)
+      const isCritical = availableReal <= 0 || (minStock > 0 ? mp.stock <= minStock : daysRemaining <= 30);
+      const deficit = minStock > 0 ? Math.max(0, minStock - mp.stock) : 0;
+      const suggestOrder = isCritical
+        ? Math.ceil(deficit > 0 ? deficit + (dailyAvg * 15) : Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45))
+        : 0;
+
+      return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock, maxStock };
+    };
+
+    return inventory.filter(i => i.category === 'Materia Prima').map(calcItem);
+  }, [inventory, invMovements, invRequisitions]);
+
+  // Resto de productos de Almacén General, agrupados por categoría (subcategoría cuando es Producto Terminado).
+  // Omite Materia Prima (ya está arriba) y, a pedido, Bolsas Plásticas y Termoencogibles.
+  const projectionOtrosPorCategoria = useMemo(() => {
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
+    const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
+    const EXCLUIR = new Set(['Bolsas Plásticas','Termoencogibles']);
+
+    const calcItem = (mp) => {
+      const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
+      const dailyAvg = consumedIn30Days / 30;
+      let committedStock = 0;
+      pendingReqs.forEach(req => {
+        const item = req.items.find(i => i.id === mp.id);
+        if (item) committedStock += parseNum(item.qty);
+      });
+      const availableReal = mp.stock - committedStock;
+      const daysRemaining = dailyAvg > 0 ? availableReal / dailyAvg : 999;
+      const minStock = parseNum(mp.minStock || 0);
+      const maxStock = parseNum(mp.maxStock || 0);
+      const isCritical = availableReal <= 0 || (minStock > 0 ? mp.stock <= minStock : daysRemaining <= 30);
+      const deficit = minStock > 0 ? Math.max(0, minStock - mp.stock) : 0;
+      const suggestOrder = isCritical
+        ? Math.ceil(deficit > 0 ? deficit + (dailyAvg * 15) : Math.abs(availableReal < 0 ? availableReal : 0) + (dailyAvg * 45))
+        : 0;
+      return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock, maxStock };
+    };
+
+    const grupos = {};
+    inventory.filter(i => i.category !== 'Materia Prima' && i.activo!==false).forEach(i=>{
+      const catEfectiva = (i.category==='Productos Terminados' && i.subcategory) ? i.subcategory : (i.category||'Otros');
+      if(EXCLUIR.has(catEfectiva)) return;
+      if(!grupos[catEfectiva]) grupos[catEfectiva]=[];
+      grupos[catEfectiva].push(calcItem(i));
     });
+    return Object.entries(grupos).sort((a,b)=>a[0].localeCompare(b[0],'es'));
   }, [inventory, invMovements, invRequisitions]);
 
   // generateProjectionData kept for backward compatibility — returns the memoized value
@@ -16917,6 +16959,14 @@ function App() {
       await updateDoc(getDocRef('inventory', itemId), { minStock: parseNum(value) });
       setEditingMinStock(null);
       setDialog({title:'✅ Guardado', text:`Stock mínimo actualizado para ${itemId}.`, type:'alert'});
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
+
+  const handleSaveMaxStock = async (itemId, value) => {
+    try {
+      await updateDoc(getDocRef('inventory', itemId), { maxStock: parseNum(value) });
+      setEditingMaxStock(null);
+      setDialog({title:'✅ Guardado', text:`Stock máximo actualizado para ${itemId}.`, type:'alert'});
     } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
 
@@ -24938,24 +24988,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           let nuevosCount=0, recuperadosCount=0;
           const recuperadosLista=[], nuevosLista=[];
           Object.entries(clientesMesVend).forEach(([cl, primeraFechaMes])=>{
-            // Criterio 1 (prioritario): la Fecha de Creación del cliente en el Directorio cae en el mes de esta comisión
+            // Único criterio para "nuevo": Fecha de Creación del cliente (Directorio) cae en el mes de esta comisión.
+            // Sin fecha de creación cargada (o de otro mes) → el cliente NO cuenta como nuevo ni se muestra,
+            // hasta que se cargue/corrija su Fecha de Creación.
             const clienteDir=(clients||[]).find(c=>(c.name||'').toUpperCase()===cl||(c.rif||'').toUpperCase()===cl);
             if(clienteDir?.fechaCreacion && clienteDir.fechaCreacion.startsWith(ym)){
               nuevosCount++; nuevosLista.push(cl);
               return;
             }
-            // Criterio 2 (heurístico — clientes sin Fecha de Creación cargada todavía en el Directorio):
-            // Facturas históricas de ese cliente CON ESTE VENDEDOR (atribución por vendedor de la factura)
+            // Recuperado: reactivación tras +6 meses sin comprarle a este vendedor (no depende de Fecha de Creación)
             const histCliVend=(invoices||[]).filter(inv=>
               !inv.esAnulacionFiscal &&
               (inv.clientName||inv.clientRif||'').toUpperCase()===cl &&
               (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) &&
               fechaFactura(inv));
             const fechasPrevias=histCliVend.map(fechaFactura).filter(f=>f<primeraFechaMes).sort();
-            if(fechasPrevias.length===0){
-              // Sin facturas previas de este cliente con este vendedor → NUEVO para el vendedor
-              nuevosCount++; nuevosLista.push(cl);
-            } else {
+            if(fechasPrevias.length>0){
               const ultimaPrevia=fechasPrevias[fechasPrevias.length-1];
               if(mesesEntre(ultimaPrevia, primeraFechaMes) > 6){
                 recuperadosCount++; recuperadosLista.push(cl);
@@ -36617,6 +36665,7 @@ ${resumenHtml}
                         <th className="py-3 px-4 border-r">Código / Material</th>
                         <th className="py-3 px-4 border-r text-center">Stock Actual</th>
                         <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo 🔒</th>
+                        <th className="py-3 px-4 border-r text-center bg-blue-50">Stock Máximo 🔒</th>
                         <th className="py-3 px-4 border-r text-center">Comprometido</th>
                         <th className="py-3 px-4 border-r text-center">Disponible Real</th>
                         <th className="py-3 px-4 border-r text-center">Consumo/Día</th>
@@ -36647,6 +36696,23 @@ ${resumenHtml}
                               </div>
                             )}
                           </td>
+                          <td className="py-3 px-4 border-r text-center bg-blue-50/50">
+                            {editingMaxStock?.id === mp.id ? (
+                              <div className="flex gap-1 items-center justify-center">
+                                <input type="number" step="0.01" min="0" value={editingMaxStock.value}
+                                  onChange={e=>setEditingMaxStock({...editingMaxStock,value:e.target.value})}
+                                  className="w-20 border-2 border-blue-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
+                                <button onClick={()=>handleSaveMaxStock(mp.id,editingMaxStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                                <button onClick={()=>setEditingMaxStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-1 items-center justify-center">
+                                <span className={`font-black ${mp.maxStock>0&&mp.stock>mp.maxStock?'text-blue-600':'text-gray-600'}`}>{mp.maxStock>0?formatNum(mp.maxStock):'—'}</span>
+                                <button onClick={()=>requireAdminPassword(()=>setEditingMaxStock({id:mp.id,value:String(mp.maxStock||0)}),'Editar Stock Máximo')}
+                                  className="p-0.5 text-gray-400 hover:text-blue-500" title="Editar (Admin)"><Edit size={11}/></button>
+                              </div>
+                            )}
+                          </td>
                           <td className="py-3 px-4 border-r text-center font-bold text-red-400">{formatNum(mp.committedStock)}</td>
                           <td className={`py-3 px-4 border-r text-center font-black ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
                           <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{formatNum(mp.dailyAvg)}</td>
@@ -36664,6 +36730,81 @@ ${resumenHtml}
             </div>
           </div>
 
+          {/* Resto de productos de Almacén General, por categoría (sin Bolsas Plásticas ni Termoencogibles) */}
+          {projectionOtrosPorCategoria.map(([categoria, items]) => (
+            <div key={categoria} className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="px-8 py-4 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+                <h3 className="text-base font-black text-gray-800 uppercase flex items-center gap-2"><Package className="text-orange-500" size={18}/> {categoria}</h3>
+                <span className="bg-gray-200 text-gray-700 px-3 py-1 rounded-xl font-black text-[10px]">{items.length} ítem(s)</span>
+              </div>
+              <div className="overflow-x-auto rounded-b-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-gray-100 border-b-2 border-gray-200">
+                    <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
+                      <th className="py-3 px-4 border-r">Código / Producto</th>
+                      <th className="py-3 px-4 border-r text-center">Stock Actual</th>
+                      <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo 🔒</th>
+                      <th className="py-3 px-4 border-r text-center bg-blue-50">Stock Máximo 🔒</th>
+                      <th className="py-3 px-4 border-r text-center">Comprometido</th>
+                      <th className="py-3 px-4 border-r text-center">Disponible Real</th>
+                      <th className="py-3 px-4 border-r text-center">Consumo/Día</th>
+                      <th className="py-3 px-4 border-r text-center">Días Cobertura</th>
+                      <th className="py-3 px-4 text-center">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {items.map(mp => (
+                      <tr key={mp.id} className={`hover:bg-gray-50 transition-colors ${mp.isCritical ? 'bg-red-50/50' : ''}`}>
+                        <td className="py-3 px-4 border-r font-black text-orange-600">{mp.id}<br/><span className="text-[9px] font-bold text-gray-500 uppercase">{mp.desc}</span></td>
+                        <td className="py-3 px-4 border-r text-center font-black text-blue-600">{formatNum(mp.stock)}</td>
+                        <td className="py-3 px-4 border-r text-center bg-yellow-50/50">
+                          {editingMinStock?.id === mp.id ? (
+                            <div className="flex gap-1 items-center justify-center">
+                              <input type="number" step="0.01" min="0" value={editingMinStock.value}
+                                onChange={e=>setEditingMinStock({...editingMinStock,value:e.target.value})}
+                                className="w-20 border-2 border-orange-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
+                              <button onClick={()=>handleSaveMinStock(mp.id,editingMinStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                              <button onClick={()=>setEditingMinStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1 items-center justify-center">
+                              <span className={`font-black ${mp.minStock>0&&mp.stock<=mp.minStock?'text-red-600':'text-gray-600'}`}>{mp.minStock>0?formatNum(mp.minStock):'—'}</span>
+                              <button onClick={()=>requireAdminPassword(()=>setEditingMinStock({id:mp.id,value:String(mp.minStock||0)}),'Editar Stock Mínimo')}
+                                className="p-0.5 text-gray-400 hover:text-orange-500" title="Editar (Admin)"><Edit size={11}/></button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 border-r text-center bg-blue-50/50">
+                          {editingMaxStock?.id === mp.id ? (
+                            <div className="flex gap-1 items-center justify-center">
+                              <input type="number" step="0.01" min="0" value={editingMaxStock.value}
+                                onChange={e=>setEditingMaxStock({...editingMaxStock,value:e.target.value})}
+                                className="w-20 border-2 border-blue-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
+                              <button onClick={()=>handleSaveMaxStock(mp.id,editingMaxStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                              <button onClick={()=>setEditingMaxStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1 items-center justify-center">
+                              <span className={`font-black ${mp.maxStock>0&&mp.stock>mp.maxStock?'text-blue-600':'text-gray-600'}`}>{mp.maxStock>0?formatNum(mp.maxStock):'—'}</span>
+                              <button onClick={()=>requireAdminPassword(()=>setEditingMaxStock({id:mp.id,value:String(mp.maxStock||0)}),'Editar Stock Máximo')}
+                                className="p-0.5 text-gray-400 hover:text-blue-500" title="Editar (Admin)"><Edit size={11}/></button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 border-r text-center font-bold text-red-400">{formatNum(mp.committedStock)}</td>
+                        <td className={`py-3 px-4 border-r text-center font-black ${mp.availableReal < 0 ? 'text-red-600' : 'text-green-600'}`}>{formatNum(mp.availableReal)}</td>
+                        <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{formatNum(mp.dailyAvg)}</td>
+                        <td className={`py-3 px-4 border-r text-center font-black text-lg ${mp.daysRemaining <= 30 ? 'text-red-600' : 'text-green-600'}`}>{mp.daysRemaining === 999 ? '∞' : Math.round(mp.daysRemaining)}</td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase ${mp.isCritical ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{mp.isCritical ? '⚠ CRÍTICO' : '✓ OK'}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
           {/* Requisiciones pendientes de almacén */}
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-8 py-5 border-b border-gray-200 bg-blue-50 flex justify-between items-center">
