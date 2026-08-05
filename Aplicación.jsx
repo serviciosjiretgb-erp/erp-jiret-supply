@@ -5270,6 +5270,34 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
 
 const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings,appUser}) => {
   const [search,setSearch]=useState('');
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: histórico completo, se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, ese día usa la última tasa vigente)
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
   const [modal,setModal]=useState(null);
@@ -6699,6 +6727,34 @@ const CxPView = ({
   const [cxpExpanded, setCxpExpanded] = useState({});
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [cajasCuentasCxp, setCajasCuentasCxp] = useState([]);
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: histórico completo, se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, ese día usa la última tasa vigente)
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
 
   useEffect(()=>{
     const u = onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancarias(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -7900,14 +7956,21 @@ const HistorialPagosView = ({
   const histFiltered = allPagos.filter(p=>{
     if(histSearch){
       const q=histSearch.toLowerCase();
+      const qDigits=histSearch.replace(/[^0-9]/g,'');
       const f=_factMap.get(p.facturaId);
+      const tasaP=pN(p.tasa||tasaBCV||1);
+      const montoEf=montoEfectivo(p);
+      const montoUsdDigits=fN(montoEf).replace(/[^0-9]/g,'');
+      const montoBsVal=pN(p.montoBs||0)>0&&!p.esAnticipo?pN(p.montoBs):montoEf*tasaP;
+      const montoBsDigits=fN(montoBsVal).replace(/[^0-9]/g,'');
       if(!(
         (p.proveedor||'').toLowerCase().includes(q)||
         (f?.nroFactura||'').toLowerCase().includes(q)||
         (p.referencia||'').toLowerCase().includes(q)||
         (p.metodo||'').toLowerCase().includes(q)||
         (p.banco||'').toLowerCase().includes(q)||
-        (p.concepto||'').toLowerCase().includes(q)
+        (p.concepto||'').toLowerCase().includes(q)||
+        (qDigits.length>0 && (montoUsdDigits.includes(qDigits) || montoBsDigits.includes(qDigits)))
       )) return false;
     }
     if(histFiltMes && !(p.fecha||'').startsWith(histFiltMes)) return false;
@@ -8290,7 +8353,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           </div>
           {/* Filtros */}
           <div className="flex flex-wrap gap-2">
-            <input value={histSearch} onChange={e=>{setHistSearch(e.target.value);setHistPage(0);}} placeholder="🔍 Buscar proveedor, N° factura, referencia..."
+            <input value={histSearch} onChange={e=>{setHistSearch(e.target.value);setHistPage(0);}} placeholder="🔍 Buscar proveedor, N° factura, referencia, monto USD o Bs..."
               className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 flex-1 min-w-[200px]"/>
             <input type="month" value={histFiltMes} onChange={e=>{setHistFiltMes(e.target.value);setHistPage(0);}}
               className="border border-gray-200 rounded-xl px-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400"/>
@@ -16879,18 +16942,40 @@ function App() {
   // ============================================================================
   // LÓGICA DE PROYECCIÓN DE MP Y ORDEN DE COMPRA — memoizado para no recalcular en cada render
   // ============================================================================
+  // Agrupa documentos de inventory que representan el MISMO producto en distintos almacenes
+  // en una sola fila con el stock sumado — un solo producto, existencia total (como Almacén General).
+  const groupProductosPorId = useCallback((items) => {
+    const grupos = {};
+    items.forEach(i=>{
+      const cleanId = i.displayId || (i.id||'').split('___')[0];
+      if(!grupos[cleanId]) grupos[cleanId] = { ...i, id: cleanId, displayId: cleanId, stock: 0, minStock: 0, maxStock: 0, _docIds: [], _latestTs: 0 };
+      const g = grupos[cleanId];
+      g.stock += parseNum(i.stock||0);
+      g._docIds.push(i.id);
+      if(parseNum(i.minStock||0) > 0) g.minStock = parseNum(i.minStock);
+      if(parseNum(i.maxStock||0) > 0) g.maxStock = parseNum(i.maxStock);
+      if((i.timestamp||0) >= g._latestTs){
+        g._latestTs = i.timestamp||0;
+        g.desc = i.desc||g.desc; g.unit = i.unit||g.unit;
+        g.cost = i.cost!=null?i.cost:g.cost;
+        g.category = i.category||g.category; g.subcategory = i.subcategory||g.subcategory;
+      }
+    });
+    return Object.values(grupos);
+  }, []);
+
   const projectionData = useMemo(() => {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
     const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
 
     const calcItem = (mp) => {
-      const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
+      const consumedIn30Days = recentMovs.filter(m => mp._docIds.includes(m.itemId)).reduce((sum, m) => sum + parseNum(m.qty), 0);
       const dailyAvg = consumedIn30Days / 30;
 
       let committedStock = 0;
       pendingReqs.forEach(req => {
-           const item = req.items.find(i => i.id === mp.id);
+           const item = req.items.find(i => mp._docIds.includes(i.id));
            if (item) committedStock += parseNum(item.qty);
       });
 
@@ -16909,23 +16994,24 @@ function App() {
       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock, maxStock };
     };
 
-    return inventory.filter(i => i.category === 'Materia Prima').map(calcItem);
-  }, [inventory, invMovements, invRequisitions]);
+    const agrupados = groupProductosPorId(inventory.filter(i => i.category === 'Materia Prima'));
+    return agrupados.map(calcItem);
+  }, [inventory, invMovements, invRequisitions, groupProductosPorId]);
 
   // Resto de productos de Almacén General, agrupados por categoría (subcategoría cuando es Producto Terminado).
-  // Omite Materia Prima (ya está arriba) y, a pedido, Bolsas Plásticas y Termoencogibles.
+  // Omite Materia Prima (ya está arriba), Semielaborados, Bolsas Plásticas y Termoencogibles.
   const projectionOtrosPorCategoria = useMemo(() => {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const recentMovs = invMovements.filter(m => m.type === 'SALIDA' && m.timestamp >= thirtyDaysAgo);
     const pendingReqs = (invRequisitions||[]).filter(r => r.status === 'PENDIENTE');
-    const EXCLUIR = new Set(['Bolsas Plásticas','Termoencogibles']);
+    const EXCLUIR = new Set(['Bolsas Plásticas','Termoencogibles','Semielaborados']);
 
     const calcItem = (mp) => {
-      const consumedIn30Days = recentMovs.filter(m => m.itemId === mp.id).reduce((sum, m) => sum + parseNum(m.qty), 0);
+      const consumedIn30Days = recentMovs.filter(m => mp._docIds.includes(m.itemId)).reduce((sum, m) => sum + parseNum(m.qty), 0);
       const dailyAvg = consumedIn30Days / 30;
       let committedStock = 0;
       pendingReqs.forEach(req => {
-        const item = req.items.find(i => i.id === mp.id);
+        const item = req.items.find(i => mp._docIds.includes(i.id));
         if (item) committedStock += parseNum(item.qty);
       });
       const availableReal = mp.stock - committedStock;
@@ -16940,33 +17026,42 @@ function App() {
       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock, maxStock };
     };
 
+    const candidatos = inventory.filter(i => i.category !== 'Materia Prima' && i.category !== 'Semielaborados' && i.activo!==false);
+    const agrupados = groupProductosPorId(candidatos);
+
     const grupos = {};
-    inventory.filter(i => i.category !== 'Materia Prima' && i.activo!==false).forEach(i=>{
-      const catEfectiva = (i.category==='Productos Terminados' && i.subcategory) ? i.subcategory : (i.category||'Otros');
+    agrupados.forEach(mp=>{
+      const catEfectiva = (mp.category==='Productos Terminados' && mp.subcategory) ? mp.subcategory : (mp.category||'Otros');
       if(EXCLUIR.has(catEfectiva)) return;
       if(!grupos[catEfectiva]) grupos[catEfectiva]=[];
-      grupos[catEfectiva].push(calcItem(i));
+      grupos[catEfectiva].push(calcItem(mp));
     });
     return Object.entries(grupos).sort((a,b)=>a[0].localeCompare(b[0],'es'));
-  }, [inventory, invMovements, invRequisitions]);
+  }, [inventory, invMovements, invRequisitions, groupProductosPorId]);
 
   // generateProjectionData kept for backward compatibility — returns the memoized value
   const generateProjectionData = useCallback(() => projectionData, [projectionData]);
 
-  // ── Guardar stock mínimo de MP (solo admin) ──
-  const handleSaveMinStock = async (itemId, value) => {
+  // ── Guardar stock mínimo/máximo — se propaga a TODOS los documentos del producto (todos los almacenes) ──
+  const handleSaveMinStock = async (docIds, value) => {
     try {
-      await updateDoc(getDocRef('inventory', itemId), { minStock: parseNum(value) });
+      const ids = Array.isArray(docIds) ? docIds : [docIds];
+      const batch = writeBatch(db);
+      ids.forEach(id => batch.update(getDocRef('inventory', id), { minStock: parseNum(value) }));
+      await batch.commit();
       setEditingMinStock(null);
-      setDialog({title:'✅ Guardado', text:`Stock mínimo actualizado para ${itemId}.`, type:'alert'});
+      setDialog({title:'✅ Guardado', text:`Stock mínimo actualizado.`, type:'alert'});
     } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
 
-  const handleSaveMaxStock = async (itemId, value) => {
+  const handleSaveMaxStock = async (docIds, value) => {
     try {
-      await updateDoc(getDocRef('inventory', itemId), { maxStock: parseNum(value) });
+      const ids = Array.isArray(docIds) ? docIds : [docIds];
+      const batch = writeBatch(db);
+      ids.forEach(id => batch.update(getDocRef('inventory', id), { maxStock: parseNum(value) }));
+      await batch.commit();
       setEditingMaxStock(null);
-      setDialog({title:'✅ Guardado', text:`Stock máximo actualizado para ${itemId}.`, type:'alert'});
+      setDialog({title:'✅ Guardado', text:`Stock máximo actualizado.`, type:'alert'});
     } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
 
@@ -24945,8 +25040,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const pct = esc ? esc.pct : 0;
             const rango = esc ? (cfg.cobranzaEscala.indexOf(esc)+1) : '—';
             const monto = parseNum(ne.total||ne.montoBase||0);
+            const facturaVinculada = ne.facturaId ? (invoices||[]).find(inv=>inv.id===ne.facturaId) : null;
+            const factura = facturaVinculada?.nroFiscal || '';
             return {
-              neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'',
+              neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'', factura,
               monto, condicion, vencimiento, fechaPago, diasRetraso,
               rango, pct, montoPagar: monto*(pct/100), cobrado
             };
@@ -25065,7 +25162,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ...(tipoComisionVend==='PORCENTUAL'
                 ? {porcentaje:pctSimple, comisionPorcentual}
                 : {comisionMeta, montoMix, totalCobranza, bonos:{...bonos},
-                   cobranzaDetalle: cobranzaCalcAll.filter(x=>x.cobrado&&(x.fechaPago||'').startsWith(ym)).map(x=>({neId:x.neId,cliente:x.cliente,fechaNE:x.fecha,monto:x.monto,fechaPago:x.fechaPago,diasRetraso:x.diasRetraso,pct:x.pct,montoPagar:x.montoPagar}))}),
+                   cobranzaDetalle: cobranzaCalcAll.filter(x=>x.cobrado&&(x.fechaPago||'').startsWith(ym)).map(x=>({neId:x.neId,cliente:x.cliente,factura:x.factura,fechaNE:x.fecha,monto:x.monto,fechaPago:x.fechaPago,diasRetraso:x.diasRetraso,pct:x.pct,montoPagar:x.montoPagar}))}),
               nNEs: nesMesCom.length,
               ts: Date.now(),
               user: appUser?.name||'Sistema',
@@ -25088,18 +25185,44 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
               fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
             ].join('');
-            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
+            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td(r.factura||'—')}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
             const metaRows=(cfg.metaTabla||[]).map(e=>{const a=totalVentasVend>=e.min&&totalVentasVend<=e.max;return`<tr>${td('$'+formatNum(e.min)+' a $'+formatNum(e.max))}${td(e.pct+'%',true)}${td(a?'✓ Alcanzado':'No alcanzado')}${td('$'+formatNum(a?totalVentasVend*(e.pct/100):0),true)}</tr>`;}).join('');
             const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;margin-bottom:14px;}th{background:#000;color:#fff;font-size:10px;text-transform:uppercase;padding:6px 9px;border:1px solid #000;}h3{color:#f97316;font-size:13px;margin:10px 0 4px;}</style></head><body>
             <div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #16a34a;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:15px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="color:#16a34a;font-size:14px;">RECIBO DE COMISIONES — ${comVendedor||'GENERAL'}</h3><p style="font-size:11px;">Período: ${mesLabel} ${comAnio} | Generado: ${getTodayDate()}</p></div>
             <h3>Conceptos y Bonos</h3><table><thead><tr><th>Descripción</th><th>Estatus</th><th>Devengado</th></tr></thead><tbody>${conceptos}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="2" style="padding:6px 9px;font-weight:900;">COMPENSACIÓN TOTAL</td><td style="padding:6px 9px;text-align:right;font-weight:900;font-size:13px;">$${formatNum(compensacionTotal)}</td></tr></tfoot></table>
             <h3>1. Cumplimiento de Meta — Total Ventas: $${formatNum(totalVentasVend)}</h3><table><thead><tr><th>Rango</th><th>%</th><th>Estatus</th><th>Aplicado</th></tr></thead><tbody>${metaRows}</tbody></table>
-            <h3>3. Comisión por Cobranza</h3><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Monto</th><th>Cond.</th><th>Vencim.</th><th>Fecha Pago</th><th>Días Retr.</th><th>Rango</th><th>%</th><th>A Pagar</th></tr></thead><tbody>${cobrRows||'<tr><td colspan="10" style="padding:8px;text-align:center;color:#999;">Sin registros</td></tr>'}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="9" style="padding:6px 9px;font-weight:900;">TOTAL COBRANZA</td><td style="padding:6px 9px;text-align:right;font-weight:900;">$${formatNum(totalCobranza)}</td></tr></tfoot></table>
+            <h3>3. Comisión por Cobranza</h3><table><thead><tr><th>Fecha</th><th>Cliente</th><th>Factura</th><th>Monto</th><th>Cond.</th><th>Vencim.</th><th>Fecha Pago</th><th>Días Retr.</th><th>Rango</th><th>%</th><th>A Pagar</th></tr></thead><tbody>${cobrRows||'<tr><td colspan="11" style="padding:8px;text-align:center;color:#999;">Sin registros</td></tr>'}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="10" style="padding:6px 9px;font-weight:900;">TOTAL COBRANZA</td><td style="padding:6px 9px;text-align:right;font-weight:900;">$${formatNum(totalCobranza)}</td></tr></tfoot></table>
             <table><tr style="background:#16a34a;color:#fff;"><td style="padding:10px;font-weight:900;font-size:13px;">TOTAL A PAGAR</td><td style="padding:10px;text-align:right;font-weight:900;font-size:16px;">$${formatNum(compensacionTotal)}</td></tr></table>
             </body></html>`;
             const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Comisiones_${(comVendedor||'GENERAL').split(' ').join('_')}_${ym}.xls`;a.click();
           };
-          const imprimirComisiones = () => handleExportPDF('Reporte_Comisiones',false);
+          const imprimirComisiones = () => {
+            const td=(c,r=false,b=false)=>`<td style="padding:5px 9px;border:1px solid #ccc;font-size:10px;${r?'text-align:right;':''}${b?'font-weight:700;':''}">${c}</td>`;
+            const fila=(desc,estatus,monto)=>`<tr>${td(desc)}${td(estatus)}${td('$'+formatNum(monto),true,true)}</tr>`;
+            const conceptos=[
+              fila('Bono por Vehículo','Fijo',bonos.bonoVehiculo),
+              fila('Salario Garantizado',salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:'No aplica',bonos.salarioGarantizado),
+              fila(`Captación de Cliente (≥${minClientesCaptacion})`,`${nuevosCount} nuevo(s)`,bonos.captacion),
+              fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
+              fila(`Mix de Categoría (${nSubcats} subcat.)`,mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado',montoMix),
+              fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
+              fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
+            ].join('');
+            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td(r.factura||'—')}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
+            const metaRows=(cfg.metaTabla||[]).map(e=>{const a=totalVentasVend>=e.min&&totalVentasVend<=e.max;return`<tr>${td('$'+formatNum(e.min)+' a $'+formatNum(e.max))}${td(e.pct+'%',true)}${td(a?'✓ Alcanzado':'No alcanzado')}${td('$'+formatNum(a?totalVentasVend*(e.pct/100):0),true)}</tr>`;}).join('');
+            const html=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+<div style="font-size:15px;font-weight:900">RECIBO DE COMISIONES — ${comVendedor||'GENERAL'}</div>
+<div style="font-size:8.5px;color:#666;text-align:right">Período ${mesLabel} ${comAnio} · Emitido ${getTodayDate()}</div>
+</div>
+<p style="font-weight:900;color:#16a34a;font-size:12px;margin:8px 0 4px">Conceptos y Bonos</p>
+<table><thead><tr><th>Descripción</th><th>Estatus</th><th>Devengado</th></tr></thead><tbody>${conceptos}</tbody><tfoot><tr style="background:#111;color:#fff"><td colspan="2">COMPENSACIÓN TOTAL</td><td style="text-align:right">$${formatNum(compensacionTotal)}</td></tr></tfoot></table>
+<p style="font-weight:900;color:#16a34a;font-size:12px;margin:12px 0 4px">1. Cumplimiento de Meta — Total Ventas: $${formatNum(totalVentasVend)}</p>
+<table><thead><tr><th>Rango</th><th>%</th><th>Estatus</th><th>Aplicado</th></tr></thead><tbody>${metaRows}</tbody></table>
+<p style="font-weight:900;color:#16a34a;font-size:12px;margin:12px 0 4px">3. Comisión por Cobranza</p>
+<table><thead><tr><th>Fecha</th><th>Cliente</th><th>Factura</th><th>Monto</th><th>Cond.</th><th>Vencim.</th><th>Fecha Pago</th><th>Días Retr.</th><th>Rango</th><th>%</th><th>A Pagar</th></tr></thead><tbody>${cobrRows||'<tr><td colspan="11" style="text-align:center;color:#999">Sin registros</td></tr>'}</tbody><tfoot><tr style="background:#111;color:#fff"><td colspan="10">TOTAL COBRANZA</td><td style="text-align:right">$${formatNum(totalCobranza)}</td></tr></tfoot></table>
+<table style="margin-top:10px"><tr style="background:#16a34a;color:#fff"><td style="padding:10px;font-weight:900;font-size:13px">TOTAL A PAGAR</td><td style="padding:10px;text-align:right;font-weight:900;font-size:16px">$${formatNum(compensacionTotal)}</td></tr></table>`;
+            handlePDFFromHTML(html,`Comisiones_${(comVendedor||'GENERAL').split(' ').join('_')}_${ym}`);
+          };
 
           const addCobranza = () => {};
           const delCobranza = (i) => setComCobranza((comCobranza||[]).filter((_,idx)=>idx!==i));
@@ -25269,6 +25392,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <th className="px-2 py-2 text-left">NE</th>
                         <th className="px-2 py-2 text-left">Fecha NE</th>
                         <th className="px-2 py-2 text-left">Cliente</th>
+                        <th className="px-2 py-2 text-left">Factura</th>
                         <th className="px-2 py-2 text-right">Monto</th>
                         <th className="px-2 py-2 text-center">Cond. (días)</th>
                         <th className="px-2 py-2 text-center">Vencimiento</th>
@@ -25280,7 +25404,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </tr></thead>
                       <tbody className="divide-y divide-gray-50">
                         {cobranzaCalc.length===0 ? (
-                          <tr><td colSpan="11" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">
+                          <tr><td colSpan="13" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">
                             No hay Notas de Entrega para {comVendedor||'este vendedor'} en {mesLabel} {comAnio}
                           </td></tr>
                         ) : cobranzaCalc.map((r,i)=>(
@@ -25288,6 +25412,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <td className="px-2 py-1.5 font-black text-orange-600 text-[10px] whitespace-nowrap">{r.neId||'—'}</td>
                             <td className="px-2 py-1.5 text-[10px] whitespace-nowrap">{r.fecha}</td>
                             <td className="px-2 py-1.5 text-[10px] max-w-[120px] truncate" title={r.cliente}>{r.cliente}</td>
+                            <td className="px-2 py-1.5 text-[10px] whitespace-nowrap">{r.factura||'—'}</td>
                             <td className="px-2 py-1.5 text-right font-black">${formatNum(r.monto)}</td>
                             <td className="px-2 py-1.5 text-center text-gray-600">{r.condicion}d</td>
                             <td className="px-2 py-1.5 text-center text-[10px]">{r.vencimiento||'—'}</td>
@@ -25311,9 +25436,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         ))}
                       </tbody>
                       {cobranzaCalc.length>0 && <tfoot className="bg-gray-100 font-black"><tr>
-                        <td colSpan="3" className="px-2 py-2 uppercase text-[9px]">Total Cobranza ({cobranzaCalc.filter(r=>r.fechaPago).length}/{cobranzaCalc.length} pagados)</td>
+                        <td colSpan="4" className="px-2 py-2 uppercase text-[9px]">Total Cobranza ({cobranzaCalc.filter(r=>r.fechaPago).length}/{cobranzaCalc.length} pagados)</td>
                         <td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td>
-                        <td colSpan="6"></td>
+                        <td colSpan="7"></td>
                         <td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td>
                       </tr></tfoot>}
                     </table>
@@ -25430,11 +25555,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ? [['Concepto','Monto'],['Ventas brutas sin IVA','$'+formatNum(r.totalVentas)],['% Comisión',r.porcentaje+'%'],['COMISIÓN TOTAL','$'+formatNum(r.compensacionTotal)]]
               : [['Concepto','Fecha de Pago','Monto'],['Comisión por Meta','5 de cada mes','$'+formatNum(r.comisionMeta||0)],['Comisión por Cobranza','15 de cada mes','$'+formatNum(r.totalCobranza||0)],['Bono Mix','5 de cada mes','$'+formatNum(r.montoMix||0)],['Bono Vehículo','5 de cada mes','$'+formatNum(r.bonos?.bonoVehiculo||0)],['Salario Garantizado','5 de cada mes','$'+formatNum(r.bonos?.salarioGarantizado||0)],['Captación','5 de cada mes','$'+formatNum(r.bonos?.captacion||0)],['Recuperación','5 de cada mes','$'+formatNum(r.bonos?.recuperacion||0)],['TOTAL','','$'+formatNum(r.compensacionTotal)]];
             const detalleCobr=(!esPct&&r.cobranzaDetalle&&r.cobranzaDetalle.length)?`
-              <tr><td colspan="8"></td></tr>
-              <tr><td colspan="8" style="font-weight:900;font-size:12px;background:#fef3c7">DETALLE DE COBRANZA DEL MES — Se paga el 15 de cada mes</td></tr>
-              <tr style="font-weight:900;background:#f1f5f9"><td>NE</td><td>Cliente</td><td>Fecha NE</td><td>Fecha Cobro</td><td>Monto NE</td><td>Días Retraso</td><td>%</td><td>Comisión</td></tr>
-              ${r.cobranzaDetalle.map(d=>`<tr><td>${d.neId}</td><td>${d.cliente||''}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td>$${formatNum(d.monto||0)}</td><td>${formatNum(d.diasRetraso||0)}</td><td>${formatNum(d.pct||0)}%</td><td>$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
-              <tr style="font-weight:900;background:#111;color:#fff"><td colspan="7">TOTAL COBRANZA</td><td>$${formatNum(r.totalCobranza||0)}</td></tr>`:'';
+              <tr><td colspan="9"></td></tr>
+              <tr><td colspan="9" style="font-weight:900;font-size:12px;background:#fef3c7">DETALLE DE COBRANZA DEL MES — Se paga el 15 de cada mes</td></tr>
+              <tr style="font-weight:900;background:#f1f5f9"><td>NE</td><td>Cliente</td><td>Factura</td><td>Fecha NE</td><td>Fecha Cobro</td><td>Monto NE</td><td>Días Retraso</td><td>%</td><td>Comisión</td></tr>
+              ${r.cobranzaDetalle.map(d=>`<tr><td>${d.neId}</td><td>${d.cliente||''}</td><td>${d.factura||'—'}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td>$${formatNum(d.monto||0)}</td><td>${formatNum(d.diasRetraso||0)}</td><td>${formatNum(d.pct||0)}%</td><td>$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
+              <tr style="font-weight:900;background:#111;color:#fff"><td colspan="8">TOTAL COBRANZA</td><td>$${formatNum(r.totalCobranza||0)}</td></tr>`:'';
             const html=`<html><head><meta charset="utf-8"></head><body><table border="1">
               <tr><td colspan="8" style="font-weight:900;font-size:14px">COMISIÓN ${r.vendedor} — ${r.mesLabel}</td></tr>
               <tr><td>Tipo</td><td colspan="7">${esPct?'Porcentual '+r.porcentaje+'%':'Esquema Completo'}</td></tr>
@@ -36685,14 +36810,14 @@ ${resumenHtml}
                                 <input type="number" step="0.01" min="0" value={editingMinStock.value}
                                   onChange={e=>setEditingMinStock({...editingMinStock,value:e.target.value})}
                                   className="w-20 border-2 border-orange-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
-                                <button onClick={()=>handleSaveMinStock(mp.id,editingMinStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                                <button onClick={()=>handleSaveMinStock(mp._docIds,editingMinStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
                                 <button onClick={()=>setEditingMinStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
                               </div>
                             ) : (
                               <div className="flex gap-1 items-center justify-center">
                                 <span className={`font-black ${mp.minStock>0&&mp.stock<=mp.minStock?'text-red-600':'text-gray-600'}`}>{mp.minStock>0?formatNum(mp.minStock):'—'}</span>
-                                <button onClick={()=>requireAdminPassword(()=>setEditingMinStock({id:mp.id,value:String(mp.minStock||0)}),'Editar Stock Mínimo')}
-                                  className="p-0.5 text-gray-400 hover:text-orange-500" title="Editar (Admin)"><Edit size={11}/></button>
+                                <button onClick={()=>setEditingMinStock({id:mp.id,value:String(mp.minStock||0)})}
+                                  className="p-0.5 text-gray-400 hover:text-orange-500" title="Editar"><Edit size={11}/></button>
                               </div>
                             )}
                           </td>
@@ -36702,14 +36827,14 @@ ${resumenHtml}
                                 <input type="number" step="0.01" min="0" value={editingMaxStock.value}
                                   onChange={e=>setEditingMaxStock({...editingMaxStock,value:e.target.value})}
                                   className="w-20 border-2 border-blue-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
-                                <button onClick={()=>handleSaveMaxStock(mp.id,editingMaxStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                                <button onClick={()=>handleSaveMaxStock(mp._docIds,editingMaxStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
                                 <button onClick={()=>setEditingMaxStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
                               </div>
                             ) : (
                               <div className="flex gap-1 items-center justify-center">
                                 <span className={`font-black ${mp.maxStock>0&&mp.stock>mp.maxStock?'text-blue-600':'text-gray-600'}`}>{mp.maxStock>0?formatNum(mp.maxStock):'—'}</span>
-                                <button onClick={()=>requireAdminPassword(()=>setEditingMaxStock({id:mp.id,value:String(mp.maxStock||0)}),'Editar Stock Máximo')}
-                                  className="p-0.5 text-gray-400 hover:text-blue-500" title="Editar (Admin)"><Edit size={11}/></button>
+                                <button onClick={()=>setEditingMaxStock({id:mp.id,value:String(mp.maxStock||0)})}
+                                  className="p-0.5 text-gray-400 hover:text-blue-500" title="Editar"><Edit size={11}/></button>
                               </div>
                             )}
                           </td>
@@ -36763,14 +36888,14 @@ ${resumenHtml}
                               <input type="number" step="0.01" min="0" value={editingMinStock.value}
                                 onChange={e=>setEditingMinStock({...editingMinStock,value:e.target.value})}
                                 className="w-20 border-2 border-orange-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
-                              <button onClick={()=>handleSaveMinStock(mp.id,editingMinStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                              <button onClick={()=>handleSaveMinStock(mp._docIds,editingMinStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
                               <button onClick={()=>setEditingMinStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
                             </div>
                           ) : (
                             <div className="flex gap-1 items-center justify-center">
                               <span className={`font-black ${mp.minStock>0&&mp.stock<=mp.minStock?'text-red-600':'text-gray-600'}`}>{mp.minStock>0?formatNum(mp.minStock):'—'}</span>
-                              <button onClick={()=>requireAdminPassword(()=>setEditingMinStock({id:mp.id,value:String(mp.minStock||0)}),'Editar Stock Mínimo')}
-                                className="p-0.5 text-gray-400 hover:text-orange-500" title="Editar (Admin)"><Edit size={11}/></button>
+                              <button onClick={()=>setEditingMinStock({id:mp.id,value:String(mp.minStock||0)})}
+                                className="p-0.5 text-gray-400 hover:text-orange-500" title="Editar"><Edit size={11}/></button>
                             </div>
                           )}
                         </td>
@@ -36780,14 +36905,14 @@ ${resumenHtml}
                               <input type="number" step="0.01" min="0" value={editingMaxStock.value}
                                 onChange={e=>setEditingMaxStock({...editingMaxStock,value:e.target.value})}
                                 className="w-20 border-2 border-blue-400 rounded-lg p-1 text-center font-black text-xs outline-none" autoFocus/>
-                              <button onClick={()=>handleSaveMaxStock(mp.id,editingMaxStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
+                              <button onClick={()=>handleSaveMaxStock(mp._docIds,editingMaxStock.value)} className="p-1 bg-green-500 text-white rounded-md hover:bg-green-600"><CheckCircle size={12}/></button>
                               <button onClick={()=>setEditingMaxStock(null)} className="p-1 bg-gray-200 rounded-md hover:bg-gray-300"><X size={12}/></button>
                             </div>
                           ) : (
                             <div className="flex gap-1 items-center justify-center">
                               <span className={`font-black ${mp.maxStock>0&&mp.stock>mp.maxStock?'text-blue-600':'text-gray-600'}`}>{mp.maxStock>0?formatNum(mp.maxStock):'—'}</span>
-                              <button onClick={()=>requireAdminPassword(()=>setEditingMaxStock({id:mp.id,value:String(mp.maxStock||0)}),'Editar Stock Máximo')}
-                                className="p-0.5 text-gray-400 hover:text-blue-500" title="Editar (Admin)"><Edit size={11}/></button>
+                              <button onClick={()=>setEditingMaxStock({id:mp.id,value:String(mp.maxStock||0)})}
+                                className="p-0.5 text-gray-400 hover:text-blue-500" title="Editar"><Edit size={11}/></button>
                             </div>
                           )}
                         </td>
