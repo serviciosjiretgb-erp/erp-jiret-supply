@@ -13012,6 +13012,8 @@ function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [notasEntrega, setNotasEntrega] = useState([]);
+  const [papeleraItems, setPapeleraItems] = useState([]);
+  const [anulVerId, setAnulVerId] = useState(null);
   // ── Estados Notas de Entrega ────────────────────────────────────────────────
   const [neView, setNeView] = useState('lista');
   const [neForm, setNeForm] = useState(null);
@@ -13061,7 +13063,8 @@ function App() {
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
-  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
+  const [showAnulHistorial, setShowAnulHistorial] = useState(false);
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:'',tipoAnulacion:'NC',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena,editingAnulInvId:null,editingAnulNcId:null});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
   const [anulCliQuery, setAnulCliQuery] = useState('');
   const [retBusqFact, setRetBusqFact] = useState('');
@@ -13467,6 +13470,7 @@ function App() {
   const [auditDate, setAuditDate] = useState('');
   const [auditMes, setAuditMes] = useState('');
   const [auditPage, setAuditPage] = useState(1);
+  const [auditPapeleraView, setAuditPapeleraView] = useState(false);
   const [activitySearch, setActivitySearch] = useState('');
   const [activityDateFrom, setActivityDateFrom] = useState('');
   const [activityDateTo, setActivityDateTo] = useState('');
@@ -14133,6 +14137,7 @@ function App() {
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({_fsId:d.id, id:d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubPapelera = onSnapshot(getColRef('papelera'), (s) => setPapeleraItems(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.eliminadoEn||0)-(a.eliminadoEn||0))));
     const unsubRetenciones = onSnapshot(getColRef('retencionesClientes'), (s) => setRetenciones(s.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubOpCosts = onSnapshot(getColRef('operatingCosts'), (s) => setOpCosts(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -14158,7 +14163,7 @@ function App() {
     return () => { 
       unsubAlimentario(); unsubDepositos(); unsubUsers(); unsubSettings(); unsubFinanzasPDFs(); unsubInv(); unsubMovs(); unsubCli(); unsubReq(); unsubInvB(); unsubInvReqs(); unsubOpCosts(); 
       unsubPOs(); unsubWIP(); unsubFinished(); unsubBobinas(); unsubFormulas(); unsubPDC(); unsubAST(); unsubConsign(); unsubNE(); unsubCobrosCxc(); unsubCuentasBanco(); unsubCajasCuentas(); unsubBancoMovsFin();
-      unsubResena(); unsubResenaImg(); unsubComRep();
+      unsubResena(); unsubResenaImg(); unsubComRep(); unsubPapelera();
       if (typeof unsubNotifs === 'function') unsubNotifs();
       if (typeof unsubTomas === 'function') unsubTomas();
     };
@@ -26074,40 +26079,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
             rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
-          // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
-          (notasVentaCD||[]).forEach(nc=>{
-            const fecha=nc.fecha||'';
-            if(fecha<tvDesde||fecha>tvHasta) return;
-            if(tvBuscarDoc && !(nc.nroDocumento||'').toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
-            const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
-            const ne=(notasEntrega||[]).find(e=>e.id===nc.neId);
-            const cliente=inv?.clientName||ne?.clientName||'—';
-            if(tvBuscarDesc && !cliente.toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-            const baseImpBs=parseNum(nc.monto||0);   // stored as Base Imponible Bs.
-            const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
-            const ivaUsd=parseFloat((baseUsd*0.16).toFixed(6));
-            const totalUsd=baseUsd+ivaUsd;
-            // NC resta (negativo), ND suma (positivo)
-            const signo=nc.tipo==='NC'?-1:1;
-            // Costo proporcional de la factura/NE afectada
-            const costoAfect=(()=>{
-              const src=inv||ne;
-              if(!src) return 0;
-              const items=(src.itemsFacturados||src.items||[]);
-              const srcBase=parseNum(src.montoBase||0)||items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0)||parseNum(src.total||src.totalUSD||0);
-              const srcCosto=items.reduce((s,it)=>s+parseNum(it.costoTotal||0)||(parseNum(it.costoUnit||0)*parseNum(it.cantidad||0)),0)||parseNum(src.costoTotal||src.costo||0);
-              if(srcBase>0&&srcCosto>0) return baseUsd*(srcCosto/srcBase);
-              return 0;
-            })();
-            const costoNC=costoAfect*signo;
-            const utilidadNC=(baseUsd*signo)-costoNC;
-            const pctUtilNC=baseUsd>0?Math.abs(utilidadNC/baseUsd)*100:0;
-            rows.push({fecha,documento:nc.nroDocumento||nc.tipo,descripcion:cliente,
-              montoBruto:baseUsd*signo,iva:ivaUsd*signo,tNeto:totalUsd*signo,
-              costo:costoNC,utilidad:utilidadNC,pctUtil:pctUtilNC,
-              tipo:nc.tipo,isNota:true,tasaNC});
-          });
+          // ── NC/ND excluidas de Transacciones de Ventas: afectan el Libro de Ventas
+          // (NC resta, ND suma) pero no son parte de este reporte — solo Notas de Entrega.
           rows.sort((a,b)=>b.fecha.localeCompare(a.fecha));
           const tot=rows.reduce((s,r)=>({montoBruto:s.montoBruto+r.montoBruto,iva:s.iva+r.iva,tNeto:s.tNeto+r.tNeto,costo:s.costo+r.costo,utilidad:s.utilidad+r.utilidad}),{montoBruto:0,iva:0,tNeto:0,costo:0,utilidad:0});
           const pctTot=tot.montoBruto>0?(tot.utilidad/tot.montoBruto*100):0;
@@ -31952,6 +31925,7 @@ ${resumenHtml}
                   </select></div>
                 <button onClick={()=>{const _ctaIVA=settings?.retClienteCuentasCfg?.IVA;setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA',cuentaContableRetId:_ctaIVA?.cuentaContableId||'',cuentaContableRetNombre:_ctaIVA?.cuentaContableNombre||''});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
                 <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
+                <button onClick={()=>setShowAnulHistorial(true)} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><History size={14}/>Historial Anulación {(invoices||[]).filter(f=>f.esAnulacionFiscal).length>0?`(${(invoices||[]).filter(f=>f.esAnulacionFiscal).length})`:''}</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
@@ -31961,7 +31935,7 @@ ${resumenHtml}
                   <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
                     <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
                       <Ban size={18} className="text-orange-400"/>
-                      <p className="text-white font-black text-sm uppercase">Registrar Anulación Fiscal</p>
+                      <p className="text-white font-black text-sm uppercase">{anulFiscalForm.editingAnulInvId?'Editar Anulación Fiscal':'Registrar Anulación Fiscal'}</p>
                     </div>
                     <div className="p-5 space-y-4">
                       <div className="flex gap-2 flex-wrap">
@@ -31969,8 +31943,25 @@ ${resumenHtml}
                         <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta contabilidad</span>
                         <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta reporte financiero</span>
                       </div>
+                      <div className="bg-orange-50 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Período fiscal (Libro de Ventas / Determinación IVA / Act. Económica)</p>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                            <select value={anulFiscalForm.periodoAnio} onChange={e=>setAnulFiscalForm(f=>({...f,periodoAnio:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                              {(()=>{const cy=new Date().getFullYear();return Array.from({length:cy-2023+1},(_,i)=>String(2024+i)).map(y=>(<option key={y} value={y}>{y}</option>));})()}
+                            </select></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                            <select value={anulFiscalForm.periodoMes} onChange={e=>setAnulFiscalForm(f=>({...f,periodoMes:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                              {mesesLabel.map((m,i)=>(<option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>))}
+                            </select></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Quincena</label>
+                            <select value={anulFiscalForm.quincena} onChange={e=>setAnulFiscalForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                              <option value="AMBAS">Ambas</option><option value="1">I Quincena</option><option value="2">II Quincena</option>
+                            </select></div>
+                        </div>
+                      </div>
                       <div className="bg-gray-50 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.)</p>
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.) — opcional, solo para mantener correlativo</p>
                         <div className="grid grid-cols-3 gap-3">
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control</label>
                             <input value={anulFiscalForm.nroControl} onChange={e=>setAnulFiscalForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-001234" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
@@ -31998,60 +31989,178 @@ ${resumenHtml}
                             );
                           })()}
                         </div>
-                        <div className="grid grid-cols-3 gap-3 mt-3">
+                        <div className="grid grid-cols-4 gap-3 mt-3">
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Base Bs.</label>
                             <input type="number" value={anulFiscalForm.baseImponible} onChange={e=>setAnulFiscalForm(f=>({...f,baseImponible:e.target.value,iva:String((parseNum(e.target.value)*0.16).toFixed(2))}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA Bs. (16%)</label>
                             <input type="number" value={anulFiscalForm.iva} onChange={e=>setAnulFiscalForm(f=>({...f,iva:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total Bs.</label>
                             <input disabled value={formatNum((parseNum(anulFiscalForm.baseImponible)+parseNum(anulFiscalForm.iva)))} className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 text-xs font-black bg-gray-100 text-gray-500"/></div>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                            <input type="number" value={anulFiscalForm.tasa} onChange={e=>setAnulFiscalForm(f=>({...f,tasa:e.target.value}))} placeholder="Requerida si Base+IVA > 0" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         </div>
                       </div>
                       <div className="bg-gray-50 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Nota de crédito de anulación (Bs.)</p>
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[10px] font-black text-orange-600 uppercase">Nota de {anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'} de anulación (Bs.)</p>
+                          <div className="flex bg-white border-2 border-gray-200 rounded-xl overflow-hidden">
+                            <button type="button" onClick={()=>setAnulFiscalForm(f=>({...f,tipoAnulacion:'NC'}))} className={`px-3 py-1 text-[10px] font-black uppercase ${anulFiscalForm.tipoAnulacion!=='ND'?'bg-orange-500 text-white':'text-gray-500'}`}>NC</button>
+                            <button type="button" onClick={()=>setAnulFiscalForm(f=>({...f,tipoAnulacion:'ND'}))} className={`px-3 py-1 text-[10px] font-black uppercase ${anulFiscalForm.tipoAnulacion==='ND'?'bg-orange-500 text-white':'text-gray-500'}`}>ND</button>
+                          </div>
+                        </div>
                         <div className="grid grid-cols-2 gap-3">
-                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control NC</label>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control {anulFiscalForm.tipoAnulacion==='ND'?'ND':'NC'}</label>
                             <input value={anulFiscalForm.ncNroControl} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroControl:e.target.value}))} placeholder="00-000045" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Crédito</label>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° {anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'}</label>
                             <input value={anulFiscalForm.ncNroCredito} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroCredito:e.target.value}))} placeholder="0000028" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         </div>
-                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha NC</label>
+                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha {anulFiscalForm.tipoAnulacion==='ND'?'ND':'NC'}</label>
                           <input type="date" value={anulFiscalForm.ncFecha} onChange={e=>setAnulFiscalForm(f=>({...f,ncFecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        <p className="text-[9px] text-gray-400 mt-2">El monto de la NC toma el total de la factura automáticamente.</p>
+                        <p className="text-[9px] text-gray-400 mt-2">N° Control y N° de {anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'} son obligatorios (mantienen el correlativo).</p>
                       </div>
                     </div>
                     <div className="px-5 py-4 border-t flex gap-2">
                       <button onClick={()=>setShowAnulFiscalModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-gray-500 bg-gray-100 hover:bg-gray-200">Cancelar</button>
                       <button onClick={async()=>{
-                        if(!anulFiscalForm.nroControl||!anulFiscalForm.nroFiscal) return setDialog({title:'Aviso',text:'N° Control y N° Fiscal son obligatorios.',type:'alert'});
-                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:'N° Control y N° de Crédito de la NC son obligatorios.',type:'alert'});
-                        const base=parseNum(anulFiscalForm.baseImponible||0);
-                        const iva=parseNum(anulFiscalForm.iva||0);
-                        const total=base+iva;
-                        const invId=`ANUL-${Date.now().toString(36)}`;
-                        const ncId=`ANULNC-${Date.now().toString(36)}`;
+                        if(anulFiscalForm.nroFiscal&&!anulFiscalForm.nroControl) return setDialog({title:'Aviso',text:'Si indicas N° Fiscal, el N° Control de la factura es obligatorio.',type:'alert'});
+                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:`N° Control y N° de ${anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'} son obligatorios.`,type:'alert'});
+                        const baseBs=parseNum(anulFiscalForm.baseImponible||0);
+                        const ivaBsVal=parseNum(anulFiscalForm.iva||0);
+                        const tasaVal=parseNum(anulFiscalForm.tasa||0);
+                        if((baseBs>0||ivaBsVal>0)&&tasaVal<=0) return setDialog({title:'Aviso',text:'La tasa de cambio es obligatoria cuando Base o IVA son mayores a 0.',type:'alert'});
+                        const totalBs=baseBs+ivaBsVal;
+                        const montoBaseUsd=tasaVal>0?parseFloat((baseBs/tasaVal).toFixed(6)):0;
+                        const ivaUsd=tasaVal>0?parseFloat((ivaBsVal/tasaVal).toFixed(6)):0;
+                        const totalUsd=montoBaseUsd+ivaUsd;
+                        const isEdit=!!anulFiscalForm.editingAnulInvId;
+                        const invId=anulFiscalForm.editingAnulInvId||`ANUL-${Date.now().toString(36)}`;
+                        const ncId=anulFiscalForm.editingAnulNcId||`ANULNC-${Date.now().toString(36)}`;
+                        const origTs=isEdit?(invoices||[]).find(i=>i.id===invId)?.timestamp:null;
                         const batch=writeBatch(db);
                         batch.set(getDocRef('maquilaInvoices',invId),{
                           id:invId,fecha:anulFiscalForm.fecha,fechaFactura:anulFiscalForm.fecha,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
                           nroFiscal:anulFiscalForm.nroFiscal,nroControl:anulFiscalForm.nroControl,
-                          tasa:1,montoBase:base,iva,total,totalBs:total,baseGravableBs:base,ivaBs:iva,
+                          tasa:tasaVal,montoBase:montoBaseUsd,iva:ivaUsd,total:totalUsd,totalBs,baseGravableBs:baseBs,ivaBs:ivaBsVal,
                           aplicaIva:'SI',esAnulacionFiscal:true,
-                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                          periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
+                          timestamp:origTs||Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
                         batch.set(getDocRef('notasVentaCreditoDebito',ncId),{
-                          id:ncId,tipo:'NC',naturaleza:'FISCAL',
-                          nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
+                          id:ncId,tipo:anulFiscalForm.tipoAnulacion||'NC',naturaleza:'FISCAL',
+                          nroDocumento:anulFiscalForm.ncNroCredito,nroControl:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
                           fecha:anulFiscalForm.ncFecha,facturaId:invId,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
-                          monto:base,ivaBs:iva,totalBs:total,tasaFactura:1,
+                          monto:baseBs,ivaBs:ivaBsVal,totalBs,tasaFactura:tasaVal,
                           esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',
-                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                          periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
+                          timestamp:origTs||Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
                         await batch.commit();
                         setShowAnulFiscalModal(false);
-                        setDialog({title:'Registrado',text:'La factura y su NC de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
-                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">Registrar solo en Libro de Ventas</button>
+                        setDialog({title:isEdit?'Actualizado':'Registrado',text:isEdit?'La anulación fiscal fue actualizada.':'La factura y su NC/ND de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
+                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">{anulFiscalForm.editingAnulInvId?'Guardar Cambios':'Registrar solo en Libro de Ventas'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showAnulHistorial && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setShowAnulHistorial(false)}>
+                  <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                    <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
+                      <History size={18} className="text-orange-400"/>
+                      <p className="text-white font-black text-sm uppercase">Historial de Anulaciones Fiscales</p>
+                    </div>
+                    <div className="p-5 space-y-3">
+                      {(()=>{
+                        const handleEditar=(f)=>{
+                          const nc=f._nc;
+                          setAnulFiscalForm({
+                            fecha:f.fecha||getTodayDate(),nroFiscal:f.nroFiscal||'',nroControl:f.nroControl||'',
+                            clientRif:f.clientRif||'',clientName:f.clientName||'',
+                            baseImponible:String(f.baseGravableBs??f.montoBase??0),iva:String(f.ivaBs??f.iva??0),tasa:String(f.tasa||''),
+                            tipoAnulacion:nc?.tipo||'NC',
+                            ncNroControl:nc?.nroControl||nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),
+                            periodoAnio:f.periodoAnio||libroAnio,periodoMes:f.periodoMes||libroMes,quincena:f.quincena||libroQuincena,
+                            editingAnulInvId:f.id,editingAnulNcId:nc?.id||null
+                          });
+                          setAnulCliQuery('');
+                          setShowAnulHistorial(false);
+                          setShowAnulFiscalModal(true);
+                        };
+                        const handleEliminar=(f)=>{
+                          const nc=f._nc;
+                          requireAdminPassword(()=>setDialog({title:'Eliminar Anulación Fiscal',text:`¿Eliminar la anulación de Factura ${f.nroFiscal||f.nroControl||'—'} (${f.clientName||'—'})? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.`,type:'confirm',onConfirm:async()=>{
+                            try{
+                              const batch=writeBatch(db);
+                              const {_nc, ...invData}=f;
+                              const papInvId=`PAP-${Date.now().toString(36)}-inv`;
+                              batch.set(getDocRef('papelera',papInvId),{
+                                id:papInvId,coleccionOrigen:'maquilaInvoices',docId:f.id,datos:invData,
+                                resumen:`Anulación Fiscal — Factura ${f.nroFiscal||f.nroControl||'—'} — ${f.clientName||'—'}`,
+                                eliminadoPor:appUser?.name||'Sistema',eliminadoEn:Date.now(),fechaEliminado:getTodayDate(),
+                                motivo:'Eliminación de Anulación Fiscal'
+                              });
+                              if(nc){
+                                const papNcId=`PAP-${Date.now().toString(36)}-nc`;
+                                batch.set(getDocRef('papelera',papNcId),{
+                                  id:papNcId,coleccionOrigen:'notasVentaCreditoDebito',docId:nc.id,datos:nc,
+                                  resumen:`${nc.tipo||'NC'} de anulación — Factura ${f.nroFiscal||f.nroControl||'—'} — ${f.clientName||'—'}`,
+                                  eliminadoPor:appUser?.name||'Sistema',eliminadoEn:Date.now(),fechaEliminado:getTodayDate(),
+                                  motivo:'Eliminación de Anulación Fiscal'
+                                });
+                              }
+                              batch.delete(getDocRef('maquilaInvoices',f.id));
+                              if(nc) batch.delete(getDocRef('notasVentaCreditoDebito',nc.id));
+                              await batch.commit();
+                              logAuditoria(appUser,'Libro de Ventas','ANULACIÓN FISCAL ELIMINADA',`Se eliminó (a papelera) la anulación fiscal Factura ${f.nroFiscal||'—'} · Control ${f.nroControl||'—'} · ${f.clientName||'—'}`);
+                            }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                          }}), 'Eliminar Anulación Fiscal — requiere clave admin');
+                        };
+                        const anulInvs=(invoices||[]).filter(i=>i.esAnulacionFiscal).map(inv=>{
+                          const nc=(notasVentaCD||[]).find(n=>n.facturaId===inv.id);
+                          return {...inv,_nc:nc};
+                        }).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+                        if(anulInvs.length===0) return (
+                          <div className="text-center py-12 text-gray-400"><Ban size={36} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">No hay anulaciones fiscales registradas.</p></div>
+                        );
+                        return anulInvs.map(f=>(
+                          <div key={f.id} className="border border-gray-200 rounded-xl p-3.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm">
+                                  <span className="font-black text-gray-900">Factura {f.nroFiscal}</span>
+                                  <span className="text-gray-400"> · Control {f.nroControl} · {f.fecha||'—'}</span>
+                                </p>
+                                <p className="text-[13px] text-indigo-600 truncate">{f.clientName||'—'} — Bs. {formatNum(f.totalBs??f.total??0)}</p>
+                              </div>
+                              <div className="flex gap-1.5 shrink-0">
+                                <button onClick={()=>setAnulVerId(anulVerId===f.id?null:f.id)} title="Ver" className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all ${anulVerId===f.id?'bg-gray-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-500 hover:text-white'}`}><Eye size={14}/></button>
+                                <button onClick={()=>handleEditar(f)} title="Editar" className="w-9 h-9 flex items-center justify-center bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white rounded-xl transition-all"><Edit size={14}/></button>
+                                <button onClick={()=>handleEliminar(f)} title="Eliminar" className="w-9 h-9 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"><Trash2 size={14}/></button>
+                              </div>
+                            </div>
+                            {anulVerId===f.id && (
+                              <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                                <div><span className="text-gray-400 font-bold">RIF:</span> <span className="font-bold">{f.clientRif||'—'}</span></div>
+                                <div><span className="text-gray-400 font-bold">Tasa Bs/$:</span> <span className="font-bold">{f.tasa||'—'}</span></div>
+                                <div><span className="text-gray-400 font-bold">Base Bs.:</span> <span className="font-bold">{formatNum(f.baseGravableBs??f.montoBase??0)}</span></div>
+                                <div><span className="text-gray-400 font-bold">IVA Bs.:</span> <span className="font-bold">{formatNum(f.ivaBs??f.iva??0)}</span></div>
+                                <div><span className="text-gray-400 font-bold">Total Bs.:</span> <span className="font-bold">{formatNum(f.totalBs??f.total??0)}</span></div>
+                                <div><span className="text-gray-400 font-bold">Total USD:</span> <span className="font-bold">${formatNum(f.total||0)}</span></div>
+                                <div><span className="text-gray-400 font-bold">Período:</span> <span className="font-bold">{f.periodoMes||'—'}/{f.periodoAnio||'—'} · Q{f.quincena||'—'}</span></div>
+                                <div><span className="text-gray-400 font-bold">{f._nc?.tipo||'NC'}:</span> <span className="font-bold">{f._nc?.nroCredito||f._nc?.nroDocumento||'—'}</span></div>
+                                <div><span className="text-gray-400 font-bold">Registró:</span> <span className="font-bold">{f.user||'—'}</span></div>
+                                <div><span className="text-gray-400 font-bold">Fecha {f._nc?.tipo||'NC'}:</span> <span className="font-bold">{f._nc?.fecha||'—'}</span></div>
+                              </div>
+                            )}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                    <div className="px-5 py-4 border-t">
+                      <button onClick={()=>setShowAnulHistorial(false)} className="w-full py-3 rounded-xl text-xs font-black uppercase text-gray-600 bg-gray-100 hover:bg-gray-200">Cerrar</button>
                     </div>
                   </div>
                 </div>
@@ -41248,6 +41357,10 @@ ${resumenHtml}
                 className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors">
                 <Download size={15}/> Exportar Log
               </button>
+              <button onClick={()=>setAuditPapeleraView(v=>!v)}
+                className={`font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors border-2 ${auditPapeleraView?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-700 border-gray-200 hover:border-orange-300'}`}>
+                <Trash2 size={15}/> Papelera {(papeleraItems||[]).length>0?`(${(papeleraItems||[]).length})`:''}
+              </button>
               {(appUser?.role==='Master'||appUser?.role==='Administrador') && (
                 <button onClick={()=>{
                   if(!auditDate&&!auditMes) return setDialog({title:'Aviso',text:'Selecciona una fecha o un mes en el filtro para limpiar registros.',type:'alert'});
@@ -41266,6 +41379,7 @@ ${resumenHtml}
               )}
             </div>
           </div>
+          {!auditPapeleraView && (<>
           {/* Filters */}
           <div className="px-6 py-4 bg-gray-50/50 border-b border-gray-200 flex flex-wrap gap-3">
             <div className="relative flex-1 min-w-48">
@@ -41366,6 +41480,37 @@ ${resumenHtml}
               </div>
             )}
           </div>
+          </>)}
+          {auditPapeleraView && (
+            <div className="p-6">
+              {(papeleraItems||[]).length===0 ? (
+                <div className="text-center py-16 text-gray-400"><Trash2 size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-sm uppercase">Papelera vacía</p></div>
+              ) : (
+                <div className="space-y-2">
+                  {papeleraItems.map(p=>(
+                    <div key={p.id} className="border border-gray-200 rounded-xl p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-black text-sm text-gray-900 truncate">{p.resumen||p.docId}</p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase mt-0.5">{p.coleccionOrigen} · Eliminado por {p.eliminadoPor||'—'} · {p.fechaEliminado||'—'}</p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button onClick={()=>requireAdminPassword(async()=>{
+                          try{
+                            await setDoc(getDocRef(p.coleccionOrigen,p.docId),p.datos);
+                            await deleteDoc(getDocRef('papelera',p.id));
+                            logAuditoria(appUser,'Auditoría','EDICIÓN',`Restaurado desde Papelera: ${p.resumen||p.docId} (${p.coleccionOrigen})`);
+                          }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                        },'Restaurar desde Papelera — requiere clave admin')} className="px-4 py-2 bg-green-50 text-green-700 border-2 border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-500 hover:text-white transition-all flex items-center gap-1.5"><RefreshCw size={12}/>Restaurar</button>
+                        <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar Definitivamente',text:`¿Eliminar definitivamente "${p.resumen||p.docId}"? Esta acción no se puede deshacer.`,type:'confirm',onConfirm:async()=>{
+                          try{ await deleteDoc(getDocRef('papelera',p.id)); }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                        }}),'Eliminar definitivamente — requiere clave admin')} className="w-9 h-9 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"><Trash2 size={14}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
