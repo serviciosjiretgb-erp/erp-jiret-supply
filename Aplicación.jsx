@@ -88,6 +88,34 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [sec,setSec]=useState('tabla');
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: histórico completo, se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, ese día usa la última tasa vigente)
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   const [retIVA,setRetIVA]=useState([]);
   const [retISLR,setRetISLR]=useState([]);
   const [retFiltros,setRetFiltros]=useState({proveedor:'',factura:'',comprobante:'',concepto:'',desde:'',hasta:''});
@@ -5962,7 +5990,13 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Bs./$</label>
-                      <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))} placeholder="0 = solo USD"/>
+                      <div className="flex gap-1.5">
+                        <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))} placeholder="0 = solo USD"/>
+                        <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
+                          const t=await fetchTasaBCV(form.fecha);
+                          if(t) setForm(f=>({...f, tasa:String(t)}));
+                        }} className="px-2.5 bg-orange-50 text-orange-600 border-2 border-orange-200 rounded-xl hover:bg-orange-500 hover:text-white disabled:opacity-50 transition-all text-sm shrink-0">{fetchingBCV?'⏳':'🔄'}</button>
+                      </div>
                     </div>
                   </div>
 
@@ -7639,9 +7673,15 @@ ${body}
 
                   <div style={{marginBottom:10}}>
                     <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
-                    <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
-                      onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
-                      style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
+                    <div style={{display:'flex',gap:6}}>
+                      <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
+                        onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                        style={{flex:1,padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
+                      <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
+                        const t=await fetchTasaBCV(pm.lineaActual?.fecha||hoy);
+                        if(t) setPM(m=>({lineaActual:{...m.lineaActual,tasa:String(t)}}));
+                      }} style={{padding:'0 12px',border:'2px solid #fed7aa',borderRadius:10,background:'#fff7ed',color:'#E8541A',fontSize:14,cursor:fetchingBCV?'not-allowed':'pointer',opacity:fetchingBCV?0.5:1}}>{fetchingBCV?'⏳':'🔄'}</button>
+                    </div>
                   </div>
 
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
@@ -10064,6 +10104,34 @@ ${resumenHtml}
 
 function ProcuraApp({fbUser,onBack,settings,appUser}) {
   const [sec,setSec]=useState('dashboard');
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: histórico completo, se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, ese día usa la última tasa vigente)
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    } catch(e){
+      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   const [facturaPreload,setFacturaPreload]=useState(null);
   const [proveedores,setProveedores]=useState([]);
   const [ordenesCompra,setOrdenesCompra]=useState([]);
@@ -12643,6 +12711,34 @@ ${valoresHtml}
 function App() {
   const [fbUser, setFbUser] = useState(null);
   const [appUser, setAppUser] = useState(null); 
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      // Fecha pasada: histórico completo, se toma la más reciente <= la fecha pedida
+      // (el BCV no publica fines de semana/feriados, ese día usa la última tasa vigente)
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const arr = await r.json();
+      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const match = candidatas[0];
+      const tasa = parseFloat(match?.promedio || match?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    } catch(e){
+      setDialog({title:'Tasa BCV',text:'No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.',type:'alert'});
+      return null;
+    } finally { setFetchingBCV(false); }
+  };
   const [auditoriaEventos, setAuditoriaEventos] = useState([]);
   useEffect(()=>{
     const u = onSnapshot(getColRef('auditoria_eventos'), s=>setAuditoriaEventos(s.docs.map(d=>d.data())));
@@ -13350,7 +13446,7 @@ function App() {
   const [newInvItemForm, setNewInvItemForm] = useState(initialInvItemForm);
   const [editingInvId, setEditingInvId] = useState(null);
   const [showInvItemForm, setShowInvItemForm] = useState(false); // collapsible form
-  const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '' };
+  const initialMovementForm = { date: getTodayDate(), itemId: '', type: 'ENTRADA', qty: '', cost: '', reference: '', notes: '', opAsignada: '', tasa: '' };
   const [newMovementForm, setNewMovementForm] = useState(initialMovementForm);
   // Multialmacén — Traslados
   const initialTrasladoForm = { date: getTodayDate(), itemId: '', almacenOrigen: '', almacenDestino: '', qty: '', notes: '' };
@@ -21651,6 +21747,18 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                        <input type="date" required value={newMovementForm.date} onChange={e=>setNewMovementForm({...newMovementForm, date: e.target.value})} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
                      </div>
+                     {newMovementForm.type === 'SALIDA' && (
+                       <div>
+                         <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Tasa Bs./$</label>
+                         <div className="flex gap-2">
+                           <input type="number" step="0.01" value={newMovementForm.tasa} onChange={e=>setNewMovementForm({...newMovementForm, tasa: e.target.value})} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-sm outline-none transition-colors text-black" />
+                           <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
+                             const t=await fetchTasaBCV(newMovementForm.date);
+                             if(t) setNewMovementForm(f=>({...f, tasa:String(t)}));
+                           }} className="px-4 bg-orange-50 text-orange-600 border-2 border-orange-200 rounded-xl hover:bg-orange-500 hover:text-white disabled:opacity-50 transition-all shrink-0">{fetchingBCV?'⏳':'🔄'}</button>
+                         </div>
+                       </div>
+                     )}
                      
                      <div className="md:col-span-2">
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Ítem del Inventario</label>
@@ -24685,6 +24793,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase())
           );
           const factsDirCom = (invoices||[]).filter(inv => {
+            if(inv.esAnulacionFiscal) return false;
             if(!(inv.fecha||'').startsWith(ym)) return false;
             if((inv.vendedor||'').toUpperCase()==='OFICINA') return false;
             if(comVendedor && (inv.vendedor||'').toUpperCase()!==comVendedor.toUpperCase()) return false;
@@ -24697,7 +24806,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // NC del mes aplicadas a las NEs/facturas del vendedor — descuentan de la meta (base sin IVA)
           const _idsNEVend=new Set(nesMesCom.flatMap(ne=>[ne.id,ne.documento,ne.facturaId].filter(Boolean)));
           const _idsFactVend=new Set(factsDirCom.flatMap(inv=>[inv.id,inv.documento,inv.nroFiscal].filter(Boolean)));
-          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
+          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>!n.esAnulacionFiscal&&n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
               _idsNEVend.has(n.neId)||_idsNEVend.has(n.neOrigen)||_idsNEVend.has(n.facturaId)||
               _idsFactVend.has(n.facturaId)
             )).reduce((s,n)=>{
@@ -24709,8 +24818,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 - ncDescuentoVend;
 
           // Total ventas de TODA la empresa en el mes
-          const nesMesEmpresa = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ym));
+          const nesMesEmpresa = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ym) && ne.status!=='ANULADA');
           const factsDirEmpresa = (invoices||[]).filter(inv => {
+            if(inv.esAnulacionFiscal) return false;
             if(!(inv.fecha||'').startsWith(ym)) return false;
             if(inv.neOrigen) return false;
             const invId = inv.id||inv.documento||'';
@@ -24756,6 +24866,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           // NEs del vendedor — TODAS (sin filtro de mes, para ver pendientes históricos)
           const nesCobranza = (notasEntrega||[]).filter(ne => {
+            if(ne.status==='ANULADA') return false;
             if(!comVendedor || (ne.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) {
               // Solo filtrar por vendedor, no por mes
               return true;
@@ -24822,6 +24933,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           Object.entries(clientesMesVend).forEach(([cl, primeraFechaMes])=>{
             // Facturas históricas de ese cliente CON ESTE VENDEDOR (atribución por vendedor de la factura)
             const histCliVend=(invoices||[]).filter(inv=>
+              !inv.esAnulacionFiscal &&
               (inv.clientName||inv.clientRif||'').toUpperCase()===cl &&
               (!comVendedor || (inv.vendedor||'').toUpperCase()===comVendedor.toUpperCase()) &&
               fechaFactura(inv));
@@ -26665,10 +26777,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                       <div>
                         <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Tasa Bs/$</label>
-                        <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
-                          onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
-                          className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
-                          placeholder={`${formatNum(settings?.tasaBCV||0)}`}/>
+                        <div className="flex gap-1.5">
+                          <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
+                            onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
+                            className="w-24 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
+                            placeholder={`${formatNum(settings?.tasaBCV||0)}`}/>
+                          <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
+                            const t=await fetchTasaBCV(newInvoiceForm.fechaFactura||newInvoiceForm.fecha);
+                            if(t) setNewInvoiceForm(f=>({...f, tasa:String(t)}));
+                          }} className="px-2 bg-orange-50 text-orange-600 border-2 border-orange-200 rounded-xl hover:bg-orange-500 hover:text-white disabled:opacity-50 transition-all shrink-0">{fetchingBCV?'⏳':'🔄'}</button>
+                        </div>
                         <div className="text-[7px] text-gray-400 mt-0.5 text-center">BCV: {formatNum(settings?.tasaBCV||0)}</div>
                       </div>
                       <div className="md:col-span-1">
@@ -29342,10 +29460,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                       <div style={{marginBottom:10}}>
                         <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
-                        <input type="number" step="0.01"
-                          value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
-                          style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
-                          onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                        <div style={{display:'flex',gap:6}}>
+                          <input type="number" step="0.01"
+                            value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
+                            style={{flex:1,padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
+                            onFocus={e=>e.target.style.borderColor='#E8541A'} onBlur={e=>e.target.style.borderColor='#e5e7eb'}/>
+                          <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
+                            const t=await fetchTasaBCV(pm.lineaActual?.fecha||getTodayDate());
+                            if(t) setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));
+                          }} style={{padding:'0 12px',border:'2px solid #fed7aa',borderRadius:10,background:'#fff7ed',color:'#E8541A',fontSize:14,cursor:fetchingBCV?'not-allowed':'pointer',opacity:fetchingBCV?0.5:1}}>{fetchingBCV?'⏳':'🔄'}</button>
+                        </div>
                       </div>
 
                       {/* Método */}
