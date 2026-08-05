@@ -13542,6 +13542,7 @@ function App() {
   const [dashAnio, setDashAnio] = useState(new Date().getFullYear());
   const [dashVendFiltro, setDashVendFiltro] = useState('todos');
   const [dashClienteFiltro, setDashClienteFiltro] = useState('todos');
+  const [dashCanalFiltro, setDashCanalFiltro] = useState('todos');
   const [dashBusqueda, setDashBusqueda] = useState('');
   // ── Ficha de vendedores ──
   const [fichaVend, setFichaVend] = useState(null);
@@ -24202,22 +24203,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const detalle = [];
           nesMes.forEach(ne => {
             const vend = (ne.vendedor||'—').toUpperCase();
+            const canal = (ne.canal||'TRADICIONAL').toUpperCase();
             const items = ne.items||[];
             if(items.length===0){
-              detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:ne.id, cant:1, precio:parseNum(ne.montoBase||0), monto:parseNum(ne.montoBase||0), comision:0, pctCom:0});
+              detalle.push({vend, canal, fecha:ne.fecha, cliente:ne.clientName||'—', producto:ne.id, cant:1, precio:parseNum(ne.montoBase||0), monto:parseNum(ne.montoBase||0), comision:0, pctCom:0});
             } else {
               items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, fecha:ne.fecha, cliente:ne.clientName||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
+                detalle.push({vend, canal, fecha:ne.fecha, cliente:ne.clientName||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
           factsDirect.forEach(inv => {
             const vend = (inv.vendedor||'—').toUpperCase();
+            const canal = (inv.canal||'TRADICIONAL').toUpperCase();
             const items = inv.itemsFacturados||[];
             if(items.length===0){
-              detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||inv.total||0), monto:parseNum(inv.montoBase||inv.total||0), comision:0, pctCom:0});
+              detalle.push({vend, canal, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||inv.total||0), monto:parseNum(inv.montoBase||inv.total||0), comision:0, pctCom:0});
             } else {
               items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
+                detalle.push({vend, canal, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
 
@@ -24250,6 +24253,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const detalleFilt = detalle.filter(d=>
             (dashVendFiltro==='todos'||d.vend===dashVendFiltro) &&
             (dashClienteFiltro==='todos'||d.cliente===dashClienteFiltro) &&
+            (dashCanalFiltro==='todos'||d.canal===dashCanalFiltro) &&
             (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
           );
           const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
@@ -24261,6 +24265,25 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const rowsH=detalleFilt.map((d,i)=>`<tr style="${i%2?'background:#f9fafb;':''}">${td(d.vend)}${td(d.fecha)}${td(d.cliente)}${td(d.producto)}${td(formatNum(d.cant),true)}${td('$'+formatNum(d.precio),true)}${td('$'+formatNum(d.monto),true,true)}${td(formatNum(d.pctCom)+'%',true)}${td('$'+formatNum(d.comision),true,true)}</tr>`).join('');
             const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 8px;border:1px solid #000;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #6366f1;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#6366f1;font-weight:900;">DASHBOARD DE VENTAS — DETALLE</h3><p style="font-size:10px;">Período: ${mesLabelD} ${dashAnio} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${['Vendedor','Fecha','Cliente','Producto','Cant.','Precio','Monto','% Com.','Comisión'].map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsH}</tbody><tfoot><tr style="background:#111;color:#fff;"><td colspan="6" style="padding:6px 8px;font-weight:900;">TOTALES (${detalleFilt.length} líneas)</td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totMontoF)}</td><td></td><td style="padding:6px 8px;text-align:right;font-weight:900;">$${formatNum(totComF)}</td></tr></tfoot></table></body></html>`;
             const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Dashboard_Ventas_${ymD}.xls`;a.click();
+          };
+
+          const exportDashPDF = () => {
+            const rows=detalleFilt.map(d=>`<tr>
+<td>${d.vend}</td><td>${d.fecha}</td><td>${d.cliente}</td><td>${d.producto}</td>
+<td style="text-align:right">${formatNum(d.cant)}</td><td style="text-align:right">$${formatNum(d.precio)}</td>
+<td style="text-align:right;font-weight:700">$${formatNum(d.monto)}</td>
+<td style="text-align:right">${formatNum(d.pctCom)}%</td><td style="text-align:right">$${formatNum(d.comision)}</td>
+</tr>`).join('');
+            const filtrosResumen=[dashVendFiltro!=='todos'&&`Vendedor ${dashVendFiltro}`,dashClienteFiltro!=='todos'&&`Cliente ${dashClienteFiltro}`,dashCanalFiltro!=='todos'&&`Canal ${dashCanalFiltro}`,dashBusqueda&&`Buscar "${dashBusqueda}"`].filter(Boolean).join(' · ')||'Sin filtros';
+            const html=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+<div style="font-size:15px;font-weight:900">DASHBOARD DE VENTAS — DETALLE</div>
+<div style="font-size:8.5px;color:#666;text-align:right">${mesLabelD} ${dashAnio} · ${filtrosResumen}<br/>${detalleFilt.length} líneas · Emitido ${getTodayDate()}</div>
+</div>
+<table><thead><tr><th>Vendedor</th><th>Fecha</th><th>Cliente</th><th>Producto</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Monto</th><th style="text-align:right">% Com.</th><th style="text-align:right">Comisión</th></tr></thead>
+<tbody>${rows}</tbody>
+<tfoot><tr><td colspan="6">Totales — ${detalleFilt.length} líneas</td><td style="text-align:right">$${formatNum(totMontoF)}</td><td></td><td style="text-align:right">$${formatNum(totComF)}</td></tr></tfoot>
+</table>`;
+            handlePDFFromHTML(html,`Dashboard_Ventas_Detalle_${ymD}`);
           };
 
           return (
@@ -24349,7 +24372,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                     <select value={dashVendFiltro} onChange={e=>setDashVendFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{vendUnicos.map(v=><option key={v} value={v}>{v==='todos'?'Todos los Vendedores':v}</option>)}</select>
                     <select value={dashClienteFiltro} onChange={e=>setDashClienteFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">{cliUnicos.map(c=><option key={c} value={c}>{c==='todos'?'Todos los Clientes':c}</option>)}</select>
+                    <select value={dashCanalFiltro} onChange={e=>setDashCanalFiltro(e.target.value)} className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400">
+                      <option value="todos">Todos los Canales</option><option value="DIGITAL">Digital</option><option value="TRADICIONAL">Tradicional</option>
+                    </select>
                     <input type="text" value={dashBusqueda} onChange={e=>setDashBusqueda(e.target.value)} placeholder="Buscar..." className="px-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-400"/>
+                    <button onClick={exportDashPDF} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-black text-white rounded-xl text-[10px] font-black uppercase hover:bg-gray-800"><Printer size={12}/>PDF</button>
+                    <button onClick={exportDashExcel} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><Download size={12}/>Excel</button>
                   </div>
                 </div>
                 <div className="overflow-x-auto border border-gray-100 rounded-xl">
@@ -24791,19 +24819,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return true;
           });
           const facturasMes = [...nesMesCom, ...factsDirCom]; // para compatibilidad
-          // NC del mes aplicadas a las NEs/facturas del vendedor — descuentan de la meta (base sin IVA)
-          const _idsNEVend=new Set(nesMesCom.flatMap(ne=>[ne.id,ne.documento,ne.facturaId].filter(Boolean)));
-          const _idsFactVend=new Set(factsDirCom.flatMap(inv=>[inv.id,inv.documento,inv.nroFiscal].filter(Boolean)));
-          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>!n.esAnulacionFiscal&&n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
-              _idsNEVend.has(n.neId)||_idsNEVend.has(n.neOrigen)||_idsNEVend.has(n.facturaId)||
-              _idsFactVend.has(n.facturaId)
-            )).reduce((s,n)=>{
-              const t=parseNum(n.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
-              return s+(t>1?parseNum(n.monto||0)/t:0); // base sin IVA
-            },0);
+          // Sin descuento de NC/ND: totalVentasVend queda puro NE + facturas directas, igual que Dashboard.
           const totalVentasVend = nesMesCom.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0)
-                                + factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0)
-                                - ncDescuentoVend;
+                                + factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
+
 
           // Total ventas de TODA la empresa en el mes
           const nesMesEmpresa = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ym) && ne.status!=='ANULADA');
@@ -24919,6 +24938,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           let nuevosCount=0, recuperadosCount=0;
           const recuperadosLista=[], nuevosLista=[];
           Object.entries(clientesMesVend).forEach(([cl, primeraFechaMes])=>{
+            // Criterio 1 (prioritario): la Fecha de Creación del cliente en el Directorio cae en el mes de esta comisión
+            const clienteDir=(clients||[]).find(c=>(c.name||'').toUpperCase()===cl||(c.rif||'').toUpperCase()===cl);
+            if(clienteDir?.fechaCreacion && clienteDir.fechaCreacion.startsWith(ym)){
+              nuevosCount++; nuevosLista.push(cl);
+              return;
+            }
+            // Criterio 2 (heurístico — clientes sin Fecha de Creación cargada todavía en el Directorio):
             // Facturas históricas de ese cliente CON ESTE VENDEDOR (atribución por vendedor de la factura)
             const histCliVend=(invoices||[]).filter(inv=>
               !inv.esAnulacionFiscal &&
@@ -25127,7 +25153,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <tbody className="divide-y divide-gray-50">
                         <tr><td className="px-3 py-2 font-bold">Bono por Vehículo</td><td className="px-3 py-2 text-right"><input type="number" value={bonos.bonoVehiculo||''} onChange={e=>setComBonos({...bonos,bonoVehiculo:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.bonoVehiculo)}</td></tr>
                         <tr><td className="px-3 py-2 font-bold">Salario Garantizado <span className="text-[8px] text-gray-400">(primeros 3 meses)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.salarioGarantizado||''} onChange={e=>setComBonos({...bonos,salarioGarantizado:parseNum(e.target.value)})} disabled={!salarioAplica} className={`w-24 border rounded-lg px-2 py-1 text-right font-black text-xs ${!salarioAplica?'bg-gray-100 text-gray-400':''}`} placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{fechaIngreso?(salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:`Vencido (${fechaIngreso})`):'Sin fecha ingreso'}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.salarioGarantizado)}</td></tr>
-                        <tr><td className="px-3 py-2 font-bold">Captación de Cliente <span className="text-[8px] text-gray-400">(≥{minClientesCaptacion} nuevos)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.captacion||''} onChange={e=>setComBonos({...bonos,captacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{nuevosCount} nuevo(s){nuevosCount>0?`: ${nuevosLista.slice(0,3).join(', ')}${nuevosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.captacion)}</td></tr>
+                        <tr><td className="px-3 py-2 font-bold">Captación de Cliente <span className="text-[8px] text-gray-400">(≥{minClientesCaptacion} nuevos)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.captacion||''} onChange={e=>setComBonos({...bonos,captacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[8px] text-gray-500 mt-1 text-left whitespace-normal break-words">{nuevosCount} nuevo(s){nuevosCount>0?`: ${nuevosLista.join(', ')}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.captacion)}</td></tr>
                         <tr><td className="px-3 py-2 font-bold">Recuperación de Cliente <span className="text-[8px] text-gray-400">(+6 meses inactivo)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.recuperacion||''} onChange={e=>setComBonos({...bonos,recuperacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{recuperadosCount} recuperado(s){recuperadosCount>0?`: ${recuperadosLista.slice(0,3).join(', ')}${recuperadosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.recuperacion)}</td></tr>
                         <tr className="bg-blue-50"><td className="px-3 py-2 font-bold">Mix de Categoría ({nSubcats} subcat. vendidas)</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(montoMix)}</td></tr>
                         <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Meta de Venta</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{escMeta?`${escMeta.pct}%`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(comisionMeta)}</td></tr>
@@ -25153,7 +25179,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
                       <div className="px-4 py-1.5 bg-orange-50/50 border-t border-orange-100 flex justify-between items-center text-[9px] font-bold text-gray-500">
                         <span>NEs del mes: {nesMesCom.length} — ${formatNum(nesMesCom.reduce((s,ne)=>s+parseNum(ne.montoBase||0),0))}</span>
-                        <span>Facturas directas (sin NE): {factsDirCom.length} — ${formatNum(factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0))}{ncDescuentoVend>0.005?` · NC descontadas: -$${formatNum(ncDescuentoVend)}`:''}</span>
+                        <span>Facturas directas (sin NE): {factsDirCom.length} — ${formatNum(factsDirCom.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0))}</span>
                       </div>
                       <table className="w-full text-xs">
                         <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Rango</th><th className="px-3 py-2 text-center">%</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Aplicado</th></tr></thead>
@@ -26409,6 +26435,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
                     </select>
                     {newClientForm.cuentaContableNombre&&<p className="text-[10px] text-blue-600 font-medium mt-1 px-1">{newClientForm.cuentaContableNombre}</p>}
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-gray-500 uppercase block mb-2 tracking-widest">Fecha de Creación</label>
+                    <input type="date" value={newClientForm.fechaCreacion||''} onChange={e=>setNewClientForm({...newClientForm,fechaCreacion:e.target.value})}
+                      className="w-full border-2 border-gray-200 rounded-2xl p-3 text-xs font-bold outline-none focus:border-orange-400"/>
+                    <p className="text-[9px] text-gray-400 font-medium mt-1 px-1">En blanco para clientes ya registrados — se usa para Captación de Cliente en Comisiones.</p>
                   </div>
                 </div>
                 <div className="bg-blue-50/60 border-2 border-blue-100 rounded-2xl p-5">
