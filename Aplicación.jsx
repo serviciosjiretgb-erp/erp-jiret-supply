@@ -24228,21 +24228,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const vendArrBruto = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
           const totalVentasBruto = vendArrBruto.reduce((s,v)=>s+v.monto,0);
 
-          // Ajuste NC/ND del período — asignado al VENDEDOR dueño de la NE/factura afectada (no prorrateado)
-          const _vendPorDoc=new Map();
-          (notasEntrega||[]).forEach(ne=>{const v=(ne.vendedor||'—').toUpperCase();[ne.id,ne.documento,ne.facturaId].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
-          (invoices||[]).forEach(inv=>{const v=(inv.vendedor||'—').toUpperCase();[inv.id,inv.documento,inv.nroFiscal].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
-          let ajusteNCDash=0;
-          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)&&!nc.esAnulacionFiscal).forEach(nc=>{
-            const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
-            const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
-            const signed=nc.tipo==='NC'?-baseUsd:baseUsd;
-            ajusteNCDash+=signed;
-            const vDoc=_vendPorDoc.get(nc.neId)||_vendPorDoc.get(nc.neOrigen)||_vendPorDoc.get(nc.facturaId)||'—';
-            porVend[vDoc]=(porVend[vDoc]||0)+signed;
-          });
-          const totalVentas = totalVentasBruto + ajusteNCDash;
-          const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
+          // Sin ajuste NC/ND: el Dashboard queda alineado 1:1 con Notas de Entrega / Transacciones de Ventas.
+          const totalVentas = totalVentasBruto;
+          const vendArr = vendArrBruto;
           const mejorVend = vendArr[0];
           const ventaMasGrande = facts.reduce((mx,inv)=>{const m=parseNum(inv.montoBase||inv.total||0);return m>mx.m?{m,inv}:mx;},{m:0,inv:null});
           const colores=['bg-blue-500','bg-cyan-500','bg-purple-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-indigo-500'];
@@ -27807,29 +27795,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             });
           });
 
-          // Ajuste NC para el período filtrado
-          const ajusteNCGraf = (notasVentaCD||[]).filter(nc=>{
-            if(nc.esAnulacionFiscal) return false;
-            if(fVF.anio && !(nc.fecha||'').startsWith(fVF.anio)) return false;
-            if(fVF.mes && (nc.fecha||'').substring(5,7) !== fVF.mes) return false;
-            return true;
-          }).reduce((s,nc)=>{
-            const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
-            const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
-            return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
-          },0);
-          totV = totV + ajusteNCGraf;
-
-          // Ratio NC para escalar todos los breakdowns proporcionalmente
-          const totVBruto = totV - ajusteNCGraf; // reversar para obtener bruto
-          const ratioNC = totVBruto > 0 ? totV / totVBruto : 1; // totV ya tiene NC aplicada
-
-          const t10P=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>[k,v*ratioNC]);
-          const t10C=Object.entries(byCli).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>[k,v*ratioNC]);
-          const tV=Object.entries(byVend).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
-          const tL=Object.entries(byLoc).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
-          const tCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v*ratioNC]);
-          const tCanal=[['DIGITAL',byCanal['DIGITAL']||0],['TRADICIONAL',byCanal['TRADICIONAL']||0]].map(([k,v])=>[k,v*ratioNC]).filter(([,v])=>v>0);
+          // Sin ajuste NC/ND: totV y los desgloses quedan puramente de Notas de Entrega,
+          // igual que Notas de Entrega / Transacciones de Ventas.
+          const t10P=Object.entries(byProd).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>[k,v]);
+          const t10C=Object.entries(byCli).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k,v])=>[k,v]);
+          const tV=Object.entries(byVend).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v]);
+          const tL=Object.entries(byLoc).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v]);
+          const tCat=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[k,v]);
+          const tCanal=[['DIGITAL',byCanal['DIGITAL']||0],['TRADICIONAL',byCanal['TRADICIONAL']||0]].map(([k,v])=>[k,v]).filter(([,v])=>v>0);
           const totCanal=tCanal.reduce((s,x)=>s+x[1],0)||1;
           const totVend=tV.reduce((s,x)=>s+x[1],0)||1;
           const totLoc=tL.reduce((s,x)=>s+x[1],0)||1;
