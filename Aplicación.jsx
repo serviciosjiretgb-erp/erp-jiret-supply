@@ -86,63 +86,6 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
-  const [fetchingBCV, setFetchingBCV] = useState(false);
-  const fetchTasaBCV = async (fecha) => {
-    setFetchingBCV(true);
-    try{
-      const hoy = new Date().toISOString().slice(0,10);
-      if(!fecha || fecha===hoy){
-        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
-        const d = await r.json();
-        const tasa = parseFloat(d.promedio || d.venta || 0);
-        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
-        return tasa;
-      }
-      // Fecha pasada: se busca en el histórico diario y se toma la más reciente <= la fecha pedida
-      // (el BCV no publica fines de semana/feriados, así que ese día usa la última tasa vigente).
-      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
-      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
-      const arr = await r.json();
-      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-      const match = candidatas[0];
-      const tasa = parseFloat(match?.promedio || match?.venta || 0);
-      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
-      return tasa;
-    } catch(e){
-      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
-      return null;
-    } finally { setFetchingBCV(false); }
-  };
-  // ── Clave Admin + Papelera (mismo estándar que Ventas) — Procura/Impuestos no la tenían.
-  // Usa prompt() nativo en vez de un modal propio: este componente es enorme y no hay certeza
-  // de dónde insertar JSX de forma segura sin arriesgar romper su render — el prompt() cumple
-  // el mismo requisito de seguridad (pedir clave) sin tocar el árbol de JSX existente.
-  const [systemUsersIA,setSystemUsersIA]=useState([]);
-  useEffect(()=>{ const u=onSnapshot(getColRef('users'), s=>setSystemUsersIA(s.docs.map(d=>({id:d.id,...d.data()})))); return ()=>u(); },[]);
-  const requireAdminPasswordIA=(action,actionName='esta acción')=>{
-    const clave=window.prompt(`Clave de administrador para: ${actionName}`);
-    if(clave===null) return; // cancelado
-    const adminUsers=(systemUsersIA||[]).filter(u=>u.role==='Master'||u.username==='admin');
-    const validPasswords=adminUsers.map(u=>u.password).filter(Boolean);
-    validPasswords.push('Supply2026.Admin','1234');
-    if(validPasswords.includes(clave)){ action(); }
-    else { window.alert('Clave admin incorrecta.'); }
-  };
-  // Borrado seguro reutilizable: clave admin → respaldo en Papelera → borra → registra en Auditoría
-  const eliminarConRespaldoIA=({coleccion,docId,datos,modulo,detalle,actionName,onOk})=>{
-    requireAdminPasswordIA(async()=>{
-      try{
-        const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-        const batch=writeBatch(db);
-        batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:coleccion,docIdOriginal:String(docId),datos:datos||null,modulo:modulo||'—',detalle:detalle||'',eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-        batch.delete(getDocRef(coleccion,docId));
-        await batch.commit();
-        await logAuditoria(appUser,modulo||'—','ELIMINACIÓN',detalle||`Eliminado de ${coleccion}: ${docId}`);
-        if(onOk) onOk(); else window.alert('Eliminado. Recuperable desde Auditoría del Sistema → Papelera.');
-      }catch(e){ window.alert('No se pudo eliminar: '+e.message); }
-    }, actionName||`Eliminar registro de ${coleccion}`);
-  };
   const [sec,setSec]=useState('tabla');
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
   const [retIVA,setRetIVA]=useState([]);
@@ -458,19 +401,11 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       const lastDay=new Date(parseInt(detAnio),parseInt(detMes),0).getDate();
       const desde=detQ==='2'?`${detAnio}-${detMes}-16`:`${detAnio}-${detMes}-01`;
       const hasta=detQ==='1'?`${detAnio}-${detMes}-15`:`${detAnio}-${detMes}-${String(lastDay).padStart(2,'0')}`;
-      const matchPeriodoDet=(doc,fechaFallback)=>{
-        if(doc.periodoAnio&&doc.periodoMes){
-          if(doc.periodoAnio!==detAnio||doc.periodoMes!==detMes) return false;
-          const q=(String(doc.quincena)==='1'||String(doc.quincena)==='2')?String(doc.quincena):(()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
-          return q===detQ;
-        }
-        const f=fechaFallback||''; return f>=desde&&f<=hasta;
-      };
       const ventasFact=(detInvoices||[]).filter(inv=>{
         if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-        return matchPeriodoDet(inv, inv.fechaFactura||inv.fecha||'');
+        const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
       });
-      const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodoDet(n, n.fecha||''));
+      const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
       // Solo retenciones de IVA — el mismo criterio que ya usa Libro de Ventas. Sin este filtro se
       // sumaban también ISLR/Municipal/Otras retenciones, inflando "Retenciones del Período".
       // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
@@ -1413,20 +1348,12 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const hasta=detQ==='1'?`${detAnio}-${detMes}-15`:`${detAnio}-${detMes}-${String(lastDay).padStart(2,'0')}`;
           const fmtD=d=>d.split('-').reverse().join('/');
 
-          const matchPeriodoDet=(doc,fechaFallback)=>{
-            if(doc.periodoAnio&&doc.periodoMes){
-              if(doc.periodoAnio!==detAnio||doc.periodoMes!==detMes) return false;
-              const q=(String(doc.quincena)==='1'||String(doc.quincena)==='2')?String(doc.quincena):(()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
-              return q===detQ;
-            }
-            const f=fechaFallback||''; return f>=desde&&f<=hasta;
-          };
-          // ── Ventas (Débitos Fiscales) — mismo criterio de período/quincena que Libro de Ventas ──
+          // ── Ventas (Débitos Fiscales) — misma lógica que Libro de Ventas ──
           const ventasFact=(detInvoices||[]).filter(inv=>{
             if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-            return matchPeriodoDet(inv, inv.fechaFactura||inv.fecha||'');
+            const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
           });
-          const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodoDet(n, n.fecha||''));
+          const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
           // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
           const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f.substring(0,7)===`${detAnio}-${detMes}`&&getQuincenaRetMod(r)===detQ&&(r.tipoRetencion||'IVA')==='IVA';});
           let ventasGravadasBs=0, ivaDebitosBs=0;
@@ -1787,19 +1714,11 @@ table{border-collapse:collapse;width:100%}
           const rango=(q)=>({desde:q===2?`${aeAnio}-${aeMes}-16`:`${aeAnio}-${aeMes}-01`,hasta:q===1?`${aeAnio}-${aeMes}-15`:`${aeAnio}-${aeMes}-${String(lastDay).padStart(2,'0')}`});
           const ventasBrutasQ=(q)=>{
             const {desde,hasta}=rango(q);
-            const matchPeriodoAe=(doc,fechaFallback)=>{
-              if(doc.periodoAnio&&doc.periodoMes){
-                if(doc.periodoAnio!==aeAnio||doc.periodoMes!==aeMes) return false;
-                const qd=(String(doc.quincena)==='1'||String(doc.quincena)==='2')?String(doc.quincena):(()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
-                return qd===String(q);
-              }
-              const f=fechaFallback||''; return f>=desde&&f<=hasta;
-            };
             const facts=(aeInvoices||[]).filter(inv=>{
               if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-              return matchPeriodoAe(inv, inv.fechaFactura||inv.fecha||'');
+              const f=inv.fechaFactura||inv.fecha||''; return f>=desde&&f<=hasta;
             });
-            const ncnd=(aeNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodoAe(n, n.fecha||''));
+            const ncnd=(aeNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
             let tot=0;
             facts.forEach(inv=>{
               const tasa=pNum(inv.tasa||0)||pNum(settings?.tasaBCV||0)||1;
@@ -3053,13 +2972,11 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
   const tasa=pNum(f.tasa||0);
   const lineas=[];
   const items=f.itemsOC||[];
-  const esBsFCitems=String(f.moneda||'USD').toUpperCase()==='BS';
   if(items.length>0){
     items.forEach(it=>{
       const cta=resolverCuentaFC(it,servicios,planDeCuentasArg);
-      const bsDirecto=pNum(it._totalBsOriginal||0)>0?pNum(it._totalBsOriginal):(esBsFCitems?pNum(it.cantidad||0)*pNum(it.precioUnit||0):0);
       lineas.push({tipo:'DEBITO',cuenta:cta,concepto:`${it.desc||'—'} (${it.unidad||'Und'} × ${pNum(it.cantidad).toFixed(2)})`,
-        montoUSD:pNum(it.total||0),montoBs:bsDirecto>0?bsDirecto:(tasa?pNum(it.total||0)*tasa:0)});
+        montoUSD:pNum(it.total||0),montoBs:tasa?pNum(it.total||0)*tasa:0});
     });
   } else {
     const ctaManual=resolverCuentaManualFC(f,planDeCuentasArg);
@@ -3069,7 +2986,7 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
   if(tot.ivaTotal>0){
     lineas.push({tipo:'DEBITO',cuenta:'1.1.02.03.001 — IVA Crédito Fiscal',
       concepto:`IVA${tot.iva16>0?' 16%':''}${tot.iva8>0?' 8%':''} soportado`,
-      montoUSD:tot.ivaTotal,montoBs:(pNum(tot.iva16Bs||0)+pNum(tot.iva8Bs||0))||(tasa?tot.ivaTotal*tasa:0)});
+      montoUSD:tot.ivaTotal,montoBs:tasa?tot.ivaTotal*tasa:0});
   }
   const prov=(proveedoresArg||[]).find(p=>p.id===f.proveedorId);
   const ctaProv=prov?.cuentaContableNombre||'2.1.01.01.002 — Cuentas por Pagar Proveedores';
@@ -3103,12 +3020,6 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const montoBase=pNum(f.montoBase||0);
   const iva=pNum(f.iva||0);
   const total=pNum(f.total||(montoBase+iva));
-  // Si se ingresó manualmente el monto en Bs. (Registro en Bolívares — Libro de Ventas), usar
-  // ese valor exacto para el asiento en vez de recalcular USD×tasa, que puede diferir por
-  // redondeo respecto a lo que realmente aparece en la factura/Libro de Ventas.
-  const totalBsManual=pNum(f.totalBs||0);
-  const baseBsManual=pNum(f.baseGravableBs||0);
-  const ivaBsManual=pNum(f.ivaBs||0);
   const lineas=[];
   const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const rifFactura=normRif(f.clientRif);
@@ -3116,17 +3027,17 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const ctaCliente=cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
   lineas.push({tipo:'DEBITO',cuenta:ctaCliente,
     concepto:`${f.clientName||'—'} · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:total,montoBs:totalBsManual>0?totalBsManual:(tasa?total*tasa:0)});
+    montoUSD:total,montoBs:tasa?total*tasa:0});
   const tieneOp=!!(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas.length>0));
   const cfgIngreso=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
   const ctaIngreso=cfgIngreso||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
   lineas.push({tipo:'CREDITO',cuenta:ctaIngreso,
     concepto:`Venta ${tieneOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:montoBase,montoBs:baseBsManual>0?baseBsManual:(tasa?montoBase*tasa:0)});
+    montoUSD:montoBase,montoBs:tasa?montoBase*tasa:0});
   if(iva>0){
     lineas.push({tipo:'CREDITO',cuenta:'2.1.02.01.001 — IVA Débito Fiscal',
       concepto:`IVA 16% repercutido · Fact. ${f.nroFiscal||f.documento||'—'}`,
-      montoUSD:iva,montoBs:ivaBsManual>0?ivaBsManual:(tasa?iva*tasa:0)});
+      montoUSD:iva,montoBs:tasa?iva*tasa:0});
   }
   const totDeb=lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoUSD,0);
   const totCred=lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoUSD,0);
@@ -3465,7 +3376,7 @@ const CXP_SALDO_INICIAL_JUNIO_2026 = [
   {cod:'P0563',nombre:'EL GRAN GALPON DEL REMATE ,C.A',cuentaContable:'2.1.01.01.001-CUENTAS POR PAGAR PROVEEDORES',facturas:[],pagos:[{fecha:'2026-06-25',desc:'ANTICIPO',aplicaciones:[],sinAplicar:1600}]},
 ];
 
-const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog,eliminarConRespaldoIA}) => {
+const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
   const [search,setSearch]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
@@ -3621,11 +3532,10 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog,e
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const eliminar = (p) => eliminarConRespaldoIA({
-    coleccion:'procura_proveedores', docId:p.id, datos:p, modulo:'Procura',
-    detalle:`Proveedor eliminado: ${p.nombre}`, actionName:`Eliminar proveedor "${p.nombre}"`,
-    onOk:()=>setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'}),
-  });
+  const eliminar = (p) => setDialog({title:'¿Eliminar proveedor?',text:`Se eliminará "${p.nombre}". Esta acción no se puede deshacer.`,type:'confirm',onConfirm:async()=>{
+    try{await deleteDoc(getDocRef('procura_proveedores',p.id));setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'});}
+    catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  }});
 
   const exportPDF = () => {
     const CSS = `
@@ -5330,7 +5240,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
 };
 
 
-const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings,appUser,fetchingBCV,fetchTasaBCV}) => {
+const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,dialog,setDialog,facturaPreload,onPreloadConsumed,settings,appUser}) => {
   const [search,setSearch]=useState('');
   const [filtStatus,setFiltStatus]=useState('TODOS');
   const [filtMes,setFiltMes]=useState('');
@@ -5499,15 +5409,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         tipoCompra:form.tipoCompra||'PRODUCTO',
         categoriaCompra:form.categoriaCompra||'',
         cuentaServicioId:form.cuentaServicioId||'',
-        itemsOC:(form.itemsOC||[]).map(it=>{
-          const esBsSave=String(form.moneda||'').toUpperCase()==='BS';
-          if(esBsSave){
-            const tasaSave=Math.max(pNum(form.tasa||0),0.0001);
-            const totalBs=pNum(it._totalBsOriginal||(pNum(it.cantidad||0)*pNum(it.precioUnit||0)));
-            return clean({...it,total:parseFloat((totalBs/tasaSave).toFixed(2)),_totalBsOriginal:totalBs,_precioBsOriginal:pNum(it.precioUnit||0)});
-          }
-          return clean(it);
-        }),
+        itemsOC:(form.itemsOC||[]).map(it=>clean(it)),
         diasCredito:form.diasCredito||'',
         condPago:form.condPago||'',
         esImportacion:!!form.esImportacion,
@@ -6059,10 +5961,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                       </select>
                     </div>
                     <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1">Tasa Bs./$
-                        <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(form.fecha);if(t)setForm(f=>({...f,tasa:String(t)}));}}
-                          className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
-                      </label>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Bs./$</label>
                       <input type="number" className={`${inp} text-xs py-1.5`} value={form.tasa||''} onChange={e=>setForm(f=>({...f,tasa:e.target.value}))} placeholder="0 = solo USD"/>
                     </div>
                   </div>
@@ -6113,11 +6012,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                 const newIt={...updated[i],...patch};
                                 const totalCampo=parseFloat((pNum(newIt.cantidad)*pNum(newIt.precioUnit)).toFixed(2));
                                 if(esBsIt){
-                                  // El valor tecleado ES Bs — se preserva tal cual en _totalBsOriginal, pero
-                                  // 'total' (el campo que usa TODO el sistema, incluido el asiento contable,
-                                  // como monto en USD) debe quedar convertido a USD, no en Bs.
-                                  const tasaIt=Math.max(pNum(form.tasa||0),0.0001);
-                                  newIt.total=parseFloat((totalCampo/tasaIt).toFixed(2));
+                                  // El valor tecleado ES Bs — se guarda tal cual y también su equivalente USD
+                                  newIt.total=totalCampo;
                                   newIt._totalBsOriginal=totalCampo;
                                   newIt._precioBsOriginal=pNum(newIt.precioUnit);
                                 } else {
@@ -6129,7 +6025,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                               };
                               const codigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
                               // Columna secundaria: si la factura es en Bs, mostrar el equivalente en USD (dividir); si es en USD, mostrar el equivalente en Bs (multiplicar)
-                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0):pNum(it.total||0)*pNum(form.tasa||0)):0;
+                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0)/Math.max(pNum(form.tasa||0),1):pNum(it.total||0)*pNum(form.tasa||0)):0;
                               return(
                               <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                                 <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
@@ -6153,7 +6049,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                   <input type="number" className="w-20 text-right text-[10px] font-mono border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-orange-400"
                                     value={it.precioUnit||''} onChange={e=>updateItem({precioUnit:pNum(e.target.value)})}/>
                                 </td>
-                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(esBsIt?pNum(it._totalBsOriginal||0):pNum(it.total||0))}</td>
+                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(it.total||0)}</td>
                                 {hasTasa&&<td className="px-2 py-1 text-right font-mono text-blue-700 text-[10px]">{pFmt(totSecundario)}</td>}
                               </tr>);
                             })}
@@ -6761,7 +6657,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 // ══════════════════════════════════════════════════════════════════════════
 const CxPView = ({
   facturasCompra, pagosCxP, proveedores, retIVACompra, retISLR, notasCompraCD,
-  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal, appUser, fetchingBCV, fetchTasaBCV
+  tasaBCV, settings, dialog, setDialog, cxpPagoModal, setCxpPagoModal, appUser
 }) => {
   const [cxpSearch, setCxpSearch] = useState('');
   const [cxpFechaRef, setCxpFechaRef] = useState('');
@@ -7584,7 +7480,7 @@ ${body}
                       style={{width:'100%',padding:'8px 10px',borderRadius:10,border:`2px solid ${pm.esAnticipo?'#16a34a':'#d1d5db'}`,background:pm.esAnticipo?'#16a34a':'#fff',color:pm.esAnticipo?'#fff':'#374151',fontSize:10,fontWeight:900,textTransform:'uppercase',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
                       {pm.esAnticipo?'✓':'＋'} Anticipo sin factura
                     </button>
-                    {pm.esAnticipo&&<p style={{fontSize:8,color:'#15803d',margin:'6px 2px 0',fontWeight:700}}>El dinero sale de banco/caja y queda a favor de <strong>{pm.nombre||'este proveedor'}</strong>. Podrá aplicarlo a facturas más adelante.</p>}
+                    {pm.esAnticipo&&<p style={{fontSize:8,color:'#15803d',margin:'6px 2px 0',fontWeight:700}}>El dinero sale de banco/caja y queda a favor con el proveedor. Podrá aplicarlo a facturas más adelante.</p>}
                   </div>
                   {/* Anticipos disponibles */}
                   {!pm.esAnticipo&&totalAnticiposProv>0.01&&(
@@ -7595,7 +7491,7 @@ ${body}
                         return(
                         <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
                           <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${fN(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}{(a.concepto&&a.concepto!=='Anticipo a proveedor')?` · ${a.concepto}`:''}</span>
-                          <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:a.fecha||hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                          <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                             style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                         </div>);
                       })}
@@ -7742,10 +7638,7 @@ ${body}
                   </div>
 
                   <div style={{marginBottom:10}}>
-                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'flex',alignItems:'center',gap:4,marginBottom:4}}>Tasa Bs/$
-                      <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(pm.lineaActual?.fecha);if(t)setPM(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
-                        style={{color:'#E8541A',background:'none',border:'none',cursor:'pointer',opacity:fetchingBCV?0.4:1}} title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
-                    </label>
+                    <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
                     <input type="number" step="0.01" value={pm.lineaActual?.tasa||String(tasaBCV||1)}
                       onChange={e=>setPM(m=>({lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
                       style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}/>
@@ -10170,57 +10063,6 @@ ${resumenHtml}
 
 
 function ProcuraApp({fbUser,onBack,settings,appUser}) {
-  const [fetchingBCV, setFetchingBCV] = useState(false);
-  const fetchTasaBCV = async (fecha) => {
-    setFetchingBCV(true);
-    try{
-      const hoy = new Date().toISOString().slice(0,10);
-      if(!fecha || fecha===hoy){
-        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
-        const d = await r.json();
-        const tasa = parseFloat(d.promedio || d.venta || 0);
-        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
-        return tasa;
-      }
-      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
-      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
-      const arr = await r.json();
-      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-      const match = candidatas[0];
-      const tasa = parseFloat(match?.promedio || match?.venta || 0);
-      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
-      return tasa;
-    } catch(e){
-      window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
-      return null;
-    } finally { setFetchingBCV(false); }
-  };
-  // ── Clave Admin + Papelera (mismo estándar que Ventas) — Procura no la tenía ──
-  const [systemUsersIA,setSystemUsersIA]=useState([]);
-  useEffect(()=>{ const u=onSnapshot(getColRef('users'), s=>setSystemUsersIA(s.docs.map(d=>({id:d.id,...d.data()})))); return ()=>u(); },[]);
-  const requireAdminPasswordIA=(action,actionName='esta acción')=>{
-    const clave=window.prompt(`Clave de administrador para: ${actionName}`);
-    if(clave===null) return; // cancelado
-    const adminUsers=(systemUsersIA||[]).filter(u=>u.role==='Master'||u.username==='admin');
-    const validPasswords=adminUsers.map(u=>u.password).filter(Boolean);
-    validPasswords.push('Supply2026.Admin','1234');
-    if(validPasswords.includes(clave)){ action(); }
-    else { window.alert('Clave admin incorrecta.'); }
-  };
-  const eliminarConRespaldoIA=({coleccion,docId,datos,modulo,detalle,actionName,onOk})=>{
-    requireAdminPasswordIA(async()=>{
-      try{
-        const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-        const batch=writeBatch(db);
-        batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:coleccion,docIdOriginal:String(docId),datos:datos||null,modulo:modulo||'—',detalle:detalle||'',eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-        batch.delete(getDocRef(coleccion,docId));
-        await batch.commit();
-        await logAuditoria(appUser,modulo||'—','ELIMINACIÓN',detalle||`Eliminado de ${coleccion}: ${docId}`);
-        if(onOk) onOk(); else window.alert('Eliminado. Recuperable desde Auditoría del Sistema → Papelera.');
-      }catch(e){ window.alert('No se pudo eliminar: '+e.message); }
-    }, actionName||`Eliminar registro de ${coleccion}`);
-  };
   const [sec,setSec]=useState('dashboard');
   const [facturaPreload,setFacturaPreload]=useState(null);
   const [proveedores,setProveedores]=useState([]);
@@ -10256,7 +10098,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
   },[fbUser]);
 
   const tasaBCV=pNum(tasas[0]?.tasaRef||0)||62.5;
-  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,eliminarConRespaldoIA,fetchingBCV,fetchTasaBCV,
+  const sharedProps={dialog,setDialog,proveedores,facturasCompra,pagosCxP,ordenesCompra,tasaBCV,settings,retIVACompra,retISLR,notasCompraCD,cxpPagoModal,setCxpPagoModal,appUser,
     navegarAFactura:(preload)=>{setFacturaPreload(preload);setSec('facturas');}
   };
 
@@ -10851,9 +10693,6 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [serviciosC, setServiciosC] = useState([]);
   const [facturasVentaC, setFacturasVentaC] = useState([]);
   const [cuentasIngresoCfgC, setCuentasIngresoCfgC] = useState({conOpId:'',conOpNombre:'',sinOpId:'',sinOpNombre:''});
-  const [inventoryMovementsC, setInventoryMovementsC] = useState([]);
-  const [inventoryC, setInventoryC] = useState([]);
-  const [cuentasProduccionCfgC, setCuentasProduccionCfgC] = useState({});
   const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [filtHasta, setFiltHasta] = useState(getTodayDate());
   const [filtCuenta, setFiltCuenta] = useState('');
@@ -10917,9 +10756,6 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       onSnapshot(getColRef('procura_facturas_compra'), s => setFacturasCompraC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_servicios'), s => setServiciosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('maquilaInvoices'), s => setFacturasVentaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
-      onSnapshot(getColRef('inventoryMovements'), s => setInventoryMovementsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
-      onSnapshot(getColRef('inventory'), s => setInventoryC(s.docs.map(d => ({id:d.id, ...d.data()})))),
-      onSnapshot(doc(db,'settings','produccionCuentasCfg'), d => d.exists() && setCuentasProduccionCfgC(d.data())),
       onSnapshot(doc(db,'settings','ventasCuentasIngreso'), d => d.exists() && setCuentasIngresoCfgC(x=>({...x,...d.data()}))),
     ];
     return () => subs.forEach(u => u());
@@ -11133,7 +10969,6 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       const nombreNorm = contNormNombre(nombreEnConcepto);
       const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
       const tercero = (esProveedorMov ? provsC.find(p=>p.id===m.terceroId) : clientesC.find(c=>c.id===m.terceroId))
-        || (m.terceroId ? (clientesC.find(c=>c.id===m.terceroId)||provsC.find(p=>p.id===m.terceroId)) : null)
         || clientesC.find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
         || provsC.find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
       const [codTercero, nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
@@ -11353,58 +11188,6 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // Relacionados. Dos formatos posibles en cxp_pagos_relacionados: los que vienen de un
   // movimiento real (origen+movimientoId, monto ya con signo) y los manuales (con campo
   // tipo aparte, monto sin signo) — se normalizan ambos aquí.
-  const construirLineasOperacionesInventario = () => {
-    const filtradas = (inventoryMovementsC||[]).filter(m=>(m.type==='AUTOCONSUMO'||m.type==='MUESTRA')&&(!filtDesde||(m.date||'')>=filtDesde)&&(!filtHasta||(m.date||'')<=filtHasta))
-      .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-    return filtradas.map(m=>{
-      const ctaGastoM=m.type==='AUTOCONSUMO'?(cuentasProduccionCfgC.consumosInternosNombre||''):(cuentasProduccionCfgC.muestrasAveriasNombre||'');
-      const itemM=(inventoryC||[]).find(i=>i.id===m.itemId);
-      const catM=(itemM?.category||'').toLowerCase();
-      const ctaInvM=catM.includes('materia prima')?cuentasProduccionCfgC.inventarioMateriaPrimaNombre
-        :catM.includes('terminado')?cuentasProduccionCfgC.inventarioMercanciaNombre
-        :cuentasProduccionCfgC.inventarioConsumiblesNombre;
-      const montoM=parseNum(m.totalValue||0);
-      const tasaM=parseNum(m.tasa||settingsCC?.tasaBCV||0);
-      const lineas = (!ctaGastoM||!ctaInvM||montoM<=0) ? [] : [
-        {codigo:(ctaGastoM.split('—')[0]||'').trim(), cuenta:(ctaGastoM.split('—')[1]||ctaGastoM).trim(), tipo:'D', dBs:tasaM?montoM*tasaM:0, hBs:0, dUSD:montoM, hUSD:0},
-        {codigo:(ctaInvM.split('—')[0]||'').trim(), cuenta:(ctaInvM.split('—')[1]||ctaInvM).trim(), tipo:'H', dBs:0, hBs:tasaM?montoM*tasaM:0, dUSD:0, hUSD:montoM},
-      ];
-      return { id:m.id, comprobante:m.itemName||'—', fecha:m.date||'', doc:m.reference||'—',
-        conc:`Salida por ${m.type==='AUTOCONSUMO'?'Autoconsumo':'Muestra'}${!ctaGastoM||!ctaInvM?' — ⚠ falta configurar cuenta':''}`,
-        tasa:tasaM, lineas };
-    }).filter(r=>r.lineas.length>0);
-  };
-
-  const construirLineasCostoVenta = () => {
-    const filtradas = (facturasVentaC||[]).filter(f=>!f.esAnulacionFiscal&&(f.nroFiscal||f.nroControl)&&(f.itemsFacturados||[]).length>0
-      &&(!filtDesde||(f.fechaFactura||f.fecha||'')>=filtDesde)&&(!filtHasta||(f.fechaFactura||f.fecha||'')<=filtHasta))
-      .sort((a,b)=>(b.fechaFactura||b.fecha||'').localeCompare(a.fechaFactura||a.fecha||''));
-    return filtradas.map(f=>{
-      let costoProd=0, costoMerc=0;
-      (f.itemsFacturados||[]).forEach(it=>{
-        const itemInv=(inventoryC||[]).find(i=>(i.displayId||i.id)===it.invCode||(i.displayId||i.id)===it.codigo);
-        const cat=(itemInv?.category||it.category||'').toLowerCase();
-        const costoIt=parseNum(it.cantidad||0)*parseNum(it.costoUnit||0);
-        if(cat.includes('mercanc')) costoMerc+=costoIt; else costoProd+=costoIt;
-      });
-      const tasaCV=parseNum(f.tasa||0)||parseNum(settingsCC?.tasaBCV||0);
-      const lineas=[];
-      if(costoProd>0.01 && cuentasProduccionCfgC.costoVentaProduccionNombre && cuentasProduccionCfgC.inventarioMateriaPrimaNombre){
-        const ctaD=cuentasProduccionCfgC.costoVentaProduccionNombre, ctaC=cuentasProduccionCfgC.inventarioMateriaPrimaNombre;
-        lineas.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),tipo:'D',dBs:tasaCV?costoProd*tasaCV:0,hBs:0,dUSD:costoProd,hUSD:0});
-        lineas.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),tipo:'H',dBs:0,hBs:tasaCV?costoProd*tasaCV:0,dUSD:0,hUSD:costoProd});
-      }
-      if(costoMerc>0.01 && cuentasProduccionCfgC.costoVentaMercanciaNombre && cuentasProduccionCfgC.inventarioMercanciaNombre){
-        const ctaD=cuentasProduccionCfgC.costoVentaMercanciaNombre, ctaC=cuentasProduccionCfgC.inventarioMercanciaNombre;
-        lineas.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),tipo:'D',dBs:tasaCV?costoMerc*tasaCV:0,hBs:0,dUSD:costoMerc,hUSD:0});
-        lineas.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),tipo:'H',dBs:0,hBs:tasaCV?costoMerc*tasaCV:0,dUSD:0,hUSD:costoMerc});
-      }
-      return { id:f.id, comprobante:f.clientName||'—', fecha:f.fechaFactura||f.fecha||'', doc:f.nroFiscal||f.documento||'—',
-        conc:`Costo de venta — Fact. ${f.nroFiscal||f.documento||''}${lineas.length===0?' — ⚠ falta configurar cuenta':''}`,
-        tasa:tasaCV, lineas };
-    }).filter(r=>r.lineas.length>0);
-  };
-
   const construirLineasRelacionadas = () => {
     const montoConSigno = (p) => {
       if (p.origen) return Number(p.monto||0);
@@ -11761,10 +11544,6 @@ ${valoresHtml}
         return {...comunes, titulo:'Ajustes Contables', primeraCol:'Comprobante', docLabel:'Nro Comp.', tasa:true, ordenBsPrimero:true, unidad:'ajuste(s)', lineas:aplicarReclasCC('ajustes',construirLineasAjustes())};
       case 'relacionadas':
         return {...comunes, titulo:'Cuentas por Pagar Relacionadas', primeraCol:'Tercero', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('relacionadas',construirLineasRelacionadas())};
-      case 'op_inventario':
-        return {...comunes, titulo:'Operaciones de Inventario', primeraCol:'Artículo', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('op_inventario',construirLineasOperacionesInventario())};
-      case 'costo_venta':
-        return {...comunes, titulo:'Costo de Venta', primeraCol:'Cliente', docLabel:'Nro Fact.', tasa:true, ordenBsPrimero:true, unidad:'factura(s)', lineas:aplicarReclasCC('costo_venta',construirLineasCostoVenta())};
       default: return null;
     }
   };
@@ -11790,8 +11569,6 @@ ${valoresHtml}
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
-    { id:'op_inventario', label:'Operaciones de Inventario', icon:'📦', activo:true },
-    { id:'costo_venta', label:'Costo de Venta', icon:'📉', activo:true },
   ];
   const activo = sub || initialSub || 'banco';
 
@@ -12332,122 +12109,11 @@ ${valoresHtml}
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
-                </tr></tfoot>
-              </table></div>
-            </div>
-          )}
-        </div>
-      );
-    }
-    if (activo === 'op_inventario') {
-      const lineasOI = filtrarPorBusquedaCC(construirLineasOperacionesInventario());
-      const totOIUSD = lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
-      return (
-        <div className="p-6 space-y-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Artículo, código, cuenta, referencia..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
-            <p className="text-[10px] text-gray-400 ml-auto">{lineasOI.length} movimiento(s) · Total ${contFmt(totOIUSD)}</p>
-            <BotonesExportCC tabId="op_inventario"/>
-          </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Salidas de almacén por Autoconsumo (uso interno) o Muestra a clientes — usa las cuentas configuradas en Producción → ⚙ Config. Cuentas. Si un movimiento no aparece aquí, revisa que tenga las cuentas de contrapartida asignadas.</div>
-          {lineasOI.length===0?(
-            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
-              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
-              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
-              <p className="text-[10px] mt-1">Se generan desde Control Inventario → Salidas, con motivo Autoconsumo o Muestra</p>
-            </div>
-          ):(
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Artículo','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
-                ))}</tr></thead>
-                <tbody>
-                  {lineasOI.flatMap((r,ri)=>r.lineas.map((l,li)=>(
-                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
-                      <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
-                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='op_inventario' compId={r.id} li={li} l={l}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
-                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
-                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
-                    </tr>
-                  )))}
-                </tbody>
-                <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasOI.length} movimiento(s)</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasOI.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
-                </tr></tfoot>
-              </table></div>
-            </div>
-          )}
-        </div>
-      );
-    }
-    if (activo === 'costo_venta') {
-      const lineasCoV = filtrarPorBusquedaCC(construirLineasCostoVenta());
-      const totCoVUSD = lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
-      return (
-        <div className="p-6 space-y-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Cliente, código, cuenta, factura..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
-            <p className="text-[10px] text-gray-400 ml-auto">{lineasCoV.length} factura(s) · Total ${contFmt(totCoVUSD)}</p>
-            <BotonesExportCC tabId="costo_venta"/>
-          </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Costo de lo vendido por factura fiscal, tomado directo del costoUnit de cada ítem facturado — el mismo dato que usa Reporte General de Ventas y Costos. Producción y Mercancía usan cuentas distintas, configuradas en Producción → ⚙ Config. Cuentas.</div>
-          {lineasCoV.length===0?(
-            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
-              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
-              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
-            </div>
-          ):(
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Cliente','Fecha','Código','Cuenta','T','Nro Fact.','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
-                ))}</tr></thead>
-                <tbody>
-                  {lineasCoV.flatMap((r,ri)=>r.lineas.map((l,li)=>(
-                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
-                      <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
-                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='costo_venta' compId={r.id} li={li} l={l}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
-                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
-                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
-                    </tr>
-                  )))}
-                </tbody>
-                <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasCoV.length} factura(s)</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasCoV.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -12982,11 +12648,6 @@ function App() {
     const u = onSnapshot(getColRef('auditoria_eventos'), s=>setAuditoriaEventos(s.docs.map(d=>d.data())));
     return ()=>u();
   },[]);
-  const [papeleraItems, setPapeleraItems] = useState([]);
-  useEffect(()=>{
-    const u = onSnapshot(getColRef('papelera'), s=>setPapeleraItems(s.docs.map(d=>d.data())));
-    return ()=>u();
-  },[]);
   const [dispositivosAutorizados, setDispositivosAutorizados] = useState([]);
   useEffect(()=>{
     const u = onSnapshot(getColRef('dispositivos_autorizados'), s=>setDispositivosAutorizados(s.docs.map(d=>d.data())));
@@ -13008,8 +12669,6 @@ function App() {
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
-  const [erMoneda, setErMoneda] = useState('ambas'); // 'bs' | 'ambas' | 'usd' — vista de Estado de Resultados
-  const [erExpandido, setErExpandido] = useState({}); // {codigo: true/false} — expandir/contraer cuenta en Estado de Resultados
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Contables (Procura + Ventas + Retenciones a Clientes + Banco + Caja), EXCLUYENDO
@@ -13067,36 +12726,11 @@ function App() {
         out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
-    // 2) Ventas — SOLO lo realmente facturado fiscalmente (mismo criterio que Libro de Ventas:
-    // requiere N° Fiscal o N° Control). Antes no exigía esto, así que Estado de Resultados
-    // incluía ventas/NE que aún no tenían factura fiscal real, inflando los Ingresos.
-    (invoices||[]).filter(f=>!f.esAnulacionFiscal&&(f.nroFiscal||f.nroControl)).forEach(f=>{
+    // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
-        out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
-      }catch(e){}
-    });
-    // 2b) NC/ND fiscales REALES (ajustan Ingresos) — excluye Anulación Fiscal (esa no es venta real).
-    // Antes faltaba por completo aquí, por eso Estado de Resultados no bajaba con las NC reales
-    // aunque Libro de Ventas y Reporte General sí las restan.
-    (notasVentaCD||[]).filter(nc=>nc.naturaleza==='FISCAL'&&!nc.esAnulacionFiscal&&(nc.tipo==='NC'||nc.tipo==='ND')).forEach(nc=>{
-      try{
-        const invLink=(invoices||[]).find(i=>i.id===nc.facturaId);
-        const tasaNc=parseNum(nc.tasaFactura||invLink?.tasa||0)||1;
-        const montoBs=parseNum(nc.monto||0);
-        const montoUSD=tasaNc>1?montoBs/tasaNc:0;
-        const rifNc=(nc.clientRif||invLink?.clientRif||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-        const clienteNc=(clients||[]).find(c=>rifNc&&(c.rif||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===rifNc);
-        const ctaCliente=clienteNc?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
-        const tieneOpNc=!!(invLink?.opAsignada||(invLink?.opsAsignadas&&invLink.opsAsignadas.length>0));
-        const cfgIngresoNc=tieneOpNc?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
-        const ctaIngresoNc=cfgIngresoNc||(tieneOpNc?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
-        const esNC=nc.tipo==='NC';
-        out.push({fecha:nc.fecha||'', comprobante:nc.nroDocumento||nc.id, modulo:'Ventas', concepto:`${esNC?'Nota de Crédito':'Nota de Débito'} ${nc.nroDocumento||''} — ${nc.clientName||clienteNc?.razonSocial||clienteNc?.nombre||'—'}`,
-          lineas: mapLineas([
-            {tipo:esNC?'DEBITO':'CREDITO',cuenta:ctaIngresoNc,montoUSD,montoBs},
-            {tipo:esNC?'CREDITO':'DEBITO',cuenta:ctaCliente,montoUSD,montoBs},
-          ])});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -13170,57 +12804,6 @@ function App() {
     (ajustesApp||[]).forEach(a=>{
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
         lineas:(a.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0}))});
-    });
-    // 8) Operaciones de Inventario — salidas de almacén por Autoconsumo o Muestra, usando las
-    // cuentas configuradas en Producción (⚙ Config. Cuentas). Sin cuenta configurada para ese
-    // motivo, no genera asiento (evita usar una cuenta genérica no elegida por la persona).
-    (inventoryMovements||[]).filter(m=>m.type==='AUTOCONSUMO'||m.type==='MUESTRA').forEach(m=>{
-      const ctaGastoM=m.type==='AUTOCONSUMO'?(cuentasProduccionCfg.consumosInternosNombre||''):(cuentasProduccionCfg.muestrasAveriasNombre||'');
-      if(!ctaGastoM) return;
-      const itemM=(inventory||[]).find(i=>i.id===m.itemId);
-      const catM=(itemM?.category||'').toLowerCase();
-      const ctaInvM=catM.includes('materia prima')?cuentasProduccionCfg.inventarioMateriaPrimaNombre
-        :catM.includes('terminado')?cuentasProduccionCfg.inventarioMercanciaNombre
-        :cuentasProduccionCfg.inventarioConsumiblesNombre;
-      if(!ctaInvM) return;
-      const montoM=parseNum(m.totalValue||0);
-      if(montoM<=0) return;
-      const tasaM=parseNum(m.tasa||settings?.tasaBCV||0);
-      out.push({fecha:m.date||'', comprobante:m.reference||'SAL', modulo:'Operaciones de Inventario',
-        concepto:`Salida por ${m.type==='AUTOCONSUMO'?'Autoconsumo':'Muestra'} — ${m.itemName||'—'}`,
-        lineas:[
-          {codigo:(ctaGastoM.split('—')[0]||'').trim(),cuenta:(ctaGastoM.split('—')[1]||ctaGastoM).trim(),debeBs:tasaM?montoM*tasaM:0,haberBs:0,debeUSD:montoM,haberUSD:0},
-          {codigo:(ctaInvM.split('—')[0]||'').trim(),cuenta:(ctaInvM.split('—')[1]||ctaInvM).trim(),debeBs:0,haberBs:tasaM?montoM*tasaM:0,debeUSD:0,haberUSD:montoM},
-        ]});
-    });
-    // 9) Costo de Venta — por cada factura real (excluye Anulación Fiscal), toma el costoUnit
-    // guardado DIRECTO en los ítems de la factura (itemsFacturados) — el mismo campo que usa
-    // Reporte General de Ventas y Costos — para que el costo nunca difiera entre ambos reportes.
-    (invoices||[]).filter(f=>!f.esAnulacionFiscal&&(f.nroFiscal||f.nroControl)).forEach(f=>{
-      const itemsF=f.itemsFacturados||[];
-      if(!itemsF.length) return;
-      let costoProd=0, costoMerc=0;
-      itemsF.forEach(it=>{
-        const itemInv=(inventory||[]).find(i=>(i.displayId||i.id)===it.invCode||(i.displayId||i.id)===it.codigo);
-        const cat=(itemInv?.category||it.category||'').toLowerCase();
-        const costoIt=parseNum(it.cantidad||0)*parseNum(it.costoUnit||0);
-        if(cat.includes('mercanc')) costoMerc+=costoIt; else costoProd+=costoIt;
-      });
-      const tasaCV=parseNum(f.tasa||0)||parseNum(settings?.tasaBCV||0);
-      const fechaCV=f.fechaFactura||f.fecha||'';
-      const lineasCV=[];
-      if(costoProd>0.01 && cuentasProduccionCfg.costoVentaProduccionNombre && cuentasProduccionCfg.inventarioMateriaPrimaNombre){
-        const ctaD=cuentasProduccionCfg.costoVentaProduccionNombre, ctaC=cuentasProduccionCfg.inventarioMateriaPrimaNombre;
-        lineasCV.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),debeBs:tasaCV?costoProd*tasaCV:0,haberBs:0,debeUSD:costoProd,haberUSD:0});
-        lineasCV.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),debeBs:0,haberBs:tasaCV?costoProd*tasaCV:0,debeUSD:0,haberUSD:costoProd});
-      }
-      if(costoMerc>0.01 && cuentasProduccionCfg.costoVentaMercanciaNombre && cuentasProduccionCfg.inventarioMercanciaNombre){
-        const ctaD=cuentasProduccionCfg.costoVentaMercanciaNombre, ctaC=cuentasProduccionCfg.inventarioMercanciaNombre;
-        lineasCV.push({codigo:(ctaD.split('—')[0]||'').trim(),cuenta:(ctaD.split('—')[1]||ctaD).trim(),debeBs:tasaCV?costoMerc*tasaCV:0,haberBs:0,debeUSD:costoMerc,haberUSD:0});
-        lineasCV.push({codigo:(ctaC.split('—')[0]||'').trim(),cuenta:(ctaC.split('—')[1]||ctaC).trim(),debeBs:0,haberBs:tasaCV?costoMerc*tasaCV:0,debeUSD:0,haberUSD:costoMerc});
-      }
-      if(lineasCV.length) out.push({fecha:fechaCV, comprobante:f.nroFiscal||f.documento||f.id, modulo:'Costo de Venta',
-        concepto:`Costo de venta — Fact. ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:lineasCV});
     });
     return out;
   };
@@ -13478,12 +13061,8 @@ function App() {
   },[libroAnio,libroMes,libroQuincena]);
   const [showRetModal, setShowRetModal] = useState(false);
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
-  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:settings?.tasaBCV?String(settings.tasaBCV):'',tipoAnulacion:'NC',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena!=='AMBAS'?libroQuincena:'1'});
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate()});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
-  const [editingAnulInvId, setEditingAnulInvId] = useState(null);
-  const [editingAnulNcId, setEditingAnulNcId] = useState(null);
-  const [showAnulHistorial, setShowAnulHistorial] = useState(false);
-  const [anulVerId, setAnulVerId] = useState(null);
   const [anulCliQuery, setAnulCliQuery] = useState('');
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
@@ -13532,7 +13111,6 @@ function App() {
   const [tvPagina, setTvPagina] = useState(0);
   const [tvBuscarDoc, setTvBuscarDoc] = useState('');
   const [tvBuscarDesc, setTvBuscarDesc] = useState('');
-  const [tvVendedor, setTvVendedor] = useState(''); // '' = Todos los vendedores
   const [facturaPagina, setFacturaPagina] = useState(0);
   const [cotizPagina, setCotizPagina] = useState(0);
   const [clientesPagina, setClientesPagina] = useState(0);
@@ -13629,7 +13207,6 @@ function App() {
   // Estados para Toma Física
   const [tomaFisicaDate, setTomaFisicaDate] = useState(getTodayDate());
   const [tomaFisicaBusq, setTomaFisicaBusq] = useState('');
-  const [tomaFisicaAlmacen, setTomaFisicaAlmacen] = useState(''); // '' = Todos los almacenes
   const [physicalCounts, setPhysicalCounts] = useState({});
   const [tomasFisicas, setTomasFisicas] = useState([]);
   const [showTomaHistorial, setShowTomaHistorial] = useState(false);
@@ -13885,7 +13462,6 @@ function App() {
   const [kpiSelectedMonth, setKpiSelectedMonth] = useState('');
   // ── Auditoría module state ──
   const [auditSearch, setAuditSearch] = useState('');
-  const [mostrarPapelera, setMostrarPapelera] = useState(false);
   const [auditModuleFilter, setAuditModuleFilter] = useState('Todos');
   const [auditTipoFilter, setAuditTipoFilter] = useState('Todos');
   const [auditDate, setAuditDate] = useState('');
@@ -14249,44 +13825,6 @@ function App() {
     setAdminAction(null);
     setAdminActionName('');
   }, []);
-
-  // ── Borrado seguro (recuperable + con clave admin + con auditoría) ──────────
-  // Envuelve requireAdminPassword: antes de borrar el documento, guarda una copia
-  // completa en 'papelera' (con la colección/ID originales) para poder restaurarlo
-  // después, y deja registro permanente en Auditoría. Pensado para ir reemplazando,
-  // módulo por módulo, los deleteDoc(...) sueltos que hoy borran sin dejar rastro.
-  const eliminarConRespaldo = ({coleccion, docId, datos, modulo, detalle, actionName, onDone}) => {
-    requireAdminPassword(async () => {
-      try {
-        const papId = `PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-        const batch = writeBatch(db);
-        batch.set(getDocRef('papelera', papId), {
-          id: papId, coleccionOriginal: coleccion, docIdOriginal: String(docId), datos: datos||null,
-          modulo: modulo||'—', detalle: detalle||'', eliminadoPor: appUser?.name||'Sistema',
-          fecha: getTodayDate(), ts: Date.now(), restaurado: false,
-        });
-        batch.delete(getDocRef(coleccion, docId));
-        await batch.commit();
-        await logAuditoria(appUser, modulo||'—', 'ELIMINACIÓN', detalle||`Eliminado de ${coleccion}: ${docId}`);
-        setDialog({title:'Eliminado', text:'Se eliminó correctamente. Si fue un error, puedes recuperarlo desde Auditoría del Sistema → Papelera.', type:'alert'});
-        if (onDone) onDone();
-      } catch(e) {
-        setDialog({title:'Error', text:'No se pudo eliminar: '+e.message, type:'alert'});
-      }
-    }, actionName || `Eliminar registro de ${coleccion}`);
-  };
-
-  const restaurarDePapelera = (p) => {
-    requireAdminPassword(async () => {
-      try {
-        if (!p.datos) return setDialog({title:'Aviso', text:'Este registro no guardó una copia de los datos, no se puede restaurar automáticamente.', type:'alert'});
-        await setDoc(getDocRef(p.coleccionOriginal, p.docIdOriginal), p.datos);
-        await updateDoc(getDocRef('papelera', p.id), {restaurado:true, restauradoPor:appUser?.name||'Sistema', restauradoFecha:getTodayDate()});
-        await logAuditoria(appUser, p.modulo||'—', 'EDICIÓN', `Restaurado desde Papelera: ${p.detalle||p.docIdOriginal}`);
-        setDialog({title:'Restaurado', text:'El registro fue restaurado correctamente.', type:'alert'});
-      } catch(e) { setDialog({title:'Error', text:'No se pudo restaurar: '+e.message, type:'alert'}); }
-    }, 'Restaurar registro de la Papelera');
-  };
 
   // INICIO DE SESIÓN
   const [_sessionId] = useState(() => Math.random().toString(36).substring(2)+Date.now());
@@ -14724,35 +14262,6 @@ function App() {
   //   5.1.01.01.001 COSTO DE PRODUCCIÓN Y VENTAS        — costo al facturar
   //   4.1.01.01.000 INGRESOS POR MAQUILA                — ingresos al facturar
   // ============================================================================
-  const [fetchingBCV, setFetchingBCV] = useState(false);
-  const fetchTasaBCV = async (fecha) => {
-    setFetchingBCV(true);
-    try{
-      const hoy = new Date().toISOString().slice(0,10);
-      if(!fecha || fecha===hoy){
-        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
-        const d = await r.json();
-        const tasa = parseFloat(d.promedio || d.venta || 0);
-        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
-        return tasa;
-      }
-      // Fecha pasada: se busca en el histórico diario y se toma la más reciente <= la fecha pedida
-      // (el BCV no publica fines de semana/feriados, así que ese día usa la última tasa vigente).
-      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
-      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
-      const arr = await r.json();
-      const candidatas = (arr||[]).filter(x=>(x.fecha||'').slice(0,10)<=fecha).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-      const match = candidatas[0];
-      const tasa = parseFloat(match?.promedio || match?.venta || 0);
-      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
-      return tasa;
-    } catch(e){
-      setDialog({title:'⚠️ Tasa BCV',text:'No se pudo traer la tasa automáticamente ('+e.message+'). Escríbela a mano por esta vez.',type:'alert'});
-      return null;
-    } finally { setFetchingBCV(false); }
-  };
-
   const getCtaInventario = (categoria) => {
     const cat = (categoria || '').toLowerCase();
     if (cat.includes('materia prima')) return '1.1.03.01.004';
@@ -14836,15 +14345,10 @@ function App() {
       } else if (!pfId.startsWith('INV-PT-')) {
         // PT inventory by cleanCode OR regular inventory item
         const cleanCode = pfId;
-        const ptDocsAll = (inventory||[]).filter(i => {
+        const ptDocs = (inventory||[]).filter(i => {
           const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').trim();
           return cc === cleanCode;
         });
-        // Si la Toma Física se filtró a un almacén específico, el "stock sistema" a comparar
-        // debe ser SOLO el de ese almacén — no la suma de todos los almacenes del producto.
-        const ptDocs = tomaFisicaAlmacen
-          ? ptDocsAll.filter(d=>(d.almacen||(d.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)
-          : ptDocsAll;
         if(ptDocs.length > 0) {
           const wh = {};
           ptDocs.forEach(d=>{ const alm=d.almacen||(d.id||'').split('___')[1]?.replace(/-/g,' ')||''; const qty=parseNum(d.stock||0); if(!wh[alm]||qty>wh[alm]) wh[alm]=qty; });
@@ -14942,7 +14446,7 @@ function App() {
       });
     });
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial}table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:5px 8px;font-size:10px}th{background:#e8e8e8;font-weight:bold;text-align:center}</style></head><body>
-    <div style="text-align:center;margin-bottom:16px"><h2 style="margin:2px 0;font-size:14px">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px"><strong>RIF: J-412309374</strong> | Maracaibo, Zulia</p><h3 style="margin:4px 0;font-size:13px">REPORTE DE TOMA FISICA DE INVENTARIO</h3><p style="font-size:11px"><strong>Fecha:</strong> ${toma.fecha} | <strong>Realizado por:</strong> ${toma.realizadaPor} | <strong>Ref.:</strong> TF-${String(toma.timestamp).slice(-6)}</p>${toma.observaciones?`<p style="font-size:10px;color:#555">Obs: ${toma.observaciones}</p>`:''}</div>
+    <div style="text-align:center;margin-bottom:16px"><h2 style="margin:2px 0;font-size:14px">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px"><strong>RIF: J-412309374</strong> | Pto. La Cruz, Anzoategui</p><h3 style="margin:4px 0;font-size:13px">REPORTE DE TOMA FISICA DE INVENTARIO</h3><p style="font-size:11px"><strong>Fecha:</strong> ${toma.fecha} | <strong>Realizado por:</strong> ${toma.realizadaPor} | <strong>Ref.:</strong> TF-${String(toma.timestamp).slice(-6)}</p>${toma.observaciones?`<p style="font-size:10px;color:#555">Obs: ${toma.observaciones}</p>`:''}</div>
     <table><thead><tr><th style="width:12%">Codigo</th><th style="width:32%">Descripcion</th><th style="width:8%">Unidad</th><th style="width:13%">Stock Sistema</th><th style="width:13%">Conteo Fisico</th><th style="width:13%">Diferencia</th></tr></thead><tbody>${rows}</tbody></table>
     <div style="margin-top:40px;font-size:11px"><p><strong>Total items contados:</strong> ${toma.totalItems} | <strong>Ajustes aplicados:</strong> ${toma.totalAjustes}</p><br/><table style="width:100%;border:none"><tr><td style="border:none;width:50%"><strong>Realizado por:</strong> ${toma.realizadaPor}<br/><br/>Firma: _______________________<br/>Fecha: ${toma.fecha}</td><td style="border:none;width:50%"><strong>Supervisado por:</strong> _______________________<br/><br/>Firma: _______________________<br/>Fecha: _______________</td></tr></table></div></body></html>`;
     const blob = new Blob([html], {type:'application/vnd.ms-excel'});
@@ -15813,7 +15317,7 @@ function App() {
     const movId = Date.now().toString();
     try {
       const batch = writeBatch(db);
-      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, tasa: parseNum(newMovementForm.tasa||settings?.tasaBCV||0), reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
+      batch.set(getDocRef('inventoryMovements', movId), { id: movId, date: newMovementForm.date, itemId: item.id, itemName: item.desc, type: newMovementForm.type, qty, cost: movCost, totalValue: qty * movCost, reference: newMovementForm.reference.toUpperCase(), opAsignada: newMovementForm.opAsignada || '', notes: newMovementForm.notes.toUpperCase(), timestamp: Date.now(), user: appUser?.name });
       batch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (isAddition ? qty : -qty), cost: updatedCost });
       await batch.commit();
 
@@ -15829,16 +15333,13 @@ function App() {
           referencia: newMovementForm.reference || 'ENT',
           fecha: newMovementForm.date,
         });
-      } else if (newMovementForm.type === 'SALIDA' || newMovementForm.type === 'AUTOCONSUMO' || newMovementForm.type === 'MUESTRA' || newMovementForm.type === 'AVERIA' || newMovementForm.type === 'DEVOLUCION' || newMovementForm.type === 'PERDIDA') {
-        // Crédito inventario / Débito gasto — usa la cuenta configurada en Producción según el motivo
-        const debitoMotivo = newMovementForm.type==='AUTOCONSUMO' ? (cuentasProduccionCfg.consumosInternosNombre||'GASTO/EXTERNO')
-          : newMovementForm.type==='MUESTRA' ? (cuentasProduccionCfg.muestrasAveriasNombre||'GASTO/EXTERNO')
-          : 'GASTO/EXTERNO';
+      } else if (newMovementForm.type === 'SALIDA' || newMovementForm.type === 'AUTOCONSUMO') {
+        // Crédito inventario / Débito gasto
         await registrarAsientoContable(null, {
-          debito: debitoMotivo,
+          debito: 'GASTO/EXTERNO',
           credito: ctaInventario,
           monto: qty * movCost,
-          descripcion: `SALIDA INVENTARIO (${newMovementForm.type}) — ${item.desc}`,
+          descripcion: `SALIDA INVENTARIO — ${item.desc}`,
           referencia: newMovementForm.reference || 'SAL',
           fecha: newMovementForm.date,
         });
@@ -16137,27 +15638,6 @@ function App() {
   const [editingInvoiceId, setEditingInvoiceId] = useState(null);
   const [showCuentasIngresoModal, setShowCuentasIngresoModal] = useState(false);
   const [cuentasIngresoCfg, setCuentasIngresoCfg] = useState({conOpId:'',conOpNombre:'',sinOpId:'',sinOpNombre:''});
-  const [showCfgCuentasProduccion, setShowCfgCuentasProduccion] = useState(false);
-  const [cuentasProduccionCfg, setCuentasProduccionCfg] = useState({
-    costoVentaProduccionId:'',costoVentaProduccionNombre:'',
-    costoVentaMercanciaId:'',costoVentaMercanciaNombre:'',
-    inventarioConsumiblesId:'',inventarioConsumiblesNombre:'',
-    consumosInternosId:'',consumosInternosNombre:'',
-    muestrasAveriasId:'',muestrasAveriasNombre:'',
-    inventarioMateriaPrimaId:'',inventarioMateriaPrimaNombre:'',
-    inventarioMercanciaId:'',inventarioMercanciaNombre:'',
-  });
-  useEffect(()=>{
-    const u=onSnapshot(doc(db,'settings','produccionCuentasCfg'),d=>d.exists()&&setCuentasProduccionCfg(x=>({...x,...d.data()})));
-    return()=>u();
-  },[]);
-  const guardarCuentasProduccion=async()=>{
-    try{
-      await setDoc(doc(db,'settings','produccionCuentasCfg'),cuentasProduccionCfg,{merge:true});
-      setShowCfgCuentasProduccion(false);
-      setDialog({title:'✅ Guardado',text:'Cuentas de Producción guardadas. Se usarán para armar los asientos de Operaciones de Inventario.',type:'alert'});
-    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-  };
   useEffect(()=>{
     const u=onSnapshot(doc(db,'settings','ventasCuentasIngreso'),d=>d.exists()&&setCuentasIngresoCfg(x=>({...x,...d.data()})));
     return()=>u();
@@ -18037,51 +17517,13 @@ function App() {
 
         <div className="relative" style={{zIndex:2}}>
           {/* Title */}
-          <div className="relative text-center pt-7 pb-5">
+          <div className="text-center pt-7 pb-5">
             <h1 className="text-2xl font-black uppercase tracking-widest text-gray-900">
               PANEL PRINCIPAL ERP{selectedPortal ? ` — ${{produccion:'PRODUCCIÓN',administracion:'ADMINISTRACIÓN',finanzas:'FINANZAS',contabilidad:'CONTABILIDAD',configuracion_portal:'CONFIGURACIÓN'}[selectedPortal]||selectedPortal.toUpperCase()}` : ''}
             </h1>
             <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
-            {selectedPortal==='produccion' && (
-              <button onClick={()=>setShowCfgCuentasProduccion(true)}
-                className="absolute top-4 right-4 sm:right-6 flex items-center gap-1.5 bg-white border-2 border-gray-200 hover:border-orange-400 text-gray-500 hover:text-orange-600 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-wide shadow-sm transition-colors">
-                <Settings size={13}/> Config. Cuentas
-              </button>
-            )}
           </div>
 
-          {showCfgCuentasProduccion && (
-            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCfgCuentasProduccion(false)}>
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas Contables de Producción</h3>
-                  <button onClick={()=>setShowCfgCuentasProduccion(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
-                </div>
-                <p className="text-[11px] text-gray-500">Se configuran una sola vez. Se usan para armar correctamente los asientos de Operaciones de Inventario (salidas de almacén por autoconsumo, muestras, averías, etc.).</p>
-                {[
-                  ['costoVentaProduccionId','costoVentaProduccionNombre','Costo de Venta (Producción)'],
-                  ['costoVentaMercanciaId','costoVentaMercanciaNombre','Costo de Venta (Mercancía)'],
-                  ['inventarioConsumiblesId','inventarioConsumiblesNombre','Inventario de Consumibles'],
-                  ['consumosInternosId','consumosInternosNombre','Consumos Internos'],
-                  ['muestrasAveriasId','muestrasAveriasNombre','Muestras Clientes - Averías'],
-                  ['inventarioMateriaPrimaId','inventarioMateriaPrimaNombre','Inventario de Materia Prima'],
-                  ['inventarioMercanciaId','inventarioMercanciaNombre','Inventario de Mercancía'],
-                ].map(([idKey,nomKey,label])=>(
-                  <div key={idKey}>
-                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
-                    <select value={cuentasProduccionCfg[idKey]||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setCuentasProduccionCfg(x=>({...x,[idKey]:e.target.value,[nomKey]:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
-                      <option value="">— Seleccionar cuenta —</option>
-                      {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                    </select>
-                  </div>
-                ))}
-                <div className="flex gap-2 pt-2">
-                  <button onClick={()=>setShowCfgCuentasProduccion(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
-                  <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
-                </div>
-              </div>
-            </div>
-          )}
           {/* Grid — responsive: 1 col mobile, 2 tablet, 3 desktop */}
           <div className="px-4 sm:px-6 pb-8">
             <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,340px),1fr))', gap:16}}>
@@ -21000,35 +20442,25 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               <AlertTriangle size={20} className="text-blue-600 flex-shrink-0 mt-0.5"/>
               Ingresa el conteo físico real. El sistema calculará la diferencia y generará ajustes automáticos en el Kardex al procesar.
             </div>
-            <div className="mb-6 flex gap-3">
-              <div className="relative flex-1">
-                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-orange-400"/>
-                <input value={tomaFisicaBusq} onChange={e=>setTomaFisicaBusq(e.target.value)}
-                  placeholder="Buscar por descripción o código..."
-                  className="w-full border-2 border-orange-200 rounded-2xl pl-11 pr-10 py-3 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
-                {tomaFisicaBusq&&<button onClick={()=>setTomaFisicaBusq('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 font-black text-sm">✕</button>}
-              </div>
-              <select value={tomaFisicaAlmacen} onChange={e=>setTomaFisicaAlmacen(e.target.value)}
-                className="border-2 border-orange-200 rounded-2xl px-4 py-3 text-xs font-black outline-none focus:border-orange-400 bg-white uppercase">
-                <option value="">— Todos los almacenes —</option>
-                {Array.from(new Set((inventory||[]).map(i=>i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'').filter(Boolean))).sort().map(a=>(
-                  <option key={a} value={a}>{a}</option>
-                ))}
-              </select>
+            <div className="mb-6 relative">
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-orange-400"/>
+              <input value={tomaFisicaBusq} onChange={e=>setTomaFisicaBusq(e.target.value)}
+                placeholder="Buscar por descripción o código..."
+                className="w-full border-2 border-orange-200 rounded-2xl pl-11 pr-10 py-3 text-xs font-bold outline-none focus:border-orange-400 bg-white"/>
+              {tomaFisicaBusq&&<button onClick={()=>setTomaFisicaBusq('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 font-black text-sm">✕</button>}
             </div>
-            {tomaFisicaAlmacen && <div className="mb-4 -mt-2 text-[10px] font-black text-orange-600 uppercase">📍 Mostrando solo: {tomaFisicaAlmacen} — al procesar, solo se ajustan los ítems de este almacén que edites.</div>}
 
             {renderTFSection('📦 Inventario General (Materia Prima / Consumibles)', 'bg-gray-700',
-              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'&&i.activo!==false&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)), false, false, true)}
-            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)) &&
+              inventory.filter(i=>i.category!=='Productos Terminados'&&i.category!=='Semielaborados'&&i.activo!==false), false, false, true)}
+            {inventory.some(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0) &&
               renderTFSection('🔄 Semielaborados / Bobinas (en proceso)', 'bg-indigo-600',
-                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)), false, false, true, true)}
+                inventory.filter(i=>i.category==='Semielaborados'&&parseNum(i.stock)>0), false, false, true, true)}
 
             {/* ── PRODUCTOS TERMINADOS — por subcategoría, consolidados por código limpio ── */}
             {(() => {
               // Consolidate inventory PT items by clean code (strip ___ALMACEN suffix)
               const ptByCode = {};
-              inventory.filter(i=>(i.category==='Productos Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'))&&i.activo!==false&&(!tomaFisicaAlmacen||(i.almacen||(i.id||'').split('___')[1]?.replace(/-/g,' ')||'')===tomaFisicaAlmacen)).forEach(i => {
+              inventory.filter(i=>(i.category==='Productos Terminados'||(i.category||'').toUpperCase().includes('FLEJE')||(i.displayId||(i.id||'').split('___')[0]||'').toUpperCase().startsWith('FLJ-'))&&i.activo!==false).forEach(i => {
                 const rawId = i.displayId||(i.id||'').split('___')[0];
                 const cleanCode = rawId.replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
                 if(!cleanCode) return;
@@ -21365,7 +20797,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                        return (
                        <tr key={r.id} className="hover:bg-gray-50">
                          <td className="py-4 px-4 font-black border-r text-orange-600 text-lg">
-                           {r.opId ? String(r.opId).replace('OP-', '').padStart(5, '0') : <span className="text-gray-400 text-sm">Solicitud directa</span>}<br/>
+                           {String(r.opId).replace('OP-', '').padStart(5, '0')}<br/>
                            <span className="text-[10px] text-gray-500 block text-black">{r.phase}</span>
                          </td>
                          <td className="py-4 px-4 border-r">
@@ -22235,13 +21667,6 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                        <input type="number" step="0.01" value={newMovementForm.cost} onChange={e=>setNewMovementForm({...newMovementForm, cost: e.target.value})} disabled={invView !== 'cargo'} placeholder="0.00" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black disabled:opacity-60" />
                      </div>
 
-                     <div>
-                       <label className="text-[10px] font-black text-gray-500 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
-                         <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(newMovementForm.date);if(t)setNewMovementForm(f=>({...f,tasa:String(t)}));}}
-                           className="text-orange-500 hover:text-orange-600 disabled:opacity-40 normal-case" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
-                       </label>
-                       <input type="number" step="0.0001" value={newMovementForm.tasa||''} onChange={e=>setNewMovementForm({...newMovementForm, tasa: e.target.value})} placeholder={`${formatNum(settings?.tasaBCV||0)}`} className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-lg outline-none transition-colors text-center text-black" />
-                     </div>
                      <div className="md:col-span-2">
                        <label className="text-[10px] font-black text-gray-500 uppercase block mb-1">Documento Referencia (Factura, OP, Guía)</label>
                        <input type="text" required value={newMovementForm.reference} onChange={e=>setNewMovementForm({...newMovementForm, reference: e.target.value.toUpperCase()})} placeholder="EJ: FACT-001 o OP-005" className="w-full border-2 border-gray-200 bg-gray-50 focus:bg-white focus:border-orange-500 rounded-xl p-4 font-black text-xs uppercase outline-none transition-colors" />
@@ -24025,15 +23450,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               </div>
                               <script>window.print();</script></body></html>`);
                             }} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button>
-                            <button onClick={()=>requireAdminPassword(async()=>{
-                              const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                              const batch=writeBatch(db);
-                              batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'cotizaciones',docIdOriginal:cot.id,datos:cot,modulo:'Ventas',detalle:`Cotización ${cot.documento||cot.id}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                              batch.delete(getDocRef('cotizaciones',cot.id));
-                              await batch.commit();
-                              await logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Cotización ${cot.documento||cot.id} eliminada`);
-                              setDialog({title:'Eliminada',text:`${cot.documento} eliminada. Recuperable desde Auditoría → Papelera.`,type:'alert'});
-                            },'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
+                            <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
                           </div>
                         </td>
                       </tr>
@@ -24282,8 +23699,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'reporte_ventas' && (() => {
           const filtInvs = (invoices||[]).filter(inv=>{
             if(!inv) return false;
-            if(inv.esAnulacionFiscal) return false;
-            if(!inv.nroFiscal&&!inv.nroControl) return false;
             const _fechaMostrada=inv.fechaFactura||inv.fecha||'';
             if(pvFilter && pvFilter !== 'general') { if(!_fechaMostrada.startsWith(pvFilter)) return false; }
             // Respetar filtros activos de Facturación (año + mes)
@@ -24303,24 +23718,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
               })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo:'—',producto:inv.productoMaquilado||'—',qty:1,precio:parseNum(inv.montoBase||0),total:parseNum(inv.montoBase||0),costo:0,costoTotal:0,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
             } else {
-              // Prorratear contra el monto REAL de la factura (inv.montoBase): así la suma de los
-              // ítems nunca puede ser distinta al total verdaderamente facturado, aunque el precio
-              // de catálogo guardado en cada ítem no coincida exactamente (descuentos, ajustes, etc.)
-              const _sumaCatalogoInv = items.reduce((s,it)=>{
-                const q=parseNum(it.cantidad||1);
-                const p=parseNum(it.precioUnit||0)>0?parseNum(it.precioUnit):(parseNum(inv.montoBase||0)/items.length/q);
-                return s+p*q;
-              },0);
-              const _montoRealInv = parseNum(inv.montoBase||0);
-              const _factorProrateoInv = (_sumaCatalogoInv>0 && _montoRealInv>0) ? (_montoRealInv/_sumaCatalogoInv) : 1;
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
                 // precio de venta: from saved precioUnit, or derive from invoice total / items
-                const precioVenta = (parseNum(it.precioUnit||0) > 0
+                const precioVenta = parseNum(it.precioUnit||0) > 0
                   ? parseNum(it.precioUnit)
                   : (inv.itemsFacturados||[]).length > 0
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
-                    : parseNum(inv.montoBase||0) / qty) * _factorProrateoInv;
+                    : parseNum(inv.montoBase||0) / qty;
                 const total = precioVenta * qty;
                 // ── CÓDIGO: usar exactamente el mismo código que aparece en Inventario de Productos Terminados ──
                 // Estrategia: construir el mismo mapa consolidado (cleanCode) que usa el módulo de inventario
@@ -24446,7 +23851,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
-            if(nc.esAnulacionFiscal) return false;
             if(nc.naturaleza!=='FISCAL') return false;
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
             // Fecha efectiva para filtrar por período: la propia de la nota, o si no coincide con nada,
@@ -24671,8 +24075,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const facturasEnNEDash = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
           const nesMes = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ymD));
           const factsDirect = (invoices||[]).filter(inv => {
-            if(inv.esAnulacionFiscal) return false;
-            if(!(inv.fechaFactura||inv.fecha||'').startsWith(ymD)) return false;
+            if(!(inv.fecha||'').startsWith(ymD)) return false;
             if(inv.neOrigen) return false;
             const invId = inv.id||inv.documento||'';
             const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
@@ -24715,15 +24118,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           (notasEntrega||[]).forEach(ne=>{const v=(ne.vendedor||'—').toUpperCase();[ne.id,ne.documento,ne.facturaId].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
           (invoices||[]).forEach(inv=>{const v=(inv.vendedor||'—').toUpperCase();[inv.id,inv.documento,inv.nroFiscal].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
           let ajusteNCDash=0;
-          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)&&!nc.esAnulacionFiscal).forEach(nc=>{
+          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).forEach(nc=>{
             const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
             const signed=nc.tipo==='NC'?-baseUsd:baseUsd;
             ajusteNCDash+=signed;
-            // Si no se puede vincular a un vendedor real (NE/factura), se cuenta en el total general
-            // pero NO se agrega como una fila de "vendedor" en blanco — evita el renglón fantasma "—".
-            const vDoc=_vendPorDoc.get(nc.neId)||_vendPorDoc.get(nc.neOrigen)||_vendPorDoc.get(nc.facturaId)||null;
-            if(vDoc) porVend[vDoc]=(porVend[vDoc]||0)+signed;
+            const vDoc=_vendPorDoc.get(nc.neId)||_vendPorDoc.get(nc.neOrigen)||_vendPorDoc.get(nc.facturaId)||'—';
+            porVend[vDoc]=(porVend[vDoc]||0)+signed;
           });
           const totalVentas = totalVentasBruto + ajusteNCDash;
           const vendArr = Object.entries(porVend).map(([v,m])=>({vend:v,monto:m})).sort((a,b)=>b.monto-a.monto);
@@ -25289,7 +24690,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // NC del mes aplicadas a las NEs/facturas del vendedor — descuentan de la meta (base sin IVA)
           const _idsNEVend=new Set(nesMesCom.flatMap(ne=>[ne.id,ne.documento,ne.facturaId].filter(Boolean)));
           const _idsFactVend=new Set(factsDirCom.flatMap(inv=>[inv.id,inv.documento,inv.nroFiscal].filter(Boolean)));
-          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>!n.esAnulacionFiscal&&n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
+          const ncDescuentoVend=(notasVentaCD||[]).filter(n=>n.tipo==='NC'&&(n.fecha||'').startsWith(ym)&&(
               _idsNEVend.has(n.neId)||_idsNEVend.has(n.neOrigen)||_idsNEVend.has(n.facturaId)||
               _idsFactVend.has(n.facturaId)
             )).reduce((s,n)=>{
@@ -26002,15 +25403,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-600 hover:text-white transition-all">
                             <Download size={12}/> Excel
                           </button>
-                          <button onClick={()=>requireAdminPassword(async()=>{
-                            const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                            const batch=writeBatch(db);
-                            batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'comisionesReportes',docIdOriginal:r.id,datos:r,modulo:'Ventas',detalle:`Reporte de comisiones ${r.vendedor||''} — ${r.mesLabel||''}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                            batch.delete(getDocRef('comisionesReportes',r.id));
-                            await batch.commit();
-                            await logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Reporte de comisiones ${r.vendedor||''} — ${r.mesLabel||''} eliminado`);
-                            setDialog({title:'Eliminado',text:'Reporte eliminado. Recuperable desde Auditoría → Papelera.',type:'alert'});
-                          },`Eliminar reporte de ${r.vendedor} — ${r.mesLabel}`)} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                          <button onClick={()=>{
+                            if(window.confirm(`¿Eliminar reporte de ${r.vendedor} — ${r.mesLabel}?`))
+                              deleteDoc(getDocRef('comisionesReportes',r.id));
+                          }} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                             <Trash2 size={12}/> Eliminar
                           </button>
                         </div>
@@ -26154,7 +25550,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               setNeView('lista'); setNeForm(null); setNeInvSearch(''); setNeShowInvDrop(false);
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           };
-          const handleDeleteNE = (ne) => requireAdminPassword(async()=>{
+          const handleDeleteNE = (ne) => setDialog({title:'Eliminar Nota de Entrega',text:`¿Eliminar ${ne.id}? La mercancía será devuelta al inventario.`,type:'confirm',onConfirm:async()=>{
             try {
               const batch = writeBatch(db);
               // 1. Devolver inventario por almacén
@@ -26179,17 +25575,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   });
                 }
               }
-              // 2. Respaldar en Papelera y eliminar la NE
-              const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-              batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'notasEntrega',docIdOriginal:ne.id,datos:ne,modulo:'Notas de Entrega',detalle:`NE ${ne.id} · Cliente: ${ne.clientName||'—'}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+              // 2. Eliminar la NE
               batch.delete(getDocRef('notasEntrega',ne.id));
               await batch.commit();
               logAuditoria(appUser,'Notas de Entrega','ELIMINACIÓN',`NE ELIMINADA: ${ne.id} · Cliente: ${ne.clientName||'—'} · Fecha: ${ne.fecha||'—'} · Total: $${formatNum(ne.total||ne.totalUSD||0)}`);
               // 3. Limpiar de comCobranza si existe
               setComCobranza(prev=>(prev||[]).filter(c=>c.neId!==ne.id));
-              setDialog({title:'✅ Eliminada',text:`NE ${ne.id} eliminada. Recuperable desde Auditoría → Papelera.`,type:'alert'});
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
-          }, `Eliminar Nota de Entrega ${ne.id} (la mercancía vuelve al inventario)`);
+          }});
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
           const handleConvertirFactura = (ne) => {
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
@@ -26429,6 +25822,39 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const totalNEbase=neFiltradas.reduce((s,n)=>s+parseNum(n.montoBase||0),0);
           const totalNEiva=neFiltradas.reduce((s,n)=>s+parseNum(n.ivaAmt||0),0);
           const totalNEtotal=neFiltradas.reduce((s,n)=>s+parseNum(n.total||0),0);
+          const neEstatusLabel=(st)=>st==='PROCESADA'?'Procesada':st==='ANULADA'?'Anulada':'Tránsito';
+          const neFiltroResumen=[neFiltAnio&&`Año ${neFiltAnio}`,neFiltMes&&`Mes ${['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(neFiltMes)]}`,neFiltStatus!=='TODAS'&&`Estatus ${neFiltStatus}`,neFiltVendedor!=='TODOS'&&`Vendedor ${neFiltVendedor}`,neSearch&&`Buscar "${neSearch}"`].filter(Boolean).join(' · ')||'Sin filtros';
+          const exportarNEPDF=()=>{
+            const rows=neFiltradas.map(ne=>`<tr>
+<td style="font-weight:700;color:#ea580c">${ne.id}</td>
+<td>${ne.fecha||'—'}</td>
+<td>${ne.clientName||'—'}</td>
+<td style="font-size:9px;color:#6b7280">${ne.clientRif||'—'}</td>
+<td>${ne.territorio||'—'}</td>
+<td>${ne.vendedor||'—'}</td>
+<td style="font-size:9px">${ne.opRelacionada||'—'}</td>
+<td style="text-align:right">$${formatNum(ne.montoBase||0)}</td>
+<td style="text-align:right">$${formatNum(ne.ivaAmt||0)}</td>
+<td style="text-align:right;font-weight:700">$${formatNum(ne.total||0)}</td>
+<td style="font-size:9px">${neEstatusLabel(ne.status)}</td>
+<td style="font-size:9px">${ne.facturaId||'—'}</td>
+</tr>`).join('');
+            const html=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+<div style="font-size:15px;font-weight:900">NOTAS DE ENTREGA</div>
+<div style="font-size:8.5px;color:#666;text-align:right">${neFiltroResumen}<br/>${neFiltradas.length} NE · Emitido ${getTodayDate()}</div>
+</div>
+<table><thead><tr><th>NE#</th><th>Fecha</th><th>Cliente</th><th>RIF</th><th>Territorio</th><th>Vendedor</th><th>OP</th><th style="text-align:right">Monto</th><th style="text-align:right">IVA</th><th style="text-align:right">Total</th><th>Estatus</th><th>Factura</th></tr></thead>
+<tbody>${rows}</tbody>
+<tfoot><tr><td colspan="7">Totales — ${neFiltradas.length} NE</td><td style="text-align:right">$${formatNum(totalNEbase)}</td><td style="text-align:right">$${formatNum(totalNEiva)}</td><td style="text-align:right">$${formatNum(totalNEtotal)}</td><td colspan="2"></td></tr></tfoot>
+</table>`;
+            handlePDFFromHTML(html,`Notas_de_Entrega_${getTodayDate()}`);
+          };
+          const exportarNEExcel=()=>{
+            const headers=['NE#','Fecha','Cliente','RIF','Territorio','Vendedor','OP','Monto','IVA','Total','Estatus','Factura'];
+            const dataRows=neFiltradas.map(ne=>[ne.id,ne.fecha||'',ne.clientName||'',ne.clientRif||'',ne.territorio||'',ne.vendedor||'',ne.opRelacionada||'',formatNum(ne.montoBase||0),formatNum(ne.ivaAmt||0),formatNum(ne.total||0),neEstatusLabel(ne.status),ne.facturaId||'']);
+            dataRows.push(['','','','','','','TOTALES',formatNum(totalNEbase),formatNum(totalNEiva),formatNum(totalNEtotal),'','']);
+            handleExportExcel(dataRows,'Notas_de_Entrega',headers);
+          };
           return(
             <div className="p-6 space-y-5">
               <div className="flex items-center justify-between flex-wrap gap-3">
@@ -26457,6 +25883,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </select></div>
                 <div className="flex gap-2 items-center">
                   <div className="text-right"><div className="text-[9px] text-gray-400 font-bold">{neFiltradas.length} NE</div><div className="font-black text-sm text-orange-600">${formatNum(totalNEbase)}</div><div className="text-[9px] text-gray-400">+IVA ${formatNum(totalNEiva)} = ${formatNum(totalNEtotal)}</div></div>
+                  <button onClick={exportarNEPDF} title="Exportar PDF — respeta los filtros activos" className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
+                  <button onClick={exportarNEExcel} title="Exportar Excel — respeta los filtros activos" className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel</button>
                 </div>
               </div>
               {/* Paginación top */}
@@ -26563,11 +25991,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       ))}
                     </tbody>
                     <tfoot><tr className="bg-gray-900 text-white font-black">
-                      <td colSpan={6} className="py-2.5 px-3 text-[10px] uppercase">Totales — {neFiltradas.length} NE</td>
+                      <td colSpan={7} className="py-2.5 px-3 text-[10px] uppercase">Totales — {neFiltradas.length} NE</td>
                       <td className="py-2.5 px-3 text-right">${formatNum(totalNEbase)}</td>
                       <td className="py-2.5 px-3 text-right text-blue-300">${formatNum(totalNEiva)}</td>
                       <td className="py-2.5 px-3 text-right text-orange-300">${formatNum(totalNEtotal)}</td>
-                      <td colSpan={2}></td>
+                      <td colSpan={3}></td>
                     </tr></tfoot>
                   </table>
                 </div>
@@ -26594,14 +26022,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(ne.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            if(tvVendedor && (ne.vendedor||'').trim()!==tvVendedor) return;
             const costo=parseNum(ne.costoTotal||0)||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
             rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
           });
           // ── Fuente 3: Notas de Crédito / Débito ─────────────────────────────
-          (notasVentaCD||[]).filter(nc=>!nc.esAnulacionFiscal).forEach(nc=>{
+          (notasVentaCD||[]).forEach(nc=>{
             const fecha=nc.fecha||'';
             if(fecha<tvDesde||fecha>tvHasta) return;
             if(tvBuscarDoc && !(nc.nroDocumento||'').toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
@@ -26609,7 +26036,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ne=(notasEntrega||[]).find(e=>e.id===nc.neId);
             const cliente=inv?.clientName||ne?.clientName||'—';
             if(tvBuscarDesc && !cliente.toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            if(tvVendedor && (inv?.vendedor||ne?.vendedor||'').trim()!==tvVendedor) return;
             const tasaNC=parseNum(nc.tasaFactura||inv?.tasa||ne?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseImpBs=parseNum(nc.monto||0);   // stored as Base Imponible Bs.
             const baseUsd=tasaNC>0?parseFloat((baseImpBs/tasaNC).toFixed(6)):0;
@@ -26671,12 +26097,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente / Descripción</label>
                   <input value={tvBuscarDesc} onChange={e=>{setTvBuscarDesc(e.target.value);setTvPagina(0);}} placeholder="Buscar cliente..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
-                </div>
-                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Vendedor</label>
-                  <select value={tvVendedor} onChange={e=>{setTvVendedor(e.target.value);setTvPagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 min-w-36">
-                    <option value="">Todos los vendedores</option>
-                    {[...new Set((notasEntrega||[]).concat(invoices||[]).map(i=>(i.vendedor||'').trim()).filter(Boolean))].sort().map(v=>(<option key={v} value={v}>{v}</option>))}
-                  </select>
                 </div>
                 <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.montoBruto)}</div><div className="text-[10px] text-gray-400 font-bold">{rows.length} ops. · Base sin IVA</div></div>
               </div>
@@ -27222,10 +26642,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
 
                       <div>
-                        <label className="text-[9px] font-black text-gray-600 uppercase mb-1 flex items-center gap-1">Tasa Bs/$
-                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(newInvoiceForm.fechaFactura||newInvoiceForm.fecha);if(t)setNewInvoiceForm(f=>({...f,tasa:String(t)}));}}
-                            className="text-orange-500 hover:text-orange-600 disabled:opacity-40" title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
-                        </label>
+                        <label className="text-[9px] font-black text-gray-600 uppercase mb-1 block">Tasa Bs/$</label>
                         <input type="number" step="0.0001" min="0" value={newInvoiceForm.tasa||''}
                           onChange={e=>setNewInvoiceForm({...newInvoiceForm, tasa:e.target.value})}
                           className="w-28 bg-gray-100/70 border-2 border-transparent rounded-xl p-2.5 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black text-center"
@@ -27430,18 +26847,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                             <div className="px-4 py-3 border-b flex items-center justify-between" style={{background:asientoV.cuadrado?'#ecfdf5':'#fef2f2'}}>
                               <span className={`text-xs font-black uppercase ${asientoV.cuadrado?'text-emerald-700':'text-red-700'}`}>{asientoV.cuadrado?'✓ Asiento Cuadrado':'⚠ Asiento Descuadrado'}</span>
-                              <span className="text-[10px] text-gray-500">Débitos: ${formatNum(asientoV.totDeb)} (Bs.{formatNum(asientoV.lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+(l.montoBs||0),0))}) · Créditos: ${formatNum(asientoV.totCred)} (Bs.{formatNum(asientoV.lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+(l.montoBs||0),0))})</span>
+                              <span className="text-[10px] text-gray-500">Débitos: ${formatNum(asientoV.totDeb)} · Créditos: ${formatNum(asientoV.totCred)}</span>
                             </div>
                             <table className="w-full text-xs">
-                              <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase font-black"><th className="px-3 py-2 text-left">Cuenta Contable</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center">Tipo</th><th className="px-3 py-2 text-right">Débito</th><th className="px-3 py-2 text-right">Crédito</th></tr></thead>
+                              <thead><tr className="bg-gray-50 text-[9px] text-gray-500 uppercase font-black"><th className="px-3 py-2 text-left">Cuenta Contable</th><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center">Tipo</th><th className="px-3 py-2 text-right">Débito USD</th><th className="px-3 py-2 text-right">Crédito USD</th></tr></thead>
                               <tbody>
                                 {asientoV.lineas.map((l,i)=>(
                                   <tr key={i} className="border-t border-gray-100">
                                     <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{l.cuenta}</td>
                                     <td className="px-3 py-2 text-[10px] text-gray-500">{l.concepto}</td>
                                     <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black ${l.tipo==='DEBITO'?'bg-orange-100 text-orange-700':'bg-blue-100 text-blue-700'}`}>{l.tipo}</span></td>
-                                    <td className="px-3 py-2 text-right">{l.tipo==='DEBITO'?<><p className="font-mono font-black text-orange-600">{'$'+formatNum(l.montoUSD)}</p><p className="font-mono text-orange-400 text-[9px]">{'Bs.'+formatNum(l.montoBs||0)}</p></>:'—'}</td>
-                                    <td className="px-3 py-2 text-right">{l.tipo==='CREDITO'?<><p className="font-mono font-black text-blue-600">{'$'+formatNum(l.montoUSD)}</p><p className="font-mono text-blue-400 text-[9px]">{'Bs.'+formatNum(l.montoBs||0)}</p></>:'—'}</td>
+                                    <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{l.tipo==='DEBITO'?'$'+formatNum(l.montoUSD):'—'}</td>
+                                    <td className="px-3 py-2 text-right font-mono font-black text-blue-600">{l.tipo==='CREDITO'?'$'+formatNum(l.montoUSD):'—'}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -27695,36 +27112,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                      handlePDFFromHTML(_h,n.tipo+'_'+_doc);
                                    }} className="p-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-500 hover:text-white transition-all" title="Ver PDF"><FileText size={13}/></button>
                                   <button onClick={()=>{setVentaNCForm({...n,monto:String(n.monto||''),ivaBs:String(n.ivaBs||''),totalBs:String(n.totalBs||'')});setVentaNCBusq('');setShowVentaNCModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={12}/></button>
-                                  <button onClick={()=>requireAdminPassword(async()=>{
-                                    try{
-                                      // 1. Revertir inventario si era NC Devolución
-                                      if(n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0){
-                                        const batch=writeBatch(db);
-                                        for(const it of (n.itemsRevertidos||[])){
-                                          const cantRev=parseNum(it.cantidad||0);
-                                          if(cantRev<=0) continue;
-                                          const cleanId=(it.invCode||it.fgId||'').split('___')[0].trim();
-                                          if(!cleanId) continue;
-                                          const invDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId);
-                                          if(invDocs.length>0){
-                                            batch.update(getDocRef('inventory',invDocs[0].id),{stock:Math.max(0,parseNum(invDocs[0].stock||0)-cantRev),timestamp:Date.now()});
+                                  <button onClick={()=>setDialog({title:`Eliminar ${n.tipo} — ${n.nroDocumento}`,text:`¿Eliminar ${n.nroDocumento}? ${n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0?'Se deshará la reversión de inventario.':'No afecta inventario.'}`,type:'confirm',onConfirm:async()=>{
+                                      try{
+                                        // 1. Revertir inventario si era NC Devolución
+                                        if(n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0){
+                                          const batch=writeBatch(db);
+                                          for(const it of (n.itemsRevertidos||[])){
+                                            const cantRev=parseNum(it.cantidad||0);
+                                            if(cantRev<=0) continue;
+                                            const cleanId=(it.invCode||it.fgId||'').split('___')[0].trim();
+                                            if(!cleanId) continue;
+                                            const invDocs=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===cleanId);
+                                            if(invDocs.length>0){
+                                              batch.update(getDocRef('inventory',invDocs[0].id),{stock:Math.max(0,parseNum(invDocs[0].stock||0)-cantRev),timestamp:Date.now()});
+                                            }
+                                            const movId=`MOV-NC-REV-${Date.now().toString(36).slice(-6)}-${it.fgId||cleanId}`;
+                                            batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:cleanId,itemName:it.desc||cleanId,type:'SALIDA ANULACIÓN NC',qty:cantRev,cost:parseNum(it.costoUnit||0),totalValue:cantRev*parseNum(it.costoUnit||0),reference:n.nroDocumento,notes:`Anulación NC ${n.nroDocumento}`,user:appUser?.name||'Sistema'});
                                           }
-                                          const movId=`MOV-NC-REV-${Date.now().toString(36).slice(-6)}-${it.fgId||cleanId}`;
-                                          batch.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:cleanId,itemName:it.desc||cleanId,type:'SALIDA ANULACIÓN NC',qty:cantRev,cost:parseNum(it.costoUnit||0),totalValue:cantRev*parseNum(it.costoUnit||0),reference:n.nroDocumento,notes:`Anulación NC ${n.nroDocumento}`,user:appUser?.name||'Sistema'});
+                                          await batch.commit();
                                         }
-                                        await batch.commit();
-                                      }
-                                      // 2. Respaldar en Papelera antes de eliminar la NC/ND
-                                      const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                                      const huboReversion=n.tipo==='NC'&&n.modoOp!=='ajuste'&&(n.itemsRevertidos||[]).length>0;
-                                      const detalleNc=`${n.tipo} ${n.nroDocumento} eliminada${huboReversion?' (con reversión de inventario — restaurar este registro NO revierte el inventario automáticamente)':''}`;
-                                      await setDoc(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'notasVentaCreditoDebito',docIdOriginal:n._fsId||n.id,datos:n,modulo:'Ventas',detalle:detalleNc,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                                      // 3. Eliminar la NC/ND usando el key real de Firestore
-                                      await deleteDoc(getDocRef('notasVentaCreditoDebito', n._fsId||n.id));
-                                      await logAuditoria(appUser,'Ventas','ELIMINACIÓN',detalleNc);
-                                      setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${huboReversion?' Inventario revertido.':''} Recuperable desde Auditoría → Papelera.`,type:'alert'});
-                                    }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
-                                  }, `Eliminar ${n.tipo} — ${n.nroDocumento}`)} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                                        // 2. Eliminar la NC/ND usando el key real de Firestore
+                                        await deleteDoc(getDocRef('notasVentaCreditoDebito', n._fsId||n.id));
+                                        setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${n.tipo==='NC'&&(n.itemsRevertidos||[]).length>0?' Inventario revertido.':''}`,type:'alert'});
+                                      }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
+                                    }})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
                                 </div>
                               </td>
                             </tr>
@@ -28258,7 +27669,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Ajuste NC para el período filtrado
           const ajusteNCGraf = (notasVentaCD||[]).filter(nc=>{
-            if(nc.esAnulacionFiscal) return false;
             if(fVF.anio && !(nc.fecha||'').startsWith(fVF.anio)) return false;
             if(fVF.mes && (nc.fecha||'').substring(5,7) !== fVF.mes) return false;
             return true;
@@ -29215,7 +28625,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
             try{
               const nesSelecIds=Object.keys(m.nesSelec||{}).filter(id=>m.nesSelec[id]);
-              const ndsDirectasCliente=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&!n._clienteDirecto&&(n.clientRif===m.clientRif||n.clientName===m.clientName))
+              const ndsDirectasCliente=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif===m.clientRif||n.clientName===m.clientName))
                 .map(n=>{
                   const total=parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCV||1);
                   const yaCobrado=(cobrosCxc||[]).filter(c=>c.neId===`ND-${n.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -29385,14 +28795,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // ── REVERSAR COBRO ─────────────────────────────────────────────
           const reversarCobro=async(cobro)=>{
-            requireAdminPassword(async()=>{
+            setDialog({title:'¿Eliminar cobro?',text:`Se eliminará el cobro de $${formatNum(cobro.monto)} y se restaurará el saldo de la NE. El movimiento de banco/caja vinculado también se ajustará. ¿Confirmar?`,type:'confirm',onConfirm:async()=>{
               try{
                 const batch=writeBatch(db);
                 const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
 
-                // 1. Respaldar en Papelera y eliminar el cobro de cobros_cxc
-                const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'cobros_cxc',docIdOriginal:cobro.id,datos:cobro,modulo:'Cuentas por Cobrar',detalle:`Cobro $${formatNum(cobro.monto)} · Ref: ${cobro.referencia||'—'} · Cliente: ${cobro.clientName||'—'} (restaurar este registro NO revierte los ajustes de saldo bancario/NE hechos al reversar)`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
+                // 1. Eliminar el cobro de cobros_cxc
                 batch.delete(getDocRef('cobros_cxc',cobro.id));
 
                 // 2. Recalcular NE — saldo = total NE − NC/ND − retenciones − cobros restantes
@@ -29404,7 +28812,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   // Pero mejor recalcular desde el total bruto:
                   const totalNE=parseNum(ne.total||ne.totalUSD||0);
                   const totalNCs=(notasVentaCD||[]).filter(n=>{
-                    if(n.esAnulacionFiscal) return false;
                     const ni=n.neId||'',no=n.neOrigen||'';
                     return ni===ne.id||no===ne.id||ni===(ne.documento||'')||no===(ne.documento||'');
                   }).reduce((s,n)=>s+parseNum(n.montoUSD||0),0);
@@ -29490,9 +28897,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 await batch.commit();
                 logAuditoria(appUser,'Cuentas por Cobrar','ELIMINACIÓN',`Cobro ELIMINADO: $${formatNum(cobro.monto)} · Ref: ${cobro.referencia||'—'} · NE: ${ne?.documento||cobro.neId||'—'} · Cliente: ${cobro.clientName||'—'}`);
-                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvEncontrado?'\nMovimiento de banco/caja también ajustado.':'\n⚠ No se encontró el movimiento bancario/caja asociado.'}\nRecuperable desde Auditoría → Papelera.`,type:'alert'});
+                setDialog({title:'✅ Eliminado',text:`Cobro de $${formatNum(cobro.monto)} eliminado correctamente.${mvEncontrado?'\nMovimiento de banco/caja también ajustado.':'\n⚠ No se encontró el movimiento bancario/caja asociado.'}`,type:'alert'});
               }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-            }, `Eliminar cobro de $${formatNum(cobro.monto)} — ${cobro.clientName||''}`);
+            }});
           };
 
           // ── MODAL COBRO MASIVO — pantalla completa horizontal ────────
@@ -29501,7 +28908,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // Construir lista de clientes con saldo independiente de filtros
             const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&Math.abs(getSaldoNEAtFecha(ne,null))>0.01);
             // ND de cliente directo (sin NE, sin factura) — cuenta por cobrar propia, tratada como pseudo-NE
-            const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&!n._clienteDirecto&&(n.clientRif||n.clientName))
+            const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
               .map(n=>({
                 id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,
                 clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
@@ -29633,11 +29040,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <div style={{background:'#fff',border:'2px solid #e5e7eb',borderRadius:10,overflow:'hidden',maxHeight:160,overflowY:'auto'}}>
                           {clientesFiltrados.map(cl=>(
                             <button key={cl.clientRif} onClick={()=>{
-                              // Ya NO se pre-aplican los anticipos automáticamente al elegir cliente — el
-                              // usuario debe pulsar "Usar" en cada uno que realmente quiera aplicar. Antes
-                              // se auto-rellenaban todos, con riesgo de guardarse sin elección consciente.
+                              // Saldo a favor existente del cliente: se pre-aplica solo (misma cascada que guardarPagoMasivo,
+                              // más antigua primero). El usuario puede quitarlo/reasignarlo en "3 · Métodos de Pago" — no se
+                              // guarda nada hasta pulsar Guardar.
+                              const antsCliente=(cobrosCxc||[]).filter(c=>c.esAnticipo&&(c.clientRif===cl.clientRif||c.clientName===cl.clientName))
+                                .map(a=>({...a,_saldoAnt:parseNum(a.monto||0)-parseNum(a.montoAplicado||0)}))
+                                .filter(a=>a._saldoAnt>0.01);
                               setCxcPagoModal(m=>({...m,clientRif:cl.clientRif,clientName:cl.clientName,clientSearch:cl.clientName,nesSelec:{},distribucion:{},distribucionManual:{},
-                                lineasPago:(m.lineasPago||[]).filter(l=>!l.anticipoId)
+                                lineasPago:[...(m.lineasPago||[]).filter(l=>!l.anticipoId),...antsCliente.map(a=>({moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo (automática)',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}))]
                               }));
                             }}
                               style={{width:'100%',display:'flex',justifyContent:'space-between',alignItems:'center',padding:'9px 12px',border:'none',borderBottom:'1px solid #f9fafb',background:'transparent',cursor:'pointer',textAlign:'left'}}
@@ -29684,7 +29094,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             return(
                             <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
                               <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}</span>
-                              <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:a.fecha||getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                              <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                                 style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                             </div>);
                           })}
@@ -29908,10 +29318,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </div>
 
                       <div style={{marginBottom:10}}>
-                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'flex',alignItems:'center',gap:4,marginBottom:4}}>Tasa Bs/$
-                          <button type="button" disabled={fetchingBCV} onClick={async()=>{const t=await fetchTasaBCV(pm.lineaActual?.fecha);if(t)setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:String(t)}}));}}
-                            style={{color:'#E8541A',background:'none',border:'none',cursor:'pointer',opacity:fetchingBCV?0.4:1}} title="Traer tasa oficial BCV de hoy">{fetchingBCV?'⏳':'🔄'}</button>
-                        </label>
+                        <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Tasa Bs/$</label>
                         <input type="number" step="0.01"
                           value={pm.lineaActual?.tasa||''} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,tasa:e.target.value}}))}
                           style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,fontWeight:700,outline:'none',boxSizing:'border-box'}}
@@ -29924,7 +29331,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <label style={{fontSize:9,fontWeight:900,color:'#374151',textTransform:'uppercase',display:'block',marginBottom:4}}>Método</label>
                           <select value={pm.lineaActual?.metodo||'Transferencia'} onChange={e=>setCxcPagoModal(m=>({...m,lineaActual:{...m.lineaActual,metodo:e.target.value}}))}
                             style={{width:'100%',padding:'10px 12px',border:'2px solid #e5e7eb',borderRadius:10,fontSize:12,outline:'none',background:'#fff',boxSizing:'border-box'}}>
-                            {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Punto de Venta','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
+                            {['Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil'].map(o=><option key={o}>{o}</option>)}
                           </select>
                         </div>
                         <div>
@@ -30120,7 +29527,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </div>
                     <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Método de pago</label>
                       <select value={cxcCobroModal.metodo} onChange={e=>setCxcCobroModal(m=>({...m,metodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-orange-400">
-                        <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option><option>Zelle</option><option>Punto de Venta</option><option>Cheque</option><option>Pago Móvil</option></select></div>
+                        <option>Transferencia</option><option>Efectivo USD</option><option>Efectivo Bs.</option><option>Zelle</option><option>Cheque</option><option>Pago Móvil</option></select></div>
                   </div>
                   <div><label className="text-[9px] font-black text-blue-600 uppercase block mb-1">Cuenta bancaria destino</label>
                     <select value={cxcCobroModal.cuentaId||''} onChange={e=>{const ct=(cuentasBanco||[]).find(c=>c.id===e.target.value);setCxcCobroModal(m=>({...m,cuentaId:e.target.value,cuentaNombre:ct?`${ct.banco} · ${ct.numeroCuenta}`:''}));}} className="w-full border-2 border-blue-200 rounded-xl p-2.5 text-xs font-bold outline-none focus:border-blue-400">
@@ -30349,7 +29756,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           ]);
                                           // NCs/NDs para sub-filas — lookup completo igual que getNCUSDNEAtFecha
                                           const ncsNE=(notasVentaCD||[]).filter(n=>{
-                                            if(n.esAnulacionFiscal) return false;
                                             const ni=n.neId||'',no=n.neOrigen||'',nf=n.facturaId||'';
                                             return ((_neId2&&(ni===_neId2||no===_neId2))||(_neDoc2&&(ni===_neDoc2||no===_neDoc2))||(nf&&_lnkIds.has(nf)))
                                                    &&(!fechaRef||(n.fecha||'')<=fechaRef);
@@ -30932,26 +30338,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
             return true;
           });
-          // ── ND de cliente directo (sin NE, sin factura) — se cuentan como pseudo-NE, IGUAL que en
-          // Registrar Cobro (ndsDirectas). Antes Estado de Cuenta no las incluía en absoluto, por lo
-          // que el saldo del cliente salía más bajo aquí que en Registrar Cobro por ese monto exacto.
-          const ndsDirectasEc=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&!n._clienteDirecto&&(n.clientRif||n.clientName))
-            .map(n=>({
-              id:`ND-${n.id}`,_esNDDirecta:true,_ndOrigId:n.id,
-              clientRif:n.clientRif||'',clientName:n.clientName||n.clientRif||'Cliente',
-              fecha:n.fecha||n.createdAt||getTodayDate(),
-              total:parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCVec||1),
-              nroFiscal:n.nroDocumento||n.id,tasa:parseNum(n.tasaFactura||0)||tasaBCVec,
-              montoBase:parseNum(n.monto||0)/(parseNum(n.tasaFactura||0)||tasaBCVec||1),
-              _ndDescripcion:n.descripcion||'',
-            }))
-            .filter(nd=>{
-              if(ecDesde&&(nd.fecha||'')<ecDesde) return false;
-              if(ecHasta&&(nd.fecha||'')>ecHasta) return false;
-              const yaCobrado=(cobrosCxc||[]).filter(c=>c.neId===nd.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-              return (nd.total-yaCobrado)>0.01;
-            });
-          allNEs.push(...ndsDirectasEc);
           // ── Retenciones MANUALES (factura no registrada en el sistema) ──────────
           const _manualRetsPorClienteEc = new Map();
           for(const r of (retenciones||[])){
@@ -31412,11 +30798,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             return(
                             <React.Fragment key={ne.id}>
                               <tr className={`border-b border-gray-100 ${rowBg}`}>
-                                <td className="py-2 px-3 font-black text-orange-600">{ne._esNDDirecta?(ne.nroFiscal||ne.id):(ne.documento||ne.id)}</td>
+                                <td className="py-2 px-3 font-black text-orange-600">{ne.documento||ne.id}</td>
                                 <td className="py-2 px-3 text-gray-500">{ne.fecha||'—'}</td>
                                 <td className="py-2 px-3 text-amber-600 font-bold">{getVenceEc(ne)}</td>
-                                <td className="py-2 px-3">{ne._esNDDirecta?<span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">ND directa</span>:<span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span>}</td>
-                                <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{ne._esNDDirecta?(ne._ndDescripcion||'Nota de Débito — sin factura asociada'):((ne.items||[])[0]?.desc||ne.descripcion||'—')}</td>
+                                <td className="py-2 px-3"><span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[8px] font-black">NE</span></td>
+                                <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{(ne.items||[])[0]?.desc||ne.descripcion||'—'}</td>
                                 <td className="py-2 px-3 text-right font-black text-gray-800">${formatNum(parseNum(ne.total||ne.montoBase||0))}</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
                                 <td className="py-2 px-3 text-right text-gray-300">—</td>
@@ -32005,24 +31391,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const mesesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
           const mesLabel = mesesLabel[parseInt(libroMes,10)-1]||'';
 
-          // ── Respeta el período/quincena EXPLÍCITO de una Anulación Fiscal (si lo tiene),
-          // igual que ya se hace con retenciones vía getQuincenaRet — solo cae a la fecha
-          // si el documento no trae periodoAnio/periodoMes guardado (registros viejos).
-          const matchPeriodo = (doc, fechaFallback) => {
-            if (doc.periodoAnio && doc.periodoMes) {
-              if (doc.periodoAnio!==libroAnio||doc.periodoMes!==libroMes) return false;
-              if (libroQuincena==='AMBAS') return true;
-              const q = (String(doc.quincena)==='1'||String(doc.quincena)==='2') ? String(doc.quincena) : (()=>{const dd=parseInt((fechaFallback||'').split('-')[2],10);return dd&&dd<=15?'1':'2';})();
-              return q===libroQuincena;
-            }
-            const f = fechaFallback||'';
-            return f>=periodoDesde&&f<=periodoHasta;
-          };
-
           // ── Facturas con nroFiscal en el período ──────────────────────────────
           const factsPeriodo = (invoices||[]).filter(inv=>{
             if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-            if(!matchPeriodo(inv, inv.fechaFactura||inv.fecha||'')) return false;
+            const f=inv.fechaFactura||inv.fecha||''; if(f<periodoDesde||f>periodoHasta) return false;
             if(libroFiltFact&&!(inv.nroFiscal||'').includes(libroFiltFact.toUpperCase())&&!(inv.nroControl||'').includes(libroFiltFact.toUpperCase())&&!(inv.documento||'').toUpperCase().includes(libroFiltFact.toUpperCase())) return false;
             if(libroFiltCliente&&!(inv.clientName||'').toUpperCase().includes(libroFiltCliente.toUpperCase())&&!(inv.clientRif||'').includes(libroFiltCliente.toUpperCase())) return false;
             return true;
@@ -32044,7 +31416,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
-          const ncndFiscales=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&matchPeriodo(n, n.fecha));
+          const ncndFiscales=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=periodoDesde&&n.fecha<=periodoHasta);
 
           // ── Filas del libro ───────────────────────────────────────────────────
           const rows=[]; let seq=1;
@@ -32054,13 +31426,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ivaAmt=parseNum(inv.iva||0)||(inv.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0);
             const total=parseNum(inv.total||0)||base+ivaAmt;
             const ret=retPeriodo.find(r=>r.facturaId===inv.id);
-            const ncLink=inv.esAnulacionFiscal?(notasVentaCD||[]).find(n=>n.facturaId===inv.id):null;
             rows.push({seq:seq++,fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
               totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, alicuota:inv.aplicaIva==='SI'?'16%':'0%',
               ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
-              nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||'',
-              esAnulacionFiscal:!!inv.esAnulacionFiscal,anulInvId:inv.id,anulNcId:ncLink?.id||null});
+              nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
           });
           retPeriodo.forEach(ret=>{
             const isManual=(ret.facturaId||'').startsWith('MANUAL-');
@@ -32139,7 +31509,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               nroControl: n.nroControl||'',                // N° Control del doc NC/ND
               nroDebito:  n.tipo==='ND' ? n.nroDocumento : '',   // N° Débito solo si ND
               nroCredito: n.tipo==='NC' ? n.nroDocumento : '',   // N° Crédito solo si NC
-              facAfectada: inv.nroFiscal?padNum(inv.nroFiscal,8):'—', // Factura afectada (— si es NC/ND suelta)
+              facAfectada: padNum(inv.nroFiscal,8),        // Factura afectada
               totalVentasBs: totalBsNC,
               baseImponibleBs: baseConSigno,               // Base en Bs con signo
               alicuota: '16%',
@@ -32147,8 +31517,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ivaRetDb: 0,                                 // ← vacío: solo para retenciones
               nroFactAfecta: '',                           // ← vacío: solo para retenciones
               nroComprobante: '',                          // ← vacío: solo para retenciones
-              invId: n.id,
-              esAnulacionFiscal: !!n.esAnulacionFiscal, anulInvId: n.facturaId||null, anulNcId: n.id
+              invId: n.id
             });
           });
 
@@ -32535,8 +31904,7 @@ ${resumenHtml}
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
                 <button onClick={()=>{const _ctaIVA=settings?.retClienteCuentasCfg?.IVA;setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA',cuentaContableRetId:_ctaIVA?.cuentaContableId||'',cuentaContableRetNombre:_ctaIVA?.cuentaContableNombre||''});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
-                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setEditingAnulInvId(null);setEditingAnulNcId(null);setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
-                <button onClick={()=>setShowAnulHistorial(true)} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><History size={14}/>Historial Anulaciones</button>
+                <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
@@ -32546,7 +31914,7 @@ ${resumenHtml}
                   <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
                     <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
                       <Ban size={18} className="text-orange-400"/>
-                      <p className="text-white font-black text-sm uppercase">{editingAnulInvId?'Editar Anulación Fiscal':'Registrar Anulación Fiscal'}</p>
+                      <p className="text-white font-black text-sm uppercase">Registrar Anulación Fiscal</p>
                     </div>
                     <div className="p-5 space-y-4">
                       <div className="flex gap-2 flex-wrap">
@@ -32555,8 +31923,7 @@ ${resumenHtml}
                         <span className="bg-red-50 text-red-700 text-[10px] font-black px-2.5 py-1 rounded-full">No afecta reporte financiero</span>
                       </div>
                       <div className="bg-gray-50 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.) — opcional</p>
-                        <p className="text-[9px] text-gray-400 -mt-2 mb-3">Deja N° Control y N° Fiscal en blanco si es una NC/ND suelta, sin factura asociada (solo para no perder el correlativo).</p>
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Factura anulada (Bs.)</p>
                         <div className="grid grid-cols-3 gap-3">
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control</label>
                             <input value={anulFiscalForm.nroControl} onChange={e=>setAnulFiscalForm(f=>({...f,nroControl:e.target.value}))} placeholder="00-001234" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
@@ -32565,26 +31932,6 @@ ${resumenHtml}
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
                             <input type="date" value={anulFiscalForm.fecha} onChange={e=>setAnulFiscalForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         </div>
-                        <div className="mt-3"><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Tasa de Cambio (Bs./USD)</label>
-                          <input type="number" value={anulFiscalForm.tasa} onChange={e=>setAnulFiscalForm(f=>({...f,tasa:e.target.value}))} placeholder={settings?.tasaBCV?`Ej. ${settings.tasaBCV}`:'Tasa del día de la factura'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-                          <p className="text-[9px] text-gray-400 mt-1">Usa la tasa vigente el día de la factura anulada, no necesariamente la de hoy — de esto depende el saldo en USD de la NC.</p>
-                        </div>
-                        <div className="grid grid-cols-3 gap-3 mt-3">
-                          <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Año que afecta</label>
-                            <select value={anulFiscalForm.periodoAnio} onChange={e=>setAnulFiscalForm(f=>({...f,periodoAnio:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                              {(()=>{const cy=new Date().getFullYear();return Array.from({length:cy-2023+1},(_,i)=>String(2024+i)).map(y=>(<option key={y} value={y}>{y}</option>));})()}
-                            </select></div>
-                          <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Mes que afecta</label>
-                            <select value={anulFiscalForm.periodoMes} onChange={e=>setAnulFiscalForm(f=>({...f,periodoMes:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                              {mesesLabel.map((m,i)=>(<option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>))}
-                            </select></div>
-                          <div><label className="text-[9px] font-black text-orange-600 uppercase block mb-1">Quincena</label>
-                            <select value={anulFiscalForm.quincena} onChange={e=>setAnulFiscalForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                              <option value="1">I Quincena (01–15)</option>
-                              <option value="2">II Quincena (16–fin)</option>
-                            </select></div>
-                        </div>
-                        <p className="text-[9px] text-gray-400 mt-1">Esto es lo que decide en qué quincena del Libro de Ventas aparece — independiente de la Fecha de la factura.</p>
                         <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (RIF)</label>
                           <input value={anulFiscalForm.clientRif} onChange={e=>setAnulFiscalForm(f=>({...f,clientRif:e.target.value}))} placeholder="J-12345678-9" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         <div className="mt-3 relative"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente (Razón Social)</label>
@@ -32612,148 +31959,56 @@ ${resumenHtml}
                           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Total Bs.</label>
                             <input disabled value={formatNum((parseNum(anulFiscalForm.baseImponible)+parseNum(anulFiscalForm.iva)))} className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 text-xs font-black bg-gray-100 text-gray-500"/></div>
                         </div>
-                        <p className="text-[9px] text-gray-400 mt-1">Si se dañó el formato fiscal (no hubo venta), deja Base e IVA en 0 y el Cliente en blanco.</p>
                       </div>
                       <div className="bg-gray-50 rounded-xl p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <p className="text-[10px] font-black text-orange-600 uppercase">Nota de anulación (Bs.)</p>
-                          <div className="flex gap-1 bg-white border-2 border-gray-200 rounded-lg p-1">
-                            {[['NC','Nota de Crédito'],['ND','Nota de Débito']].map(([val,label])=>(
-                              <button key={val} type="button" onClick={()=>setAnulFiscalForm(f=>({...f,tipoAnulacion:val}))} className={`px-3 py-1.5 rounded-md text-[9px] font-black uppercase transition-colors ${anulFiscalForm.tipoAnulacion===val?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-600'}`}>{label}</button>
-                            ))}
-                          </div>
-                        </div>
+                        <p className="text-[10px] font-black text-orange-600 uppercase mb-3">Nota de crédito de anulación (Bs.)</p>
                         <div className="grid grid-cols-2 gap-3">
-                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control {anulFiscalForm.tipoAnulacion}</label>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Control NC</label>
                             <input value={anulFiscalForm.ncNroControl} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroControl:e.target.value}))} placeholder="00-000045" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° {anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'}</label>
+                          <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° Crédito</label>
                             <input value={anulFiscalForm.ncNroCredito} onChange={e=>setAnulFiscalForm(f=>({...f,ncNroCredito:e.target.value}))} placeholder="0000028" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
                         </div>
-                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha {anulFiscalForm.tipoAnulacion}</label>
+                        <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha NC</label>
                           <input type="date" value={anulFiscalForm.ncFecha} onChange={e=>setAnulFiscalForm(f=>({...f,ncFecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
-                        <p className="text-[9px] text-gray-400 mt-2">{anulFiscalForm.tipoAnulacion==='ND'?'Usa Nota de Débito cuando lo que se dañó fue el formato de una ND o similar (no una factura) — deja Base e IVA en 0 igual que arriba.':'El monto de la NC toma el total de la factura automáticamente.'}</p>
+                        <p className="text-[9px] text-gray-400 mt-2">El monto de la NC toma el total de la factura automáticamente.</p>
                       </div>
                     </div>
                     <div className="px-5 py-4 border-t flex gap-2">
                       <button onClick={()=>setShowAnulFiscalModal(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-gray-500 bg-gray-100 hover:bg-gray-200">Cancelar</button>
                       <button onClick={async()=>{
-                        if(anulFiscalForm.nroFiscal&&!anulFiscalForm.nroControl) return setDialog({title:'Aviso',text:'Si pones N° Fiscal, pon también su N° Control.',type:'alert'});
-                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:`N° Control y N° de ${anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'} de la ${anulFiscalForm.tipoAnulacion} son obligatorios (esto es lo que mantiene el correlativo).`,type:'alert'});
-                        const tasa=parseNum(anulFiscalForm.tasa||0);
-                        const baseBsChk=parseNum(anulFiscalForm.baseImponible||0);
-                        const ivaBsChk=parseNum(anulFiscalForm.iva||0);
-                        if((baseBsChk+ivaBsChk)>0 && (!tasa||tasa<=1)) return setDialog({title:'Aviso',text:'Ingresa la tasa de cambio (Bs./USD) vigente el día de la factura anulada. Sin esto, el saldo en USD de la NC queda mal calculado.',type:'alert'});
-                        const tasaFinal = tasa>1?tasa:1;
-                        const baseBs=parseNum(anulFiscalForm.baseImponible||0);
-                        const ivaBs=parseNum(anulFiscalForm.iva||0);
-                        const totalBs=baseBs+ivaBs;
-                        const esEdicion=!!editingAnulInvId;
-                        const invId=editingAnulInvId||`ANUL-${Date.now().toString(36)}`;
-                        const ncId=editingAnulNcId||`ANULNC-${Date.now().toString(36)}`;
+                        if(!anulFiscalForm.nroControl||!anulFiscalForm.nroFiscal) return setDialog({title:'Aviso',text:'N° Control y N° Fiscal son obligatorios.',type:'alert'});
+                        if(!anulFiscalForm.ncNroControl||!anulFiscalForm.ncNroCredito) return setDialog({title:'Aviso',text:'N° Control y N° de Crédito de la NC son obligatorios.',type:'alert'});
+                        const base=parseNum(anulFiscalForm.baseImponible||0);
+                        const iva=parseNum(anulFiscalForm.iva||0);
+                        const total=base+iva;
+                        const invId=`ANUL-${Date.now().toString(36)}`;
+                        const ncId=`ANULNC-${Date.now().toString(36)}`;
                         const batch=writeBatch(db);
                         batch.set(getDocRef('maquilaInvoices',invId),{
                           id:invId,fecha:anulFiscalForm.fecha,fechaFactura:anulFiscalForm.fecha,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
                           nroFiscal:anulFiscalForm.nroFiscal,nroControl:anulFiscalForm.nroControl,
-                          tasa:tasaFinal,montoBase:parseFloat((baseBs/tasaFinal).toFixed(2)),iva:parseFloat((ivaBs/tasaFinal).toFixed(2)),total:parseFloat((totalBs/tasaFinal).toFixed(2)),
-                          totalBs,baseGravableBs:baseBs,ivaBs,
-                          aplicaIva:'SI',esAnulacionFiscal:true,periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
-                          timestamp:esEdicion?(anulFiscalForm._timestamp||Date.now()):Date.now(),createdAt:esEdicion?(anulFiscalForm._createdAt||getTodayDate()):getTodayDate(),
-                          user:appUser?.name||'Sistema'
+                          tasa:1,montoBase:base,iva,total,totalBs:total,baseGravableBs:base,ivaBs:iva,
+                          aplicaIva:'SI',esAnulacionFiscal:true,
+                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
                         batch.set(getDocRef('notasVentaCreditoDebito',ncId),{
-                          id:ncId,tipo:anulFiscalForm.tipoAnulacion||'NC',naturaleza:'FISCAL',
-                          nroDocumento:anulFiscalForm.ncNroCredito,nroControl:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
+                          id:ncId,tipo:'NC',naturaleza:'FISCAL',
+                          nroDocumento:anulFiscalForm.ncNroControl,nroCredito:anulFiscalForm.ncNroCredito,
                           fecha:anulFiscalForm.ncFecha,facturaId:invId,
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
-                          monto:baseBs,ivaBs,totalBs,tasaFactura:tasaFinal,
-                          esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
-                          timestamp:esEdicion?(anulFiscalForm._ncTimestamp||Date.now()):Date.now(),createdAt:esEdicion?(anulFiscalForm._ncCreatedAt||getTodayDate()):getTodayDate(),
-                          user:appUser?.name||'Sistema'
+                          monto:base,ivaBs:iva,totalBs:total,tasaFactura:1,
+                          esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',
+                          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
                         await batch.commit();
-                        await logAuditoria(appUser,'Ventas',esEdicion?'EDICIÓN':'CREACIÓN',`${esEdicion?'Anulación Fiscal editada':'Anulación Fiscal registrada'}: Factura ${anulFiscalForm.nroFiscal} + NC ${anulFiscalForm.ncNroCredito}`);
                         setShowAnulFiscalModal(false);
-                        setEditingAnulInvId(null); setEditingAnulNcId(null);
-                        setDialog({title:esEdicion?'Actualizado':'Registrado',text:esEdicion?'La Anulación Fiscal fue actualizada.':`Quedó registrada en el Libro de Ventas${anulFiscalForm.nroFiscal?' junto con la factura anulada':''}.`,type:'alert'});
-                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">{editingAnulInvId?'Guardar Cambios':'Registrar solo en Libro de Ventas'}</button>
+                        setDialog({title:'Registrado',text:'La factura y su NC de anulación quedaron registradas en el Libro de Ventas.',type:'alert'});
+                      }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase text-white bg-red-600 hover:bg-red-700">Registrar solo en Libro de Ventas</button>
                     </div>
                   </div>
                 </div>
               )}
-
-              {showAnulHistorial && (()=>{
-                const anulInvs=(invoices||[]).filter(i=>i.esAnulacionFiscal).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
-                return (
-                  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>{setShowAnulHistorial(false);setAnulVerId(null);}}>
-                    <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
-                      <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
-                        <History size={18} className="text-orange-400"/>
-                        <p className="text-white font-black text-sm uppercase">Historial de Anulaciones Fiscales</p>
-                      </div>
-                      <div className="p-5 space-y-2">
-                        {anulInvs.length===0 ? (
-                          <p className="text-xs text-gray-400 font-bold text-center py-6">No hay anulaciones fiscales registradas.</p>
-                        ) : anulInvs.map(inv=>{
-                          const nc=(notasVentaCD||[]).find(n=>n.facturaId===inv.id);
-                          const expandido=anulVerId===inv.id;
-                          return (
-                            <div key={inv.id} className="border-2 border-gray-100 rounded-xl overflow-hidden">
-                              <div className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-                                <div className="text-[11px]">
-                                  <span className="font-black text-gray-800">Factura {inv.nroFiscal}</span>
-                                  <span className="text-gray-400"> · Control {inv.nroControl} · {inv.fechaFactura||inv.fecha}</span>
-                                  <div className="text-gray-500">{inv.clientName||'Sin cliente'} — Bs. {formatNum(inv.totalBs||0)}</div>
-                                </div>
-                                <div className="flex gap-1.5 shrink-0">
-                                  <button onClick={()=>setAnulVerId(expandido?null:inv.id)} className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-800 hover:text-white"><Eye size={13}/></button>
-                                  <button onClick={()=>{
-                                    setAnulFiscalForm({fecha:inv.fechaFactura||inv.fecha||getTodayDate(),nroFiscal:inv.nroFiscal||'',nroControl:inv.nroControl||'',clientRif:inv.clientRif||'',clientName:inv.clientName||'',baseImponible:String(inv.baseGravableBs||''),iva:String(inv.ivaBs||''),tasa:String(inv.tasa||''),tipoAnulacion:nc?.tipo||'NC',ncNroControl:nc?.nroControl||nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),periodoAnio:inv.periodoAnio||libroAnio,periodoMes:inv.periodoMes||libroMes,quincena:inv.quincena||'1',_timestamp:inv.timestamp,_createdAt:inv.createdAt,_ncTimestamp:nc?.timestamp,_ncCreatedAt:nc?.createdAt});
-                                    setEditingAnulInvId(inv.id); setEditingAnulNcId(nc?.id||null);
-                                    setShowAnulHistorial(false); setShowAnulFiscalModal(true);
-                                  }} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
-                                  <button onClick={()=>requireAdminPassword(async()=>{
-                                    try{
-                                      const detalleAnul=`Anulación Fiscal — Factura ${inv.nroFiscal} + NC ${nc?.nroCredito||''}`;
-                                      const batch=writeBatch(db);
-                                      const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                                      batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'maquilaInvoices',docIdOriginal:inv.id,datos:inv,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                                      batch.delete(getDocRef('maquilaInvoices',inv.id));
-                                      if(nc){
-                                        const papId2=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}b`;
-                                        batch.set(getDocRef('papelera',papId2),{id:papId2,coleccionOriginal:'notasVentaCreditoDebito',docIdOriginal:nc.id,datos:nc,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                                        batch.delete(getDocRef('notasVentaCreditoDebito',nc.id));
-                                      }
-                                      await batch.commit();
-                                      await logAuditoria(appUser,'Ventas','ELIMINACIÓN',detalleAnul);
-                                      setDialog({title:'Eliminado',text:'Anulación fiscal eliminada. Recuperable desde Auditoría → Papelera.',type:'alert'});
-                                    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                                  }, `Eliminar Anulación Fiscal (Factura ${inv.nroFiscal})`)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
-                                </div>
-                              </div>
-                              {expandido && (
-                                <div className="px-4 pb-3 pt-1 bg-gray-50 text-[10px] text-gray-600 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-gray-100">
-                                  <div>Cliente RIF: <span className="font-bold">{inv.clientRif||'—'}</span></div>
-                                  <div>Tasa: <span className="font-bold">{formatNum(inv.tasa||0)}</span></div>
-                                  <div>Base / IVA / Total Bs.: <span className="font-bold">{formatNum(inv.baseGravableBs||0)} / {formatNum(inv.ivaBs||0)} / {formatNum(inv.totalBs||0)}</span></div>
-                                  <div>Total USD: <span className="font-bold">${formatNum(inv.total||0)}</span></div>
-                                  <div>Período: <span className="font-bold">{inv.periodoMes||'—'}/{inv.periodoAnio||'—'} · Q{inv.quincena||'—'}</span></div>
-                                  <div>{nc?.tipo||'NC'}: <span className="font-bold">{nc?nc.nroDocumento+' / '+(nc.tipo==='ND'?'Débito ':'Crédito ')+nc.nroCredito:'— no encontrada —'}</span></div>
-                                  <div>Registrado por: <span className="font-bold">{inv.user||'—'}</span></div>
-                                  <div>Fecha {nc?.tipo||'NC'}: <span className="font-bold">{nc?.fecha||'—'}</span></div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="px-5 py-4 border-t">
-                        <button onClick={()=>{setShowAnulHistorial(false);setAnulVerId(null);}} className="w-full py-2.5 rounded-xl text-xs font-black uppercase text-gray-500 bg-gray-100 hover:bg-gray-200">Cerrar</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
 
               {/* TABLA */}
               <div className="bg-white rounded-2xl border overflow-hidden">
@@ -32761,7 +32016,7 @@ ${resumenHtml}
                   <table className="w-full text-[9px] whitespace-nowrap border-collapse">
                     <thead>
                       <tr className="bg-gray-800 text-white text-center">
-                        {['Nº','Fecha','N° RIF','Razón Social','Tipo','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afect.','Total Ventas Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. Afecta','N° Comprobante',''].map((h,i)=>(
+                        {['Nº','Fecha','N° RIF','Razón Social','Tipo','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afect.','Total Ventas Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. Afecta','N° Comprobante'].map((h,i)=>(
                           <th key={i} className="py-2 px-2 border-r border-white/20 font-black">{h}</th>
                         ))}
                       </tr>
@@ -32797,31 +32052,6 @@ ${resumenHtml}
                             <td className="py-1.5 px-2 text-right font-bold text-red-600">{r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.nroFactAfecta||'—'}</td>
                             <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
-                            <td className="py-1.5 px-2 text-center">
-                              {r.esAnulacionFiscal && (
-                                <button title="Eliminar esta Anulación Fiscal (factura + NC)" onClick={()=>requireAdminPassword(async()=>{
-                                  try{
-                                    const invDatos=(invoices||[]).find(i=>i.id===r.anulInvId)||null;
-                                    const ncDatos=(notasVentaCD||[]).find(n=>n.id===r.anulNcId)||null;
-                                    const detalleAnul=`Anulación Fiscal — Factura ${r.nroFactura||r.nroControl||''} + NC ${r.nroCredito||''}`;
-                                    const batch=writeBatch(db);
-                                    if(r.anulInvId){
-                                      const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                                      batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'maquilaInvoices',docIdOriginal:r.anulInvId,datos:invDatos,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                                      batch.delete(getDocRef('maquilaInvoices',r.anulInvId));
-                                    }
-                                    if(r.anulNcId){
-                                      const papId2=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}b`;
-                                      batch.set(getDocRef('papelera',papId2),{id:papId2,coleccionOriginal:'notasVentaCreditoDebito',docIdOriginal:r.anulNcId,datos:ncDatos,modulo:'Ventas',detalle:detalleAnul,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                                      batch.delete(getDocRef('notasVentaCreditoDebito',r.anulNcId));
-                                    }
-                                    await batch.commit();
-                                    await logAuditoria(appUser,'Ventas','ELIMINACIÓN',detalleAnul);
-                                    setDialog({title:'Eliminado',text:'El registro de anulación fiscal fue eliminado del Libro de Ventas. Puedes recuperarlo desde Auditoría del Sistema → Papelera.',type:'alert'});
-                                  }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
-                                }, `Eliminar Anulación Fiscal (Factura ${r.nroFactura||r.nroControl||''} + NC ${r.nroCredito||''})`)} className="text-red-500 hover:text-red-700"><Trash2 size={12}/></button>
-                              )}
-                            </td>
                           </tr>
                         ));
                       })()}
@@ -32836,7 +32066,7 @@ ${resumenHtml}
                         <td></td>
                         <td className="py-2 px-2 text-right">{fmtVen(totIva)}</td>
                         <td className="py-2 px-2 text-right text-red-300">{fmtVen(totRetDb)}</td>
-                        <td colSpan={3}></td>
+                        <td colSpan={2}></td>
                       </tr>
                     </tfoot>
                   </table>
@@ -33180,15 +32410,7 @@ ${resumenHtml}
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
                               <button onClick={()=>{setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
-                              <button onClick={()=>requireAdminPassword(async()=>{try{
-                                const papId=`PAP-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`;
-                                const batch=writeBatch(db);
-                                batch.set(getDocRef('papelera',papId),{id:papId,coleccionOriginal:'retencionesClientes',docIdOriginal:ret.id,datos:ret,modulo:'Ventas',detalle:`Comprobante de retención ${ret.nroRetencion}`,eliminadoPor:appUser?.name||'Sistema',fecha:getTodayDate(),ts:Date.now(),restaurado:false});
-                                batch.delete(getDocRef('retencionesClientes',ret.id));
-                                await batch.commit();
-                                await logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Comprobante de retención ${ret.nroRetencion} eliminado`);
-                                setDialog({title:'✅ Eliminada',text:'Recuperable desde Auditoría → Papelera.',type:'alert'});
-                              }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}},`Eliminar comprobante ${ret.nroRetencion}`)} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
                         });
@@ -33901,7 +33123,7 @@ ${resumenHtml}
                             return s;
                           },0);
                         // Ajuste NC del período
-                        const ajusteNC = (notasVentaCD||[]).filter(nc=>!nc.esAnulacionFiscal&&(nc.fecha||'').startsWith(ym)).reduce((s,nc)=>{
+                        const ajusteNC = (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ym)).reduce((s,nc)=>{
                           const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
                           const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
                           return s+(nc.tipo==='NC'?-baseUsd:baseUsd);
@@ -37758,12 +36980,11 @@ ${resumenHtml}
                                     {(()=>{
                                       // Show ALL categories — user selects what is needed for this phase
                                       // Categorías que coinciden exactamente con el inventario
-                                      // (usa normCatVal para tolerar variantes ya guardadas: 'Quimicos'/'QUIMICOS'/'Químicos')
-                                      const ALL_CATS = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      const ALL_CATS = ['Materia Prima','Quimicos','Tintas','Pigmento','Semielaborado','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       // Consolidate ALL inventory items (prefer ALMACEN ZI stock, show all with stock > 0)
                                       const seen = {};
-                                      (inventory||[]).filter(i => i.activo !== false && ALL_CATS.includes(normCatVal(i.category)||'Otros')).forEach(i => {
+                                      (inventory||[]).filter(i => i.activo !== false && ALL_CATS.includes(i.category||'Otros')).forEach(i => {
                                         const rawId = i.id||'';
                                         const alm = (i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '').toUpperCase();
                                         const isZI = alm.includes('ZI') || alm === '' || !rawId.includes('___');
@@ -37781,10 +37002,10 @@ ${resumenHtml}
                                       });
                                       const uniqueItems = Object.values(seen).sort((a,b)=>(a._cleanCode||'').localeCompare(b._cleanCode||''));
 
-                                      // Group by category (normalizada, para no separar 'Químicos' de 'Quimicos'/'QUIMICOS')
+                                      // Group by category
                                       const catGroups = {};
-                                      uniqueItems.forEach(i=>{ const c=normCatVal(i.category)||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
-                                      const catOrder = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      uniqueItems.forEach(i=>{ const c=i.category||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
+                                      const catOrder = ['Materia Prima','Quimicos','Tintas','Pigmento','Semielaborado','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       return (
                                         <div className="flex gap-2 mb-3">
@@ -40702,7 +39923,6 @@ ${resumenHtml}
     // reporte es específicamente de Producción y no debe mezclarse con ajustes que no afectan
     // ninguna orden de producción (a menos que la propia NC/ND lo indique explícitamente).
     const notasPeriodo = (notasVentaCD||[]).filter(nc => {
-      if(nc.esAnulacionFiscal) return false;
       if(!(nc.fecha||'').startsWith(ym)) return false;
       const neNC = (notasEntrega||[]).find(e=>e.id===nc.neId);
       return !!(neNC && neNC.opRelacionada);
@@ -41213,19 +40433,11 @@ ${resumenHtml}
     try {
       const ts = getTodayDate();
       const backup = {
-        _meta: { fecha: ts, timestamp: Date.now(), version: '1.1', empresa: 'SERVICIOS JIRET G&B, C.A.' },
+        _meta: { fecha: ts, timestamp: Date.now(), version: '1.0', empresa: 'SERVICIOS JIRET G&B, C.A.' },
         inventory, inventoryMovements: invMovements, clientes: clients, requirements,
         maquilaInvoices: invoices, inventoryRequisitions: invRequisitions,
         operatingCosts: opCosts, purchaseOrders, wipInventory, finishedGoodsInventory,
-        planDeCuentas, asientosContables, formulas,
-        // ── Agregado: colecciones de Contabilidad / Ventas / Procura / Banco-Caja / Auditoría ──
-        cotizaciones, actasReclamo, cobrosCxc, notasEntrega, tomasFisicas, bobinaProductions, consignaciones,
-        notasVentaCreditoDebito: notasVentaCD, retencionesClientes: retenciones, notifications,
-        cont_asientos: asientosApp, indices_inflacion: indicesInflacionApp, comprobantes_ajustes: ajustesApp,
-        cxp_terceros_relacionados: tercerosRelApp, cxp_pagos_relacionados: pagosRelApp,
-        procura_facturas_compra: facturasCompraApp, procura_proveedores: proveedoresApp, procura_servicios: serviciosApp,
-        banco_cuentas: cuentasBanco, caja_cuentas: cajasCuentas, banco_movimientos: bancoMovsFin, caja_movimientos: movCajaApp,
-        auditoria_eventos: auditoriaEventos,
+        planDeCuentas, asientosContables,
       };
       // Descargar JSON de datos
       const jsonBlob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -41267,19 +40479,6 @@ ${resumenHtml}
                 ['wipInventory', data.wipInventory], ['finishedGoodsInventory', data.finishedGoodsInventory],
                 ['planDeCuentas', data.planDeCuentas], ['asientosContables', data.asientosContables],
                 ['formulas', data.formulas],
-                ['cotizaciones', data.cotizaciones], ['actasReclamo', data.actasReclamo], ['cobros_cxc', data.cobrosCxc],
-                ['notasEntrega', data.notasEntrega], ['tomasFisicas', data.tomasFisicas],
-                ['bobinaProductions', data.bobinaProductions], ['consignaciones', data.consignaciones],
-                ['notasVentaCreditoDebito', data.notasVentaCreditoDebito], ['retencionesClientes', data.retencionesClientes],
-                ['notifications', data.notifications],
-                ['cont_asientos', data.cont_asientos], ['indices_inflacion', data.indices_inflacion],
-                ['comprobantes_ajustes', data.comprobantes_ajustes],
-                ['cxp_terceros_relacionados', data.cxp_terceros_relacionados], ['cxp_pagos_relacionados', data.cxp_pagos_relacionados],
-                ['procura_facturas_compra', data.procura_facturas_compra], ['procura_proveedores', data.procura_proveedores],
-                ['procura_servicios', data.procura_servicios],
-                ['banco_cuentas', data.banco_cuentas], ['caja_cuentas', data.caja_cuentas],
-                ['banco_movimientos', data.banco_movimientos], ['caja_movimientos', data.caja_movimientos],
-                ['auditoria_eventos', data.auditoria_eventos],
               ];
               let total = 0;
               for (const [col, items] of collections) {
@@ -41314,13 +40513,7 @@ ${resumenHtml}
     'inventory', 'inventoryMovements', 'clientes', 'requirements',
     'maquilaInvoices', 'inventoryRequisitions', 'operatingCosts',
     'purchaseOrders', 'wipInventory', 'finishedGoodsInventory',
-    'planDeCuentas', 'asientosContables', 'formulas',
-    'cotizaciones', 'actasReclamo', 'cobros_cxc', 'notasEntrega', 'tomasFisicas',
-    'bobinaProductions', 'consignaciones', 'notasVentaCreditoDebito', 'retencionesClientes',
-    'cont_asientos', 'indices_inflacion', 'comprobantes_ajustes',
-    'cxp_terceros_relacionados', 'cxp_pagos_relacionados',
-    'procura_facturas_compra', 'procura_proveedores', 'procura_servicios',
-    'banco_cuentas', 'caja_cuentas', 'banco_movimientos', 'caja_movimientos',
+    'planDeCuentas', 'asientosContables',
   ];
 
   const handleResetSystem = () => {
@@ -41940,7 +41133,7 @@ ${resumenHtml}
     const allLogs = (() => {
       const logs = [];
       (invoices||[]).forEach(inv=>{
-        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'}${inv.vendedor?' — Vendedor: '+inv.vendedor:''} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
+        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.vendedor||inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
       });
       (invMovements||[]).forEach(m=>{
         const t={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'}[m.type]||'EDICIÓN';
@@ -42008,10 +41201,6 @@ ${resumenHtml}
                 className="bg-black hover:bg-orange-500 text-white font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors">
                 <Download size={15}/> Exportar Log
               </button>
-              <button onClick={()=>setMostrarPapelera(v=>!v)}
-                className={`font-black py-3 px-6 flex items-center gap-2 uppercase text-[10px] tracking-widest rounded-2xl transition-colors border-2 ${mostrarPapelera?'bg-emerald-600 text-white border-emerald-600':'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'}`}>
-                <RefreshCw size={15}/> Papelera ({(papeleraItems||[]).filter(p=>!p.restaurado).length})
-              </button>
               {(appUser?.role==='Master'||appUser?.role==='Administrador') && (
                 <button onClick={()=>{
                   if(!auditDate&&!auditMes) return setDialog({title:'Aviso',text:'Selecciona una fecha o un mes en el filtro para limpiar registros.',type:'alert'});
@@ -42030,29 +41219,6 @@ ${resumenHtml}
               )}
             </div>
           </div>
-          {mostrarPapelera && (
-            <div className="px-6 py-4 bg-emerald-50 border-b-2 border-emerald-200">
-              <p className="text-[10px] font-black text-emerald-700 uppercase mb-2">Papelera — registros eliminados que se pueden restaurar</p>
-              {(papeleraItems||[]).filter(p=>!p.restaurado).length===0 ? (
-                <p className="text-xs text-gray-400 font-bold">No hay registros en la papelera.</p>
-              ) : (
-                <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                  {(papeleraItems||[]).filter(p=>!p.restaurado).sort((a,b)=>(b.ts||0)-(a.ts||0)).map(p=>(
-                    <div key={p.id} className="bg-white rounded-xl border border-emerald-200 px-3 py-2 flex items-center justify-between gap-3">
-                      <div className="text-[10px]">
-                        <span className="font-black text-gray-700">{p.modulo}</span>
-                        <span className="text-gray-400"> · {p.fecha} · por {p.eliminadoPor}</span>
-                        <div className="text-gray-500">{p.detalle}</div>
-                      </div>
-                      <button onClick={()=>restaurarDePapelera(p)} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1">
-                        <RefreshCw size={11}/> Restaurar
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           {/* Filters */}
           <div className="px-6 py-4 bg-gray-50/50 border-b border-gray-200 flex flex-wrap gap-3">
             <div className="relative flex-1 min-w-48">
@@ -42285,20 +41451,8 @@ ${resumenHtml}
     const listaCuentas = Object.values(cuentasConMov)
       .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()))
       .sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    let saldoInicialCuenta = 0;
-    let saldoInicialCuentaUSD = 0;
-    if (mayorCuentaSelApp && contFiltDesde) {
-      getAsientosReales().forEach(a=>{
-        if ((a.fecha||'') >= contFiltDesde) return;
-        (a.lineas||[]).forEach(l=>{
-          if (l.codigo !== mayorCuentaSelApp) return;
-          saldoInicialCuenta += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
-          saldoInicialCuentaUSD += parseNum(l.debeUSD||0) - parseNum(l.haberUSD||0);
-        });
-      });
-    }
-    let saldoAcum = saldoInicialCuenta;
-    let saldoAcumUSD = saldoInicialCuentaUSD;
+    let saldoAcum = 0;
+    let saldoAcumUSD = 0;
     const movsCuenta = !mayorCuentaSelApp ? [] : asientosPeriodo.flatMap(a=>
       (a.lineas||[]).filter(l=>l.codigo===mayorCuentaSelApp).map(l=>{
         saldoAcum += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
@@ -42367,15 +41521,6 @@ ${resumenHtml}
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo $</th>
                     </tr></thead>
                     <tbody>
-                      {contFiltDesde && (
-                        <tr className="bg-purple-50 border-b-2 border-purple-200">
-                          <td colSpan={6} className="px-3 py-2 font-black text-purple-700 text-[10px] uppercase">Saldo Inicial (al {contFiltDesde})</td>
-                          <td className={`px-3 py-2 text-right font-mono font-black ${saldoInicialCuenta<0?'text-red-600':'text-purple-700'}`}>{contFmt(saldoInicialCuenta)}</td>
-                          <td className="px-3 py-2 border-l border-purple-100"></td>
-                          <td className="px-3 py-2"></td>
-                          <td className={`px-3 py-2 text-right font-mono font-black ${saldoInicialCuentaUSD<0?'text-red-600':'text-purple-700'}`}>{contFmt(saldoInicialCuentaUSD)}</td>
-                        </tr>
-                      )}
                       {movsCuenta.length===0 && <tr><td colSpan={10} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
                       {movsCuenta.map((m,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
@@ -42483,146 +41628,35 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
-    const LABEL_MODULO_ER = {
-      'Procura':'📋 Procura', 'Ventas':'🧾 Ventas', 'Retenciones a Clientes':'📋 Ret. Clientes',
-      'Banco':'🏦 Banco', 'Caja':'💵 Caja', 'Relacionadas':'🤝 Relacionadas', 'Ajustes':'🛠️ Ajustes',
-    };
-    const pdcMap = {};
-    planDeCuentas.forEach(p=>{ if(p.codigo) pdcMap[p.codigo]=p; });
     const asientosPeriodo = getAsientosReales().filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
-    }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    });
     const porCuenta = {};
     asientosPeriodo.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
         const cod = l.codigo||'';
         if(!cod) return;
-        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||(pdcMap[cod]&&pdcMap[cod].nombre)||'', debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
+        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0};
         porCuenta[cod].debeBs += parseNum(l.debeBs||0);
         porCuenta[cod].haberBs += parseNum(l.haberBs||0);
-        porCuenta[cod].debeUSD += parseNum(l.debeUSD||0);
-        porCuenta[cod].haberUSD += parseNum(l.haberUSD||0);
       });
     });
     const cuentas = Object.values(porCuenta);
-    // Sección por el PRIMER segmento del código (4=Ingresos, 5=Costos, 6=Gastos).
-    // Antes "Gastos" buscaba 5.x-no-5.1, pero en el Plan de Cuentas real los Gastos
-    // usan prefijo 6.x (confirmado con el PDF de referencia) — por eso no aparecían.
-    const seccionDe = (cod) => (cod.split('.')[0]||'');
-    const ingresos = cuentas.filter(c=>seccionDe(c.codigo)==='4').map(c=>({...c,saldo:c.haberBs-c.debeBs,saldoUSD:c.haberUSD-c.debeUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01);
-    const costos = cuentas.filter(c=>seccionDe(c.codigo)==='5').map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01);
-    const gastos = cuentas.filter(c=>seccionDe(c.codigo)==='6').map(c=>({...c,saldo:c.debeBs-c.haberBs,saldoUSD:c.debeUSD-c.haberUSD})).filter(c=>Math.abs(c.saldo)>0.01||Math.abs(c.saldoUSD)>0.01);
+    const ingresos = cuentas.filter(c=>c.codigo.startsWith('4')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    const costos = cuentas.filter(c=>c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    const gastos = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
     const totalIngresos = ingresos.reduce((s,c)=>s+c.saldo,0);
-    const totalIngresosUSD = ingresos.reduce((s,c)=>s+c.saldoUSD,0);
     const totalCostos = costos.reduce((s,c)=>s+c.saldo,0);
-    const totalCostosUSD = costos.reduce((s,c)=>s+c.saldoUSD,0);
     const totalGastos = gastos.reduce((s,c)=>s+c.saldo,0);
-    const totalGastosUSD = gastos.reduce((s,c)=>s+c.saldoUSD,0);
     const utilidadBruta = totalIngresos - totalCostos;
-    const utilidadBrutaUSD = totalIngresosUSD - totalCostosUSD;
     const utilidadNeta = utilidadBruta - totalGastos;
-    const utilidadNetaUSD = utilidadBrutaUSD - totalGastosUSD;
-    const verBs = erMoneda!=='usd';
-    const verUSD = erMoneda!=='bs';
-    const nCols = 2 + (verBs?1:0) + (verUSD?1:0);
-    const toggleExp = (cod) => setErExpandido(prev=>({...prev,[cod]:!prev[cod]}));
-    const detalleCuenta = (cod) => asientosPeriodo.flatMap(a=>
-      (a.lineas||[]).filter(l=>l.codigo===cod).map(l=>({
-        fecha:a.fecha, modulo:a.modulo, concepto:a.concepto||'—', referencia:a.comprobante||'',
-        debeBs:parseNum(l.debeBs||0), haberBs:parseNum(l.haberBs||0), debeUSD:parseNum(l.debeUSD||0), haberUSD:parseNum(l.haberUSD||0),
-      }))
-    );
-    // Árbol Grupo → Subgrupo → Cuentas, usando los campos "grupo"/"subGrupo" que YA
-    // existen en Plan de Cuentas (los mismos que usa el reporte de Impuestos). Se
-    // ordena cada rama por el código más bajo que contiene, para respetar el orden
-    // numérico real del plan de cuentas.
-    const construirArbol = (cuentasArr) => {
-      const porGrupo = {};
-      cuentasArr.forEach(c=>{
-        const pdc = pdcMap[c.codigo];
-        const g = (pdc && pdc.grupo) || '(Sin grupo)';
-        const sg = (pdc && (pdc.subGrupo || pdc.grupo)) || '(Sin subgrupo)';
-        if(!porGrupo[g]) porGrupo[g] = {nombre:g, subgrupos:{}};
-        if(!porGrupo[g].subgrupos[sg]) porGrupo[g].subgrupos[sg] = {nombre:sg, cuentas:[]};
-        porGrupo[g].subgrupos[sg].cuentas.push(c);
-      });
-      return Object.values(porGrupo).map(g=>{
-        const subgrupos = Object.values(g.subgrupos).map(sg=>{
-          const cs = sg.cuentas.sort((a,b)=>a.codigo.localeCompare(b.codigo));
-          return {nombre:sg.nombre, cuentas:cs, minCod:cs[0].codigo,
-            totalBs:cs.reduce((s,c)=>s+c.saldo,0), totalUSD:cs.reduce((s,c)=>s+c.saldoUSD,0)};
-        }).sort((a,b)=>a.minCod.localeCompare(b.minCod));
-        return {nombre:g.nombre, subgrupos, minCod:subgrupos[0].minCod,
-          totalBs:subgrupos.reduce((s,sg)=>s+sg.totalBs,0), totalUSD:subgrupos.reduce((s,sg)=>s+sg.totalUSD,0)};
-      }).sort((a,b)=>a.minCod.localeCompare(b.minCod));
-    };
-    const arbolIngresos = construirArbol(ingresos);
-    const arbolCostos = construirArbol(costos);
-    const arbolGastos = construirArbol(gastos);
-    const FilaER = ({c, esIngreso}) => {
-      const exp = !!erExpandido[c.codigo];
-      const detalle = exp ? detalleCuenta(c.codigo) : [];
-      return (
-        <>
-          <tr className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer select-none" onClick={()=>toggleExp(c.codigo)}>
-            <td className="px-3 py-1.5 pl-12 font-mono text-[9px] text-gray-400">
-              <span className="inline-flex items-center gap-1"><ChevronRight size={11} className={`text-gray-400 transition-transform ${exp?'rotate-90':''}`}/>{c.codigo}</span>
-            </td>
-            <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
-            {verBs && <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>}
-            {verUSD && <td className="px-3 py-1.5 text-right font-mono text-blue-700">${contFmt(c.saldoUSD)}</td>}
-          </tr>
-          {exp && (detalle.length===0 ? (
-            <tr className="bg-gray-50/60"><td colSpan={nCols} className="px-3 py-2 pl-20 text-[9px] text-gray-400 italic">Sin líneas de detalle para esta cuenta en el rango.</td></tr>
-          ) : detalle.map((d,i)=>{
-            const mBs = esIngreso ? d.haberBs-d.debeBs : d.debeBs-d.haberBs;
-            const mUSD = esIngreso ? d.haberUSD-d.debeUSD : d.debeUSD-d.haberUSD;
-            return (
-              <tr key={i} className="bg-gray-50/60 border-b border-gray-100">
-                <td className="px-3 py-1 pl-20 text-[9px] text-gray-400 whitespace-nowrap">{d.fecha||'—'}</td>
-                <td className="px-3 py-1 text-[9px] text-gray-500">
-                  <span className="text-gray-400">{LABEL_MODULO_ER[d.modulo]||d.modulo||'—'}</span>{' · '}{d.concepto}{d.referencia?' · '+d.referencia:''}
-                </td>
-                {verBs && <td className="px-3 py-1 text-right font-mono text-[9px] text-gray-500">{mBs!==0?contFmt(mBs):'—'}</td>}
-                {verUSD && <td className="px-3 py-1 text-right font-mono text-[9px] text-blue-600">{mUSD!==0?'$'+contFmt(mUSD):'—'}</td>}
-              </tr>
-            );
-          }))}
-        </>
-      );
-    };
-    const BloqueSeccion = ({titulo, arbol, total, totalUSDv, esIngreso, vacioMsg, colorTotal}) => (
-      <>
-        <tr style={{background:'#0f172a'}}><td colSpan={nCols} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">{titulo}</td></tr>
-        {arbol.length===0 && <tr><td colSpan={nCols} className="px-3 py-2 text-center text-gray-400 text-[10px]">{vacioMsg}</td></tr>}
-        {arbol.map(g=>(
-          <React.Fragment key={g.nombre}>
-            <tr className="bg-gray-100 border-b border-gray-200">
-              <td colSpan={2} className="px-3 py-1.5 pl-4 font-black text-gray-500 text-[9px] uppercase tracking-wide">{g.nombre}</td>
-              {verBs && <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-500 text-[10px]">{contFmt(g.totalBs)}</td>}
-              {verUSD && <td className="px-3 py-1.5 text-right font-mono font-bold text-gray-500 text-[10px]">${contFmt(g.totalUSD)}</td>}
-            </tr>
-            {g.subgrupos.map(sg=>(
-              <React.Fragment key={sg.nombre}>
-                {sg.nombre!==g.nombre && (
-                  <tr className="bg-gray-50/80 border-b border-gray-100">
-                    <td colSpan={2} className="px-3 py-1 pl-8 font-bold text-gray-400 text-[9px] uppercase">{sg.nombre}</td>
-                    {verBs && <td className="px-3 py-1 text-right font-mono text-gray-400 text-[9px]">{contFmt(sg.totalBs)}</td>}
-                    {verUSD && <td className="px-3 py-1 text-right font-mono text-gray-400 text-[9px]">${contFmt(sg.totalUSD)}</td>}
-                  </tr>
-                )}
-                {sg.cuentas.map(c=><FilaER key={c.codigo} c={c} esIngreso={esIngreso}/>)}
-              </React.Fragment>
-            ))}
-          </React.Fragment>
-        ))}
-        <tr className={colorTotal==='emerald'?'bg-emerald-50 border-y-2 border-emerald-200':'bg-red-50 border-y-2 border-red-200'}>
-          <td colSpan={2} className={`px-3 py-2 font-black text-[10px] uppercase ${colorTotal==='emerald'?'text-emerald-700':'text-red-700'}`}>{'Total '+titulo}</td>
-          {verBs && <td className={`px-3 py-2 text-right font-mono font-black ${colorTotal==='emerald'?'text-emerald-700':'text-red-700'}`}>{contFmt(total)}</td>}
-          {verUSD && <td className={`px-3 py-2 text-right font-mono font-black ${colorTotal==='emerald'?'text-emerald-700':'text-red-700'}`}>${contFmt(totalUSDv)}</td>}
-        </tr>
-      </>
+    const FilaER = ({c}) => (
+      <tr className="border-b border-gray-100">
+        <td className="px-3 py-1.5 pl-8 font-mono text-[9px] text-gray-400">{c.codigo}</td>
+        <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
+        <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>
+      </tr>
     );
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
@@ -42636,34 +41670,28 @@ ${resumenHtml}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
-              <div>
-                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Moneda</label>
-                <div className="flex gap-1 bg-white border-2 border-gray-200 rounded-lg p-1">
-                  {[['bs','Bs.'],['ambas','Bs. y $'],['usd','$']].map(([val,label])=>(
-                    <button key={val} onClick={()=>setErMoneda(val)} className={`px-3 py-1.5 rounded-md text-[10px] font-black uppercase transition-colors ${erMoneda===val?'bg-gray-900 text-white':'text-gray-400 hover:text-gray-600'}`}>{label}</button>
-                  ))}
-                </div>
-              </div>
             </div>
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-4xl">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-3xl">
               <table className="w-full text-xs">
                 <tbody>
-                  <BloqueSeccion titulo="Ingresos" arbol={arbolIngresos} total={totalIngresos} totalUSDv={totalIngresosUSD} esIngreso={true} vacioMsg="Sin ingresos en el rango elegido." colorTotal="emerald"/>
-                  <BloqueSeccion titulo="Costo de Ventas" arbol={arbolCostos} total={totalCostos} totalUSDv={totalCostosUSD} esIngreso={false} vacioMsg="Sin costos en el rango elegido." colorTotal="red"/>
+                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Ingresos</td></tr>
+                  {ingresos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin ingresos en el rango elegido.</td></tr>}
+                  {ingresos.map(c=><FilaER key={c.codigo} c={c}/>)}
+                  <tr className="bg-emerald-50 border-y-2 border-emerald-200"><td colSpan={2} className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Ingresos</td><td className="px-3 py-2 text-right font-mono font-black text-emerald-700">{contFmt(totalIngresos)}</td></tr>
 
-                  <tr className="bg-gray-900">
-                    <td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td>
-                    {verBs && <td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBruta>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(utilidadBruta)}</td>}
-                    {verUSD && <td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-400':'text-red-400'}`}>${contFmt(utilidadBrutaUSD)}</td>}
-                  </tr>
+                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Costo de Ventas</td></tr>
+                  {costos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin costos en el rango elegido.</td></tr>}
+                  {costos.map(c=><FilaER key={c.codigo} c={c}/>)}
+                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Costo de Ventas</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalCostos)}</td></tr>
 
-                  <BloqueSeccion titulo="Gastos Operativos" arbol={arbolGastos} total={totalGastos} totalUSDv={totalGastosUSD} esIngreso={false} vacioMsg="Sin gastos en el rango elegido." colorTotal="red"/>
+                  <tr className="bg-gray-900"><td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td><td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBruta>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(utilidadBruta)}</td></tr>
 
-                  <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}>
-                    <td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td>
-                    {verBs && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{contFmt(Math.abs(utilidadNeta))}</td>}
-                    {verUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">${contFmt(Math.abs(utilidadNetaUSD))}</td>}
-                  </tr>
+                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Gastos Operativos</td></tr>
+                  {gastos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin gastos en el rango elegido.</td></tr>}
+                  {gastos.map(c=><FilaER key={c.codigo} c={c}/>)}
+                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Gastos Operativos</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalGastos)}</td></tr>
+
+                  <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}><td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td><td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{contFmt(Math.abs(utilidadNeta))}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -42694,8 +41722,8 @@ ${resumenHtml}
     const pasivos = cuentas.filter(c=>c.codigo.startsWith('2')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
     const patrimonio = cuentas.filter(c=>c.codigo.startsWith('3')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
     const ingresosTot = cuentas.filter(c=>c.codigo.startsWith('4')).reduce((s,c)=>s+(c.haberBs-c.debeBs),0);
-    const costosTot = cuentas.filter(c=>c.codigo.startsWith('5')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const gastosTot = cuentas.filter(c=>c.codigo.startsWith('6')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+    const costosTot = cuentas.filter(c=>c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+    const gastosTot = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
     const utilidadEjercicio = ingresosTot - costosTot - gastosTot;
     const totalActivo = activos.reduce((s,c)=>s+c.saldo,0);
     const totalPasivo = pasivos.reduce((s,c)=>s+c.saldo,0);
@@ -44306,7 +43334,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
               {/* Contenido del respaldo */}
               <div className="text-[9px] font-bold text-green-600 bg-green-100 rounded-xl p-3 space-y-0.5">
-                {['Inventario y Movimientos (Kardex)', 'Clientes, Cotizaciones y Facturas', 'Notas de Entrega y NC/ND', 'Asientos Contables, Ajustes y Plan de Cuentas', 'Retenciones de Clientes', 'Costos Operativos y Órdenes de Compra', 'Proveedores y Facturas de Compra (Procura)', 'Movimientos de Banco y Caja', 'Productos Terminados y Bobinas', 'Tomas Físicas y Consignaciones', 'Requisiciones de Planta', 'Auditoría del Sistema'].map(item => (
+                {['Inventario y Movimientos (Kardex)', 'Clientes, OPs y Facturas', 'Asientos Contables y Plan de Cuentas', 'Costos Operativos y Órdenes de Compra', 'Productos Terminados', 'Requisiciones de Planta'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><CheckCircle size={10} className="text-green-500 shrink-0"/> {item}</div>
                 ))}
               </div>
@@ -44411,7 +43439,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                 Elimina <span className="font-black">permanentemente</span> todos los datos operativos y deja el sistema limpio. <span className="font-black underline">Los usuarios y la configuración se conservan.</span>
               </p>
               <div className="text-[9px] font-bold text-red-600 bg-red-100 rounded-xl p-3 mb-4 space-y-0.5">
-                {['Inventario y Movimientos', 'Clientes, Cotizaciones y Facturas', 'Notas de Entrega y NC/ND', 'Asientos Contables y Ajustes', 'Retenciones de Clientes', 'Costos Operativos', 'Órdenes de Compra', 'Proveedores y Facturas de Compra', 'Movimientos de Banco y Caja', 'Productos Terminados y Bobinas', 'Tomas Físicas y Consignaciones'].map(item => (
+                {['Inventario y Movimientos', 'Clientes, OPs y Facturas', 'Asientos Contables', 'Costos Operativos', 'Órdenes de Compra', 'Productos Terminados'].map(item => (
                   <div key={item} className="flex items-center gap-1.5"><Trash2 size={10} className="text-red-500 shrink-0"/> Se borrará: {item}</div>
                 ))}
               </div>
@@ -48137,7 +47165,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                     <div className="flex items-start justify-between">
                       <div>
                         <h1 className="text-2xl font-black text-gray-900 uppercase tracking-tight">SERVICIOS JIRET G&B, C.A.</h1>
-                        <p className="text-sm font-bold text-gray-600 mt-0.5">RIF: J-412309374 &nbsp;|&nbsp; Maracaibo, Zulia</p>
+                        <p className="text-sm font-bold text-gray-600 mt-0.5">RIF: J-412309374 &nbsp;|&nbsp; Puerto La Cruz, Anzoátegui</p>
                         <p className="text-xs text-gray-500">Fabricación y Maquila de Empaques Plásticos</p>
                       </div>
                       <div className="text-right">
