@@ -24077,11 +24077,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const ymD = `${dashAnio}-${String(dashMes).padStart(2,'0')}`;
           const mesLabelD = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][dashMes-1];
           // ── Fuente de ingresos: NEs del mes (canónica) + facturas directas sin NE ──
+          // Se excluyen NE con status ANULADA y facturas/NC-ND de Anulación Fiscal: cero impacto real.
           const facturasEnNEDash = new Set((notasEntrega||[]).map(ne=>ne.facturaId).filter(Boolean));
-          const nesMes = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ymD));
+          const nesMes = (notasEntrega||[]).filter(ne => (ne.fecha||'').startsWith(ymD) && ne.status!=='ANULADA');
           const factsDirect = (invoices||[]).filter(inv => {
             if(!(inv.fecha||'').startsWith(ymD)) return false;
             if(inv.neOrigen) return false;
+            if(inv.esAnulacionFiscal) return false;
             const invId = inv.id||inv.documento||'';
             const invDoc = (inv.documento||'').replace(/^FAC-/,'INVO-');
             return !facturasEnNEDash.has(invId) && !facturasEnNEDash.has(invDoc);
@@ -24123,7 +24125,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           (notasEntrega||[]).forEach(ne=>{const v=(ne.vendedor||'—').toUpperCase();[ne.id,ne.documento,ne.facturaId].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
           (invoices||[]).forEach(inv=>{const v=(inv.vendedor||'—').toUpperCase();[inv.id,inv.documento,inv.nroFiscal].filter(Boolean).forEach(k=>{if(!_vendPorDoc.has(k))_vendPorDoc.set(k,v);});});
           let ajusteNCDash=0;
-          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)).forEach(nc=>{
+          (notasVentaCD||[]).filter(nc=>(nc.fecha||'').startsWith(ymD)&&!nc.esAnulacionFiscal).forEach(nc=>{
             const tasaNC=parseNum(nc.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
             const baseUsd=tasaNC>0?parseNum(nc.monto||0)/tasaNC:parseNum(nc.monto||0);
             const signed=nc.tipo==='NC'?-baseUsd:baseUsd;
@@ -24388,7 +24390,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const info = vendedoresInfo[nombre.toUpperCase()]||{};
             const nEst = (info.estados||[]).length;
             const ym2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
-            const factsMes = (invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
+            const factsMes = (invoices||[]).filter(inv=>!inv.esAnulacionFiscal&&(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
             const totalMes = factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
             const fichaHtml=`<div style="font-family:Arial,sans-serif;color:#111;"><div style="margin-bottom:14px;"><span style="width:52px;height:52px;border-radius:50%;background:#e0e7ff;display:inline-flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#4f46e5;margin-right:14px;vertical-align:middle;">${(info.nombre||nombre).charAt(0)}</span><div style="display:inline-block;vertical-align:middle;"><div><strong style="font-size:18px;text-transform:uppercase;">${info.nombre||nombre}</strong> <span style="padding:2px 10px;border-radius:20px;font-size:10px;font-weight:900;text-transform:uppercase;background:${info.activo!==false?'#d1fae5':'#fee2e2'};color:${info.activo!==false?'#065f46':'#991b1b'}">${info.activo!==false?'ACTIVO':'INACTIVO'}</span></div><div style="font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;margin-top:3px;">${info.cargo||'VENDEDOR'} · Ingreso: ${info.fechaIngreso||'No registrado'}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;">${[['Teléfono',info.telefono||'—'],['Email',info.email||'—'],['Región',info.region||'—'],['Estados',`${nEst} estado(s)`],['Salario','$'+formatNum(info.salarioBase??300)],['Bono Vehículo','$'+formatNum(info.bonoVehiculo??200)]].map(([l,v])=>`<div style="background:#f9fafb;border-radius:8px;padding:9px 12px;"><div style="font-size:9px;font-weight:900;color:#6b7280;text-transform:uppercase;margin-bottom:2px;">${l}</div><div style="font-size:12px;font-weight:700;">${v}</div></div>`).join('')}</div>${nEst>0?`<div style="margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px;"><div style="font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;margin-bottom:8px;">Zona de Ventas — ${nEst} Estado(s)</div><div style="display:flex;flex-wrap:wrap;gap:4px;">${(info.estados||[]).map(e=>`<span style="background:#e0e7ff;color:#3730a3;font-size:10px;font-weight:700;padding:2px 8px;border-radius:12px;">${e}</span>`).join('')}</div></div>`:''}<div style="margin-top:14px;border-top:2px solid #e5e7eb;padding-top:10px;"><div style="font-size:10px;font-weight:900;color:#4f46e5;text-transform:uppercase;margin-bottom:8px;">Rendimiento — ${new Date().toLocaleString('es-VE',{month:'long',year:'numeric'})}</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:18px;font-weight:900;color:#16a34a;">$${formatNum(totalMes)}</div><div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;">Ventas del mes</div></div><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:18px;font-weight:900;color:#16a34a;">${factsMes.length}</div><div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;">Facturas</div></div><div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:18px;font-weight:900;color:#16a34a;">${new Set(factsMes.map(i=>i.clientName||'')).size}</div><div style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-top:2px;">Clientes</div></div></div></div></div>`;
             _abrirVentanaReporte(fichaHtml, `Ficha Técnica — ${info.nombre||nombre}`);
@@ -24400,7 +24402,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const mesLabel2=new Date().toLocaleString('es-VE',{month:'long',year:'numeric'});
             const rows=vendedores.map(nombre=>{
               const info=vendedoresInfo[nombre.toUpperCase()]||{};
-              const factsMes=(invoices||[]).filter(inv=>(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
+              const factsMes=(invoices||[]).filter(inv=>!inv.esAnulacionFiscal&&(inv.fecha||'').startsWith(ym2)&&(inv.vendedor||'').toUpperCase()===nombre.toUpperCase());
               const totalMes=factsMes.reduce((s,inv)=>s+parseNum(inv.montoBase||inv.total||0),0);
               return {nombre:info.nombre||nombre,cargo:info.cargo||'VENDEDOR',fechaIngreso:info.fechaIngreso||'—',region:info.region||'—',nEstados:(info.estados||[]).length,telefono:info.telefono||'—',activo:info.activo!==false,salarioBase:info.salarioBase??300,bonoVehiculo:info.bonoVehiculo??200,totalMes,nFacturas:factsMes.length,nClientes:new Set(factsMes.map(i=>i.clientName||'')).size};
             });
@@ -27627,7 +27629,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const comCfgDef={porcentaje:2,base:'montoBase',umbral:0,tipoCalculo:'porcentaje_ventas'};
           const comCfg=settings?.comisionesConfig||comCfgDef;
 
-          const allNEs=(notasEntrega||[]).map(ne=>({
+          const allNEs=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>({
             fecha:ne.fecha||'',cliente:ne.clientName||ne.clientNombre||'',
             rif:ne.clientRif||'',vendedor:ne.vendedor||'Directa',
             montoBase:parseNum(ne.montoBase||0),
@@ -27689,6 +27691,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Ajuste NC para el período filtrado
           const ajusteNCGraf = (notasVentaCD||[]).filter(nc=>{
+            if(nc.esAnulacionFiscal) return false;
             if(fVF.anio && !(nc.fecha||'').startsWith(fVF.anio)) return false;
             if(fVF.mes && (nc.fecha||'').substring(5,7) !== fVF.mes) return false;
             return true;
