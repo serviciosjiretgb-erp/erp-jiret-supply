@@ -25583,6 +25583,43 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               setComCobranza(prev=>(prev||[]).filter(c=>c.neId!==ne.id));
             } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
           }});
+          const handleAnularNE = (ne) => {
+            if(ne.status==='ANULADA'){ setDialog({title:'Nota de Entrega',text:`${ne.id} ya está anulada.`,type:'alert'}); return; }
+            if(ne.facturaId){ setDialog({title:'No se puede anular',text:`${ne.id} ya fue facturada (Factura ${ne.facturaId}). Anule o revierta primero la factura antes de anular la NE.`,type:'alert'}); return; }
+            setDialog({title:'Anular Nota de Entrega',text:`¿Anular ${ne.id}? La mercancía será devuelta al inventario (mismo almacén de donde se descontó). La NE quedará marcada como ANULADA — no se elimina el registro.`,type:'confirm',onConfirm:async()=>{
+              try {
+                const batch = writeBatch(db);
+                // 1. Devolver inventario por almacén (misma lógica que Eliminar)
+                for(const item of (ne.items||[])) {
+                  if(!item.invCode) continue;
+                  const code=(item.invCode||'').split('___')[0];
+                  const wqty=item.warehouseQtys||(item.almacenDeduccion?{[item.almacenDeduccion]:parseNum(item.cantidad||0)}:{'ALMACEN ZI':parseNum(item.cantidad||0)});
+                  for(const [almNom,qty] of Object.entries(wqty)) {
+                    if(parseNum(qty)<=0) continue;
+                    const targetDoc=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===code&&i.almacen===almNom);
+                    if(!targetDoc) continue;
+                    batch.update(getDocRef('inventory',targetDoc.id),{stock:parseNum(targetDoc.stock||0)+parseNum(qty),updatedAt:Date.now()});
+                    const movId=`ANULNE-${ne.id}-${code}-${Date.now()}-${Math.random().toString(36).slice(2,4)}`;
+                    batch.set(getDocRef('inventoryMovements',movId),{
+                      id:movId,date:getTodayDate(),timestamp:Date.now(),
+                      itemId:targetDoc.id,itemName:item.desc||code,
+                      type:'ENTRADA',qty:parseNum(qty),
+                      unitCost:parseNum(item.costoUnit||0),totalValue:parseNum(qty)*parseNum(item.costoUnit||0),
+                      reference:ne.id,almacen:almNom,
+                      notes:`DEVOLUCIÓN POR ANULACIÓN NE ${ne.id} — ${ne.clientName||''}`,
+                      user:appUser?.name||'Sistema'
+                    });
+                  }
+                }
+                // 2. Marcar como ANULADA (se conserva el registro)
+                batch.update(getDocRef('notasEntrega',ne.id),{status:'ANULADA',anuladoPor:appUser?.name||'Sistema',anuladoEn:Date.now(),updatedAt:Date.now()});
+                await batch.commit();
+                logAuditoria(appUser,'Notas de Entrega','ANULACIÓN',`NE ANULADA: ${ne.id} · Cliente: ${ne.clientName||'—'} · Total: $${formatNum(ne.total||0)} · Inventario devuelto`);
+                // 3. Limpiar de comCobranza si existe
+                setComCobranza(prev=>(prev||[]).filter(c=>c.neId!==ne.id));
+              } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+            }});
+          };
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
           const handleConvertirFactura = (ne) => {
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
@@ -25595,7 +25632,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const neVendedores = ['TODOS', ...Array.from(new Set((notasEntrega||[]).map(ne=>(ne.vendedor||'').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'))];
           const neFiltradas = (notasEntrega||[]).filter(ne=>{
             const matchSearch=!neSearch||ne.id.toUpperCase().includes(neSearch.toUpperCase())||(ne.clientName||'').toUpperCase().includes(neSearch.toUpperCase());
-            const matchStatus=neFiltStatus==='TODAS'||ne.status===neFiltStatus;
+            const matchStatus=neFiltStatus==='TODAS'||(neFiltStatus==='EXTRACONTABLE'?ne.esExtraContable===true:ne.status===neFiltStatus);
             const matchAnio=!neFiltAnio||(ne.fecha||'').startsWith(neFiltAnio);
             const matchMes=!neFiltMes||(ne.fecha||'').substring(5,7)===neFiltMes;
             const matchVendedor=neFiltVendedor==='TODOS'||(ne.vendedor||'').trim().toUpperCase()===neFiltVendedor.toUpperCase();
@@ -25819,9 +25856,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             );
           }
 
-          const totalNEbase=neFiltradas.reduce((s,n)=>s+parseNum(n.montoBase||0),0);
-          const totalNEiva=neFiltradas.reduce((s,n)=>s+parseNum(n.ivaAmt||0),0);
-          const totalNEtotal=neFiltradas.reduce((s,n)=>s+parseNum(n.total||0),0);
+          const totalNEbase=neFiltradas.filter(n=>n.status!=='ANULADA').reduce((s,n)=>s+parseNum(n.montoBase||0),0);
+          const totalNEiva=neFiltradas.filter(n=>n.status!=='ANULADA').reduce((s,n)=>s+parseNum(n.ivaAmt||0),0);
+          const totalNEtotal=neFiltradas.filter(n=>n.status!=='ANULADA').reduce((s,n)=>s+parseNum(n.total||0),0);
           const neEstatusLabel=(st)=>st==='PROCESADA'?'Procesada':st==='ANULADA'?'Anulada':'Tránsito';
           const neFiltroResumen=[neFiltAnio&&`Año ${neFiltAnio}`,neFiltMes&&`Mes ${['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(neFiltMes)]}`,neFiltStatus!=='TODAS'&&`Estatus ${neFiltStatus}`,neFiltVendedor!=='TODOS'&&`Vendedor ${neFiltVendedor}`,neSearch&&`Buscar "${neSearch}"`].filter(Boolean).join(' · ')||'Sin filtros';
           const exportarNEPDF=()=>{
@@ -25875,7 +25912,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="relative flex-1 min-w-48"><Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"/><input value={neSearch} onChange={e=>{setNeSearch(e.target.value);setNePagina(0);}} placeholder="Buscar NE o cliente..." className="w-full pl-8 pr-3 py-2 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Estatus</label>
                   <select value={neFiltStatus} onChange={e=>{setNeFiltStatus(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
-                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option><option value="ANULADA">Anulada</option>
+                    <option value="TODAS">Todos</option><option value="TRANSITO">Tránsito</option><option value="PROCESADA">Procesada</option><option value="ANULADA">Anulada</option><option value="EXTRACONTABLE">Extra Contable</option>
                   </select></div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Vendedor</label>
                   <select value={neFiltVendedor} onChange={e=>{setNeFiltVendedor(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
@@ -25918,10 +25955,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-3 px-3 text-right text-gray-500">${formatNum(ne.ivaAmt||0)}</td>
                           <td className="py-3 px-3 text-right font-black text-green-700">${formatNum(ne.total||0)}</td>
                           <td className="py-3 px-3 whitespace-nowrap">
-                            <select value={ne.status||'TRANSITO'} onChange={e=>handleChangeStatusNE(ne,e.target.value)} onClick={e=>e.stopPropagation()}
-                              className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
-                              <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option>
-                            </select>
+                            <div className="flex flex-col gap-1 items-start">
+                              {ne.status==='ANULADA'?(
+                                <span className="text-[8px] font-black px-2 py-1 rounded-full bg-red-100 text-red-600">🚫 Anulada</span>
+                              ):(
+                                <select value={ne.status||'TRANSITO'} onChange={e=>handleChangeStatusNE(ne,e.target.value)} onClick={e=>e.stopPropagation()}
+                                  className={`text-[8px] font-black px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${ne.status==='PROCESADA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>
+                                  <option value="TRANSITO">⏳ Tránsito</option><option value="PROCESADA">✅ Procesada</option>
+                                </select>
+                              )}
+                              {ne.esExtraContable&&<span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">Extra Contable</span>}
+                            </div>
                           </td>
                           <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.facturaId||'—'}</td>
                           <td className="py-3 px-3">
@@ -25984,6 +26028,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     <div style="text-align:center"><div style="border-top:1px solid #111;padding-top:8px;font-size:9px;color:#666;text-transform:uppercase">RECIBÍ CONFORME / CLIENTE</div></div>
   </div>
 </div>`, `NE_${ne.id}_${ne.clientName||''}`)}} className="w-7 h-7 flex items-center justify-center bg-gray-100 text-gray-700 hover:bg-gray-800 hover:text-white rounded-lg transition-all"><Printer size={11}/></button>
+                              {ne.status!=='ANULADA'&&!ne.facturaId&&(
+                                <button onClick={()=>handleAnularNE(ne)} title="Anular (devuelve inventario)" className="w-7 h-7 flex items-center justify-center bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-lg transition-all"><Ban size={11}/></button>
+                              )}
                               <button onClick={()=>handleDeleteNE(ne)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                             </div>
                           </td>
