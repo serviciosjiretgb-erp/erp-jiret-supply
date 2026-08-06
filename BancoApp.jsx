@@ -6242,7 +6242,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // modifica ningún asiento ya existente (el lado origen no se toca).
   // ══════════════════════════════════════════════════════════════════════
   const PagosPorIdentificarView = () => {
-    const [ediciones, setEdiciones] = useState({}); // { [pagoId]: {fecha, tasa, cuentaDestino} }
+    const [ediciones, setEdiciones] = useState({}); // { [pagoId]: {fecha, tasa, cuentaDestino, montoBs, montoUSD} }
     const [procesando, setProcesando] = useState(null);
     const [busq, setBusq] = useState('');
 
@@ -6253,17 +6253,55 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return s;
     }, [movBanco, movCaja]);
 
+    // Muestra TODOS los pendientes — incluyendo los que nunca tuvieron cuenta asignada (antes se
+    // ocultaban). Uno sin cuenta aparece en Banco Y en Caja hasta que se le asigne una, porque no
+    // hay forma de saber a cuál pertenece todavía.
     const pendientes = useMemo(() =>
-      (pagosCxPTodos||[]).filter(p =>
-        p.cuentaId && !(p.cuentaId||'').startsWith('ANTICIPO::') && !gruposConMov.has(p.grupoPagoId) &&
-        (submodulo==='caja' ? (p.cuentaId||'').startsWith('CAJA::') : !(p.cuentaId||'').startsWith('CAJA::')) &&
-        (!busq || (p.proveedor||'').toUpperCase().includes(busq.toUpperCase()) || (p.referencia||'').toUpperCase().includes(busq.toUpperCase()) || (p.concepto||'').toUpperCase().includes(busq.toUpperCase()))
-      ).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')),
+      (pagosCxPTodos||[]).filter(p => {
+        if((p.cuentaId||'').startsWith('ANTICIPO::')) return false;
+        if(gruposConMov.has(p.grupoPagoId)) return false;
+        const enCaja = (p.cuentaId||'').startsWith('CAJA::');
+        const enBanco = !!p.cuentaId && !enCaja;
+        const sinAsignar = !p.cuentaId;
+        const pasaModulo = submodulo==='caja' ? (enCaja||sinAsignar) : (enBanco||sinAsignar);
+        if(!pasaModulo) return false;
+        if(busq){
+          const q=busq.toUpperCase();
+          if(!((p.proveedor||'').toUpperCase().includes(q)||(p.referencia||'').toUpperCase().includes(q)||(p.concepto||'').toUpperCase().includes(q))) return false;
+        }
+        return true;
+      }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')),
       [pagosCxPTodos, gruposConMov, busq, submodulo]
     );
 
-    const edit = (p) => ediciones[p.id] || { fecha: p.fecha || getTodayDate(), tasa: String(p.tasa || tasaActiva || ''), cuentaDestino: p.cuentaId || '' };
-    const setEditField = (p, field, value) => setEdiciones(prev => ({...prev, [p.id]: {...edit(p), [field]: value}}));
+    const edit = (p) => {
+      if(ediciones[p.id]) return ediciones[p.id];
+      const tasaDefault = Number(p.tasa || tasaActiva || 0) || 0;
+      const monedaP = p.moneda||'USD';
+      const montoBsDefault = monedaP==='Bs' ? Number(p.monto||0) : (tasaDefault>0 ? Number(p.monto||0)*tasaDefault : 0);
+      const montoUSDDefault = monedaP==='Bs' ? (tasaDefault>0 ? Number(p.monto||0)/tasaDefault : 0) : Number(p.monto||0);
+      return {
+        fecha: p.fecha || getTodayDate(), tasa: String(tasaDefault||''), cuentaDestino: p.cuentaId || '',
+        montoBs: montoBsDefault.toFixed(2), montoUSD: montoUSDDefault.toFixed(2),
+      };
+    };
+
+    // Bs y USD quedan sincronizados por la tasa: editar uno recalcula el otro. Cambiar la tasa
+    // recalcula el USD tomando el Bs como ancla (es lo que normalmente trae el estado de cuenta real).
+    const setEditField = (p, field, value) => {
+      setEdiciones(prev => {
+        const cur = prev[p.id] || edit(p);
+        const next = {...cur, [field]: value};
+        if(field==='montoBs'){
+          const t=Number(cur.tasa)||0; if(t>0) next.montoUSD=(Number(value||0)/t).toFixed(2);
+        } else if(field==='montoUSD'){
+          const t=Number(cur.tasa)||0; if(t>0) next.montoBs=(Number(value||0)*t).toFixed(2);
+        } else if(field==='tasa'){
+          const t=Number(value)||0; if(t>0) next.montoUSD=(Number(cur.montoBs||0)/t).toFixed(2);
+        }
+        return {...prev, [p.id]: next};
+      });
+    };
 
     const identificar = async (p) => {
       const e = edit(p);
@@ -6271,13 +6309,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setProcesando(p.id);
       try {
         const tasaP = Number(e.tasa)||1;
-        const monedaP = p.moneda||'USD';
-        const montoUSDP = monedaP==='Bs' ? parseFloat((Number(p.monto||0)/tasaP).toFixed(2)) : Number(p.monto||0);
-        const montoBsP = monedaP==='Bs' ? Number(p.monto||0) : parseFloat((Number(p.monto||0)*tasaP).toFixed(2));
+        const montoUSDP = Number(e.montoUSD)||0;
+        const montoBsP = Number(e.montoBs)||0;
         const grupoPagoIdP = p.grupoPagoId || `GRP-RESTORE-${Date.now().toString(36)}`;
         const movId = `MOV-RESTORE-${Date.now().toString(36)}`;
         const esCaja = e.cuentaDestino.startsWith('CAJA::');
-        const batch = writeBatch(db);
+        const batch = writeBatch(_bancoDB);
         if(esCaja){
           const cajaId = e.cuentaDestino.replace('CAJA::','');
           const cajaObj = (cajas||[]).find(c=>c.id===cajaId);
@@ -6301,8 +6338,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           });
           batch.update(getDocRef('banco_cuentas', ctaObj.id), {saldo: saldoResultante});
         }
-        batch.update(getDocRef('procura_pagos_cxp', p.id), {grupoPagoId:grupoPagoIdP, cuentaId:e.cuentaDestino, fecha:e.fecha, tasa:tasaP});
+        batch.update(getDocRef('procura_pagos_cxp', p.id), {grupoPagoId:grupoPagoIdP, cuentaId:e.cuentaDestino, fecha:e.fecha, tasa:tasaP, monto:montoUSDP, montoBs:montoBsP, moneda:'USD'});
         await batch.commit();
+        setEdiciones(prev => { const n={...prev}; delete n[p.id]; return n; });
+      } catch(err){ alert('Error: '+err.message); }
+      finally { setProcesando(null); }
+    };
+
+    const eliminarPendiente = async (p) => {
+      const e = edit(p);
+      if(!window.confirm(`¿Eliminar este registro de "${p.proveedor||'—'}" por $${bancoFmt(Number(e.montoUSD||0))}?\n\nSe borra de Historial de Pagos y no se crea ningún movimiento en Banco/Caja. Úsalo solo si está repetido o es un error — no si el pago sí ocurrió.`)) return;
+      setProcesando(p.id);
+      try {
+        await deleteDoc(getDocRef('procura_pagos_cxp', p.id));
         setEdiciones(prev => { const n={...prev}; delete n[p.id]; return n; });
       } catch(err){ alert('Error: '+err.message); }
       finally { setProcesando(null); }
@@ -6313,7 +6361,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
           <div>
             <h2 className="text-xl font-black uppercase text-slate-900">Pagos por Identificar</h2>
-            <p className="text-xs text-slate-400 font-medium mt-0.5">Pagos de Historial de Pago (Procura) sin movimiento en Banco o Caja — asígnales su cuenta a medida que los reconozcas contra tu estado de cuenta real.</p>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">Pagos de Historial de Pago (Procura) sin movimiento en Banco o Caja — asígnales su cuenta a medida que los reconozcas contra tu estado de cuenta real. {pendientes.length} pendiente(s).</p>
           </div>
           <input value={busq} onChange={e=>setBusq(e.target.value)} placeholder="Buscar proveedor, referencia, concepto..." className={`${inp} w-64`}/>
         </div>
@@ -6323,17 +6371,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <div className="space-y-3">
             {pendientes.map(p=>{
               const e = edit(p);
-              const tasaP = Number(e.tasa)||0;
-              const monedaP = p.moneda||'USD';
-              const montoUSD = monedaP==='Bs' ? (tasaP>0?Number(p.monto||0)/tasaP:0) : Number(p.monto||0);
-              const montoBs = monedaP==='Bs' ? Number(p.monto||0) : Number(p.monto||0)*tasaP;
               return (
                 <div key={p.id} className="bg-white rounded-2xl border-2 border-amber-200 p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
-                    <div className="md:col-span-2">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                    <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Proveedor / Concepto</label>
                       <p className="font-black text-sm text-slate-800 truncate" title={p.proveedor}>{p.proveedor||'—'}</p>
-                      <p className="text-[10px] text-slate-400 truncate" title={p.concepto}>{p.concepto||'—'}{p.referencia?` · Ref: ${p.referencia}`:''}</p>
+                      <p className="text-[10px] text-slate-400 truncate" title={p.concepto}>{p.concepto||'—'}{p.referencia?` · Ref: ${p.referencia}`:''}{p.esAnticipo?' · Anticipo':''}</p>
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha</label>
@@ -6341,11 +6385,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Bs/$</label>
-                      <input type="number" step="0.01" className={inp} value={e.tasa} onChange={ev=>setEditField(p,'tasa',ev.target.value)}/>
+                      <input type="number" step="0.0001" className={inp} value={e.tasa} onChange={ev=>setEditField(p,'tasa',ev.target.value)}/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Bs.</label>
+                      <input type="number" step="0.01" className={inp} value={e.montoBs} onChange={ev=>setEditField(p,'montoBs',ev.target.value)}/>
                     </div>
                     <div>
-                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Saldo Bs. / USD</label>
-                      <div className="text-xs font-black text-slate-700 leading-tight">Bs. {bancoFmt(montoBs)}<br/><span className="text-emerald-600">${bancoFmt(montoUSD)}</span></div>
+                      <label className="text-[9px] font-black text-emerald-600 uppercase block mb-1">Monto USD</label>
+                      <input type="number" step="0.01" className={`${inp} font-black text-emerald-700`} value={e.montoUSD} onChange={ev=>setEditField(p,'montoUSD',ev.target.value)}/>
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Asignar a</label>
@@ -6355,12 +6405,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                         {(cajas||[]).map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre} (Caja)</option>)}
                       </select>
                     </div>
-                  </div>
-                  <div className="flex justify-between items-center mt-3">
-                    <span className="text-[10px] font-black text-red-500 uppercase">${bancoFmt(monedaP==='Bs'?montoUSD:Number(p.monto||0))} {p.esAnticipo?'· Anticipo':''}</span>
-                    <button disabled={!e.cuentaDestino||procesando===p.id} onClick={()=>identificar(p)} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-                      <CheckCircle size={13}/> {procesando===p.id?'Identificando...':'Identificar'}
-                    </button>
+                    <div className="flex gap-2 justify-end">
+                      <button disabled={procesando===p.id} onClick={()=>eliminarPendiente(p)} title="Eliminar (duplicado o error — no crea movimiento)" className="flex items-center justify-center w-10 h-10 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white disabled:opacity-40 transition-all shrink-0">
+                        <Trash2 size={15}/>
+                      </button>
+                      <button disabled={!e.cuentaDestino||procesando===p.id} onClick={()=>identificar(p)} className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                        <CheckCircle size={13}/> {procesando===p.id?'...':'Identificar'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
