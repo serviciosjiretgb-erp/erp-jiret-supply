@@ -3939,7 +3939,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
       <div>
         <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV</label>
-        <div className="relative">
+        <div className="flex gap-1.5">
           <input type="number" step="0.01" className={`${inp} bg-white`} value={form.tasa} onChange={e=>{
             const v=e.target.value; const tasaN=Number(v)||tasaActiva; const montoOpN=Number(form.montoOp)||0;
             const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
@@ -3956,8 +3956,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               const nativo=bs?(usdEq*tasaN):usdEq;
               setForm(f=>({...f,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)}));
             }catch(err){ console.error('BCV button error:', err); alert('No se pudo actualizar la tasa: '+(err?.message||err)); }
-          }} className="absolute right-2 top-1.5 bg-transparent border-none p-0.5 cursor-pointer disabled:cursor-not-allowed">
-            <RefreshCw size={14} className={`text-blue-400 ${fetchingBCV?'animate-spin':''}`}/>
+          }} className="shrink-0 w-10 flex items-center justify-center border-2 border-slate-200 rounded-xl bg-white hover:bg-blue-50 disabled:cursor-not-allowed transition-colors">
+            <RefreshCw size={14} className={`text-blue-500 ${fetchingBCV?'animate-spin':''}`}/>
           </button>
         </div>
       </div>
@@ -5870,7 +5870,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       </div>
                       <div>
                         <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV</label>
-                        <div className="relative">
+                        <div className="flex gap-1.5">
                           <input type="number" step="0.01" className={`${inp} bg-white`} value={form.tasa} onChange={e=>{
                             const v=e.target.value; const tasaN=Number(v)||tasaActiva; const montoOpN=Number(form.montoOp)||0;
                             const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
@@ -5887,8 +5887,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                               const nativo=bs?(usdEq*tasaN):usdEq;
                               setForm(f=>({...f,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)}));
                             }catch(err){ console.error('BCV button error:', err); alert('No se pudo actualizar la tasa: '+(err?.message||err)); }
-                          }} className="absolute right-2 top-1.5 bg-transparent border-none p-0.5 cursor-pointer disabled:cursor-not-allowed">
-                            <RefreshCw size={14} className={`text-blue-400 ${fetchingBCV?'animate-spin':''}`}/>
+                          }} className="shrink-0 w-10 flex items-center justify-center border-2 border-slate-200 rounded-xl bg-white hover:bg-blue-50 disabled:cursor-not-allowed transition-colors">
+                            <RefreshCw size={14} className={`text-blue-500 ${fetchingBCV?'animate-spin':''}`}/>
                           </button>
                         </div>
                       </div>
