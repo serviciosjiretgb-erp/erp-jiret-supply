@@ -3075,7 +3075,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           totHaberUSD:todasLineas.reduce((a,l)=>a+l.haberUSD,0),
           terceroNombre:tercero?.nombre||'',
         };
-        setModal(false); setForm(initF()); setBusqCtas({});
+        alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
         setComprobante(comp);
       } finally { setBusy(false); }
     };
@@ -3850,7 +3850,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         )}
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
-        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
+        <BModal open={modal} onClose={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: onClose del BModal (backdrop / Escape)');setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
           <div style={{display:'flex',height:'78vh',overflow:'hidden'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
@@ -3865,7 +3865,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <div className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full text-[9px] font-black tracking-widest border border-emerald-500/30 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block animate-pulse"/>MULTIMONEDA
                   </div>
-                  <button onClick={()=>{setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
+                  <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: boton X columna izquierda');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
                 </div>
               </div>
 
@@ -4185,7 +4185,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
-                <button onClick={()=>{setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
+                <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: boton X panel Estado Operativo');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
               </div>
 
               <div className="p-4 space-y-3 flex-1">
@@ -4297,7 +4297,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:transform-none">
                   {busy?<><RefreshCw size={15} className="animate-spin"/> Procesando...</>:<><Save size={16}/> Procesar y Ver Comprobante</>}
                 </button>
-                <button onClick={()=>{setModal(false);setForm(initF());}} className="w-full py-2 text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors">
+                <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: link cancelar inferior');setModal(false);setForm(initF());}} className="w-full py-2 text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors">
                   Cancelar
                 </button>
               </div>
@@ -5390,7 +5390,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         }
 
         await batch.commit();
-        setModal(false); setForm(initF()); setBusqCtas({});
+        alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
       } catch(e){ alert('Error: '+e.message); } finally { setBusy(false); }
     };
 
@@ -5784,7 +5784,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </BModal>
         )}
 
-        <BModal open={modal} onClose={()=>{setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
+        <BModal open={modal} onClose={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: onClose del BModal (backdrop / Escape)');setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
           <div style={{display:'flex',height:'78vh',overflow:'hidden'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
@@ -5798,7 +5798,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <div className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full text-[9px] font-black tracking-widest border border-emerald-500/30 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block animate-pulse"/>MULTIMONEDA
                   </div>
-                  <button onClick={()=>{setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
+                  <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: boton X columna izquierda');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
                 </div>
               </div>
 
@@ -6108,7 +6108,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <div style={{width:340,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
-                <button onClick={()=>{setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
+                <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: boton X panel Estado Operativo');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
               </div>
 
               <div className="p-4 space-y-3 flex-1">
