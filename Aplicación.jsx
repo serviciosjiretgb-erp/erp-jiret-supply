@@ -13642,6 +13642,7 @@ function App() {
   const [osaFilterNum, setOsaFilterNum] = useState('');
   const [kardexDateFrom, setKardexDateFrom] = useState('');
   const [kardexDateTo, setKardexDateTo] = useState('');
+  const [kardexAlmacenFiltro, setKardexAlmacenFiltro] = useState('todos');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [showReportType, setShowReportType] = useState(null);
 
@@ -22155,14 +22156,14 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
               <div className="mb-6 flex gap-3 items-end flex-wrap">
                 <div className="flex-1 min-w-48">
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Seleccionar Artículo</label>
-                  <select value={kardexProductId} onChange={e=>setKardexProductId(e.target.value)} className="w-full border-2 border-orange-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
+                  <select value={kardexProductId} onChange={e=>{setKardexProductId(e.target.value);setKardexAlmacenFiltro('todos');}} className="w-full border-2 border-orange-300 rounded-xl p-3 text-xs font-bold outline-none focus:border-orange-500 bg-white">
                     <option value="">— Seleccione un artículo —</option>
                     {(()=>{
                       const con={};
                       (inventory||[]).filter(i=>i.activo!==false).forEach(i=>{
                         const cc=(i.displayId||(i.id||'')).split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
                         if(!cc)return;
-                        if(!con[cc]||parseNum(i.stock)>parseNum(con[cc].stock))con[cc]={...i,_cc:cc};
+                        if(!con[cc])con[cc]={...i,_cc:cc};
                       });
                       const grp={};
                       Object.values(con).forEach(i=>{const s=i.subcategory||i.category||'Otros';if(!grp[s])grp[s]=[];grp[s].push(i);});
@@ -22170,7 +22171,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       const sorted=[...SUB.filter(s=>grp[s]),...Object.keys(grp).filter(s=>!SUB.includes(s)).sort()];
                       return sorted.flatMap(sub=>[
                         <option key={`h-${sub}`} disabled>── {sub.toUpperCase()} ──</option>,
-                        ...(grp[sub]||[]).sort((a,b)=>a._cc.localeCompare(b._cc)).map(i=><option key={i.id} value={i.id}>{i._cc} — {i.desc}</option>)
+                        ...(grp[sub]||[]).sort((a,b)=>a._cc.localeCompare(b._cc)).map(i=><option key={i._cc} value={i._cc}>{i._cc} — {i.desc}</option>)
                       ]);
                     })()}
                   </select>
@@ -22182,6 +22183,22 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     <input type="text" placeholder="Buscar artículo..." value={invSearchTerm} onChange={e=>setInvSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-3 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-400"/>
                   </div>
                 </div>
+                {kardexProductId && !kardexProductId.startsWith('FG::') && (
+                  <div>
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Filtro por Almacén</label>
+                    <select value={kardexAlmacenFiltro} onChange={e=>setKardexAlmacenFiltro(e.target.value)} className="border-2 border-indigo-300 rounded-xl px-3 py-3 text-xs font-bold outline-none focus:border-indigo-500 bg-white">
+                      <option value="todos">Todos los almacenes</option>
+                      {(()=>{
+                        const almsSet=new Set();
+                        (inventory||[]).filter(i=>{
+                          const cc=(i.displayId||(i.id||'')).split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
+                          return cc===kardexProductId;
+                        }).forEach(i=>{ if(i.almacen) almsSet.add(i.almacen); });
+                        return Array.from(almsSet).sort().map(a=><option key={a} value={a}>{a}</option>);
+                      })()}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
                   <input type="date" value={kardexDateFrom} onChange={e=>setKardexDateFrom(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-3 text-xs font-bold outline-none focus:border-orange-400"/>
@@ -22192,14 +22209,23 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                 </div>
                 {(kardexDateFrom||kardexDateTo) && <button onClick={()=>{setKardexDateFrom('');setKardexDateTo('');}} className="mt-5 text-[9px] font-black text-red-500 uppercase hover:underline self-end">✕ Limpiar fechas</button>}
               </div>
-              {/* Search results dropdown */}
+              {/* Search results dropdown — un solo producto, stock sumado entre almacenes */}
               {invSearchTerm && !kardexProductId && (
                 <div className="mb-4 border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                  {(inventory||[]).filter(i=>String(i.desc||'').toUpperCase().includes(invSearchTerm.toUpperCase())||String(i.id||'').toUpperCase().includes(invSearchTerm.toUpperCase())).slice(0,8).map(i=>(
-                    <button key={i.id} onClick={()=>{setKardexProductId(i.id);setInvSearchTerm('');}} className="w-full text-left px-4 py-2.5 hover:bg-orange-50 border-b border-gray-100 text-xs font-bold flex justify-between">
-                      <span className="text-orange-600 font-black">{i.id}</span><span className="text-gray-600">{i.desc}</span><span className="text-gray-400">Stock: {formatNum(i.stock)}</span>
-                    </button>
-                  ))}
+                  {(()=>{
+                    const con={};
+                    (inventory||[]).filter(i=>i.activo!==false&&(String(i.desc||'').toUpperCase().includes(invSearchTerm.toUpperCase())||String(i.displayId||i.id||'').split('___')[0].toUpperCase().includes(invSearchTerm.toUpperCase()))).forEach(i=>{
+                      const cc=(i.displayId||(i.id||'')).split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
+                      if(!cc)return;
+                      if(!con[cc])con[cc]={desc:i.desc,unit:i.unit,stock:0};
+                      con[cc].stock+=parseNum(i.stock||0);
+                    });
+                    return Object.entries(con).slice(0,8).map(([cc,i])=>(
+                      <button key={cc} onClick={()=>{setKardexProductId(cc);setKardexAlmacenFiltro('todos');setInvSearchTerm('');}} className="w-full text-left px-4 py-2.5 hover:bg-orange-50 border-b border-gray-100 text-xs font-bold flex justify-between">
+                        <span className="text-orange-600 font-black">{cc}</span><span className="text-gray-600">{i.desc}</span><span className="text-gray-400">Stock total: {formatNum(i.stock)} {i.unit}</span>
+                      </button>
+                    ));
+                  })()}
                 </div>
               )}
               {kardexProductId ? (() => {
@@ -22227,12 +22253,31 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   itemStock = fgGroupItems.reduce((s,fg)=>s+(esTermo?parseNum(fg.kgProducidos):parseNum(fg.millares)),0);
                   itemCost = item ? (esTermo?parseNum(item.costoUnitario||0):parseNum(item.costoUnitarioMillar||0)) : 0;
                 } else {
-                  item = (inventory||[]).find(i=>i.id===actualKardexId);
-                  itemLabel = item?.desc||actualKardexId;
-                  itemUnit = item?.unit||'';
-                  itemStock = item?.stock||0;
-                  itemCost = item?.cost||0;
+                  // Todos los documentos (uno por almacén) que representan este mismo producto
+                  const allProdDocs = (inventory||[]).filter(i=>{
+                    const cc=(i.displayId||(i.id||'')).split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACK\d+$/i,'').toUpperCase();
+                    return cc===actualKardexId;
+                  });
+                  if(kardexAlmacenFiltro==='todos'){
+                    const rep = allProdDocs[0];
+                    item = rep;
+                    itemLabel = rep?.desc||actualKardexId;
+                    itemUnit = rep?.unit||'';
+                    itemStock = allProdDocs.reduce((s,i)=>s+parseNum(i.stock||0),0);
+                    itemCost = rep?.cost||0;
+                  } else {
+                    const rep = allProdDocs.find(i=>i.almacen===kardexAlmacenFiltro);
+                    item = rep||null;
+                    itemLabel = rep?.desc||allProdDocs[0]?.desc||actualKardexId;
+                    itemUnit = rep?.unit||allProdDocs[0]?.unit||'';
+                    itemStock = rep?.stock||0;
+                    itemCost = rep?.cost||allProdDocs[0]?.cost||0;
+                  }
                 }
+
+                // Almacén de un movimiento: usa el campo explícito si existe; si no (movimientos viejos),
+                // lo infiere del sufijo ___ALMACEN-X del itemId con el que se guardó.
+                const movAlmacen = (m) => m.almacen || ((m.itemId||'').includes('___') ? (m.itemId.split('___')[1]||'').replace(/-/g,' ') : '');
 
                 // Get all movements for this item (from all FG IDs in group)
                 const fgIdSet = new Set(fgGroupItems.map(f=>f.id));
@@ -22241,13 +22286,18 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     const mid = m.itemId?.replace('FG::','');
                     return fgIdSet.has(mid) || fgIdSet.has(m.itemId);
                   }
-                  return m.itemId===actualKardexId;
+                  const mCc = (m.itemId||'').split('___')[0].toUpperCase();
+                  if(mCc!==actualKardexId) return false;
+                  if(kardexAlmacenFiltro!=='todos' && movAlmacen(m).toUpperCase()!==kardexAlmacenFiltro.toUpperCase()) return false;
+                  return true;
                 }).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
                 
-                // Deduplicar movimientos con mismo tipo+fecha+cantidad (versiones anteriores crearon duplicados)
+                // Deduplicar SOLO cuando también coincide reference+notes (mismo doc reescrito por un bug viejo).
+                // Con solo tipo+fecha+cantidad se corría el riesgo de ocultar 2 movimientos reales distintos
+                // (ej. 2 ventas de 10 unidades el mismo día a clientes diferentes) — ya no pasa.
                 const _seenMovKeys = new Set();
                 const dedupMovs = movs.filter(m => {
-                  const k = `${m.type}|${m.date}|${String(parseNum(m.qty).toFixed(4))}`;
+                  const k = `${m.type}|${m.date}|${String(parseNum(m.qty).toFixed(4))}|${m.reference||''}|${m.notes||''}`;
                   if (_seenMovKeys.has(k)) return false;
                   _seenMovKeys.add(k);
                   return true;
