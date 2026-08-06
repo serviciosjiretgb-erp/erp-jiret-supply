@@ -2057,6 +2057,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const systemUsers = systemUsersProp.length > 0 ? systemUsersProp : systemUsersLocal;
   const [cobrosCajaCxc, setCobrosCajaCxc] = useState([]); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
   const [pagosCajaCxP,  setPagosCajaCxP]  = useState([]); // procura_pagos_cxp donde cuentaId empieza con CAJA::
+  const [pagosCxPTodos, setPagosCxPTodos] = useState([]); // TODOS los procura_pagos_cxp — para Pagos por Identificar
 
   useEffect(() => {
     if (!fbUser) return;
@@ -2066,10 +2067,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         setCobrosCajaCxc(s.docs.map(d=>d.data()).filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
       }),
       onSnapshot(query(getColRef('procura_pagos_cxp'), orderBy('fecha','desc')), s => {
-        setPagosCajaCxP(s.docs.map(d=>d.data()).filter(p=>(p.cuentaId||'').startsWith('CAJA::')));
+        const todos = s.docs.map(d=>d.data());
+        setPagosCajaCxP(todos.filter(p=>(p.cuentaId||'').startsWith('CAJA::')));
+        setPagosCxPTodos(todos);
       }),
       onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),,
+      onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('cxp_terceros_relacionados'), s => setTercerosRel(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('cxp_pagos_relacionados'), s => setPagosRel(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>({_docId:d.id,...d.data()})))),
@@ -6238,6 +6241,136 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // Es 100% ADITIVO: solo CREA el asiento que faltaba, nunca borra ni
   // modifica ningún asiento ya existente (el lado origen no se toca).
   // ══════════════════════════════════════════════════════════════════════
+  const PagosPorIdentificarView = () => {
+    const [ediciones, setEdiciones] = useState({}); // { [pagoId]: {fecha, tasa, cuentaDestino} }
+    const [procesando, setProcesando] = useState(null);
+    const [busq, setBusq] = useState('');
+
+    const gruposConMov = useMemo(() => {
+      const s = new Set();
+      (movBanco||[]).forEach(m => { if(m.grupoPagoId) s.add(m.grupoPagoId); });
+      (movCaja||[]).forEach(m => { if(m.grupoPagoId) s.add(m.grupoPagoId); });
+      return s;
+    }, [movBanco, movCaja]);
+
+    const pendientes = useMemo(() =>
+      (pagosCxPTodos||[]).filter(p =>
+        p.cuentaId && !(p.cuentaId||'').startsWith('ANTICIPO::') && !gruposConMov.has(p.grupoPagoId) &&
+        (submodulo==='caja' ? (p.cuentaId||'').startsWith('CAJA::') : !(p.cuentaId||'').startsWith('CAJA::')) &&
+        (!busq || (p.proveedor||'').toUpperCase().includes(busq.toUpperCase()) || (p.referencia||'').toUpperCase().includes(busq.toUpperCase()) || (p.concepto||'').toUpperCase().includes(busq.toUpperCase()))
+      ).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')),
+      [pagosCxPTodos, gruposConMov, busq, submodulo]
+    );
+
+    const edit = (p) => ediciones[p.id] || { fecha: p.fecha || getTodayDate(), tasa: String(p.tasa || tasaActiva || ''), cuentaDestino: p.cuentaId || '' };
+    const setEditField = (p, field, value) => setEdiciones(prev => ({...prev, [p.id]: {...edit(p), [field]: value}}));
+
+    const identificar = async (p) => {
+      const e = edit(p);
+      if(!e.cuentaDestino) return;
+      setProcesando(p.id);
+      try {
+        const tasaP = Number(e.tasa)||1;
+        const monedaP = p.moneda||'USD';
+        const montoUSDP = monedaP==='Bs' ? parseFloat((Number(p.monto||0)/tasaP).toFixed(2)) : Number(p.monto||0);
+        const montoBsP = monedaP==='Bs' ? Number(p.monto||0) : parseFloat((Number(p.monto||0)*tasaP).toFixed(2));
+        const grupoPagoIdP = p.grupoPagoId || `GRP-RESTORE-${Date.now().toString(36)}`;
+        const movId = `MOV-RESTORE-${Date.now().toString(36)}`;
+        const esCaja = e.cuentaDestino.startsWith('CAJA::');
+        const batch = writeBatch(db);
+        if(esCaja){
+          const cajaId = e.cuentaDestino.replace('CAJA::','');
+          const cajaObj = (cajas||[]).find(c=>c.id===cajaId);
+          batch.set(getDocRef('caja_movimientos', movId), {
+            id:movId, cajaId, cajaNombre:cajaObj?.nombre||'', moneda:cajaObj?.moneda||'USD',
+            tipo:'Egreso', fecha:e.fecha, monto:montoUSDP, montoBs:montoBsP, montoUSD:montoUSDP, tasa:tasaP,
+            concepto:p.concepto||'Pago CxP (identificado)', referencia:p.referencia||'', grupoPagoId:grupoPagoIdP,
+            origenIngreso:'Identificado desde Banco — Pagos por Identificar', estatus:'No Conciliado', ts:Date.now(),
+          });
+        } else {
+          const ctaObj = (cuentas||[]).find(c=>c.id===e.cuentaDestino);
+          if(!ctaObj) throw new Error('Esa cuenta bancaria ya no existe — elige otra.');
+          const saldoAnterior = Number(ctaObj.saldo||0);
+          const saldoResultante = parseFloat((saldoAnterior - montoUSDP).toFixed(2));
+          batch.set(getDocRef('banco_movimientos', movId), {
+            id:movId, cuentaId:e.cuentaDestino, cuentaNombre:ctaObj.banco||'', tipoBanco:ctaObj.tipoBanco, moneda:ctaObj.moneda,
+            tipo:'Egreso', fecha:e.fecha, montoNativo:montoUSDP, montoBs:montoBsP, montoUSD:montoUSDP, tasa:tasaP,
+            concepto:p.concepto||'Pago CxP (identificado)', referencia:p.referencia||'', grupoPagoId:grupoPagoIdP,
+            origenIngreso:'Identificado desde Banco — Pagos por Identificar',
+            saldoAnterior, saldoResultante, estatus:'No Conciliado', ts:Date.now(),
+          });
+          batch.update(getDocRef('banco_cuentas', ctaObj.id), {saldo: saldoResultante});
+        }
+        batch.update(getDocRef('procura_pagos_cxp', p.id), {grupoPagoId:grupoPagoIdP, cuentaId:e.cuentaDestino, fecha:e.fecha, tasa:tasaP});
+        await batch.commit();
+        setEdiciones(prev => { const n={...prev}; delete n[p.id]; return n; });
+      } catch(err){ alert('Error: '+err.message); }
+      finally { setProcesando(null); }
+    };
+
+    return (
+      <div>
+        <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 className="text-xl font-black uppercase text-slate-900">Pagos por Identificar</h2>
+            <p className="text-xs text-slate-400 font-medium mt-0.5">Pagos de Historial de Pago (Procura) sin movimiento en Banco o Caja — asígnales su cuenta a medida que los reconozcas contra tu estado de cuenta real.</p>
+          </div>
+          <input value={busq} onChange={e=>setBusq(e.target.value)} placeholder="Buscar proveedor, referencia, concepto..." className={`${inp} w-64`}/>
+        </div>
+        {pendientes.length===0 ? (
+          <BEmptyState icon={Inbox} title="Nada por identificar" desc="Todos los pagos de Historial de Pago ya tienen su movimiento en Banco o Caja"/>
+        ) : (
+          <div className="space-y-3">
+            {pendientes.map(p=>{
+              const e = edit(p);
+              const tasaP = Number(e.tasa)||0;
+              const monedaP = p.moneda||'USD';
+              const montoUSD = monedaP==='Bs' ? (tasaP>0?Number(p.monto||0)/tasaP:0) : Number(p.monto||0);
+              const montoBs = monedaP==='Bs' ? Number(p.monto||0) : Number(p.monto||0)*tasaP;
+              return (
+                <div key={p.id} className="bg-white rounded-2xl border-2 border-amber-200 p-4">
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+                    <div className="md:col-span-2">
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Proveedor / Concepto</label>
+                      <p className="font-black text-sm text-slate-800 truncate" title={p.proveedor}>{p.proveedor||'—'}</p>
+                      <p className="text-[10px] text-slate-400 truncate" title={p.concepto}>{p.concepto||'—'}{p.referencia?` · Ref: ${p.referencia}`:''}</p>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha</label>
+                      <input type="date" className={inp} value={e.fecha} onChange={ev=>setEditField(p,'fecha',ev.target.value)}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Bs/$</label>
+                      <input type="number" step="0.01" className={inp} value={e.tasa} onChange={ev=>setEditField(p,'tasa',ev.target.value)}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Saldo Bs. / USD</label>
+                      <div className="text-xs font-black text-slate-700 leading-tight">Bs. {bancoFmt(montoBs)}<br/><span className="text-emerald-600">${bancoFmt(montoUSD)}</span></div>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Asignar a</label>
+                      <select value={e.cuentaDestino} onChange={ev=>setEditField(p,'cuentaDestino',ev.target.value)} className={`${sel} ${!e.cuentaDestino?'border-red-300 bg-red-50':''}`}>
+                        <option value="">⚠ Sin asignar</option>
+                        {(cuentas||[]).map(c=><option key={c.id} value={c.id}>{c.banco}{c.numeroCuenta?` — ${String(c.numeroCuenta).slice(-4)}`:''}</option>)}
+                        {(cajas||[]).map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre} (Caja)</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center mt-3">
+                    <span className="text-[10px] font-black text-red-500 uppercase">${bancoFmt(monedaP==='Bs'?montoUSD:Number(p.monto||0))} {p.esAnticipo?'· Anticipo':''}</span>
+                    <button disabled={!e.cuentaDestino||procesando===p.id} onClick={()=>identificar(p)} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                      <CheckCircle size={13}/> {procesando===p.id?'Identificando...':'Identificar'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const RepararTrasladosView = () => {
     const [selec, setSelec] = useState({});
     const [busy, setBusy] = useState(false);
@@ -7813,6 +7946,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     { group:'Analítica',   color:'#f97316', items:[{id:'dashboard',    label:'Panel General',      icon:LayoutDashboard}] },
     { group:'Bancos',      color:'#3b82f6', items:[{id:'cuentas',      label:'Cuentas Bancarias',  icon:Building2},
                                                     {id:'movimientos',  label:'Movimientos Banco',  icon:ArrowLeftRight},
+                                                    {id:'pagos_identificar',label:'Pagos por Identificar',icon:Inbox},
                                                     {id:'conciliacion', label:'Conciliación',       icon:CheckCircle},
                                                     {id:'reciprocidad', label:'Reciprocidad de Banco',icon:Activity}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_banco',label:'General de Banco',   icon:Building2},
@@ -7823,6 +7957,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     { group:'Analítica',   color:'#10b981', items:[{id:'caja_dashboard', label:'Panel General',    icon:LayoutDashboard}] },
     { group:'Caja',        color:'#10b981', items:[{id:'cuentas_caja',   label:'Cuentas de Caja',  icon:PiggyBank},
                                                     {id:'caja_op',       label:'Operaciones Caja', icon:Banknote},
+                                                    {id:'pagos_identificar',label:'Pagos por Identificar',icon:Inbox},
                                                     {id:'vales',         label:'Relación de Vales',icon:FileText},
                                                     {id:'arqueo',        label:'Arqueo de Caja',   icon:Calculator}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_caja',  label:'General de Caja',  icon:PiggyBank},
@@ -7841,6 +7976,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const views = {
     dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
+    pagos_identificar:<PagosPorIdentificarView/>,
     conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva} concils={concils} validarClaveAdmin={validarClaveAdmin}/>, reciprocidad:<ReciprocidadView/>,
     cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
     caja_dashboard:<CajaOpView/>,
