@@ -17036,13 +17036,13 @@ function App() {
       return { ...mp, dailyAvg, daysRemaining, committedStock, availableReal, suggestOrder, isCritical, minStock, maxStock };
     };
 
-    const candidatos = inventory.filter(i => i.category !== 'Materia Prima' && i.category !== 'Semielaborados' && i.activo!==false);
+    const candidatos = inventory.filter(i => i.category !== 'Materia Prima' && !(i.category||'').toUpperCase().startsWith('SEMIELABORADO') && i.activo!==false);
     const agrupados = groupProductosPorId(candidatos);
 
     const grupos = {};
     agrupados.forEach(mp=>{
       const catEfectiva = (mp.category==='Productos Terminados' && mp.subcategory) ? mp.subcategory : (mp.category||'Otros');
-      if(EXCLUIR.has(catEfectiva)) return;
+      if(EXCLUIR.has(catEfectiva) || catEfectiva.toUpperCase().startsWith('SEMIELABORADO')) return;
       if(!grupos[catEfectiva]) grupos[catEfectiva]=[];
       grupos[catEfectiva].push(calcItem(mp));
     });
@@ -22310,7 +22310,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                     return true;
                   })
                   .map(m => {
-                  const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
+                  const isIn = (m.type||'').toUpperCase().startsWith('ENTRADA') || m.type==='AJUSTE (POSITIVO)';
                   if(isIn) runBalance += parseNum(m.qty);
                   else runBalance -= parseNum(m.qty);
                   return {...m, balance: Math.max(0,runBalance)};
@@ -22361,7 +22361,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                             </thead>
                             <tbody>
                               {rows.map((m,i) => {
-                                const isIn = m.type==='ENTRADA'||m.type==='ENTRADA_DEVOLUCION'||m.type==='ENTRADA_INICIAL';
+                                const isIn = (m.type||'').toUpperCase().startsWith('ENTRADA') || m.type==='AJUSTE (POSITIVO)';
                                 const cu = m.unitCost||m.cost||itemCost||0;
                                 const val = m.totalValue||(parseNum(m.qty)*cu);
                                 return (
@@ -36848,8 +36848,8 @@ ${resumenHtml}
                       <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                         <th className="py-3 px-4 border-r">Código / Material</th>
                         <th className="py-3 px-4 border-r text-center">Stock Actual</th>
-                        <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo 🔒</th>
-                        <th className="py-3 px-4 border-r text-center bg-blue-50">Stock Máximo 🔒</th>
+                        <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo</th>
+                        <th className="py-3 px-4 border-r text-center bg-blue-50">Stock Máximo</th>
                         <th className="py-3 px-4 border-r text-center">Comprometido</th>
                         <th className="py-3 px-4 border-r text-center">Disponible Real</th>
                         <th className="py-3 px-4 border-r text-center">Consumo/Día</th>
@@ -36927,8 +36927,8 @@ ${resumenHtml}
                     <tr className="uppercase font-black text-[10px] tracking-widest text-gray-600">
                       <th className="py-3 px-4 border-r">Código / Producto</th>
                       <th className="py-3 px-4 border-r text-center">Stock Actual</th>
-                      <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo 🔒</th>
-                      <th className="py-3 px-4 border-r text-center bg-blue-50">Stock Máximo 🔒</th>
+                      <th className="py-3 px-4 border-r text-center bg-yellow-50">Stock Mínimo</th>
+                      <th className="py-3 px-4 border-r text-center bg-blue-50">Stock Máximo</th>
                       <th className="py-3 px-4 border-r text-center">Comprometido</th>
                       <th className="py-3 px-4 border-r text-center">Disponible Real</th>
                       <th className="py-3 px-4 border-r text-center">Consumo/Día</th>
