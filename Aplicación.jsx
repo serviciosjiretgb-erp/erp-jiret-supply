@@ -22314,7 +22314,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                   if(isIn) runBalance += parseNum(m.qty);
                   else runBalance -= parseNum(m.qty);
                   return {...m, balance: Math.max(0,runBalance)};
-                });
+                }).reverse(); // más reciente arriba — el saldo ya se calculó en orden cronológico antes de invertir
                 return (
                   <div>
                     {/* Item summary */}
