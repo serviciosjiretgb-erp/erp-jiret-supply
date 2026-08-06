@@ -2004,21 +2004,46 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   </div>);
 }
 
+const DebugPanel = () => {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceUpdate(n => n + 1), 400);
+    return () => clearInterval(id);
+  }, []);
+  const logs = window.__bancoDbg || [];
+  return (
+    <div style={{position:'fixed', bottom:8, left:8, width:440, maxHeight:260, overflow:'auto', background:'rgba(15,23,42,.97)', color:'#4ade80', fontSize:10, fontFamily:'monospace', padding:10, borderRadius:10, zIndex:999999, border:'2px solid #4ade80', boxShadow:'0 0 20px rgba(0,0,0,.5)'}}>
+      <div style={{color:'#fff', fontWeight:900, marginBottom:6, fontSize:11}}>🔍 DEBUG LOG — {logs.length} evento(s)</div>
+      {logs.length===0 && <div style={{color:'#94a3b8'}}>Sin eventos todavía...</div>}
+      {logs.slice().reverse().map((l,i)=><div key={i} style={{borderBottom:'1px solid rgba(255,255,255,.1)', padding:'2px 0'}}>{l}</div>)}
+    </div>
+  );
+};
+
 function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [] }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
 
   // ── DIAGNÓSTICO TEMPORAL — mientras se ubica la causa de "la pantalla se cierra sola" ──
-  // Cualquier error de JS no capturado, o cualquier promesa rechazada sin .catch, se muestra
-  // en un alert con el mensaje y el archivo/línea exactos, en vez de dejar que React resetee
-  // la app en silencio (que es lo que se ve como "la ventana se cerró").
+  // Las alertas del navegador se pueden bloquear en silencio (Chrome ofrece "no permitir más
+  // mensajes de esta página" tras varias alertas seguidas). Por eso este log NO usa alert():
+  // guarda todo en window.__bancoDbg (fuera de React, sobrevive a cualquier remount) y un
+  // panelito fijo en pantalla lo muestra en vivo — imposible de bloquear.
+  if (!window.__bancoDbg) window.__bancoDbg = [];
+  const bdbg = (msg) => {
+    const t = new Date().toLocaleTimeString();
+    window.__bancoDbg.push(`${t} — ${msg}`);
+    if (window.__bancoDbg.length > 40) window.__bancoDbg.shift();
+    console.log('🔍', msg);
+  };
+
   useEffect(() => {
     const onErr = (e) => {
-      alert('⚠ ERROR ATRAPADO (esto explica el cierre):\n\n' + (e?.message || e) + '\n\n' + (e?.filename ? `Archivo: ${e.filename}:${e.lineno}` : '') + '\n\n' + (e?.error?.stack ? e.error.stack.split('\n').slice(0,5).join('\n') : ''));
+      bdbg('❌ ERROR JS: ' + (e?.message || e) + (e?.filename ? ` (${e.filename}:${e.lineno})` : ''));
       console.error('window.onerror capturado:', e);
     };
     const onRej = (e) => {
-      alert('⚠ PROMESA RECHAZADA SIN CAPTURAR (esto explica el cierre):\n\n' + (e?.reason?.message || e?.reason || e) + '\n\n' + (e?.reason?.stack ? String(e.reason.stack).split('\n').slice(0,5).join('\n') : ''));
+      bdbg('❌ PROMESA RECHAZADA: ' + (e?.reason?.message || e?.reason || e));
       console.error('unhandledrejection capturado:', e);
     };
     window.addEventListener('error', onErr);
@@ -2028,7 +2053,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // esto la intercepta y te deja cancelar con el diálogo nativo del navegador — así
     // confirmamos si es una recarga real (no algo interno de React/BancoApp).
     const onBeforeUnload = (e) => {
-      console.trace('⚠ beforeunload disparado — la página está intentando recargar/salir');
+      bdbg('⚠ beforeunload — la página está intentando recargar/salir');
       e.preventDefault();
       e.returnValue = '¿Seguro que quieres salir? Puede perder lo que estaba llenando.';
       return e.returnValue;
@@ -2044,15 +2069,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
+    bdbg('▶ fetchTasaBCV LLAMADA (fecha=' + fecha + ')');
     setFetchingBCV(true);
     try{
       const hoy = new Date().toISOString().slice(0,10);
       if(!fecha || fecha===hoy){
         const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        bdbg('  fetch respondió, ok=' + r.ok + ' status=' + r.status);
         if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
         const d = await r.json();
         const tasa = parseFloat(d.promedio || d.venta || 0);
         if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        bdbg('✅ fetchTasaBCV ÉXITO, tasa=' + tasa);
         return tasa;
       }
       // Fecha pasada: histórico completo, se toma la más reciente <= la fecha pedida
@@ -2064,11 +2092,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const match = candidatas[0];
       const tasa = parseFloat(match?.promedio || match?.venta || 0);
       if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      bdbg('✅ fetchTasaBCV ÉXITO (histórico), tasa=' + tasa);
       return tasa;
     } catch(e){
+      bdbg('❌ fetchTasaBCV CATCH: ' + e.message);
       window.alert('No se pudo traer la tasa BCV automáticamente ('+e.message+'). Escríbela a mano por esta vez.');
       return null;
-    } finally { setFetchingBCV(false); }
+    } finally { setFetchingBCV(false); bdbg('◀ fetchTasaBCV TERMINÓ (finally)'); }
   };
   const [submodulo, setSubmodulo] = useState(null); // null | 'banco' | 'caja'
 
@@ -2077,7 +2107,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   useEffect(() => {
     const prev = _prevSecSub.current;
     if (prev.sec !== sec || prev.submodulo !== submodulo) {
-      alert(`🔍 CAMBIO DE SECCIÓN DETECTADO\n\nsec: "${prev.sec}" → "${sec}"\nsubmodulo: "${prev.submodulo}" → "${submodulo}"\n\n(si esto salió justo después de dar clic en la tasa, ya encontramos el problema)`);
+      bdbg(`🔀 CAMBIO sec: "${prev.sec}"→"${sec}" | submodulo: "${prev.submodulo}"→"${submodulo}"`);
       console.trace('sec/submodulo cambiaron:', prev, '→', {sec, submodulo});
     }
     _prevSecSub.current = {sec, submodulo};
@@ -2795,6 +2825,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // que quiera sin que React vuelva a montar este componente (mismo problema ya resuelto antes
   // para ConciliacionView, aquí con una solución más simple ya que no hace falta sacarlo del todo).
   const MovimientosViewImpl = ({ ventasOnlyIngreso = false }) => {
+    try {
     const [monedaVista, setMonedaVista] = useState('USD');
     const [searchTercero, setSearchTercero] = useState('');
     const [searchBanco,   setSearchBanco]   = useState('');
@@ -2808,6 +2839,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [detalleId,setDetalle] = useState(null);
     const [editId,   setEditId]  = useState(null);
     const [modal,    setModal]   = useState(ventasOnlyIngreso); // auto-open for ventas
+    useEffect(() => { bdbg('▶ MovimientosViewImpl MONTADO (modal inicial=' + ventasOnlyIngreso + ')'); return () => bdbg('◀ MovimientosViewImpl DESMONTADO'); }, []);
     const [busqCtas, setBusqCtas]= useState({});
     const [busy,     setBusy]    = useState(false);
     const [comprobante, setComprobante] = useState(null); // modal de comprobante imprimible
@@ -3103,7 +3135,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           totHaberUSD:todasLineas.reduce((a,l)=>a+l.haberUSD,0),
           terceroNombre:tercero?.nombre||'',
         };
-        alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
+        bdbg('🔒 CIERRE via: BANCO: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
         setComprobante(comp);
       } finally { setBusy(false); }
     };
@@ -3878,7 +3910,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         )}
 
         {/* ── MODAL NUEVO MOVIMIENTO — DISEÑO BICOLUMNA ── */}
-        <BModal open={modal} onClose={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: onClose del BModal (backdrop / Escape)');setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
+        <BModal open={modal} onClose={()=>{bdbg('🔒 CIERRE via: BANCO: onClose del BModal (backdrop / Escape)');setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
           <div style={{display:'flex',height:'78vh',overflow:'hidden'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
@@ -3893,7 +3925,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <div className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full text-[9px] font-black tracking-widest border border-emerald-500/30 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block animate-pulse"/>MULTIMONEDA
                   </div>
-                  <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: boton X columna izquierda');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
+                  <button onClick={()=>{bdbg('🔒 CIERRE via: BANCO: boton X columna izquierda');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
                 </div>
               </div>
 
@@ -3995,6 +4027,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           }}/>
           <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async(ev)=>{
             ev.preventDefault(); ev.stopPropagation();
+            bdbg('👆 CLIC en boton tasa BCV');
             try{
               const t=await fetchTasaBCV(form.fecha);
               if(!t) return;
@@ -4213,7 +4246,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               {/* Header columna derecha */}
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
-                <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: boton X panel Estado Operativo');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
+                <button onClick={()=>{bdbg('🔒 CIERRE via: BANCO: boton X panel Estado Operativo');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
               </div>
 
               <div className="p-4 space-y-3 flex-1">
@@ -4325,7 +4358,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:transform-none">
                   {busy?<><RefreshCw size={15} className="animate-spin"/> Procesando...</>:<><Save size={16}/> Procesar y Ver Comprobante</>}
                 </button>
-                <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: BANCO: link cancelar inferior');setModal(false);setForm(initF());}} className="w-full py-2 text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors">
+                <button onClick={()=>{bdbg('🔒 CIERRE via: BANCO: link cancelar inferior');setModal(false);setForm(initF());}} className="w-full py-2 text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors">
                   Cancelar
                 </button>
               </div>
@@ -4334,6 +4367,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </BModal>
       </div>
     );
+    } catch(err) {
+      bdbg('🔴 MovimientosViewImpl LANZÓ ERROR DE RENDER: ' + err.message);
+      console.error('MovimientosView error:', err);
+      return (
+        <div className="max-w-2xl mx-auto mt-12 bg-red-50 border-2 border-red-300 rounded-3xl p-8 text-center">
+          <AlertTriangle size={40} className="text-red-500 mx-auto mb-3"/>
+          <div className="text-red-600 font-black text-lg uppercase mb-2">Error en Banco — Nuevo Movimiento</div>
+          <div className="text-red-700 text-xs font-bold bg-red-100 rounded-xl p-3 font-mono break-words">{err.message}</div>
+          <button onClick={()=>window.location.reload()} className="mt-4 bg-black text-white px-6 py-2.5 rounded-xl font-black text-xs uppercase">Recargar</button>
+        </div>
+      );
+    }
   };
   // FIX CRÍTICO (aplicado): MovimientosViewImpl se redefine en cada render de BancoApp (normal,
   // así mantiene sus closures frescos sobre cuentas/movBanco/etc.). El problema NO era eso — era
@@ -5053,6 +5098,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const CajaOpViewImpl = () => {
     try {
     const [modal, setModal] = useState(false);
+    useEffect(() => { bdbg('▶ CajaOpViewImpl MONTADO'); return () => bdbg('◀ CajaOpViewImpl DESMONTADO'); }, []);
     const [busy, setBusy]   = useState(false);
     // Filtros
     const [cajFiltMoneda, setCajFiltMoneda] = useState('USD');  // 'BS'|'USD'|'AMBAS'
@@ -5428,7 +5474,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         }
 
         await batch.commit();
-        alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
+        bdbg('🔒 CIERRE via: CAJA: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
       } catch(e){ alert('Error: '+e.message); } finally { setBusy(false); }
     };
 
@@ -5822,7 +5868,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </BModal>
         )}
 
-        <BModal open={modal} onClose={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: onClose del BModal (backdrop / Escape)');setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
+        <BModal open={modal} onClose={()=>{bdbg('🔒 CIERRE via: CAJA: onClose del BModal (backdrop / Escape)');setModal(false);setForm(initF());}} title="" xlwide noHeader noClip>
           <div style={{display:'flex',height:'78vh',overflow:'hidden'}}>
 
             {/* ══ COLUMNA IZQUIERDA: FORMULARIO ══ */}
@@ -5836,7 +5882,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <div className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-full text-[9px] font-black tracking-widest border border-emerald-500/30 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block animate-pulse"/>MULTIMONEDA
                   </div>
-                  <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: boton X columna izquierda');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
+                  <button onClick={()=>{bdbg('🔒 CIERRE via: CAJA: boton X columna izquierda');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-white transition-colors"><X size={18}/></button>
                 </div>
               </div>
 
@@ -5936,6 +5982,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           }}/>
                           <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async(ev)=>{
                             ev.preventDefault(); ev.stopPropagation();
+                            bdbg('👆 CLIC en boton tasa BCV');
                             try{
                               const t=await fetchTasaBCV(form.fecha);
                               if(!t) return;
@@ -6146,7 +6193,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <div style={{width:340,flexShrink:0,display:'flex',flexDirection:'column',background:'#f8fafc',borderLeft:'1px solid #e2e8f0',overflowY:'auto'}}>
               <div className="px-5 py-4 border-b border-slate-200 flex-shrink-0 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest flex items-center gap-2"><Activity size={13}/> Estado Operativo</p>
-                <button onClick={()=>{alert('🔍 CIERRE DETECTADO\n\nOrigen: CAJA: boton X panel Estado Operativo');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
+                <button onClick={()=>{bdbg('🔒 CIERRE via: CAJA: boton X panel Estado Operativo');setModal(false);setForm(initF());}} className="text-slate-400 hover:text-slate-700 transition-colors"><X size={18}/></button>
               </div>
 
               <div className="p-4 space-y-3 flex-1">
@@ -6265,6 +6312,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
     } catch(err) {
+      bdbg('🔴 CajaOpViewImpl LANZÓ ERROR DE RENDER: ' + err.message);
       console.error('CajaOpView error:', err);
       return (
         <div className="max-w-2xl mx-auto mt-12 bg-red-50 border-2 border-red-300 rounded-3xl p-8 text-center">
@@ -8387,6 +8435,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       <div>
         {views[sec] || <DashboardView/>}
       </div>
+      <DebugPanel/>
     </div>
   );
 }
