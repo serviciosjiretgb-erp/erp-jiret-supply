@@ -3178,6 +3178,32 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
           asientoCredito:form.tipo==='Ingreso'?ctaContra:ctaBanco,
         });
+
+        // ── Regenerar el asiento contable real vinculado (cont_asientos), no solo las etiquetas ──
+        if (movOriginal?.asientoContableId && form.ctaContraId) {
+          const ctaContraObj = contCuentas.find(c=>c.id===form.ctaContraId) || {};
+          const bancoEnDebeEdit = form.tipo==='Ingreso';
+          const lineaBancoEdit = {
+            codigo:cuentaNueva?.cuentaContableCod||'', cuenta:ctaBanco, tipoLinea:bancoEnDebeEdit?'D':'H',
+            nroDoc:form.referencia||'', concepto:form.concepto, tasa,
+            debeBs:bancoEnDebeEdit?montoBs:0, haberBs:bancoEnDebeEdit?0:montoBs,
+            debeUSD:bancoEnDebeEdit?montoUSD:0, haberUSD:bancoEnDebeEdit?0:montoUSD,
+          };
+          const lineaContraEdit = {
+            codigo:ctaContraObj.codigo||'', cuenta:ctaContraObj.nombre||form.ctaContraNombre||'', tipoLinea:bancoEnDebeEdit?'H':'D',
+            nroDoc:form.referencia||'', concepto:form.concepto, tasa,
+            debeBs:bancoEnDebeEdit?0:montoBs, haberBs:bancoEnDebeEdit?montoBs:0,
+            debeUSD:bancoEnDebeEdit?0:montoUSD, haberUSD:bancoEnDebeEdit?montoUSD:0,
+          };
+          const lineasEdit = [lineaBancoEdit, lineaContraEdit];
+          batch.update(getDocRef('cont_asientos', movOriginal.asientoContableId), {
+            fecha:form.fecha, tipo:form.tipo==='Ingreso'?'Ingreso':'Egreso', subTipo:form.tipo,
+            nroDocumento:form.referencia||'', descripcion:form.concepto.toUpperCase(), tasa,
+            terceroNombre:tercero?.nombre||'', lineas:lineasEdit,
+            totalDebeBs:lineasEdit.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasEdit.reduce((a,l)=>a+l.haberBs,0),
+            totalDebeUSD:lineasEdit.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasEdit.reduce((a,l)=>a+l.haberUSD,0),
+          });
+        }
         await batch.commit();
         setEditId(null); setDetalle(null); setForm(initF());
       } catch(e) {
@@ -5550,7 +5576,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const ctaCajaEdit  = cajaObjEdit?.cuentaContableNom || `Caja ${cajaObjEdit?.nombre||''}`;
         const ctaContraEdit = form.ctaContraNombre||(form.tipo==='Ingreso'?'Cuentas por Cobrar':'Cuentas por Pagar');
         const terceroEdit = form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):provs.find(p=>p.id===form.terceroId);
-        await updateDoc(getDocRef('caja_movimientos',cajaDet.id),{
+
+        const batch = writeBatch(_bancoDB);
+        batch.update(getDocRef('caja_movimientos',cajaDet.id),{
           fecha:form.fecha, tipo:form.tipo, moneda:form.moneda, concepto:form.concepto, referencia:form.referencia,
           motivoEgreso:form.motivoEgreso,
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
@@ -5561,6 +5589,34 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           asientoCredito:form.tipo==='Ingreso'?ctaContraEdit:ctaCajaEdit,
           updatedAt:Date.now(),
         });
+
+        // ── Regenerar el asiento contable real vinculado (cont_asientos), no solo las etiquetas ──
+        if (cajaDet.asientoContableId && form.ctaContraId) {
+          const ctaContraObj = contCuentas.find(c=>c.id===form.ctaContraId) || {};
+          const bancoEnDebeEdit = form.tipo==='Ingreso';
+          const lineaCajaEdit = {
+            codigo:cajaObjEdit?.cuentaContableCod||'', cuenta:ctaCajaEdit, tipoLinea:bancoEnDebeEdit?'D':'H',
+            nroDoc:form.referencia||'', concepto:form.concepto, tasa:tasaEdit,
+            debeBs:bancoEnDebeEdit?montoBsEdit:0, haberBs:bancoEnDebeEdit?0:montoBsEdit,
+            debeUSD:bancoEnDebeEdit?montoUSDEdit:0, haberUSD:bancoEnDebeEdit?0:montoUSDEdit,
+          };
+          const lineaContraEdit = {
+            codigo:ctaContraObj.codigo||'', cuenta:ctaContraObj.nombre||form.ctaContraNombre||'', tipoLinea:bancoEnDebeEdit?'H':'D',
+            nroDoc:form.referencia||'', concepto:form.concepto, tasa:tasaEdit,
+            debeBs:bancoEnDebeEdit?0:montoBsEdit, haberBs:bancoEnDebeEdit?montoBsEdit:0,
+            debeUSD:bancoEnDebeEdit?0:montoUSDEdit, haberUSD:bancoEnDebeEdit?montoUSDEdit:0,
+          };
+          const lineasEdit = [lineaCajaEdit, lineaContraEdit];
+          batch.update(getDocRef('cont_asientos', cajaDet.asientoContableId), {
+            fecha:form.fecha, tipo:form.tipo==='Ingreso'?'Ingreso':'Egreso', subTipo:form.tipo,
+            nroDocumento:form.referencia||'', descripcion:form.concepto.toUpperCase(), tasa:tasaEdit,
+            terceroNombre:terceroEdit?.nombre||'', lineas:lineasEdit,
+            totalDebeBs:lineasEdit.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasEdit.reduce((a,l)=>a+l.haberBs,0),
+            totalDebeUSD:lineasEdit.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasEdit.reduce((a,l)=>a+l.haberUSD,0),
+          });
+        }
+
+        await batch.commit();
         setCajaDet(null); setCajaEdit(false); setForm(initF());
       } catch(e) {
         alert('❌ No se pudo guardar: '+(e?.message||e));
