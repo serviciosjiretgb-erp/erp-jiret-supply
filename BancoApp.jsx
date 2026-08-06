@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   LayoutDashboard, Building2, TrendingUp, List, BookOpen,
   ArrowLeftRight, Wallet, ArrowRightLeft, Scale, Calculator,
@@ -2071,6 +2071,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     } finally { setFetchingBCV(false); }
   };
   const [submodulo, setSubmodulo] = useState(null); // null | 'banco' | 'caja'
+
+  // ── DIAGNÓSTICO TEMPORAL — rastrea cambios de sec/submodulo que no vengan de un clic de navegación ──
+  const _prevSecSub = useRef({sec, submodulo});
+  useEffect(() => {
+    const prev = _prevSecSub.current;
+    if (prev.sec !== sec || prev.submodulo !== submodulo) {
+      alert(`🔍 CAMBIO DE SECCIÓN DETECTADO\n\nsec: "${prev.sec}" → "${sec}"\nsubmodulo: "${prev.submodulo}" → "${submodulo}"\n\n(si esto salió justo después de dar clic en la tasa, ya encontramos el problema)`);
+      console.trace('sec/submodulo cambiaron:', prev, '→', {sec, submodulo});
+    }
+    _prevSecSub.current = {sec, submodulo};
+  }, [sec, submodulo]);
+
   const [cuentas,    setCuentas]  = useState([]);
   const [cajas,      setCajas]    = useState([]);
   const [tercerosRel, setTercerosRel] = useState([]);
@@ -2782,7 +2794,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // se crea UNA sola vez y su referencia queda fija — BancoApp puede re-renderizar todas las veces
   // que quiera sin que React vuelva a montar este componente (mismo problema ya resuelto antes
   // para ConciliacionView, aquí con una solución más simple ya que no hace falta sacarlo del todo).
-  const MovimientosView = ({ ventasOnlyIngreso = false }) => {
+  const MovimientosViewImpl = ({ ventasOnlyIngreso = false }) => {
     const [monedaVista, setMonedaVista] = useState('USD');
     const [searchTercero, setSearchTercero] = useState('');
     const [searchBanco,   setSearchBanco]   = useState('');
@@ -4323,6 +4335,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       </div>
     );
   };
+  // FIX CRÍTICO (aplicado): MovimientosViewImpl se redefine en cada render de BancoApp (normal,
+  // así mantiene sus closures frescos sobre cuentas/movBanco/etc.). El problema NO era eso — era
+  // que <MovimientosView/> usaba esa referencia NUEVA directamente, y React la trataba como un
+  // componente distinto cada vez, desmontando el que tenía el modal abierto. Este wrapper le da a
+  // MovimientosView una identidad ESTABLE (fijada una sola vez con useRef) que por dentro siempre
+  // llama a la implementación MÁS RECIENTE — así el componente nunca se desmonta solo, pero sigue
+  // viendo datos actualizados.
+  const _movViewImplRef = useRef(MovimientosViewImpl);
+  _movViewImplRef.current = MovimientosViewImpl;
+  const MovimientosView = useRef((props) => _movViewImplRef.current(props)).current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 4. CAJA — CUENTAS DE CAJA
@@ -5028,7 +5050,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // Mismo problema y misma solución que en MovimientosView (ver comentario ahí arriba): sin esto,
   // el modal "Nuevo Movimiento" de Caja también se cerraba solo cada vez que BancoApp re-renderizaba.
-  const CajaOpView = () => {
+  const CajaOpViewImpl = () => {
     try {
     const [modal, setModal] = useState(false);
     const [busy, setBusy]   = useState(false);
@@ -6254,6 +6276,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       );
     }
   };
+  // Mismo FIX CRÍTICO que MovimientosView — ver comentario detallado más arriba.
+  const _cajaOpViewImplRef = useRef(CajaOpViewImpl);
+  _cajaOpViewImplRef.current = CajaOpViewImpl;
+  const CajaOpView = useRef((props) => _cajaOpViewImplRef.current(props)).current;
 
   // ══════════════════════════════════════════════════════════════════════
   // 5a-bis. LIMPIAR DUPLICADOS DE CAJA (cobros/pagos que quedaron registrados
