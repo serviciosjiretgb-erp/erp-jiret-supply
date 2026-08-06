@@ -15239,17 +15239,18 @@ function App() {
       const batch = writeBatch(db);
       const ts = Date.now();
       const itemsDesc = [];
+      const fallos = []; // { cleanCode, razon } — items que NO se pudieron trasladar
 
       for (let idx = 0; idx < trasladoItems.length; idx++) {
         const { cleanCode, qty, unit, desc, stockOrigen: stockOrig } = trasladoItems[idx];
         const cantQty = parseNum(qty);
-        if (cantQty <= 0) continue;
+        if (cantQty <= 0) { fallos.push({cleanCode, razon:'Cantidad en 0'}); continue; }
 
         const allDocs = (inventory||[]).filter(i => {
           const cc = (i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').replace(/-COPY\d*$/i,'').toUpperCase();
           return cc === cleanCode.toUpperCase();
         });
-        if(!allDocs.length) continue;
+        if(!allDocs.length) { fallos.push({cleanCode, razon:`No se encontró "${cleanCode}" en inventario`}); continue; }
         const repDoc = allDocs[0];
 
         // ── Determinar stock real en almacén origen (acepta almacen field O warehouses map) ──
@@ -15258,7 +15259,7 @@ function App() {
         const origenDocMap = !origenDoc ? allDocs.find(i => parseNum((i.warehouses||{})[almacenOrigen]||0)>0) : null;
 
         const stockOrigen = origenDoc ? parseNum(origenDoc.stock||0) : (origenDocMap ? parseNum((origenDocMap.warehouses||{})[almacenOrigen]||0) : 0);
-        if (cantQty > stockOrigen + 0.001) continue; // skip if insufficient stock
+        if (cantQty > stockOrigen + 0.001) { fallos.push({cleanCode, razon:`Stock insuficiente en ${almacenOrigen} (hay ${formatNum(stockOrigen)}, pediste ${formatNum(cantQty)})`}); continue; }
 
         const t = ts + idx * 2;
 
@@ -15297,10 +15298,18 @@ function App() {
         itemsDesc.push(`${cleanCode}: ${formatNum(cantQty)} ${unit}`);
       }
 
+      // Nada se pudo procesar: NO cerrar el modal, NO decir "Registrado" — mostrar por qué falló cada uno.
+      if (itemsDesc.length === 0) {
+        setDialog({ title: '⚠️ No se registró ningún traslado', text: `Ningún artículo pudo trasladarse:\n${fallos.map(f=>`• ${f.cleanCode}: ${f.razon}`).join('\n')}`, type: 'alert' });
+        return;
+      }
+
       await batch.commit();
       setTrasladoForm(initialTrasladoForm); setTrasladoItems([]);
       setShowTrasladoModal(false); setTrasladoSearch('');
-      setDialog({ title: '✅ Traslado Registrado', text: `${itemsDesc.length} artículo(s) trasladados de ${almacenOrigen} → ${almacenDestino}:\n${itemsDesc.join('\n')}`, type: 'alert' });
+      const resumen = `${itemsDesc.length} artículo(s) trasladados de ${almacenOrigen} → ${almacenDestino}:\n${itemsDesc.join('\n')}`
+        + (fallos.length ? `\n\n⚠️ ${fallos.length} NO se trasladaron:\n${fallos.map(f=>`• ${f.cleanCode}: ${f.razon}`).join('\n')}` : '');
+      setDialog({ title: fallos.length?'✅ Traslado parcial':'✅ Traslado Registrado', text: resumen, type: 'alert' });
     } catch (err) { setDialog({ title: 'Error', text: err.message, type: 'alert' }); }
   };
 
@@ -47714,7 +47723,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                    {dialog.type === 'alert' ? <AlertTriangle size={40} className="text-orange-500" /> : <CheckCircle size={40} className="text-blue-500" />}
                 </div>
                 <h3 className="text-xl font-black text-black uppercase mb-3 tracking-widest">{dialog.title}</h3>
-                <p className="text-sm font-bold text-gray-500 mb-8">{dialog.text}</p>
+                <p className="text-sm font-bold text-gray-500 mb-8 whitespace-pre-line">{dialog.text}</p>
                 {dialog.type === 'confirm' ? (
                    <div className="flex gap-3">
                       <button onClick={() => setDialog(null)} className="flex-1 bg-gray-200 text-gray-800 font-black py-4 rounded-xl uppercase text-[10px] tracking-widest hover:bg-gray-300 transition-all">Cancelar</button>
