@@ -2023,7 +2023,23 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
     window.addEventListener('error', onErr);
     window.addEventListener('unhandledrejection', onRej);
-    return () => { window.removeEventListener('error', onErr); window.removeEventListener('unhandledrejection', onRej); };
+
+    // Si la página intenta recargarse o navegar fuera (venga de donde venga esa orden),
+    // esto la intercepta y te deja cancelar con el diálogo nativo del navegador — así
+    // confirmamos si es una recarga real (no algo interno de React/BancoApp).
+    const onBeforeUnload = (e) => {
+      console.trace('⚠ beforeunload disparado — la página está intentando recargar/salir');
+      e.preventDefault();
+      e.returnValue = '¿Seguro que quieres salir? Puede perder lo que estaba llenando.';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      window.removeEventListener('error', onErr);
+      window.removeEventListener('unhandledrejection', onRej);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
   }, []);
 
   const [fetchingBCV, setFetchingBCV] = useState(false);
