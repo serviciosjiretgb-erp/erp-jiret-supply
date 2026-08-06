@@ -2007,6 +2007,25 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
 function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [] }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
+
+  // ── DIAGNÓSTICO TEMPORAL — mientras se ubica la causa de "la pantalla se cierra sola" ──
+  // Cualquier error de JS no capturado, o cualquier promesa rechazada sin .catch, se muestra
+  // en un alert con el mensaje y el archivo/línea exactos, en vez de dejar que React resetee
+  // la app en silencio (que es lo que se ve como "la ventana se cerró").
+  useEffect(() => {
+    const onErr = (e) => {
+      alert('⚠ ERROR ATRAPADO (esto explica el cierre):\n\n' + (e?.message || e) + '\n\n' + (e?.filename ? `Archivo: ${e.filename}:${e.lineno}` : '') + '\n\n' + (e?.error?.stack ? e.error.stack.split('\n').slice(0,5).join('\n') : ''));
+      console.error('window.onerror capturado:', e);
+    };
+    const onRej = (e) => {
+      alert('⚠ PROMESA RECHAZADA SIN CAPTURAR (esto explica el cierre):\n\n' + (e?.reason?.message || e?.reason || e) + '\n\n' + (e?.reason?.stack ? String(e.reason.stack).split('\n').slice(0,5).join('\n') : ''));
+      console.error('unhandledrejection capturado:', e);
+    };
+    window.addEventListener('error', onErr);
+    window.addEventListener('unhandledrejection', onRej);
+    return () => { window.removeEventListener('error', onErr); window.removeEventListener('unhandledrejection', onRej); };
+  }, []);
+
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
