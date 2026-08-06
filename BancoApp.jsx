@@ -5423,15 +5423,41 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setCajaDet(m); setCajaEdit(false); // siempre abre en modo vista; editar solo manual
       if(m._fromBanco) return; // para ERP solo vista
       setCajaEdit(true);
-      setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',monto:String(m.monto||''),tasa:String(m.tasa||tasaActiva),aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||''});
+      setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',
+        motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',
+        ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
     };
 
     const guardarEditCaja = async() => {
       if(!cajaDet) return;
+      if(!form.montoNativo||Number(form.montoNativo)<=0) return alert('Ingrese un monto válido');
+      if(!form.concepto) return alert('Ingrese el concepto');
       setBusy(true);
       try {
-        await updateDoc(getDocRef('caja_movimientos',cajaDet.id),{fecha:form.fecha,tipo:form.tipo,moneda:form.moneda,concepto:form.concepto,referencia:form.referencia,updatedAt:Date.now()});
+        const mNatEdit = Number(form.montoNativo)||0;
+        const tasaEdit = Number(form.tasa)||tasaActiva;
+        const esBsCaja = form.moneda==='BS';
+        const montoBsEdit  = esBsCaja ? mNatEdit : mNatEdit*tasaEdit;
+        const montoUSDEdit = esBsCaja ? (tasaEdit>0?mNatEdit/tasaEdit:0) : mNatEdit;
+        const cajaObjEdit = cajas.find(c=>c.id===cajaDet.cajaId);
+        const ctaCajaEdit  = cajaObjEdit?.cuentaContableNom || `Caja ${cajaObjEdit?.nombre||''}`;
+        const ctaContraEdit = form.ctaContraNombre||(form.tipo==='Ingreso'?'Cuentas por Cobrar':'Cuentas por Pagar');
+        const terceroEdit = form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):provs.find(p=>p.id===form.terceroId);
+        await updateDoc(getDocRef('caja_movimientos',cajaDet.id),{
+          fecha:form.fecha, tipo:form.tipo, moneda:form.moneda, concepto:form.concepto, referencia:form.referencia,
+          motivoEgreso:form.motivoEgreso,
+          tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
+          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero,
+          terceroId:terceroEdit?.id||'', terceroNombre:terceroEdit?.nombre||'',
+          ctaContraId:form.ctaContraId, ctaContraNombre:form.ctaContraNombre,
+          asientoDebito:form.tipo==='Ingreso'?ctaCajaEdit:ctaContraEdit,
+          asientoCredito:form.tipo==='Ingreso'?ctaContraEdit:ctaCajaEdit,
+          updatedAt:Date.now(),
+        });
         setCajaDet(null); setCajaEdit(false); setForm(initF());
+      } catch(e) {
+        alert('❌ No se pudo guardar: '+(e?.message||e));
       } finally { setBusy(false); }
     };
 
@@ -5614,15 +5640,90 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               ?<><BBo onClick={()=>{setCajaEdit(false);setForm(initF());}}>Cancelar</BBo><BBg onClick={guardarEditCaja} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
               :<><BBd onClick={()=>{if(cajaDet._fromBanco)return alert('Este movimiento viene de CxC/CxP. Elim. desde el módulo origen.');setCajaPwdModal(cajaDet);setCajaDet(null);}}>🗑 Eliminar</BBd><div className="flex-1"/>{!cajaDet._fromBanco&&<BBg onClick={()=>abrirEditCaja(cajaDet)}>✏ Editar</BBg>}</>
             }>
-            {cajaEdit?(
+            {cajaEdit?(()=>{
+              const mNatEd = Number(form.montoNativo)||0;
+              const tasaEd = Number(form.tasa)||tasaActiva;
+              const bsEd = form.moneda==='BS';
+              const montoBsEd  = bsEd ? mNatEd : mNatEd*tasaEd;
+              const montoUSDEd = bsEd ? (tasaEd>0?mNatEd/tasaEd:0) : mNatEd;
+              const cajaSelEd = cajas.find(c=>c.id===cajaDet.cajaId);
+              return (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <BFG label="Fecha"><input type="date" className={inp} value={form.fecha} onChange={e=>setForm({...form,fecha:e.target.value})}/></BFG>
-                  <BFG label="Referencia"><input className={inp} value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})}/></BFG>
+                  <BFG label="Tipo">
+                    <div className="flex gap-1">{['Ingreso','Egreso'].map(t=>(
+                      <button key={t} onClick={()=>setForm({...form,tipo:t})}
+                        className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase border ${form.tipo===t?(t==='Ingreso'?'bg-emerald-500 text-white border-emerald-500':'bg-red-500 text-white border-red-500'):'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
+                    ))}</div>
+                  </BFG>
                 </div>
-                <BFG label="Concepto" full><input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})}/></BFG>
+                <div className="grid grid-cols-2 gap-4">
+                  <BFG label="Referencia"><input className={inp} value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})}/></BFG>
+                  {form.tipo==='Egreso'&&<div className="bg-red-50 rounded-xl p-3 border border-red-100">
+                    <p className="text-[9px] font-black uppercase text-red-700 mb-2 tracking-widest">Motivo del Egreso</p>
+                    <div className="flex gap-2 flex-wrap">{['Pago Proveedor','Nómina','Gastos Operativos','Impuestos','Préstamo','Otros'].map(o=>(
+                      <button key={o} onClick={()=>setForm({...form,motivoEgreso:o})} className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase border transition-all ${form.motivoEgreso===o?'bg-red-600 text-white border-red-600':'bg-white text-slate-500 border-slate-200'}`}>{o}</button>
+                    ))}</div>
+                  </div>}
+                </div>
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                  <div className="grid grid-cols-3 gap-4">
+                    <BFG label={`Monto (${form.moneda})`}><input type="number" step="0.01" min="0.01" className={`${inp} font-black text-lg`} value={form.montoNativo} onChange={e=>setForm({...form,montoNativo:e.target.value})}/></BFG>
+                    <BFG label="Tasa Bs/$"><input type="number" step="0.01" className={inp} value={form.tasa} onChange={e=>setForm({...form,tasa:e.target.value})}/></BFG>
+                    <div className="flex flex-col justify-end pb-0.5">
+                      <div className="rounded-xl p-3 text-center" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}>
+                        <p className="text-emerald-400 font-mono font-black text-lg leading-none">{'$'+bancoFmt(montoUSDEd)}</p>
+                        <p className="text-slate-400 text-[10px] mt-0.5">Bs. {bancoFmt(montoBsEd)}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <BFG label="Concepto / Descripción" full><input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})}/></BFG>
+                <div className="rounded-2xl overflow-hidden border border-blue-100">
+                  <div className="px-5 py-3 bg-blue-600 flex items-center gap-2">
+                    <BookOpen size={14} className="text-blue-200"/><p className="text-[10px] font-black uppercase text-white tracking-widest">Asiento Contable — {bsEd?'Bs. (c/equiv. USD)':'USD (c/equiv. Bs.)'}</p>
+                  </div>
+                  <div className="p-4 bg-blue-50 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white rounded-xl p-3 border-l-4 border-emerald-500 border border-slate-100">
+                        <p className="text-[8px] font-black uppercase text-emerald-600 tracking-widest mb-1">DÉBITO +</p>
+                        <p className="text-[11px] font-black text-slate-800">{form.tipo==='Ingreso'?(cajaSelEd?.cuentaContableNom||`Caja ${cajaSelEd?.nombre||''}`):(form.ctaContraNombre||'[Cuenta Gasto/Proveedor]')}</p>
+                        {mNatEd>0&&<div className="mt-1"><p className="font-mono font-black text-emerald-600 text-xs">{bsEd?`Bs. ${bancoFmt(montoBsEd)}`:`$${bancoFmt(montoUSDEd)}`}</p></div>}
+                      </div>
+                      <div className="bg-white rounded-xl p-3 border-l-4 border-red-500 border border-slate-100">
+                        <p className="text-[8px] font-black uppercase text-red-600 tracking-widest mb-1">CRÉDITO −</p>
+                        <p className="text-[11px] font-black text-slate-800">{form.tipo==='Egreso'?(cajaSelEd?.cuentaContableNom||`Caja ${cajaSelEd?.nombre||''}`):(form.ctaContraNombre||'[CxC / Ingreso]')}</p>
+                        {mNatEd>0&&<div className="mt-1"><p className="font-mono font-black text-red-600 text-xs">{bsEd?`Bs. ${bancoFmt(montoBsEd)}`:`$${bancoFmt(montoUSDEd)}`}</p></div>}
+                      </div>
+                    </div>
+                    <BFG label="Cuenta Contrapartida (PUC)">
+                      <select className={sel} value={form.ctaContraId} onChange={e=>{const c=contCuentas.find(x=>x.id===e.target.value);setForm({...form,ctaContraId:e.target.value,ctaContraNombre:c?`${c.codigo} · ${c.nombre}`:''})}}>
+                        <option value="">— Seleccionar del Plan de Cuentas —</option>
+                        {[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
+                      </select>
+                    </BFG>
+                  </div>
+                </div>
+                <BFG label="Tercero Vinculado">
+                  <div className="flex items-center gap-3">
+                    <button onClick={()=>setForm({...form,aplicaTercero:!form.aplicaTercero})} className={`w-11 h-6 rounded-full transition-all relative ${form.aplicaTercero?'bg-blue-600':'bg-slate-200'}`}>
+                      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${form.aplicaTercero?'left-5':'left-0.5'}`}/>
+                    </button>
+                    {form.aplicaTercero&&(<>
+                      <select className={`${sel} w-32`} value={form.tipoTercero} onChange={e=>setForm({...form,tipoTercero:e.target.value,terceroId:''})}>
+                        <option value="Cliente">Cliente</option><option value="Proveedor">Proveedor</option>
+                      </select>
+                      <select className={sel} value={form.terceroId} onChange={e=>setForm({...form,terceroId:e.target.value})}>
+                        <option value="">— Seleccionar —</option>
+                        {(form.tipoTercero==='Cliente'?clientes:provs).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+                      </select>
+                    </>)}
+                  </div>
+                </BFG>
               </div>
-            ):(
+              );
+            })():(
               <div className="space-y-3">
                 {cajaDet._fromBanco&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] font-black text-blue-700">📌 Movimiento originado en {cajaDet.origen==='CxP'?'Cuentas por Pagar':'Cuentas por Cobrar'} — solo lectura</div>}
                 <div className="grid grid-cols-2 gap-3">
