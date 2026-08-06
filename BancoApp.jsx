@@ -3946,13 +3946,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             const nativo=bs?(usdEq*tasaN):usdEq;
             setForm({...form,tasa:v,montoUSD:String(usdEq),montoNativo:String(nativo)});
           }}/>
-          <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
-            const t=await fetchTasaBCV(form.fecha);
-            if(!t) return;
-            const tasaN=t; const montoOpN=Number(form.montoOp)||0;
-            const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
-            const nativo=bs?(usdEq*tasaN):usdEq;
-            setForm({...form,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)});
+          <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async(ev)=>{
+            ev.preventDefault(); ev.stopPropagation();
+            try{
+              const t=await fetchTasaBCV(form.fecha);
+              if(!t) return;
+              const tasaN=t; const montoOpN=Number(form.montoOp)||0;
+              const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
+              const nativo=bs?(usdEq*tasaN):usdEq;
+              setForm(f=>({...f,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)}));
+            }catch(err){ console.error('BCV button error:', err); alert('No se pudo actualizar la tasa: '+(err?.message||err)); }
           }} className="absolute right-2 top-1.5 bg-transparent border-none p-0.5 cursor-pointer disabled:cursor-not-allowed">
             <RefreshCw size={14} className={`text-blue-400 ${fetchingBCV?'animate-spin':''}`}/>
           </button>
@@ -5874,13 +5877,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                             const nativo=bs?(usdEq*tasaN):usdEq;
                             setForm({...form,tasa:v,montoUSD:String(usdEq),montoNativo:String(nativo)});
                           }}/>
-                          <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async()=>{
-                            const t=await fetchTasaBCV(form.fecha);
-                            if(!t) return;
-                            const tasaN=t; const montoOpN=Number(form.montoOp)||0;
-                            const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
-                            const nativo=bs?(usdEq*tasaN):usdEq;
-                            setForm({...form,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)});
+                          <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async(ev)=>{
+                            ev.preventDefault(); ev.stopPropagation();
+                            try{
+                              const t=await fetchTasaBCV(form.fecha);
+                              if(!t) return;
+                              const tasaN=t; const montoOpN=Number(form.montoOp)||0;
+                              const usdEq=form.monedaOp==='USD'?montoOpN:(montoOpN/tasaN);
+                              const nativo=bs?(usdEq*tasaN):usdEq;
+                              setForm(f=>({...f,tasa:String(t),montoUSD:String(usdEq),montoNativo:String(nativo)}));
+                            }catch(err){ console.error('BCV button error:', err); alert('No se pudo actualizar la tasa: '+(err?.message||err)); }
                           }} className="absolute right-2 top-1.5 bg-transparent border-none p-0.5 cursor-pointer disabled:cursor-not-allowed">
                             <RefreshCw size={14} className={`text-blue-400 ${fetchingBCV?'animate-spin':''}`}/>
                           </button>
