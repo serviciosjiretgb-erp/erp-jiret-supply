@@ -3001,10 +3001,14 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
   const lineas=[];
   const items=f.itemsOC||[];
   if(items.length>0){
+    const esBsFC = f.moneda==='Bs';
     items.forEach(it=>{
       const cta=resolverCuentaFC(it,servicios,planDeCuentasArg);
+      const totalItem=pNum(it.total||0); // en la moneda de la factura (f.moneda), no siempre USD
+      const montoUSDItem = esBsFC ? (tasa?totalItem/tasa:0) : totalItem;
+      const montoBsItem  = esBsFC ? totalItem : (tasa?totalItem*tasa:0);
       lineas.push({tipo:'DEBITO',cuenta:cta,concepto:`${it.desc||'—'} (${it.unidad||'Und'} × ${pNum(it.cantidad).toFixed(2)})`,
-        montoUSD:pNum(it.total||0),montoBs:tasa?pNum(it.total||0)*tasa:0});
+        montoUSD:montoUSDItem,montoBs:montoBsItem});
     });
   } else {
     const ctaManual=resolverCuentaManualFC(f,planDeCuentasArg);
