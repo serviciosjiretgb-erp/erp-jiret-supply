@@ -11041,6 +11041,162 @@ const generateDefaultPermissions = () => {
 
 // ============================================================================
 const contFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(Number(n) || 0));
+
+// ════════════════════════════════════════════════════════════════════════
+// ÁRBOL CONTABLE — Estado de Resultados / Balance General (Contabilidad)
+// Definido a nivel de módulo a propósito (no dentro de renderEstadoResultadosModule
+// ni renderBalanceGeneralModule) — esos viven dentro del componente principal que
+// se re-renderiza seguido; un componente de fila definido ahí adentro se recrearía
+// en cada render y perdería su estado, el mismo bug de fondo que encontramos hoy
+// en BancoApp.jsx. Aquí arriba, la referencia queda fija siempre.
+// No toca getAsientosReales() ni ninguna otra fuente de datos — solo agrupa lo
+// que esos módulos YA calculan (porCuenta) usando la jerarquía real del Plan de
+// Cuentas (grupo/subGrupo), y agrega export a Excel/PDF con el mismo patrón de
+// tabla HTML que ya usa el resto del archivo (handleExportExcel/handlePDFFromHTML).
+const ccCompareCodeArrays = (pa, pb) => { for (let i=0;i<Math.max(pa.length,pb.length);i++){ const d=(pa[i]||0)-(pb[i]||0); if(d!==0) return d; } return 0; };
+const ccGetEffectiveCode = (node) => {
+  const own = node.n.match(/^(\d[\d.]*)/)?.[1];
+  if (own) return own.split('.').map(Number);
+  if (node.c && node.c.length) { let best=null; node.c.forEach(ch=>{ const c=ccGetEffectiveCode(ch); if(c&&(!best||ccCompareCodeArrays(c,best)<0)) best=c; }); return best; }
+  return null;
+};
+const ccSortTreeNodes = (nodes) => {
+  nodes.forEach(n=>{ if(n.c&&n.c.length) ccSortTreeNodes(n.c); });
+  nodes.sort((a,b)=>{ const ca=ccGetEffectiveCode(a), cb=ccGetEffectiveCode(b); if(ca&&cb) return ccCompareCodeArrays(ca,cb); if(ca&&!cb) return -1; if(!ca&&cb) return 1; return a.n.localeCompare(b.n); });
+  return nodes;
+};
+// cuentasAgregadas: [{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}] — lo que YA arma cada
+// módulo. gruposIncluir: ['1'] etc. calcularSaldo(entry)=>{usd,bs} define el signo según el
+// tipo de cuenta (distinto entre Activo, Pasivo, Ingresos, etc.) — lo decide quien llama.
+const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcularSaldo) => {
+  const root = [];
+  const normKey = s => (s||'').trim().replace(/\s+/g,' ').toUpperCase();
+  const grupoMap={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5.1':'COSTOS','5':'GASTOS','6':'GASTOS'};
+  (cuentasAgregadas||[]).filter(c=>gruposIncluir.some(g=>String(c.codigo).startsWith(g))).forEach(c=>{
+    const {usd,bs} = calcularSaldo(c);
+    if (Math.abs(usd)<0.005 && Math.abs(bs)<0.005) return;
+    const pdc = (planDeCuentasArr||[]).find(p=>p.codigo===c.codigo);
+    const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
+    const grNom = grupoMap[grKey] || pdc?.grupo || grKey;
+    const pathArray = [grNom, pdc?.grupo&&pdc.grupo!==grNom?pdc.grupo:'', pdc?.subGrupo||''].filter(Boolean);
+    let cur = root;
+    pathArray.forEach(folderName=>{
+      const key = normKey(folderName);
+      let folder = cur.find(n=>normKey(n.n)===key);
+      if (!folder) { folder = {n:folderName.trim(), c:[], u:0, b:0}; cur.push(folder); }
+      cur = folder.c;
+    });
+    cur.push({ n:`${c.codigo} - ${c.cuenta||''}`, u:usd, b:bs, isLeaf:true });
+  });
+  const compute = (nodes) => { let u=0,b=0; nodes.forEach(n=>{ if(!n.isLeaf){ const t=compute(n.c); n.u=t.u; n.b=t.b; } u+=n.u; b+=n.b; }); return {u,b}; };
+  compute(root);
+  root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
+  return root;
+};
+const CCArbolRow = ({ node, level=0, totalBase, currency='both' }) => {
+  const [isOpen, setIsOpen] = useState(level < 1);
+  const isAccountNode = /^\d+[.\d]*\s*-/.test(node.n) || (!node.c || node.c.length===0);
+  const isLeaf = !node.c || node.c.length===0;
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const pct = totalBase && node.u!==0 ? `${((Math.abs(node.u)/totalBase)*100).toFixed(2)}%` : '';
+  const indent = { paddingLeft: `${level*16+10}px` };
+
+  if (!isLeaf && !isAccountNode) {
+    const isRoot = level===0;
+    return (
+      <>
+        <tr className={isRoot?'bg-gray-900':'bg-gray-50'}>
+          <td style={indent} className={isRoot?'py-2 px-3 text-orange-400 font-black text-[10px] uppercase tracking-widest':'py-1.5 px-3 font-black text-[10px] text-gray-700 uppercase'}>{node.n}</td>
+          <td colSpan={3}/>
+        </tr>
+        {node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency}/>)}
+        <tr className={isRoot?'bg-gray-800 text-white':'bg-gray-100 text-gray-800 border-y border-gray-300'}>
+          <td style={{paddingLeft:level*16+24}} className="py-1.5 px-3 font-black text-[9px] uppercase tracking-wider">Total {node.n}</td>
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{ccFmtR(node.u)}</td>}
+          {showBS  && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{ccFmtR(node.b)}</td>}
+          <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{pct}</td>
+        </tr>
+      </>
+    );
+  }
+  return (
+    <>
+      <tr onClick={()=>!isLeaf&&setIsOpen(!isOpen)} className="bg-white hover:bg-gray-50 border-b border-gray-100 cursor-pointer">
+        <td style={indent} className="py-1.5 px-3 font-bold text-[10px] text-gray-700 flex items-center gap-1.5">
+          {!isLeaf && <span onClick={e=>{e.stopPropagation();setIsOpen(!isOpen);}} className={`inline-flex items-center justify-center w-3.5 h-3.5 border rounded-sm text-[10px] leading-none ${isOpen?'border-gray-400 text-gray-600 bg-gray-100':'border-gray-300 text-gray-400 bg-white'}`}>{isOpen?'−':'+'}</span>}
+          <span className="truncate">{node.n}</span>
+        </td>
+        {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-700">{ccFmtR(node.u)}</td>}
+        {showBS  && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-700">{ccFmtR(node.b)}</td>}
+        <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-400">{pct}</td>
+      </tr>
+      {isOpen && node.c && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency}/>)}
+    </>
+  );
+};
+// Excel: mismo patrón de tabla HTML con namespace de Excel que usa el resto del archivo
+// (handleExportExcel), no una librería nueva. flatRows: [{label,level,isSection,isTotal,u,b}]
+const ccFlattenArbol = (nodes, level=0, rows=[]) => {
+  nodes.forEach(n=>{
+    const isAccountNode = /^\d+[.\d]*\s*-/.test(n.n) || (!n.c || n.c.length===0);
+    if (!n.isLeaf && n.c?.length) {
+      rows.push({label:n.n, level, isSection:!isAccountNode, u:null, b:null});
+      ccFlattenArbol(n.c, level+1, rows);
+      rows.push({label:'Total '+n.n, level, isTotal:true, u:n.u, b:n.b});
+    } else rows.push({label:n.n, level, u:n.u, b:n.b});
+  });
+  return rows;
+};
+const ccExportExcelHTML = (titulo, subtitulo, tree, currency) => {
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const rows = ccFlattenArbol(tree);
+  const ths = ['Cuenta', ...(showUSD?['USD']:[]), ...(showBS?['Bs.']:[])];
+  let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child{text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>${titulo}</h3><p>${subtitulo}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const indent='&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(r.level);
+    const bg = r.isSection?'#f3f4f6':r.isTotal?'#e5e7eb':'#fff';
+    const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
+    html += `<tr style="background:${bg};${bold}"><td>${indent}${r.label}</td>${showUSD?`<td>${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td>${r.b!=null?ccFmtR(r.b):''}</td>`:''}</tr>`;
+  });
+  html += `</tbody></table></body></html>`;
+  return html;
+};
+const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra) => {
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const rows = ccFlattenArbol(tree);
+  let filas = '';
+  rows.forEach(r=>{
+    const indent = (r.level*16)+8;
+    const bg = r.isSection?'#f3f4f6':r.isTotal?'#e5e7eb':'#fff';
+    const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
+    filas += `<tr style="background:${bg};${bold}border-bottom:1px solid #eee"><td style="padding:5px 6px;padding-left:${indent}px">${r.label}</td>${showUSD?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.b!=null?ccFmtR(r.b):''}</td>`:''}</tr>`;
+  });
+  if (filaExtra) filas += filaExtra;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
+<style>
+  @page { size: A4; margin: 16mm 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 9pt; color: #111; background: #fff; padding: 16px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 3px solid #E8541A; }
+  .logo { font-size: 18pt; font-weight: 900; color: #E8541A; }
+  .company { text-align: right; }
+  .company .name { font-weight: 900; font-size: 11pt; }
+  .company .sub { font-size: 7.5pt; color: #555; }
+  h3 { text-transform: uppercase; margin: 10px 0 2px; }
+  p.sub { color: #666; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+  th { background: #111827; color: #fff; padding: 6px; text-align: right; font-size: 8pt; text-transform: uppercase; }
+  th:first-child, td:first-child { text-align: left; }
+  @media print { .btn-print { display: none; } }
+</style></head><body>
+<div class="header"><div class="logo">Supply G&amp;B</div><div class="company"><div class="name">SERVICIOS JIRET G&amp;B, C.A.</div><div class="sub">RIF: J-412309374<br>AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB<br>SECTOR EL TREBOL MARACAIBO-ZULIA</div></div></div>
+<h3>${titulo}</h3><p class="sub">${subtitulo}</p>
+<table><thead><tr><th>Cuenta</th>${showUSD?'<th>USD</th>':''}${showBS?'<th>Bs.</th>':''}</tr></thead><tbody>${filas}</tbody></table>
+<br><button class="btn-print" onclick="window.print()" style="padding:8px 20px;background:#E8541A;color:#fff;border:none;border-radius:4px;font-weight:900;cursor:pointer;font-size:10pt;">🖨 IMPRIMIR / GUARDAR PDF</button>
+</body></html>`;
+};
+const ccAbrirVentana = (html) => { const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close(); } else alert('Permite las ventanas emergentes para ver el reporte.'); };
 const contDd = (s) => { if (!s) return '—'; const [y, m, d] = String(s).split('-'); return `${d}/${m}/${y}`; };
 const contNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const partesCtaCC = (str) => { const p=(str||'').split('—'); return { codigo:(p[0]||'').trim(), nombre:p.slice(1).join('—').trim() }; };
@@ -13065,6 +13221,8 @@ function App() {
   },[]);
   const [contFiltDesde, setContFiltDesde] = useState('');
   const [contFiltHasta, setContFiltHasta] = useState('');
+  const [contERCurrency, setContERCurrency] = useState('both');
+  const [contBGCurrency, setContBGCurrency] = useState('both');
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
@@ -42556,27 +42714,43 @@ ${resumenHtml}
       (a.lineas||[]).forEach(l=>{
         const cod = l.codigo||'';
         if(!cod) return;
-        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0};
+        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
         porCuenta[cod].debeBs += parseNum(l.debeBs||0);
         porCuenta[cod].haberBs += parseNum(l.haberBs||0);
+        porCuenta[cod].debeUSD += parseNum(l.debeUSD||0);
+        porCuenta[cod].haberUSD += parseNum(l.haberUSD||0);
       });
     });
-    const cuentas = Object.values(porCuenta);
-    const ingresos = cuentas.filter(c=>c.codigo.startsWith('4')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const costos = cuentas.filter(c=>c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const gastos = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const totalIngresos = ingresos.reduce((s,c)=>s+c.saldo,0);
-    const totalCostos = costos.reduce((s,c)=>s+c.saldo,0);
-    const totalGastos = gastos.reduce((s,c)=>s+c.saldo,0);
-    const utilidadBruta = totalIngresos - totalCostos;
-    const utilidadNeta = utilidadBruta - totalGastos;
-    const FilaER = ({c}) => (
-      <tr className="border-b border-gray-100">
-        <td className="px-3 py-1.5 pl-8 font-mono text-[9px] text-gray-400">{c.codigo}</td>
-        <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
-        <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>
-      </tr>
-    );
+    const cuentasAgg = Object.values(porCuenta);
+
+    const treeIngresos = ccBuildArbol(cuentasAgg, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+    const treeCostos    = ccBuildArbol(cuentasAgg, planDeCuentas, ['5.1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const cuentasGastos = cuentasAgg.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1'));
+    const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+
+    const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
+    const totalIngresosUSD=sumTree(treeIngresos,'u'), totalIngresosBs=sumTree(treeIngresos,'b');
+    const totalCostosUSD=sumTree(treeCostos,'u'), totalCostosBs=sumTree(treeCostos,'b');
+    const totalGastosUSD=sumTree(treeGastosReal,'u'), totalGastosBs=sumTree(treeGastosReal,'b');
+    const utilidadBrutaUSD=totalIngresosUSD-totalCostosUSD, utilidadBrutaBs=totalIngresosBs-totalCostosBs;
+    const utilidadNetaUSD=utilidadBrutaUSD-totalGastosUSD, utilidadNetaBs=utilidadBrutaBs-totalGastosBs;
+    const showUSD = contERCurrency!=='bs'; const showBS = contERCurrency!=='usd';
+    const baseVentas = totalIngresosUSD||1;
+
+    const exportarExcel = () => {
+      const arbolCompleto = [{n:'INGRESOS',c:treeIngresos,u:totalIngresosUSD,b:totalIngresosBs},{n:'COSTO DE VENTAS',c:treeCostos,u:totalCostosUSD,b:totalCostosBs},{n:'GASTOS OPERATIVOS',c:treeGastosReal,u:totalGastosUSD,b:totalGastosBs}];
+      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency);
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    };
+    const exportarPDF = () => {
+      const arbolCompleto = [{n:'INGRESOS',c:treeIngresos,u:totalIngresosUSD,b:totalIngresosBs},{n:'COSTO DE VENTAS',c:treeCostos,u:totalCostosUSD,b:totalCostosBs},{n:'GASTOS OPERATIVOS',c:treeGastosReal,u:totalGastosUSD,b:totalGastosBs}];
+      const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">RESULTADO DEL EJERCICIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
+      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra);
+      ccAbrirVentana(html);
+    };
+
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -42589,28 +42763,42 @@ ${resumenHtml}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
+              <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
+                {[['both','USD + Bs'],['usd','Solo USD'],['bs','Solo Bs']].map(([v,lbl])=>(
+                  <button key={v} onClick={()=>setContERCurrency(v)} className={`px-2.5 py-1.5 rounded text-[9px] font-black uppercase transition-colors ${contERCurrency===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-gray-100'}`}>{lbl}</button>
+                ))}
+              </div>
+              <div className="flex gap-2 ml-auto">
+                <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
+                <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
+              </div>
             </div>
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-3xl">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <table className="w-full text-xs">
+                <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Cuenta</th>
+                    {showUSD && <th className="px-3 py-2 text-right">USD</th>}
+                    {showBS  && <th className="px-3 py-2 text-right">Bs.</th>}
+                    <th className="px-3 py-2 text-right">%</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Ingresos</td></tr>
-                  {ingresos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin ingresos en el rango elegido.</td></tr>}
-                  {ingresos.map(c=><FilaER key={c.codigo} c={c}/>)}
-                  <tr className="bg-emerald-50 border-y-2 border-emerald-200"><td colSpan={2} className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Ingresos</td><td className="px-3 py-2 text-right font-mono font-black text-emerald-700">{contFmt(totalIngresos)}</td></tr>
-
-                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Costo de Ventas</td></tr>
-                  {costos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin costos en el rango elegido.</td></tr>}
-                  {costos.map(c=><FilaER key={c.codigo} c={c}/>)}
-                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Costo de Ventas</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalCostos)}</td></tr>
-
-                  <tr className="bg-gray-900"><td colSpan={2} className="px-3 py-2.5 font-black text-white text-[11px] uppercase">Utilidad Bruta</td><td className={`px-3 py-2.5 text-right font-mono font-black text-[11px] ${utilidadBruta>=0?'text-emerald-400':'text-red-400'}`}>{contFmt(utilidadBruta)}</td></tr>
-
-                  <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Gastos Operativos</td></tr>
-                  {gastos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin gastos en el rango elegido.</td></tr>}
-                  {gastos.map(c=><FilaER key={c.codigo} c={c}/>)}
-                  <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Gastos Operativos</td><td className="px-3 py-2 text-right font-mono font-black text-red-700">{contFmt(totalGastos)}</td></tr>
-
-                  <tr className={utilidadNeta>=0?'bg-emerald-600':'bg-red-600'}><td colSpan={2} className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNeta>=0?'Utilidad Neta':'Pérdida Neta'}</td><td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{contFmt(Math.abs(utilidadNeta))}</td></tr>
+                  <CCArbolRow node={{n:'INGRESOS',c:treeIngresos,u:totalIngresosUSD,b:totalIngresosBs}} totalBase={baseVentas} currency={contERCurrency}/>
+                  <CCArbolRow node={{n:'COSTO DE VENTAS',c:treeCostos,u:totalCostosUSD,b:totalCostosBs}} totalBase={baseVentas} currency={contERCurrency}/>
+                  <tr className="bg-blue-50 border-y-2 border-blue-200">
+                    <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Utilidad Bruta</td>
+                    {showUSD && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaUSD)}</td>}
+                    {showBS  && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaBs>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaBs)}</td>}
+                    <td/>
+                  </tr>
+                  <CCArbolRow node={{n:'GASTOS OPERATIVOS',c:treeGastosReal,u:totalGastosUSD,b:totalGastosBs}} totalBase={baseVentas} currency={contERCurrency}/>
+                  <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
+                    <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
+                    {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
+                    {showBS  && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaBs)}</td>}
+                    <td/>
+                  </tr>
                 </tbody>
               </table>
             </div>
