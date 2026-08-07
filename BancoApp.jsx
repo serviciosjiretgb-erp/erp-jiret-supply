@@ -2006,14 +2006,27 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
 
 const DebugPanel = () => {
   const [, forceUpdate] = useState(0);
+  const [minimizado, setMinimizado] = useState(window.__bancoDbgMin ?? true);
   useEffect(() => {
     const id = setInterval(() => forceUpdate(n => n + 1), 400);
     return () => clearInterval(id);
   }, []);
+  const toggle = () => { const v = !minimizado; setMinimizado(v); window.__bancoDbgMin = v; };
   const logs = window.__bancoDbg || [];
+
+  if (minimizado) {
+    return (
+      <button onClick={toggle} style={{position:'fixed', bottom:8, left:8, zIndex:999999, background:'rgba(15,23,42,.95)', color:'#4ade80', fontSize:10, fontFamily:'monospace', fontWeight:900, padding:'8px 12px', borderRadius:10, border:'2px solid #4ade80', cursor:'pointer', boxShadow:'0 0 20px rgba(0,0,0,.5)'}}>
+        🔍 Debug ({logs.length}) ▲
+      </button>
+    );
+  }
   return (
     <div style={{position:'fixed', bottom:8, left:8, width:440, maxHeight:260, overflow:'auto', background:'rgba(15,23,42,.97)', color:'#4ade80', fontSize:10, fontFamily:'monospace', padding:10, borderRadius:10, zIndex:999999, border:'2px solid #4ade80', boxShadow:'0 0 20px rgba(0,0,0,.5)'}}>
-      <div style={{color:'#fff', fontWeight:900, marginBottom:6, fontSize:11}}>🔍 DEBUG LOG — {logs.length} evento(s)</div>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6}}>
+        <div style={{color:'#fff', fontWeight:900, fontSize:11}}>🔍 DEBUG LOG — {logs.length} evento(s)</div>
+        <button onClick={toggle} style={{background:'none', border:'1px solid #4ade80', color:'#4ade80', borderRadius:6, padding:'2px 8px', fontSize:10, fontWeight:900, cursor:'pointer'}}>▼ Minimizar</button>
+      </div>
       {logs.length===0 && <div style={{color:'#94a3b8'}}>Sin eventos todavía...</div>}
       {logs.slice().reverse().map((l,i)=><div key={i} style={{borderBottom:'1px solid rgba(255,255,255,.1)', padding:'2px 0'}}>{l}</div>)}
     </div>
