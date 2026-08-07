@@ -6823,6 +6823,22 @@ const CxPView = ({
     return m;
   },[notasCompraCD]);
 
+  const _ncPorFact = useMemo(()=>{
+    const m = new Map();
+    for(const n of (notasCompraCD||[])){
+      if(!n.facturaId) continue;
+      if(!m.has(n.facturaId)) m.set(n.facturaId,[]);
+      m.get(n.facturaId).push(n);
+    }
+    return m;
+  },[notasCompraCD]);
+  // Neto NC/ND en USD de una factura: NC resta del saldo (ya pagó de menos / le deben menos), ND suma.
+  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
+    const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
+    const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
+    return s + usd*(n.tipo==='NC'?1:-1);
+  },0);
+
   // Anticipos a proveedores aún no aplicados a ninguna factura — mismo criterio que
   // Estado de Cuenta de Proveedor: pagos con esAnticipo=true cuyo saldo (monto-montoAplicado)
   // sigue siendo mayor a cero.
@@ -6848,7 +6864,8 @@ const CxPView = ({
     const tasa = Math.max(pN(f.tasa||0)||tasaBCV||1,1);
     const retIVA = (_retIVAPorFact.get(f.id)||[]).reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasa,0);
     const retISLR = (f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
-    return Math.max(0, total - pagos - retIVA - retISLR);
+    const netoNCND = getNetoNCND(f.id, f.tasa);
+    return Math.max(0, total - pagos - retIVA - retISLR - netoNCND);
   };
 
   // Aging
@@ -6865,7 +6882,7 @@ const CxPView = ({
     if(cxpFechaRef && (f.fecha||'') > fechaRef) return false;
     return getSaldoFact(f) > 0.01;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }),[facturasCompra,pagosCxP,retIVACompra,cxpFechaRef]);
+  }),[facturasCompra,pagosCxP,retIVACompra,notasCompraCD,cxpFechaRef]);
 
   const porProveedor = useMemo(()=>{
     const m = {};
@@ -6877,11 +6894,13 @@ const CxPView = ({
       m[k].total+=s; m[k].facts.push(f);
     });
     (proveedores||[]).forEach(p=>{if(m[p.id]){m[p.id].rif=p.rif||'';m[p.id].nombre=p.nombre||m[p.id].nombre;}});
-    // Include providers with NC/ND directo only
+    // Include providers with NC/ND directo only — las que SÍ tienen facturaId ya se restaron
+    // dentro de getSaldoFact (por factura), sumarlas aquí también las duplicaría.
     _ncPorProv.forEach((ncs,rif)=>{
-      const netNC = ncs.reduce((s,n)=>{
+      const ncsDirectas = ncs.filter(n=>!n.facturaId);
+      const netNC = ncsDirectas.reduce((s,n)=>{
         const t=pN(n.tasaFactura||0)||tasaBCV||1;
-        const u=t>1?pN(n.monto||0)/t:0;
+        const u=t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
         return s+(n.tipo==='ND'?u:-u);
       },0);
       if(!m[rif] && netNC !== 0){
@@ -8869,6 +8888,12 @@ const EstadoCuentaProvView = ({
   const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP]);
   const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra]);
   const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
+  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
+  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
+    const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
+    const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
+    return s + usd*(n.tipo==='NC'?1:-1);
+  },0);
 
   const getSaldoFact = (f) => {
     const total = pN(f.total||0);
@@ -8876,7 +8901,8 @@ const EstadoCuentaProvView = ({
     const tasa = Math.max(pN(f.tasa||0)||tasaBCV||1,1);
     const retIVA = (_retsPorFact.get(f.id)||[]).reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasa,0);
     const retISLR = (f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
-    return total - pagos - retIVA - retISLR;
+    const netoNCND = getNetoNCND(f.id, f.tasa);
+    return total - pagos - retIVA - retISLR - netoNCND;
   };
 
   // Agrupar por proveedor
@@ -9218,7 +9244,7 @@ const NotasCompraNCView = ({
   const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pNum(n)||0); const p=a.toFixed(2).split('.'); return(pNum(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
   const getTodayDate = () => new Date().toISOString().split('T')[0];
 
-  // ── Guardar NC/ND Compra ───────────────────────────────────────────
+  // ── Guardar NC/ND Compra (crea nueva, o actualiza si compraNCForm._editId está presente) ──
   const handleSaveCompraNC = async () => {
     if(!compraNCForm.fecha||!compraNCForm.nroDocumento)
       return setDialog({title:'Datos incompletos',text:'Completa N° documento y fecha.',type:'alert'});
@@ -9232,7 +9258,8 @@ const NotasCompraNCView = ({
     if(esProvDirecto&&!pNum(compraNCForm.montoUSD||0))
       return setDialog({title:'Falta monto',text:'Ingresa el monto.',type:'alert'});
     try{
-      const id=`CNC-${Date.now()}`;
+      const editId=compraNCForm._editId||'';
+      const id=editId||`CNC-${Date.now()}`;
       const facAfect=(facturasCompra||[]).find(i=>i.id===compraNCForm.facturaId);
       const tasaAfect=esProvDirecto
         ?(pNum(compraNCForm.tasaDirecta||0)||pNum(settings?.tasaBCV||0)||1)
@@ -9242,20 +9269,53 @@ const NotasCompraNCView = ({
       const montoFinal=esProvDirecto
         ?parseFloat((pNum(compraNCForm.montoUSD||0)*tasaAfect).toFixed(2))
         :(compraNCForm.monto?pNum(compraNCForm.monto):0);
-      const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,...formSafe}=compraNCForm;
+      const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,_editId:_e,...formSafe}=compraNCForm;
       const cleanForm=Object.fromEntries(Object.entries({...formSafe}).filter(([,v])=>v!==undefined));
       const batch=writeBatch(db);
-      batch.set(getDocRef('notasCompraCreditoDebito',id),{
-        ...cleanForm,id,monto:montoFinal,tasaFactura:tasaAfect,
-        tieneIva:esProvDirecto?false:true,
-        timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
-      });
+      if(editId){
+        batch.update(getDocRef('notasCompraCreditoDebito',id),{
+          ...cleanForm,monto:montoFinal,tasaFactura:tasaAfect,
+          tieneIva:esProvDirecto?false:true,
+          updatedAt:Date.now(),updatedBy:appUser?.name||'Sistema'
+        });
+      } else {
+        batch.set(getDocRef('notasCompraCreditoDebito',id),{
+          ...cleanForm,id,monto:montoFinal,tasaFactura:tasaAfect,
+          tieneIva:esProvDirecto?false:true,
+          timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+        });
+      }
       await batch.commit();
+      if(editId) logAuditoria(appUser,'Notas de Crédito/Débito Compra','EDICIÓN',`${compraNCForm.tipo} ${compraNCForm.nroDocumento} (compras) editada.`);
       setShowCompraNCModal(false);setCompraNCBusq('');setCompraNCBusqCli('');
       setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});
-      setDialog({title:'✅ Guardada',text:`${compraNCForm.tipo} ${compraNCForm.nroDocumento} de compras registrada.`,type:'alert'});
+      setDialog({title:editId?'✅ Actualizada':'✅ Guardada',text:`${compraNCForm.tipo} ${compraNCForm.nroDocumento} de compras ${editId?'actualizada':'registrada'}.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
+
+  const abrirEditarCompraNC = (n) => {
+    setCompraNCForm({...n,_editId:n.id,montoUSD:'',tasaDirecta:n.tasaFactura?String(n.tasaFactura):''});
+    setShowCompraNCModal(true);
+  };
+
+  const handleDeleteCompraNC = (n) => {
+    const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
+    const t=pNum(n.tasaFactura||0)||1;
+    const usd=t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0);
+    setDialog({
+      title:'🗑️ Eliminar '+n.tipo,
+      text:`¿Eliminar ${n.tipo} ${n.nroDocumento||n.id} de ${fc?.proveedor||n.provName||'—'} por $${fN(usd)}?\n\nEsto también revierte su efecto en Cuentas por Pagar (el saldo de la factura vuelve a como estaba) y en el Libro de Compras — no queda ningún registro contable aparte que limpiar, todo se calcula a partir de este documento.\n\nEsta acción no se puede deshacer.`,
+      type:'confirm',
+      onConfirm: async ()=>{
+        try{
+          await deleteDoc(getDocRef('notasCompraCreditoDebito',n.id));
+          logAuditoria(appUser,'Notas de Crédito/Débito Compra','ELIMINACIÓN',`${n.tipo} ${n.nroDocumento||n.id} (compras) eliminada — proveedor ${fc?.proveedor||n.provName||'—'}, $${fN(usd)}.`);
+          setDialog({title:'✅ Eliminada',text:'La nota se eliminó y su efecto en Cuentas por Pagar y Libro de Compras ya se revirtió.',type:'alert'});
+        }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+      },
+    });
+  };
+
 
   const ncFiltradas=(notasCompraCD||[]).filter(n=>
     !compraNCBusq||(n.nroDocumento||'').toUpperCase().includes(compraNCBusq.toUpperCase())||
@@ -9304,11 +9364,12 @@ const NotasCompraNCView = ({
               <th className="text-left p-3 font-black uppercase text-[9px]">Proveedor</th>
               <th className="text-right p-3 font-black uppercase text-[9px]">Monto USD</th>
               <th className="text-left p-3 font-black uppercase text-[9px]">Descripción</th>
+              <th className="text-center p-3 font-black uppercase text-[9px]">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {ncFiltradas.length===0&&(
-              <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm font-bold">No hay notas de crédito/débito de compras registradas</td></tr>
+              <tr><td colSpan={9} className="text-center py-12 text-gray-400 text-sm font-bold">No hay notas de crédito/débito de compras registradas</td></tr>
             )}
             {ncFiltradas.map(n=>{
               const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
@@ -9324,6 +9385,12 @@ const NotasCompraNCView = ({
                   <td className="p-3">{fc?.proveedor||n.provName||'—'}</td>
                   <td className="p-3 text-right font-mono font-black">{n.tipo==='NC'?'-':'+'}{fN(usd)}</td>
                   <td className="p-3 text-gray-500 text-[10px]">{n.descripcion||'—'}</td>
+                  <td className="p-3">
+                    <div className="flex gap-1 justify-center">
+                      <button onClick={()=>abrirEditarCompraNC(n)} title="Editar" className="w-7 h-7 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit size={11}/></button>
+                      <button onClick={()=>handleDeleteCompraNC(n)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}
@@ -9377,7 +9444,7 @@ const NotasCompraNCView = ({
                   <span className="text-xl">📄</span>
                   <div>
                     <h3 className="font-black text-white text-sm uppercase tracking-wide">
-                      Nueva {compraNCForm.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} — Compras
+                      {compraNCForm._editId?'Editar':'Nueva'} {compraNCForm.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} — Compras
                       {esND?' — Ajuste':' — Ajuste financiero'}
                     </h3>
                     <p className="text-[9px] text-gray-400">{esND?'ND referencial · solo ajusta saldo en Libro de Compras':'NC ajuste financiero · ajusta crédito fiscal en Libro de Compras'}</p>
