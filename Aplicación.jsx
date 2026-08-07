@@ -6051,6 +6051,22 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Ítems de la factura — editables si hay diferencias con la OC</p>
                         <span className="text-[9px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-black uppercase flex items-center gap-1">✏️ Editable</span>
+                        {form.moneda==='Bs'&&(form.itemsOC||[]).some(it=>it._totalBsOriginal!=null&&Math.abs(pNum(it.total||0)-pNum(it._totalBsOriginal))<0.01&&pNum(it._totalBsOriginal)>pNum(form.tasa||1))&&(
+                          <button type="button" title="Corrige ítems donde el total en USD quedó igual al de Bs. por un bug ya corregido — recalcula usando el valor en Bs. que sí está bien guardado"
+                            onClick={()=>{
+                              const tasaFix=pNum(form.tasa||0);
+                              if(!tasaFix){setDialog({title:'Falta la tasa',text:'Ingresa la tasa Bs./$ antes de recalcular.',type:'alert'});return;}
+                              const corregidos=(form.itemsOC||[]).map(it=>{
+                                if(it._totalBsOriginal!=null&&Math.abs(pNum(it.total||0)-pNum(it._totalBsOriginal))<0.01&&pNum(it._totalBsOriginal)>tasaFix){
+                                  return{...it,total:parseFloat((pNum(it._totalBsOriginal)/tasaFix).toFixed(2))};
+                                }
+                                return it;
+                              });
+                              setForm(f=>({...f,itemsOC:corregidos}));
+                              setDialog({title:'✅ Recalculado',text:'Los totales en USD de los ítems afectados se recalcularon a partir del monto en Bs. Revisa la pestaña Asiento Contable y dale Actualizar para guardar.',type:'alert'});
+                            }}
+                            className="text-[9px] bg-amber-50 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full font-black uppercase flex items-center gap-1 hover:bg-amber-100">🔧 Recalcular USD de ítems</button>
+                        )}
                       </div>
                       <div className="border border-slate-200 rounded-xl overflow-hidden">
                         <table className="w-full text-xs">
@@ -6074,8 +6090,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                 const newIt={...updated[i],...patch};
                                 const totalCampo=parseFloat((pNum(newIt.cantidad)*pNum(newIt.precioUnit)).toFixed(2));
                                 if(esBsIt){
-                                  // El valor tecleado ES Bs — se guarda tal cual y también su equivalente USD
-                                  newIt.total=totalCampo;
+                                  // El valor tecleado ES Bs — 'total' debe quedar SIEMPRE en USD (así lo esperan
+                                  // generarAsientoFC y calcTotalesFC en todo el resto de la app). Se preserva el
+                                  // monto exacto tecleado en Bs aparte, para no arrastrar redondeo al mostrarlo.
+                                  const tasaIt=pNum(form.tasa||0);
+                                  newIt.total=tasaIt>0?parseFloat((totalCampo/tasaIt).toFixed(2)):totalCampo;
                                   newIt._totalBsOriginal=totalCampo;
                                   newIt._precioBsOriginal=pNum(newIt.precioUnit);
                                 } else {
@@ -6086,8 +6105,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                 setForm(f=>({...f,itemsOC:updated}));
                               };
                               const codigo=(it.invId||it.id||'').split('___')[0]||it.codigo||'—';
-                              // Columna secundaria: si la factura es en Bs, mostrar el equivalente en USD (dividir); si es en USD, mostrar el equivalente en Bs (multiplicar)
-                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0)/Math.max(pNum(form.tasa||0),1):pNum(it.total||0)*pNum(form.tasa||0)):0;
+                              // Columna principal: Bs si la factura es Bs (usa el valor exacto tecleado, sin redondeo de ida y vuelta), USD si no.
+                              const totPrincipal=esBsIt?(it._totalBsOriginal!=null?pNum(it._totalBsOriginal):pNum(it.total||0)*pNum(form.tasa||0)):pNum(it.total||0);
+                              // Columna secundaria: si la factura es en Bs, mostrar el equivalente en USD (ya está en total); si es en USD, mostrar el equivalente en Bs (multiplicar)
+                              const totSecundario=hasTasa?(esBsIt?pNum(it.total||0):pNum(it.total||0)*pNum(form.tasa||0)):0;
                               return(
                               <tr key={i} className={i%2===0?'bg-white':'bg-slate-50'}>
                                 <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
@@ -6111,7 +6132,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                   <input type="number" className="w-20 text-right text-[10px] font-mono border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-orange-400"
                                     value={it.precioUnit||''} onChange={e=>updateItem({precioUnit:pNum(e.target.value)})}/>
                                 </td>
-                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(it.total||0)}</td>
+                                <td className="px-2 py-1 text-right font-black text-orange-600 font-mono">{pFmt(totPrincipal)}</td>
                                 {hasTasa&&<td className="px-2 py-1 text-right font-mono text-blue-700 text-[10px]">{pFmt(totSecundario)}</td>}
                               </tr>);
                             })}
