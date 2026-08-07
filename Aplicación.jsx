@@ -7579,10 +7579,14 @@ ${body}
                       {anticiposProv.map(a=>{
                         const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id);
                         return(
-                        <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                        <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3,gap:6}}>
                           <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${fN(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}{(a.concepto&&a.concepto!=='Anticipo a proveedor')?` · ${a.concepto}`:''}</span>
-                          <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
-                            style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
+                          <div style={{display:'flex',gap:4,flexShrink:0}}>
+                            <button title="Corregir: marcar este anticipo como ya utilizado antes — no toca banco, caja ni facturas, solo su saldo disponible" onClick={()=>setDialog({title:'Marcar anticipo como ya usado', text:`Esto deja "$${fN(a._saldoAnt)} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" en $0 disponible.\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo. Úsalo cuando el anticipo ya se había usado antes y volvió a aparecer disponible por error.`, type:'confirm', onConfirm: async ()=>{ try{ await updateDoc(getDocRef('procura_pagos_cxp',a.id),{montoAplicado:pN(a.monto||0)}); logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Anticipo ${a.id} (${a.proveedor||''}) marcado manualmente como ya usado — saldo corregido a $0, sin tocar banco/caja/facturas.`); }catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); } }})}
+                              style={{fontSize:8,fontWeight:900,padding:'3px 6px',borderRadius:6,border:'1px solid #dc2626',background:'#fff',color:'#dc2626',cursor:'pointer'}}>🚫</button>
+                            <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                              style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
+                          </div>
                         </div>);
                       })}
                     </div>
@@ -7929,6 +7933,9 @@ const HistorialPagosView = ({
   const [histFiltCuenta, setHistFiltCuenta] = useState('');
   const [modalRestaurar, setModalRestaurar] = useState(false);
   const [restForm, setRestForm] = useState({tipo:'banco', cuentaId:'', monto:'', tasa:'', fecha:getTodayDate(), concepto:'', referencia:''});
+  const [auditando, setAuditando] = useState(false);
+  const [auditoriaResultado, setAuditoriaResultado] = useState(null); // null=no corrida, []=sin faltantes, [...]=faltantes
+  const [restaurandoMasivo, setRestaurandoMasivo] = useState(false);
   const HIST_PER_PAGE = 50;
 
   useEffect(()=>{
@@ -7948,6 +7955,90 @@ const HistorialPagosView = ({
   // se cuenta a través del registro de pago que queda vinculado a esa factura; si se sigue
   // sumando el monto completo del anticipo TAMBIÉN, el mismo dinero se cuenta dos veces.
   const montoEfectivo = p => p.esAnticipo ? Math.max(0, pN(p.monto||0)-pN(p.montoAplicado||0)) : pN(p.monto||0);
+
+  // ── Auditoría: pagos reales (no aplicaciones de anticipo, que correctamente no llevan movimiento
+  // propio — el dinero ya salió cuando se creó el anticipo) que no tienen banco_movimientos ni
+  // caja_movimientos vinculado por grupoPagoId. ──
+  const auditarPagosVsBanco = async () => {
+    setAuditando(true);
+    try {
+      const [bSnap, kSnap] = await Promise.all([
+        getDocs(getColRef('banco_movimientos')),
+        getDocs(getColRef('caja_movimientos')),
+      ]);
+      const gruposConMov = new Set();
+      bSnap.docs.forEach(d => { const g = d.data().grupoPagoId; if(g) gruposConMov.add(g); });
+      kSnap.docs.forEach(d => { const g = d.data().grupoPagoId; if(g) gruposConMov.add(g); });
+      const faltantes = allPagos.filter(p =>
+        p.cuentaId && !(p.cuentaId||'').startsWith('ANTICIPO::') && !gruposConMov.has(p.grupoPagoId)
+      ).map(p => ({...p, _cuentaId: p.cuentaId||'', _fecha: p.fecha||getTodayDate()}));
+      setAuditoriaResultado(faltantes);
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+    finally { setAuditando(false); }
+  };
+
+  const restaurarTodosFaltantes = async () => {
+    if(!auditoriaResultado?.length) return;
+    const sinBanco = auditoriaResultado.filter(p=>!p._cuentaId);
+    if(sinBanco.length){
+      return setDialog({title:'Faltan bancos por asignar', text:`${sinBanco.length} pago(s) no tienen banco/caja seleccionado todavía. Asígnales una cuenta en la lista antes de restaurar (proveedor: ${sinBanco.slice(0,5).map(p=>p.proveedor||'—').join(', ')}${sinBanco.length>5?'...':''}).`, type:'alert'});
+    }
+    setRestaurandoMasivo(true);
+    try {
+      const batch = writeBatch(db);
+      const saldosLocales = {}; // running balance por cuentaId — evita usar el saldo viejo repetido si hay varios pagos de la misma cuenta
+      auditoriaResultado.forEach((p, n) => {
+        const monedaP = p.moneda||'USD';
+        const tasaP = pN(p.tasa||tasaBCV||1)||1;
+        const montoUSDP = monedaP==='Bs' ? parseFloat((pN(p.monto||0)/tasaP).toFixed(2)) : pN(p.monto||0);
+        const montoBsP = monedaP==='Bs' ? pN(p.monto||0) : parseFloat((pN(p.monto||0)*tasaP).toFixed(2));
+        const grupoPagoIdP = p.grupoPagoId || `GRP-RESTORE-${Date.now().toString(36)}-${n}`;
+        const movId = `MOV-RESTORE-${Date.now().toString(36)}-${n}`;
+        const esCaja = (p._cuentaId||'').startsWith('CAJA::');
+        const f = _factMap.get(p.facturaId);
+        const facturasArr = f ? [{id:f.id, nroFactura:f.nroFactura||'—', fecha:f.fecha||'', monto:pN(p.monto||0)}] : [];
+
+        if(esCaja){
+          const cajaId = p._cuentaId.replace('CAJA::','');
+          const cajaObj = cajasEfectivo.find(c=>c.id===cajaId);
+          batch.set(getDocRef('caja_movimientos', movId), {
+            id:movId, cajaId, cajaNombre:cajaObj?.nombre||'', moneda:cajaObj?.moneda||'USD',
+            tipo:'Egreso', fecha:p._fecha, monto:montoUSDP, montoBs:montoBsP, montoUSD:montoUSDP, tasa:tasaP,
+            concepto:p.concepto||'Pago CxP (restaurado)', referencia:p.referencia||'', grupoPagoId:grupoPagoIdP,
+            facturas:facturasArr, origenIngreso:'Restauración masiva — Auditoría vs Banco', estatus:'No Conciliado', ts:Date.now(),
+          });
+        } else {
+          if(saldosLocales[p._cuentaId]===undefined){
+            const ctaObj = cuentasBancarias.find(c=>c.id===p._cuentaId);
+            saldosLocales[p._cuentaId] = {obj:ctaObj, saldo: pN(ctaObj?.saldo||0)};
+          }
+          const bal = saldosLocales[p._cuentaId];
+          if(bal.obj){
+            const saldoAnterior = bal.saldo;
+            const saldoResultante = parseFloat((saldoAnterior - montoUSDP).toFixed(2));
+            bal.saldo = saldoResultante; // acumula para el siguiente pago de la misma cuenta en este mismo lote
+            batch.set(getDocRef('banco_movimientos', movId), {
+              id:movId, cuentaId:p._cuentaId, cuentaNombre:bal.obj.banco||'', tipoBanco:bal.obj.tipoBanco, moneda:bal.obj.moneda,
+              tipo:'Egreso', fecha:p._fecha, montoNativo:montoUSDP, montoBs:montoBsP, montoUSD:montoUSDP, tasa:tasaP,
+              concepto:p.concepto||'Pago CxP (restaurado)', referencia:p.referencia||'', grupoPagoId:grupoPagoIdP,
+              facturas:facturasArr, origenIngreso:'Restauración masiva — Auditoría vs Banco',
+              saldoAnterior, saldoResultante, estatus:'No Conciliado', ts:Date.now(),
+            });
+          }
+        }
+        batch.update(getDocRef('procura_pagos_cxp', p.id), {grupoPagoId:grupoPagoIdP, cuentaId:p._cuentaId, fecha:p._fecha});
+      });
+      // Aplicar el saldo final acumulado de cada cuenta bancaria (ya con el efecto de TODOS sus pagos restaurados en este lote)
+      Object.values(saldosLocales).forEach(bal => {
+        if(bal.obj) batch.update(getDocRef('banco_cuentas', bal.obj.id), {saldo: bal.saldo});
+      });
+      await batch.commit();
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Restauración masiva: ${auditoriaResultado.length} movimiento(s) de banco/caja recreados desde Auditoría vs Banco.`);
+      setDialog({title:'✅ Restauración completa', text:`${auditoriaResultado.length} movimiento(s) fueron recreados en Banco/Caja, marcados "No Conciliado".`, type:'alert'});
+      setAuditoriaResultado([]);
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+    finally { setRestaurandoMasivo(false); }
+  };
 
   const metodos = ['TODOS','Transferencia','Efectivo USD','Efectivo Bs.','Zelle','Cheque','Pago Móvil','Tarjeta Internacional (Banplus)'];
 
@@ -8343,6 +8434,9 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
             </h3>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-gray-400 font-bold">{histFiltered.length} registros · ${fN(totalFiltrado)}</span>
+              {appUser?.role==='Master' && <button onClick={auditarPagosVsBanco} disabled={auditando} title="Detecta pagos que no tienen movimiento vinculado en Banco/Caja (excluye aplicaciones de anticipo, que correctamente no llevan uno propio)" className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-xl text-[9px] font-black uppercase hover:bg-indigo-600 hover:text-white transition-all disabled:opacity-50">
+                <Search size={11}/> {auditando?'Auditando...':'Auditar vs Banco/Caja'}
+              </button>}
               {appUser?.role==='Master' && <button onClick={()=>setModalRestaurar(true)} title="Corregir un movimiento de banco/caja afectado por una reversión incorrecta, sin generar registro en Historial de Pagos" className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-xl text-[9px] font-black uppercase hover:bg-red-600 hover:text-white transition-all">
                 <ShieldCheck size={11}/> Restaurar Banco/Caja
               </button>}
@@ -8462,6 +8556,64 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           </div>
         )}
       </div>
+
+      {/* MODAL RESULTADOS AUDITORÍA VS BANCO/CAJA */}
+      {auditoriaResultado!==null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setAuditoriaResultado(null)}>
+          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+            <div className="px-5 py-4 bg-gray-900 rounded-t-2xl flex items-center gap-2">
+              <Search size={18} className="text-indigo-400"/>
+              <p className="text-white font-black text-sm uppercase">Auditoría — Pagos sin movimiento en Banco/Caja</p>
+            </div>
+            <div className="p-5">
+              {auditoriaResultado.length===0 ? (
+                <div className="text-center py-10 text-gray-400"><CheckCircle size={36} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Todo cuadra — ningún pago sin su movimiento correspondiente</p></div>
+              ) : (
+                <>
+                  <p className="text-xs font-bold text-gray-600 mb-3">{auditoriaResultado.length} pago(s) no tienen movimiento vinculado en Banco/Caja (no incluye aplicaciones de anticipo — esas correctamente no llevan uno propio). Revisa banco y fecha de cada uno antes de restaurar — vienen precargados con lo que ya tenía guardado el pago, pero puedes corregirlos:</p>
+                  <div className="border border-gray-200 rounded-xl overflow-hidden mb-4 max-h-96 overflow-y-auto">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-gray-100 sticky top-0"><tr>
+                        {['Fecha','Proveedor','Concepto','Referencia','Monto','Banco / Caja'].map(h=><th key={h} className="py-2 px-2.5 text-left font-black uppercase text-gray-500">{h}</th>)}
+                      </tr></thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {auditoriaResultado.map((p,idx)=>(
+                          <tr key={p.id} className={!p._cuentaId?'bg-red-50/50':''}>
+                            <td className="py-1.5 px-2.5">
+                              <input type="date" value={p._fecha} onChange={e=>{const v=e.target.value;setAuditoriaResultado(prev=>prev.map((x,i)=>i===idx?{...x,_fecha:v}:x));}} className="border border-gray-200 rounded px-1 py-1 text-[9px] w-28 outline-none focus:border-indigo-400"/>
+                            </td>
+                            <td className="py-1.5 px-2.5 font-bold max-w-[120px] truncate" title={p.proveedor}>{p.proveedor||'—'}</td>
+                            <td className="py-1.5 px-2.5 text-gray-500 max-w-[140px] truncate" title={p.concepto}>{p.concepto||'—'}{p.esAnticipo?' (anticipo)':''}</td>
+                            <td className="py-1.5 px-2.5 text-gray-500">{p.referencia||'—'}</td>
+                            <td className="py-1.5 px-2.5 text-right font-black text-red-600 whitespace-nowrap">${fN(montoEfectivo(p))}</td>
+                            <td className="py-1.5 px-2.5">
+                              <select value={p._cuentaId} onChange={e=>{const v=e.target.value;setAuditoriaResultado(prev=>prev.map((x,i)=>i===idx?{...x,_cuentaId:v}:x));}} className={`border rounded px-1.5 py-1 text-[9px] font-bold w-36 outline-none ${!p._cuentaId?'border-red-400 bg-red-50 text-red-600':'border-gray-200 focus:border-indigo-400'}`}>
+                                <option value="">⚠ Sin asignar</option>
+                                {cuentasBancarias.map(c=><option key={c.id} value={c.id}>{c.banco}{c.numeroCuenta?` — ${c.numeroCuenta.slice(-4)}`:''}</option>)}
+                                {cajasEfectivo.map(c=><option key={c.id} value={`CAJA::${c.id}`}>{c.nombre} (Caja)</option>)}
+                              </select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot><tr className="bg-gray-50 font-black"><td colSpan={4} className="py-2 px-2.5 text-[9px] uppercase">Total</td><td className="py-2 px-2.5 text-right text-red-700">${fN(auditoriaResultado.reduce((s,p)=>s+montoEfectivo(p),0))}</td><td></td></tr></tfoot>
+                    </table>
+                  </div>
+                  {auditoriaResultado.some(p=>!p._cuentaId) && (
+                    <p className="text-[10px] font-black text-red-600 uppercase mb-2 text-center">⚠ {auditoriaResultado.filter(p=>!p._cuentaId).length} pago(s) sin banco/caja asignado — selecciónalo en la lista para poder restaurar</p>
+                  )}
+                  <button disabled={restaurandoMasivo || auditoriaResultado.some(p=>!p._cuentaId)} onClick={()=>setDialog({title:'Restaurar todos', text:`¿Recrear los ${auditoriaResultado.length} movimientos de Banco/Caja que faltan por un total de $${fN(auditoriaResultado.reduce((s,p)=>s+montoEfectivo(p),0))}, con el banco y la fecha que dejaste en cada fila? Quedarán marcados "No Conciliado" para que los revises contra tu estado de cuenta real.`, type:'confirm', onConfirm:restaurarTodosFaltantes})} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black text-xs uppercase hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                    <ShieldCheck size={14}/> {restaurandoMasivo?'Restaurando...':`Restaurar los ${auditoriaResultado.length} en Banco/Caja`}
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t">
+              <button onClick={()=>setAuditoriaResultado(null)} className="w-full py-2.5 rounded-xl text-xs font-black uppercase text-gray-600 bg-gray-100 hover:bg-gray-200">Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL RESTAURAR BANCO/CAJA — corrige una reversión incorrecta, sin tocar Historial de Pagos */}
       {modalRestaurar&&(
