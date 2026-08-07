@@ -26159,6 +26159,35 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }});
           };
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
+
+          const corregirVinculacionErronea = (ne) => {
+            const facturaVinc = (invoices||[]).find(i=>i.id===ne.facturaId);
+            const descFactura = facturaVinc
+              ? `${facturaVinc.nroFiscal||facturaVinc.documento||ne.facturaId} — ${facturaVinc.clientName||'cliente desconocido'}`
+              : `${ne.facturaId} (no se encontró el documento — puede ya no existir)`;
+            requireAdminPassword(()=>{
+              setDialog({
+                title:'⚠️ Corregir vinculación errónea',
+                text:`NE-${ne.id} está vinculada a: ${descFactura}\n\nEsta NE es de: ${ne.clientName||'—'}\n\n¿Confirmas que es un vínculo equivocado? Se va a soltar esa factura, la NE vuelve a "Tránsito" y aparecerá otra vez en Facturación — solo esta, no se toca nada más. Queda registrado quién y cuándo hizo la corrección.`,
+                type:'confirm',
+                onConfirm: async ()=>{
+                  try{
+                    await updateDoc(getDocRef('notasEntrega',ne.id),{
+                      status:'TRANSITO', facturaId:'',
+                      _correccionVinculacion:{
+                        fecha:Date.now(), por:appUser?.name||'Sistema',
+                        facturaIdAnterior:ne.facturaId||'', descFacturaAnterior:descFactura,
+                        motivo:'Vínculo a factura equivocada corregido manualmente',
+                      },
+                      updatedAt:Date.now(),
+                    });
+                    logAuditoria(appUser,'Notas de Entrega','CORRECCIÓN',`NE-${ne.id} (${ne.clientName||''}): se liberó vinculación errónea a ${descFactura}. Vuelve a estatus Tránsito, disponible para facturar de nuevo.`);
+                    setDialog({title:'✅ Corregido',text:`NE-${ne.id} ya está en Tránsito y sin vínculo — vuelve a aparecer en Facturación.`,type:'alert'});
+                  } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                },
+              });
+            },'Corregir Vinculación Errónea de NE');
+          };
           const handleConvertirFactura = (ne) => {
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
             // IMPORTANTE: la fecha de la factura es HOY (fecha de emisión de la factura),
@@ -26510,6 +26539,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <div className="flex gap-1">
                               <button onClick={()=>setNeForm({...ne,_editId:ne.id})} title="Editar" className="w-7 h-7 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit size={11}/></button>
                               <button onClick={()=>handleConvertirFactura(ne)} title="Convertir en Factura" className="w-7 h-7 flex items-center justify-center bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white rounded-lg transition-all"><Receipt size={11}/></button>
+                              {ne.status==='PROCESADA'&&<button onClick={()=>corregirVinculacionErronea(ne)} title="Corregir vinculación errónea a factura (clave admin)" className="w-7 h-7 flex items-center justify-center bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white rounded-lg transition-all"><Lock size={11}/></button>}
                               <button title="Ver PDF" onClick={()=>{
                                 const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B C.A.';
                                 const rif = settings?.empresaRIF||'J-412309374';
