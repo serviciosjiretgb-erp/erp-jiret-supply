@@ -3217,6 +3217,65 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             totalDebeUSD:lineasEdit.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasEdit.reduce((a,l)=>a+l.haberUSD,0),
           });
         }
+        // ── Caso Transferencia: actualizar también el lado destino y regenerar los DOS asientos ──
+        if (form.tipo==='Transferencia' && form.cuentaDestinoId) {
+          const ctaTrasladosObj=(contCuentas||[]).find(c=>/traslado.*fondo|fondo.*traslado/i.test(c.nombre||''))||(contCuentas||[]).find(c=>String(c.codigo)==='1.1.01.02.012');
+          const codTraslados=ctaTrasladosObj?String(ctaTrasladosObj.codigo||ctaTrasladosObj.id||''):'1.1.01.02.012';
+          const nomTraslados=ctaTrasladosObj?ctaTrasladosObj.nombre:'Traslados de Fondos';
+          const esCajaDestino = form.cuentaDestinoId.startsWith('CAJA::');
+          const cajaDestObj = esCajaDestino ? cajas.find(c=>c.id===form.cuentaDestinoId.replace('CAJA::','')) : null;
+          const bancoDestObj = esCajaDestino ? null : cuentas.find(c=>c.id===form.cuentaDestinoId);
+          const codDestino = esCajaDestino ? (cajaDestObj?.cuentaContableCod||'') : (bancoDestObj?.cuentaContableCod||'');
+          const nomCtaDestino = esCajaDestino ? (cajaDestObj?.cuentaContableNom||`Caja ${cajaDestObj?.nombre||''}`) : (bancoDestObj?.cuentaContableNom||`Banco ${bancoDestObj?.banco||''}`);
+
+          // Asiento del lado ORIGEN: Débito Traslados de Fondos / Crédito cuenta origen
+          if (movOriginal?.asientoContableId) {
+            const lineasOrig = [
+              {codigo:codTraslados,cuenta:nomTraslados,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:montoBs,haberBs:0,debeUSD:montoUSD,haberUSD:0},
+              {codigo:cuentaNueva?.cuentaContableCod||'',cuenta:ctaBanco,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:montoBs,debeUSD:0,haberUSD:montoUSD},
+            ];
+            batch.update(getDocRef('cont_asientos', movOriginal.asientoContableId), {
+              fecha:form.fecha, tipo:'Traslado', subTipo:'Transferencia', nroDocumento:form.referencia||'',
+              descripcion:form.concepto.toUpperCase(), tasa, lineas:lineasOrig,
+              totalDebeBs:lineasOrig.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasOrig.reduce((a,l)=>a+l.haberBs,0),
+              totalDebeUSD:lineasOrig.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasOrig.reduce((a,l)=>a+l.haberUSD,0),
+            });
+          }
+
+          if (form._destinoMovId) {
+            const destinoOriginal = movBanco.find(x=>(x._docId||x.id)===form._destinoMovId);
+            // Revertir el saldo que tenía el destino anterior y aplicar el nuevo
+            const cuentaDestAnterior = cuentas.find(c=>c.id===destinoOriginal?.cuentaId);
+            if (cuentaDestAnterior) batch.update(getDocRef('banco_cuentas',cuentaDestAnterior.id),{saldo:Number(cuentaDestAnterior.saldo)-Number(destinoOriginal?.montoNativo||0)});
+            if (!esCajaDestino && bancoDestObj) {
+              const saldoDestBase = cuentaDestAnterior?.id===bancoDestObj.id ? Number(cuentaDestAnterior.saldo)-Number(destinoOriginal?.montoNativo||0) : Number(bancoDestObj.saldo||0);
+              batch.update(getDocRef('banco_cuentas',bancoDestObj.id),{saldo:saldoDestBase+mNat});
+              batch.update(getDocRef('banco_movimientos',form._destinoMovId),{
+                fecha:form.fecha, cuentaId:bancoDestObj.id, cuentaNombre:bancoDestObj.banco, tipoBanco:bancoDestObj.tipoBanco, moneda:bancoDestObj.moneda,
+                concepto:form.concepto, referencia:form.referencia, tasa, montoNativo:mNat, montoBs, montoUSD,
+                saldoResultante:saldoDestBase+mNat,
+              });
+            } else if (esCajaDestino && cajaDestObj) {
+              batch.update(getDocRef('caja_movimientos',form._destinoMovId),{
+                fecha:form.fecha, cajaId:cajaDestObj.id, cajaNombre:cajaDestObj.nombre, moneda:cajaDestObj.moneda,
+                concepto:form.concepto, referencia:form.referencia, tasa, monto:mNat, montoBs, montoUSD,
+              });
+            }
+            if (destinoOriginal?.asientoContableId) {
+              const lineasDest = [
+                {codigo:codDestino,cuenta:nomCtaDestino,tipoLinea:'D',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:montoBs,haberBs:0,debeUSD:montoUSD,haberUSD:0},
+                {codigo:codTraslados,cuenta:nomTraslados,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:montoBs,debeUSD:0,haberUSD:montoUSD},
+              ];
+              batch.update(getDocRef('cont_asientos', destinoOriginal.asientoContableId), {
+                fecha:form.fecha, tipo:'Traslado', subTipo:'Transferencia', nroDocumento:form.referencia||'',
+                descripcion:form.concepto.toUpperCase(), tasa, lineas:lineasDest,
+                totalDebeBs:lineasDest.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasDest.reduce((a,l)=>a+l.haberBs,0),
+                totalDebeUSD:lineasDest.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasDest.reduce((a,l)=>a+l.haberUSD,0),
+              });
+            }
+          }
+        }
+
         await batch.commit();
         setEditId(null); setDetalle(null); setForm(initF());
       } catch(e) {
@@ -3299,12 +3358,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const abrirEdicion = (m)=>{
       setEditId(m._docId||m.id); setDetalle(m._docId||m.id);
+      let cuentaDestinoId = '', destinoMovId = '';
+      if (m.tipo === 'Transferencia') {
+        // El lado destino no tiene un vínculo directo guardado — se ubica por referencia+fecha+tipo Ingreso.
+        const destino = movBanco.find(x => x.tipo==='Ingreso' && x.origenIngreso==='Transferencia' && x.referencia===m.referencia && x.fecha===m.fecha && (x._docId||x.id)!==(m._docId||m.id));
+        if (destino) { cuentaDestinoId = destino.cuentaId; destinoMovId = destino._docId||destino.id; }
+      }
       setForm({...initF(),fecha:m.fecha,tipo:m.tipo,cuentaId:m.cuentaId,
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
         tasa:String(m.tasa||tasaActiva),montoNativo:String(m.montoNativo||''),
         aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',
-        ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
+        ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||'',
+        cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId});
     };
 
     // ── Panel info del banco seleccionado ─────────────────────────────
@@ -3487,13 +3553,23 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   </BFG>
                   <BFG label="N° Referencia"><input className={inp} value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})}/></BFG>
                 </div>
-                <div className={`grid ${form.tipo==='Transferencia'?'grid-cols-1':'grid-cols-2'} gap-4 items-start`}>
-                  <BFG label={`Cuenta Bancaria (${cuentas.length} disponibles)`}>
+                <div className={`grid ${form.tipo==='Transferencia'?'grid-cols-2':'grid-cols-2'} gap-4 items-start`}>
+                  <BFG label={`Cuenta Bancaria (${cuentas.length} disponibles)${form.tipo==='Transferencia'?' — Origen':''}`}>
                     <select className={sel} value={form.cuentaId} onChange={e=>setForm({...form,cuentaId:e.target.value})}>
                       <option value="">— Seleccione la cuenta —</option>
                       {cuentas.map(c=>{const tb=TIPO_BANCO.find(t=>t.id===c.tipoBanco)||TIPO_BANCO[0];return<option key={c.id} value={c.id}>{tb.flag} {c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldo)}</option>;})}
                     </select>
                   </BFG>
+                  {form.tipo==='Transferencia'&&(
+                    <BFG label="Cuenta Destino">
+                      <select className={sel} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value})}>
+                        <option value="">— Seleccione destino —</option>
+                        {cuentas.filter(c=>c.id!==form.cuentaId).map(c=>{const tb=TIPO_BANCO.find(t=>t.id===c.tipoBanco)||TIPO_BANCO[0];return<option key={c.id} value={c.id}>{tb.flag} {c.banco} · {c.numeroCuenta} · {c.moneda==='BS'?'Bs.':'$'} {bancoFmt(c.saldo)}</option>;})}
+                        {cajas.map(c=><option key={`CAJA::${c.id}`} value={`CAJA::${c.id}`}>💰 {c.nombre} (Caja)</option>)}
+                      </select>
+                      {form._destinoNoEncontrado && <p className="text-[9px] font-bold text-amber-600 mt-1">⚠ No se encontró el movimiento del lado destino automáticamente — si guardas, solo se corrige este lado (origen). Ubica el otro lado en Movimientos y edítalo aparte.</p>}
+                    </BFG>
+                  )}
                   {form.tipo==='Ingreso'&&<div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100">
                     <p className="text-[9px] font-black uppercase text-emerald-700 mb-2 tracking-widest">Origen del Ingreso</p>
                     <div className="flex gap-2 flex-wrap">{['Venta','Préstamo de Terceros','Depósito','Otros'].map(o=>(
