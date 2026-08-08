@@ -11094,8 +11094,8 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
   root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
   return root;
 };
-const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle }) => {
-  const [isOpen, setIsOpen] = useState(true);
+const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, defaultOpen=true }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
   const [resaltado, setResaltado] = useState(false);
   const isLeaf = !node.c || node.c.length===0;
@@ -11161,7 +11161,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle }) =
         </td>
         <td colSpan={3}/>
       </tr>
-      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle}/>)}
+      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle} defaultOpen={defaultOpen}/>)}
       {isOpen && (
         <tr className={isRoot?'bg-gray-800 text-white':'bg-gray-100 text-gray-800 border-y border-gray-300'}>
           <td style={{paddingLeft:level*16+24}} className="py-1.5 px-3 font-black text-[9px] uppercase tracking-wider">Total {node.n}</td>
@@ -13260,6 +13260,8 @@ function App() {
   const [contFiltDesde, setContFiltDesde] = useState('');
   const [contFiltHasta, setContFiltHasta] = useState('');
   const [contERCurrency, setContERCurrency] = useState('both');
+  const [contERExpandAll, setContERExpandAll] = useState(true);
+  const [contERExpandKey, setContERExpandKey] = useState(0);
   const [contBGCurrency, setContBGCurrency] = useState('both');
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
@@ -13325,7 +13327,13 @@ function App() {
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas:mapLineas(asiento.lineas)});
+        const nesRef = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean);
+        const opsRef = [f.opAsignada, ...(f.opsAsignadas||[])].filter(Boolean);
+        const refExtra = [
+          nesRef.length ? `NE: ${nesRef.join(', ')}` : '',
+          opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
+        ].filter(Boolean).join(' · ');
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas)});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -42771,7 +42779,7 @@ ${resumenHtml}
 
     const treeIngresos = ccBuildArbol(cuentasAgg, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
     const treeCostos    = ccBuildArbol(cuentasAgg, planDeCuentas, ['5.1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
-    const cuentasGastos = cuentasAgg.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1'));
+    const cuentasGastos = cuentasAgg.filter(c=>c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
@@ -42818,6 +42826,10 @@ ${resumenHtml}
                   <button key={v} onClick={()=>setContERCurrency(v)} className={`px-2.5 py-1.5 rounded text-[9px] font-black uppercase transition-colors ${contERCurrency===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-gray-100'}`}>{lbl}</button>
                 ))}
               </div>
+              <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
+                <button onClick={()=>{setContERExpandAll(true);setContERExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Expandir Todos</button>
+                <button onClick={()=>{setContERExpandAll(false);setContERExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Contraer Todos</button>
+              </div>
               <div className="flex gap-2 ml-auto">
                 <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
                 <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
@@ -42833,16 +42845,16 @@ ${resumenHtml}
                     <th className="px-3 py-2 text-right">%</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta}/>)}
-                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta}/>)}
+                <tbody key={contERExpandKey}>
+                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} defaultOpen={contERExpandAll}/>)}
+                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} defaultOpen={contERExpandAll}/>)}
                   <tr className="bg-blue-50 border-y-2 border-blue-200">
                     <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Utilidad Bruta</td>
                     {showUSD && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaUSD)}</td>}
                     {showBS  && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaBs>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaBs)}</td>}
                     <td/>
                   </tr>
-                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta}/>)}
+                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} defaultOpen={contERExpandAll}/>)}
                   <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
                     <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
                     {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
