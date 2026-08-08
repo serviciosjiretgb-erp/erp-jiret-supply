@@ -11087,15 +11087,17 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
       if (!folder) { folder = {n:folderName.trim(), c:[], u:0, b:0}; cur.push(folder); }
       cur = folder.c;
     });
-    cur.push({ n:`${c.codigo} - ${c.cuenta||''}`, u:usd, b:bs, isLeaf:true });
+    cur.push({ n:`${c.codigo} - ${c.cuenta||''}`, codigo:c.codigo, u:usd, b:bs, isLeaf:true });
   });
   const compute = (nodes) => { let u=0,b=0; nodes.forEach(n=>{ if(!n.isLeaf){ const t=compute(n.c); n.u=t.u; n.b=t.b; } u+=n.u; b+=n.b; }); return {u,b}; };
   compute(root);
   root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
   return root;
 };
-const CCArbolRow = ({ node, level=0, totalBase, currency='both' }) => {
+const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle }) => {
   const [isOpen, setIsOpen] = useState(true);
+  const [detalleAbierto, setDetalleAbierto] = useState(false);
+  const [resaltado, setResaltado] = useState(false);
   const isLeaf = !node.c || node.c.length===0;
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const pct = totalBase && node.u!==0 ? `${((Math.abs(node.u)/totalBase)*100).toFixed(2)}%` : '';
@@ -11103,13 +11105,49 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both' }) => {
   const isRoot = level===0;
 
   if (isLeaf) {
+    const detalle = detalleAbierto && getDetalle ? getDetalle(node.codigo) : null;
     return (
-      <tr className="bg-white border-b border-gray-100">
-        <td style={indent} className="py-1.5 px-3 font-bold text-[10px] text-gray-700 truncate">{node.n}</td>
-        {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-700">{ccFmtR(node.u)}</td>}
-        {showBS  && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-700">{ccFmtR(node.b)}</td>}
-        <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-400">{pct}</td>
-      </tr>
+      <>
+        <tr onClick={()=>getDetalle&&setDetalleAbierto(!detalleAbierto)} className={`border-b border-gray-100 ${resaltado?'bg-amber-100 hover:bg-amber-200':'bg-white hover:bg-gray-50'} ${getDetalle?'cursor-pointer':''}`}>
+          <td style={indent} className="py-1.5 px-3 font-bold text-[10px] text-gray-700 flex items-center gap-1.5">
+            <button onClick={e=>{e.stopPropagation();setResaltado(!resaltado);}} title="Resaltar para revisar" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center rounded text-[10px] leading-none ${resaltado?'':'opacity-30 hover:opacity-70'}`}>⭐</button>
+            {getDetalle && <span className={`flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 border rounded-sm text-[10px] leading-none ${detalleAbierto?'border-gray-400 text-gray-600 bg-white':'border-gray-300 text-gray-400 bg-white'}`}>{detalleAbierto?'−':'+'}</span>}
+            <span className="truncate">{node.n}</span>
+          </td>
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-700">{ccFmtR(node.u)}</td>}
+          {showBS  && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-700">{ccFmtR(node.b)}</td>}
+          <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-gray-400">{pct}</td>
+        </tr>
+        {detalleAbierto && (
+          <tr>
+            <td colSpan={4} className="p-0 bg-slate-50">
+              {!detalle || detalle.length===0 ? (
+                <p className="px-8 py-2 text-[10px] text-gray-400 italic">Sin movimientos en el período para esta cuenta.</p>
+              ) : (
+                <table className="w-full text-[9px]">
+                  <thead className="text-gray-400 uppercase font-black">
+                    <tr><th className="px-2 py-1 text-left" style={{paddingLeft:level*16+34}}>Fecha</th><th className="px-2 py-1 text-left">Módulo</th><th className="px-2 py-1 text-left">Comprobante</th><th className="px-2 py-1 text-left">Concepto</th>{showUSD&&<th className="px-2 py-1 text-right">Debe USD</th>}{showUSD&&<th className="px-2 py-1 text-right">Haber USD</th>}{showBS&&<th className="px-2 py-1 text-right">Debe Bs.</th>}{showBS&&<th className="px-2 py-1 text-right">Haber Bs.</th>}</tr>
+                  </thead>
+                  <tbody>
+                    {detalle.map((d,i)=>(
+                      <tr key={i} className="border-t border-slate-200">
+                        <td className="px-2 py-1 text-gray-500" style={{paddingLeft:level*16+34}}>{contDd(d.fecha)}</td>
+                        <td className="px-2 py-1 text-gray-500">{d.modulo}</td>
+                        <td className="px-2 py-1 text-gray-500 font-mono">{d.comprobante}</td>
+                        <td className="px-2 py-1 text-gray-600 truncate max-w-[240px]">{d.concepto}</td>
+                        {showUSD && <td className="px-2 py-1 text-right font-mono text-emerald-700">{d.debeUSD?ccFmtR(d.debeUSD):''}</td>}
+                        {showUSD && <td className="px-2 py-1 text-right font-mono text-red-600">{d.haberUSD?ccFmtR(d.haberUSD):''}</td>}
+                        {showBS && <td className="px-2 py-1 text-right font-mono text-emerald-700">{d.debeBs?ccFmtR(d.debeBs):''}</td>}
+                        {showBS && <td className="px-2 py-1 text-right font-mono text-red-600">{d.haberBs?ccFmtR(d.haberBs):''}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </td>
+          </tr>
+        )}
+      </>
     );
   }
   // Cualquier carpeta con hijos (Ingresos Operacionales, Otros Ingresos, etc.) es colapsable —
@@ -11123,7 +11161,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both' }) => {
         </td>
         <td colSpan={3}/>
       </tr>
-      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency}/>)}
+      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle}/>)}
       {isOpen && (
         <tr className={isRoot?'bg-gray-800 text-white':'bg-gray-100 text-gray-800 border-y border-gray-300'}>
           <td style={{paddingLeft:level*16+24}} className="py-1.5 px-3 font-black text-[9px] uppercase tracking-wider">Total {node.n}</td>
@@ -42723,6 +42761,14 @@ ${resumenHtml}
     });
     const cuentasAgg = Object.values(porCuenta);
 
+    const getDetalleCuenta = (codigo) => asientosPeriodo
+      .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
+      .map(a=>{
+        const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
+        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
+      })
+      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
     const treeIngresos = ccBuildArbol(cuentasAgg, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
     const treeCostos    = ccBuildArbol(cuentasAgg, planDeCuentas, ['5.1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     const cuentasGastos = cuentasAgg.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1'));
@@ -42788,15 +42834,15 @@ ${resumenHtml}
                   </tr>
                 </thead>
                 <tbody>
-                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency}/>)}
-                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency}/>)}
+                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta}/>)}
+                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta}/>)}
                   <tr className="bg-blue-50 border-y-2 border-blue-200">
                     <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Utilidad Bruta</td>
                     {showUSD && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaUSD)}</td>}
                     {showBS  && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaBs>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaBs)}</td>}
                     <td/>
                   </tr>
-                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency}/>)}
+                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta}/>)}
                   <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
                     <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
                     {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
