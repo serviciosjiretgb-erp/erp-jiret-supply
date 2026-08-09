@@ -12333,7 +12333,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
           const id = `NOM-${(g.nroDoc||'').replace(/\s+/g,'_')}-${g.fecha}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
           batch.set(getDocRef('comprobantes_nomina', id), {
             id, fecha: g.fecha, nroComprobante: g.nroDoc, concepto: `Nómina — ${g.nroDoc}`,
-            tasa: g.tasa||0, lineas: g.lineas, createdAt: Date.now(), user: appUser?.name||'Sistema', origen:'import_excel',
+            tasa: g.tasa||0, lineas: g.lineas, createdAt: Date.now(), user: 'Sistema', origen:'import_excel',
           });
         });
         await batch.commit();
