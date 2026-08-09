@@ -43756,11 +43756,9 @@ ${resumenHtml}
     });
     const cuentasAgg = Object.values(porCuenta);
     const getDetalleCuenta = (codigo) => asientosPeriodo
-      .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
-      .map(a=>{
-        const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
-        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
-      })
+      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+        fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
+      })))
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
     const cuentasFiltradas = !contBuscar ? cuentasAgg : cuentasAgg.filter(c=>c.codigo.toUpperCase().includes(contBuscar.toUpperCase()) || c.cuenta.toUpperCase().includes(contBuscar.toUpperCase()));
@@ -43865,11 +43863,9 @@ ${resumenHtml}
     const cuentasAgg = Object.values(porCuenta);
 
     const getDetalleCuenta = (codigo) => asientosPeriodo
-      .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
-      .map(a=>{
-        const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
-        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
-      })
+      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+        fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
+      })))
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
     const cuentasAggUsar = contERVistaPlanta
@@ -43999,11 +43995,9 @@ ${resumenHtml}
     const cuentasAgg = Object.values(porCuenta);
 
     const getDetalleCuenta = (codigo) => asientosHastaCorte
-      .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
-      .map(a=>{
-        const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
-        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
-      })
+      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+        fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
+      })))
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
     const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
