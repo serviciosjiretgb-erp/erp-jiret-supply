@@ -11328,6 +11328,8 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [reclasMasivaProp, setReclasMasivaProp] = useState(null); // {propuestas:[...], sinCoincidencia:[...]} — vista previa antes de aplicar
   const [reclasMasivaLoading, setReclasMasivaLoading] = useState(false);
   const [reclasMasivaAplicando, setReclasMasivaAplicando] = useState(false);
+  const [pidiendoClaveReclasMasiva, setPidiendoClaveReclasMasiva] = useState(false);
+  const [claveReclasMasivaInput, setClaveReclasMasivaInput] = useState('');
   const [reclasBusq, setReclasBusq] = useState('');
   const [reclasSaving, setReclasSaving] = useState(false);
   const [tasaDeprec, setTasaDeprec] = useState('');
@@ -11984,6 +11986,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       }
       setReclasMasivaProp({propuestas, sinCoincidencia, aprobadas: propuestas.map((_,i)=>i)});
     } catch(e) {
+      console.error('Error en escanearReclasMasiva:', e);
       setDialog({title:'Error', text:'No se pudo escanear: '+e.message, type:'alert'});
     } finally { setReclasMasivaLoading(false); }
   };
@@ -12315,12 +12318,7 @@ ${valoresHtml}
               <p className="text-xs font-black text-purple-800 uppercase">Reclasificación masiva de comprobantes ya contabilizados</p>
               <p className="text-[10px] text-purple-600 font-bold mt-0.5">Busca en Banco/Caja y Ajustes las líneas que quedaron con un código del plan de cuentas anterior, y propone la cuenta nueva por coincidencia de nombre — para tu revisión antes de aplicar nada.</p>
             </div>
-            <button onClick={()=>{
-              const clave = window.prompt('Esta acción requiere clave de administrador.\nIngrese la clave:');
-              if (clave===null) return;
-              if (clave!==ADMIN_PASSWORD && clave!=='Supply2026.Admin') { setDialog({title:'Clave incorrecta', text:'La clave de administrador ingresada no es correcta.', type:'alert'}); return; }
-              escanearReclasMasiva();
-            }} disabled={reclasMasivaLoading} className="bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13} className={reclasMasivaLoading?'animate-spin':''}/> {reclasMasivaLoading?'Escaneando...':'Escanear'}</button>
+            <button onClick={escanearReclasMasiva} disabled={reclasMasivaLoading} className="bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13} className={reclasMasivaLoading?'animate-spin':''}/> {reclasMasivaLoading?'Escaneando...':'Escanear'}</button>
           </div>
           {lista.length===0 ? (
             <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
@@ -13382,6 +13380,24 @@ ${valoresHtml}
         ))}
       </div>
       {contenido()}
+      {pidiendoClaveReclasMasiva && (
+        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4" onClick={()=>{setPidiendoClaveReclasMasiva(false);setClaveReclasMasivaInput('');}}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+            <h3 className="font-black text-lg text-gray-800">Confirmar con clave de administrador</h3>
+            <p className="text-xs text-gray-500 font-bold">Esta acción va a modificar {reclasMasivaProp?.aprobadas.length} línea(s) ya contabilizadas. Ingresa la clave de administrador para continuar.</p>
+            <input type="password" autoFocus value={claveReclasMasivaInput} onChange={e=>setClaveReclasMasivaInput(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter'){ if(claveReclasMasivaInput===ADMIN_PASSWORD||claveReclasMasivaInput==='Supply2026.Admin'){ setPidiendoClaveReclasMasiva(false); setClaveReclasMasivaInput(''); aplicarReclasMasiva(); } else { setDialog({title:'Clave incorrecta', text:'La clave de administrador ingresada no es correcta.', type:'alert'}); } } }}
+              placeholder="Clave de administrador" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-purple-500"/>
+            <div className="flex gap-2">
+              <button onClick={()=>{setPidiendoClaveReclasMasiva(false);setClaveReclasMasivaInput('');}} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+              <button onClick={()=>{
+                if(claveReclasMasivaInput===ADMIN_PASSWORD||claveReclasMasivaInput==='Supply2026.Admin'){ setPidiendoClaveReclasMasiva(false); setClaveReclasMasivaInput(''); aplicarReclasMasiva(); }
+                else { setDialog({title:'Clave incorrecta', text:'La clave de administrador ingresada no es correcta.', type:'alert'}); }
+              }} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700">Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
       {reclasMasivaProp && (() => {
         const {propuestas, sinCoincidencia, aprobadas} = reclasMasivaProp;
         const toggleUna = (i) => setReclasMasivaProp(m=>({...m, aprobadas: m.aprobadas.includes(i) ? m.aprobadas.filter(x=>x!==i) : [...m.aprobadas, i]}));
@@ -13439,7 +13455,7 @@ ${valoresHtml}
               </div>
               <div className="flex gap-2 p-6 pt-4 border-t border-gray-100">
                 <button onClick={()=>setReclasMasivaProp(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
-                <button onClick={aplicarReclasMasiva} disabled={!aprobadas.length || reclasMasivaAplicando} className="flex-1 bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasMasivaAplicando?'Aplicando...':`Aplicar a las ${aprobadas.length} tildada(s)`}</button>
+                <button onClick={()=>setPidiendoClaveReclasMasiva(true)} disabled={!aprobadas.length || reclasMasivaAplicando} className="flex-1 bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasMasivaAplicando?'Aplicando...':`Aplicar a las ${aprobadas.length} tildada(s)`}</button>
               </div>
             </div>
           </div>
