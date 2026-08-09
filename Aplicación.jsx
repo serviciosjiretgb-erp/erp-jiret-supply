@@ -11132,9 +11132,19 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
     const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
     const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
     const grNom = grupoMap[grKey] || pdc?.grupo || grKey;
-    const pathArray = pdc
-      ? [grNom, pdc.grupo&&pdc.grupo!==grNom?pdc.grupo:'', pdc.subGrupo||''].filter(Boolean)
+    // Camino completo: categoría del Estado de Resultados, y luego los 4 niveles reales del
+    // Plan de Cuentas (Grupo, Sub-grupo, Cuenta, Subcuenta) — cada uno como carpeta con su
+    // propio subtotal. Se descartan segmentos vacíos y los que se repiten consecutivos (Cuenta
+    // y Subcuenta suelen compartir el mismo texto en varias familias del plan).
+    const crudo = pdc
+      ? [grNom, pdc.grupo, pdc.subGrupo, pdc.cuenta, pdc.subcuenta]
       : [grNom, 'SIN CLASIFICAR EN PLAN DE CUENTAS'];
+    const pathArray = [];
+    crudo.filter(Boolean).forEach(seg=>{
+      const segN = normKey(seg);
+      const prevN = pathArray.length ? normKey(pathArray[pathArray.length-1]) : null;
+      if (segN !== prevN) pathArray.push(seg);
+    });
     let cur = root;
     pathArray.forEach(folderName=>{
       const key = normKey(folderName);
@@ -11153,11 +11163,11 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
   const [isOpen, setIsOpen] = useState(true);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
   const [resaltado, setResaltado] = useState(false);
-  // El botón global "Expandir/Contraer Todos" cambia expandSignal={abrir:boolean, key:number}.
-  // Este efecto SOLO controla isOpen (grupos) — no toca detalleAbierto ni resaltado, así que
-  // no borra lo que el usuario ya tenía abierto o marcado a nivel de cuenta.
-  useEffect(() => { if (expandSignal) setIsOpen(expandSignal.abrir); }, [expandSignal?.key]);
   const isLeaf = !node.c || node.c.length===0;
+  // El botón global "Expandir/Contraer Todos" controla el DETALLE de movimientos de cada
+  // cuenta contable (nivel hoja) — no las carpetas de Grupo/Sub-grupo/Cuenta/Subcuenta, que
+  // siempre quedan abiertas por defecto y se manejan solo con clic manual.
+  useEffect(() => { if (expandSignal && isLeaf) setDetalleAbierto(expandSignal.abrir); }, [expandSignal?.key]);
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const pct = totalBase && node.u!==0 ? `${((Math.abs(node.u)/totalBase)*100).toFixed(2)}%` : '';
   const indent = { paddingLeft: `${level*16+10}px` };
