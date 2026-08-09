@@ -13816,6 +13816,7 @@ function App() {
   const [serviciosApp, setServiciosApp] = useState([]);
   const [retencionesClientesApp, setRetencionesClientesApp] = useState([]);
   const [movBancoApp, setMovBancoApp] = useState([]);
+  const [reclasificacionesApp, setReclasificacionesApp] = useState({});
   const [movCajaApp, setMovCajaApp] = useState([]);
   const [cuentasBancoApp, setCuentasBancoApp] = useState([]);
   const [cuentasCajaApp, setCuentasCajaApp] = useState([]);
@@ -13829,6 +13830,7 @@ function App() {
       onSnapshot(getColRef('procura_servicios'), s=>setServiciosApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('retencionesClientes'), s=>setRetencionesClientesApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('banco_movimientos'), s=>setMovBancoApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('comprobantes_reclasificaciones'), s=>setReclasificacionesApp(Object.fromEntries(s.docs.map(d=>[d.id,d.data()])))),
       onSnapshot(getColRef('caja_movimientos'), s=>setMovCajaApp(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancoApp(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s=>setCuentasCajaApp(s.docs.map(d=>d.data()))),
@@ -13846,12 +13848,23 @@ function App() {
   // de Procura (confirmado en generarAsientoFC), y sumarla aparte duplicaría los montos.
   const getAsientosReales = () => {
     const out = [];
-    const mapLineas = (lineas) => lineas.map(l=>({
-      codigo:(l.cuenta||'').split('—')[0].trim(),
-      cuenta:(l.cuenta||'').split('—').slice(1).join('—').trim()||l.cuenta,
-      debeBs: l.tipo==='DEBITO'?(l.montoBs||0):0, haberBs: l.tipo==='CREDITO'?(l.montoBs||0):0,
-      debeUSD: l.tipo==='DEBITO'?(l.montoUSD||0):0, haberUSD: l.tipo==='CREDITO'?(l.montoUSD||0):0,
-    }));
+    // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
+    // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
+    // sistemas quedan sincronizados y Estado de Resultados / Balance General no muestran el código viejo.
+    const aplicarReclasLinea = (tabId, compId, lineIdx, codigo, cuenta) => {
+      const ov = reclasificacionesApp[`${tabId}__${compId}__${lineIdx}`];
+      return ov ? {codigo:ov.codigo||codigo, cuenta:ov.cuenta||cuenta} : {codigo, cuenta};
+    };
+    const mapLineas = (lineas, tabId, compId) => lineas.map((l,li)=>{
+      const codigo=(l.cuenta||'').split('—')[0].trim();
+      const cuenta=(l.cuenta||'').split('—').slice(1).join('—').trim()||l.cuenta;
+      const r = tabId ? aplicarReclasLinea(tabId, compId, li, codigo, cuenta) : {codigo, cuenta};
+      return {
+        codigo:r.codigo, cuenta:r.cuenta,
+        debeBs: l.tipo==='DEBITO'?(l.montoBs||0):0, haberBs: l.tipo==='CREDITO'?(l.montoBs||0):0,
+        debeUSD: l.tipo==='DEBITO'?(l.montoUSD||0):0, haberUSD: l.tipo==='CREDITO'?(l.montoUSD||0):0,
+      };
+    });
     // 1) Procura — ya incluye retenciones IVA/ISLR dentro del mismo asiento
     (facturasCompraApp||[]).filter(f=>f.afectaContabilidad!==false).forEach(f=>{
       try{
@@ -13860,7 +13873,7 @@ function App() {
         const retISLRLista=calcRetISLRLista(f,tot);
         const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
         const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas)});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas,'procura',f.id)});
       }catch(e){}
     });
     // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
@@ -13873,7 +13886,7 @@ function App() {
           nesRef.length ? `NE: ${nesRef.join(', ')}` : '',
           opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
         ].filter(Boolean).join(' · ');
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas)});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -13886,23 +13899,28 @@ function App() {
       const montoUSD=montoBs/Math.max(Number(r.tasa||1),1);
       const cliente = (clients||[]).find(c=>c.rif && r.clientRif && c.rif.replace(/\W/g,'')===String(r.clientRif).replace(/\W/g,''));
       const [codCli,nomCli]=cliente?.cuentaContableNombre?cliente.cuentaContableNombre.split('—').map(s=>s.trim()):['1.1.02.01.001','Cuentas por Cobrar Clientes'];
+      const rLinea0 = aplicarReclasLinea('ret_cli', r.id, 0, ctaRet.codigo, `${ctaRet.nombre} (${tipo})`);
+      const rLinea1 = aplicarReclasLinea('ret_cli', r.id, 1, codCli||'1.1.02.01.001', nomCli||'Cuentas por Cobrar Clientes');
       out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes', concepto:`Retención ${tipo} — ${r.clientName||cliente?.razonSocial||cliente?.nombre||'—'}`,
         lineas:[
-          {codigo:ctaRet.codigo, cuenta:`${ctaRet.nombre} (${tipo})`, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
-          {codigo:codCli||'1.1.02.01.001', cuenta:nomCli||'Cuentas por Cobrar Clientes', debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+          {codigo:rLinea0.codigo, cuenta:rLinea0.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+          {codigo:rLinea1.codigo, cuenta:rLinea1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
         ]});
     });
     // 4) Banco y 5) Caja — el movimiento propio + su contrapartida. Si el movimiento ya
     // tiene un asiento formal vinculado (asientoContableId), se usan esas líneas reales
     // en vez de reconstruir una genérica.
-    [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco'},
-     {movs:movCajaApp, cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja'}].forEach(({movs,cuentas,idField,nombreCta,mod})=>{
+    [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
+     {movs:movCajaApp, cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
         const cta=(cuentas||[]).find(c=>c.id===m[idField]);
         if(!cta) return;
         const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
         if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
-          out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:(asientoLigado.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)}))});
+          out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:(asientoLigado.lineas||[]).map((l,li)=>{
+            const r = aplicarReclasLinea(tabId, m.id, li, l.codigo||'', l.cuenta||'—');
+            return {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)};
+          })});
           return;
         }
         const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
@@ -13911,8 +13929,10 @@ function App() {
           ? (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+cobrar|cxc|client)/i.test(p.nombre||''))
           : (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+pagar|cxp|proveedor)/i.test(p.nombre||''));
         const contra = g ? {codigo:String(g.codigo||g.id||''), cuenta:g.nombre||''} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
-        const lineaPropia={codigo:cta.cuentaContableCod||'—', cuenta:nombreCta(cta)||mod, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
-        const lineaContra={codigo:contra.codigo, cuenta:contra.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
+        const propiaR = aplicarReclasLinea(tabId, m.id, 0, cta.cuentaContableCod||'—', nombreCta(cta)||mod);
+        const contraR = aplicarReclasLinea(tabId, m.id, 1, contra.codigo, contra.cuenta);
+        const lineaPropia={codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
+        const lineaContra={codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
         out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:[lineaPropia,lineaContra]});
       });
     });
