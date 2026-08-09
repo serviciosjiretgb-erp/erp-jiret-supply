@@ -11325,6 +11325,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // reemplazo y lo aplica al mostrar/exportar. Clave: tabId__comprobanteId__lineIdx.
   const [reclasificacionesC, setReclasificacionesC] = useState({});
   const [reclasificando, setReclasificando] = useState(null); // {tabId,compId,lineIdx,codigoActual,cuentaActual}
+  const [reclasMasivaProp, setReclasMasivaProp] = useState(null); // {propuestas:[...], sinCoincidencia:[...]} — vista previa antes de aplicar
+  const [reclasMasivaLoading, setReclasMasivaLoading] = useState(false);
+  const [reclasMasivaAplicando, setReclasMasivaAplicando] = useState(false);
   const [reclasBusq, setReclasBusq] = useState('');
   const [reclasSaving, setReclasSaving] = useState(false);
   const [tasaDeprec, setTasaDeprec] = useState('');
@@ -11937,6 +11940,79 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     try{ await deleteDoc(getDocRef('comprobantes_ajustes', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
 
+  // ── Reclasificación masiva de comprobantes ya contabilizados con códigos viejos ──────
+  // Busca líneas cuyo código ya no existe en el Plan de Cuentas actual, y propone el código
+  // nuevo por coincidencia de NOMBRE de cuenta (asumiendo que el nombre no cambió, solo el código).
+  // No aplica nada solo — arma la lista para revisión, y aplicarReclasMasiva() hace el guardado real.
+  const escanearReclasMasiva = async () => {
+    setReclasMasivaLoading(true);
+    try {
+      const codigosVigentes = new Set((planDeCuentas||[]).map(p=>p.codigo));
+      const buscarPorNombre = (nombreTxt) => {
+        const n = String(nombreTxt||'').trim().toUpperCase();
+        if (!n) return null;
+        let m = (planDeCuentas||[]).find(p=>(p.nombre||'').trim().toUpperCase()===n);
+        if (!m) m = (planDeCuentas||[]).find(p=>(p.nombre||'').trim().toUpperCase().includes(n) || n.includes((p.nombre||'').trim().toUpperCase()));
+        return m||null;
+      };
+      const colecciones = [
+        {nombre:'cont_asientos', label:'Comprobante de Banco/Caja',
+          extraer: (data,l) => ({ fecha: data.fecha||'', comprobante: data.comprobante||data.numero||'', concepto: l.concepto||data.descripcion||'',
+            montoUSD: l.debeUSD||l.haberUSD||0, montoBs: l.debeBs||l.haberBs||0 })},
+        {nombre:'comprobantes_ajustes', label:'Ajuste Contable',
+          extraer: (data,l) => ({ fecha: data.fecha||'', comprobante: data.nroComprobante||'', concepto: data.concepto||'',
+            montoUSD: l.montoUSD||0, montoBs: l.montoBs||0 })},
+      ];
+      const propuestas=[]; const sinCoincidencia=[];
+      for (const col of colecciones) {
+        const snap = await getDocs(getColRef(col.nombre));
+        snap.docs.forEach(d=>{
+          const data=d.data();
+          (data.lineas||[]).forEach((l,li)=>{
+            if (!l.codigo || codigosVigentes.has(l.codigo)) return; // sin código, o código todavía vigente: no tocar
+            const nueva = buscarPorNombre(l.cuenta);
+            const campos = col.extraer(data,l);
+            const entrada = {
+              docCol: col.nombre, docId: d.id, lineIdx: li, origenLabel: col.label, lineasDoc: data.lineas,
+              ...campos,
+              codigoViejo: l.codigo, cuentaVieja: l.cuenta||'',
+            };
+            if (nueva) propuestas.push({...entrada, codigoNuevo: nueva.codigo, cuentaNueva: nueva.nombre});
+            else sinCoincidencia.push(entrada);
+          });
+        });
+      }
+      setReclasMasivaProp({propuestas, sinCoincidencia, aprobadas: propuestas.map((_,i)=>i)});
+    } catch(e) {
+      setDialog({title:'Error', text:'No se pudo escanear: '+e.message, type:'alert'});
+    } finally { setReclasMasivaLoading(false); }
+  };
+  const aplicarReclasMasiva = async () => {
+    if (!reclasMasivaProp) return;
+    const aElegir = reclasMasivaProp.propuestas.filter((_,i)=>reclasMasivaProp.aprobadas.includes(i));
+    if (!aElegir.length) { setDialog({title:'Aviso', text:'No hay ninguna tildada para aplicar.', type:'alert'}); return; }
+    setReclasMasivaAplicando(true);
+    try {
+      // Se agrupa por documento porque puede haber varias líneas del mismo comprobante a corregir.
+      const porDoc = {};
+      aElegir.forEach(p => { const k=`${p.docCol}__${p.docId}`; (porDoc[k]=porDoc[k]||[]).push(p); });
+      const batch = writeBatch(db);
+      for (const cambios of Object.values(porDoc)) {
+        const {docCol, docId, lineasDoc} = cambios[0];
+        const lineasNuevas = (lineasDoc||[]).map((l,li)=>{
+          const cambio = cambios.find(c=>c.lineIdx===li);
+          return cambio ? {...l, codigo:cambio.codigoNuevo, cuenta:cambio.cuentaNueva} : l;
+        });
+        batch.update(getDocRef(docCol, docId), {lineas: lineasNuevas});
+      }
+      await batch.commit();
+      setReclasMasivaProp(null);
+      setDialog({title:'Reclasificación Masiva Aplicada', text:`${aElegir.length} línea(s) reclasificada(s) en ${Object.keys(porDoc).length} comprobante(s).`, type:'alert'});
+    } catch(e) {
+      setDialog({title:'Error', text:'Error al aplicar: '+e.message, type:'alert'});
+    } finally { setReclasMasivaAplicando(false); }
+  };
+
   // ── Reclasificar cuenta ──────────────────────────────────────────────────────────────
   const claveReclas = (tabId, compId, lineIdx) => `${tabId}__${compId}__${lineIdx}`;
   const cuentaReclas = (tabId, compId, lineIdx) => reclasificacionesC[claveReclas(tabId,compId,lineIdx)] || null;
@@ -12234,6 +12310,18 @@ ${valoresHtml}
             <button onClick={()=>exportarExcelReclasificaciones(lista,labelTab)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-black text-[10px] flex items-center gap-1 whitespace-nowrap"><Download size={12}/>Excel</button>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Cada fila muestra cómo se contabilizó originalmente y a qué cuenta se movió, con la fecha en que se hizo el cambio. Las reclasificaciones hechas antes de esta actualización pueden no traer fecha/concepto/monto del comprobante — solo el cambio de cuenta.</div>
+          <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-black text-purple-800 uppercase">Reclasificación masiva de comprobantes ya contabilizados</p>
+              <p className="text-[10px] text-purple-600 font-bold mt-0.5">Busca en Banco/Caja y Ajustes las líneas que quedaron con un código del plan de cuentas anterior, y propone la cuenta nueva por coincidencia de nombre — para tu revisión antes de aplicar nada.</p>
+            </div>
+            <button onClick={()=>{
+              const clave = window.prompt('Esta acción requiere clave de administrador.\nIngrese la clave:');
+              if (clave===null) return;
+              if (clave!==ADMIN_PASSWORD && clave!=='Supply2026.Admin') { setDialog({title:'Clave incorrecta', text:'La clave de administrador ingresada no es correcta.', type:'alert'}); return; }
+              escanearReclasMasiva();
+            }} disabled={reclasMasivaLoading} className="bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13} className={reclasMasivaLoading?'animate-spin':''}/> {reclasMasivaLoading?'Escaneando...':'Escanear'}</button>
+          </div>
           {lista.length===0 ? (
             <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
           ) : (
@@ -13294,6 +13382,69 @@ ${valoresHtml}
         ))}
       </div>
       {contenido()}
+      {reclasMasivaProp && (() => {
+        const {propuestas, sinCoincidencia, aprobadas} = reclasMasivaProp;
+        const toggleUna = (i) => setReclasMasivaProp(m=>({...m, aprobadas: m.aprobadas.includes(i) ? m.aprobadas.filter(x=>x!==i) : [...m.aprobadas, i]}));
+        const toggleTodas = (marcar) => setReclasMasivaProp(m=>({...m, aprobadas: marcar ? propuestas.map((_,i)=>i) : []}));
+        return (
+          <div className="fixed inset-0 bg-black/70 z-[99997] flex items-center justify-center p-4" onClick={()=>setReclasMasivaProp(null)}>
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[88vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+              <div className="p-6 pb-4 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-lg text-gray-800">Revisar Reclasificación Masiva</h3>
+                  <p className="text-xs text-gray-500 font-bold mt-1">{propuestas.length} línea(s) con código desactualizado y coincidencia encontrada por nombre. Nada se aplica hasta que confirmes.</p>
+                </div>
+                <button onClick={()=>setReclasMasivaProp(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+              </div>
+              {propuestas.length>0 && (
+                <div className="px-6 py-2 flex items-center justify-between text-[10px] font-black uppercase text-gray-500 border-b border-gray-100">
+                  <span>{aprobadas.length} de {propuestas.length} tildada(s)</span>
+                  <div className="flex gap-3">
+                    <button onClick={()=>toggleTodas(true)} className="text-purple-600 hover:underline">Marcar todas</button>
+                    <button onClick={()=>toggleTodas(false)} className="text-gray-400 hover:underline">Desmarcar todas</button>
+                  </div>
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto px-6 py-3">
+                {propuestas.length===0 ? (
+                  <p className="text-center text-gray-400 text-xs py-8">No se encontró ninguna línea con código desactualizado que tenga coincidencia por nombre.</p>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="text-[9px] uppercase font-black text-gray-400 border-b-2 border-gray-100">
+                      <tr><th className="py-2 text-left w-8"></th><th className="py-2 text-left">Origen</th><th className="py-2 text-left">Fecha</th><th className="py-2 text-left">Concepto</th><th className="py-2 text-right">Monto</th><th className="py-2 text-left bg-red-50 px-2">Código Viejo</th><th className="py-2 text-left bg-emerald-50 px-2">Código Nuevo Propuesto</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {propuestas.map((p,i)=>(
+                        <tr key={i} className={aprobadas.includes(i)?'':'opacity-40'}>
+                          <td className="py-2"><input type="checkbox" checked={aprobadas.includes(i)} onChange={()=>toggleUna(i)} className="w-4 h-4 rounded cursor-pointer"/></td>
+                          <td className="py-2 text-gray-500">{p.origenLabel}</td>
+                          <td className="py-2 font-bold">{p.fecha?contDd(p.fecha):'—'}</td>
+                          <td className="py-2 text-gray-600 max-w-[200px] truncate" title={p.concepto}>{p.concepto||'—'}</td>
+                          <td className="py-2 text-right font-mono">{p.montoUSD?`$${contFmt(p.montoUSD)}`:(p.montoBs?`Bs.${contFmt(p.montoBs)}`:'—')}</td>
+                          <td className="py-2 px-2 bg-red-50"><span className="font-mono text-red-700 font-black">{p.codigoViejo}</span><br/><span className="text-red-600">{p.cuentaVieja}</span></td>
+                          <td className="py-2 px-2 bg-emerald-50"><span className="font-mono text-emerald-700 font-black">{p.codigoNuevo}</span><br/><span className="text-emerald-700">{p.cuentaNueva}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {sinCoincidencia.length>0 && (
+                  <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-amber-700 uppercase mb-1">⚠ {sinCoincidencia.length} línea(s) con código desactualizado SIN coincidencia por nombre — hay que reclasificarlas a mano desde su comprobante:</p>
+                    <ul className="text-[10px] text-amber-700 font-bold space-y-0.5 max-h-24 overflow-y-auto">
+                      {sinCoincidencia.slice(0,20).map((s,i)=><li key={i}>{s.origenLabel} · {s.fecha?contDd(s.fecha):'—'} · {s.codigoViejo} "{s.cuentaVieja}" — {s.concepto||'sin concepto'}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 p-6 pt-4 border-t border-gray-100">
+                <button onClick={()=>setReclasMasivaProp(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                <button onClick={aplicarReclasMasiva} disabled={!aprobadas.length || reclasMasivaAplicando} className="flex-1 bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasMasivaAplicando?'Aplicando...':`Aplicar a las ${aprobadas.length} tildada(s)`}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {reclasificando && (()=>{
         const filtradas = (planCuentasC||[]).filter(c=>{
           const q=reclasBusq.toUpperCase();
