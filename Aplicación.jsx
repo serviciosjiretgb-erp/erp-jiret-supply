@@ -12183,8 +12183,8 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const escanearReclasMasiva = async () => {
     setReclasMasivaLoading(true);
     try {
-      const codigosVigentes = new Set((planCuentasC||[]).map(p=>p.codigo));
       const limpiarTxt = (s) => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase();
+      const porCodigo = new Map((planCuentasC||[]).map(p=>[p.codigo, p]));
       const buscarPorNombre = (nombreTxt) => {
         const n = limpiarTxt(nombreTxt);
         if (!n) return null;
@@ -12206,7 +12206,10 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
         snap.docs.forEach(d=>{
           const data=d.data();
           (data.lineas||[]).forEach((l,li)=>{
-            if (!l.codigo || codigosVigentes.has(l.codigo)) return; // sin código, o código todavía vigente: no tocar
+            if (!l.codigo) return; // sin código: no hay nada que reclasificar
+            const cuentaVigente = porCodigo.get(l.codigo);
+            const vigente = cuentaVigente && limpiarTxt(cuentaVigente.nombre)===limpiarTxt(l.cuenta);
+            if (vigente) return; // código Y nombre coinciden con la cuenta actual: no tocar
             const nueva = buscarPorNombre(l.cuenta);
             const campos = col.extraer(data,l);
             const entrada = {
