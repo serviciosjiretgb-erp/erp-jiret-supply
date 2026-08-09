@@ -14505,6 +14505,40 @@ function App() {
         }
       });
     }
+    // Facturas de Compra: cada ítem trae su propio "código — nombre" grabado en el momento en
+    // que se creó la factura (itemsOC[].cuentaContableNombre) — no se recalcula después, así
+    // que si el código quedó viejo, cada reporte que lea esa factura lo sigue mostrando mal
+    // para siempre. Aquí sí se revisa código Y nombre juntos (vienen combinados en un string).
+    {
+      const snap = await getDocs(getColRef('procura_facturas_compra'));
+      let facturasTocadas = 0, itemsReparados = 0; const itemsSinCoincidencia = [];
+      snap.docs.forEach(d=>{
+        const data = d.data();
+        const items = data.itemsOC;
+        if (!Array.isArray(items) || !items.length) return;
+        let huboCambio = false;
+        const itemsNuevos = items.map(it=>{
+          const texto = it.cuentaContableNombre || '';
+          if (!texto || texto.includes('Sin cuenta')) return it; // sin código guardado, se resuelve dinámico — no tocar
+          const partes = texto.split('—');
+          const codigoGuardado = (partes[0]||'').trim();
+          const nombreGuardado = (partes.length>1 ? partes.slice(1).join('—') : '').trim().toUpperCase();
+          const cuentaVigente = planDeCuentas.find(p=>p.codigo===codigoGuardado);
+          const vigente = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreGuardado;
+          if (vigente) return it;
+          const nueva = buscarCuentaNueva(nombreGuardado);
+          if (nueva) {
+            huboCambio = true; itemsReparados++;
+            return {...it, cuentaContableNombre: `${nueva.codigo} — ${nueva.nombre}`};
+          }
+          itemsSinCoincidencia.push(`Factura ${data.nroFactura||d.id} — ${it.desc||'ítem'} (buscaba "${nombreGuardado||'—'}")`);
+          return it;
+        });
+        if (huboCambio) { batch.update(getDocRef('procura_facturas_compra', d.id), {itemsOC: itemsNuevos}); facturasTocadas++; }
+      });
+      if (itemsReparados>0) reparados += itemsReparados;
+      if (itemsSinCoincidencia.length) sinCoincidencia.push(...itemsSinCoincidencia.slice(0,15).map(s=>`Facturas de Compra: ${s}`));
+    }
     if (reparados>0) await batch.commit();
     const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
       (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
