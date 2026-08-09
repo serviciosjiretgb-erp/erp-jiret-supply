@@ -12153,10 +12153,11 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     const lineas=[...f.lineas];
     const tasaNum = parseFloat(f.tasa)||0;
     const l = {...lineas[idx], [campo]:valor};
-    // Conveniencia multimoneda: si hay tasa y el otro campo está vacío, se autocalcula — pero
-    // siempre queda editable manualmente después (no se fuerza el vínculo).
-    if (campo==='montoBs' && tasaNum>0 && !lineas[idx].montoUSD) l.montoUSD = valor?(parseFloat(valor)/tasaNum).toFixed(2):'';
-    if (campo==='montoUSD' && tasaNum>0 && !lineas[idx].montoBs) l.montoBs = valor?(parseFloat(valor)*tasaNum).toFixed(2):'';
+    // Conversión automática en ambos sentidos: el campo que se está escribiendo siempre
+    // recalcula el otro, mientras haya tasa. Sin condiciones ni "modo manual" — así es
+    // automático de verdad, sin importar en qué orden se escriban los campos.
+    if (campo==='montoBs' && tasaNum>0) l.montoUSD = valor?(parseFloat(valor)/tasaNum).toFixed(2):'';
+    if (campo==='montoUSD' && tasaNum>0) l.montoBs = valor?(parseFloat(valor)*tasaNum).toFixed(2):'';
     lineas[idx]=l;
     return {...f, lineas};
   });
