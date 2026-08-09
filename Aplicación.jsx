@@ -11159,6 +11159,39 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
   root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
   return root;
 };
+// Igual que ccBuildArbol pero SIN el filtro de saldo cero — para árboles de solo navegación
+// (como el selector de cuentas del Mayor Analítico), donde una cuenta con movimiento pero saldo
+// neto cero (débitos = créditos) igual debe poder seleccionarse, no desaparecer de la lista.
+const ccBuildArbolNav = (cuentasAgregadas, planDeCuentasArr, gruposIncluir) => {
+  const root = [];
+  const normKey = s => (s||'').trim().replace(/\s+/g,' ').toUpperCase();
+  const grupoMap={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5.1':'COSTOS','5':'GASTOS','6':'GASTOS'};
+  (cuentasAgregadas||[]).filter(c=>gruposIncluir.some(g=>String(c.codigo).startsWith(g))).forEach(c=>{
+    const codC = ccNormCodigo(c.codigo);
+    const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
+    const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
+    const grNom = grupoMap[grKey] || pdc?.grupo || grKey;
+    const crudo = pdc
+      ? [grNom, pdc.grupo, pdc.subGrupo, pdc.cuenta, pdc.subcuenta]
+      : [grNom, 'SIN CLASIFICAR EN PLAN DE CUENTAS'];
+    const pathArray = [];
+    crudo.filter(Boolean).forEach(seg=>{
+      const segN = normKey(seg);
+      const prevN = pathArray.length ? normKey(pathArray[pathArray.length-1]) : null;
+      if (segN !== prevN) pathArray.push(seg);
+    });
+    let cur = root;
+    pathArray.forEach(folderName=>{
+      const key = normKey(folderName);
+      let folder = cur.find(n=>normKey(n.n)===key);
+      if (!folder) { folder = {n:folderName.trim(), c:[]}; cur.push(folder); }
+      cur = folder.c;
+    });
+    cur.push({ n:`${c.codigo} - ${c.cuenta||''}`, codigo:c.codigo, isLeaf:true });
+  });
+  root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
+  return root;
+};
 const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, expandSignal }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
@@ -13995,6 +14028,7 @@ function App() {
   const [contFiltHasta, setContFiltHasta] = useState('');
   const [contERCurrency, setContERCurrency] = useState('both');
   const [contERExpandAll, setContERExpandAll] = useState(true);
+  const [contERVistaPlanta, setContERVistaPlanta] = useState(false);
   const [contERExpandKey, setContERExpandKey] = useState(0);
   const [contBGCurrency, setContBGCurrency] = useState('both');
   const [contBGExpandAll, setContBGExpandAll] = useState(true);
@@ -14567,6 +14601,11 @@ function App() {
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
+  const [showVentasCostosReport, setShowVentasCostosReport] = useState(false);
+  const [vcFiltDesde, setVcFiltDesde] = useState('');
+  const [vcFiltHasta, setVcFiltHasta] = useState('');
+  const [vcFiltOp, setVcFiltOp] = useState('todos'); // 'todos' | 'con' | 'sin'
+  const [vcBusq, setVcBusq] = useState('');
   const [showClientReport, setShowClientReport] = useState(false);
   const [showReqReport, setShowReqReport] = useState(false);
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
@@ -23980,6 +24019,101 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     const filteredClients = filteredClientsMemo;
     const filteredInvoices = filteredInvoicesMemo;
 
+    if (showVentasCostosReport) {
+      const facturasFiltradas = (invoices||[]).filter(f=>{
+        if (f.esAnulacionFiscal) return false;
+        const fecha = f.fecha||'';
+        if (vcFiltDesde && fecha < vcFiltDesde) return false;
+        if (vcFiltHasta && fecha > vcFiltHasta) return false;
+        const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+        if (vcFiltOp==='con' && !tieneOp) return false;
+        if (vcFiltOp==='sin' && tieneOp) return false;
+        return true;
+      });
+      const porArticulo = {};
+      facturasFiltradas.forEach(f=>{
+        const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+        (f.itemsFacturados&&f.itemsFacturados.length ? f.itemsFacturados : [{desc:f.productoMaquilado||'MAQUILA / SERVICIO', cantidad:1, precioUnit:parseNum(f.montoBase), costoUnit:0, costoTotal:0, unidad:''}]).forEach(it=>{
+          const key = (it.invCode||it.desc||'—').trim().toUpperCase();
+          if (!porArticulo[key]) porArticulo[key] = {desc: it.desc||'—', unidad: it.unidad||'', cantidad:0, venta:0, costo:0, conOp:0, sinOp:0};
+          const cant = parseNum(it.cantidad)||0;
+          const venta = parseNum(it.precioUnit||0)*cant || parseNum(f.montoBase)/Math.max((f.itemsFacturados||[]).length,1);
+          const costo = parseNum(it.costoTotal||0) || parseNum(it.costoUnit||0)*cant;
+          porArticulo[key].cantidad += cant;
+          porArticulo[key].venta += venta;
+          porArticulo[key].costo += costo;
+          if (tieneOp) porArticulo[key].conOp += venta; else porArticulo[key].sinOp += venta;
+        });
+      });
+      const filas = Object.values(porArticulo)
+        .filter(a=>!vcBusq || a.desc.toUpperCase().includes(vcBusq.toUpperCase()))
+        .map(a=>({...a, margen: a.venta-a.costo, margenPct: a.venta>0 ? ((a.venta-a.costo)/a.venta*100) : 0}))
+        .sort((a,b)=>b.venta-a.venta);
+      const totales = filas.reduce((s,a)=>({venta:s.venta+a.venta, costo:s.costo+a.costo, margen:s.margen+a.margen}), {venta:0,costo:0,margen:0});
+      const totalMargenPct = totales.venta>0 ? (totales.margen/totales.venta*100) : 0;
+
+      const exportarExcelVC = () => {
+        const ths = ['Artículo','Unidad','Cantidad','Venta $','Costo $','Margen $','Margen %'];
+        let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>Reporte General de Ventas y Costos</h3><p>Filtro: ${vcFiltOp==='con'?'Con OP':vcFiltOp==='sin'?'Sin OP':'Todas'} · ${contDd(vcFiltDesde)||'inicio'} al ${contDd(vcFiltHasta)||'hoy'}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+        filas.forEach(a=>{ html += `<tr><td>${a.desc}</td><td>${a.unidad}</td><td style="text-align:right">${contFmt(a.cantidad)}</td><td style="text-align:right">${contFmt(a.venta)}</td><td style="text-align:right">${contFmt(a.costo)}</td><td style="text-align:right">${contFmt(a.margen)}</td><td style="text-align:right">${a.margenPct.toFixed(2)}%</td></tr>`; });
+        html += `<tr style="font-weight:bold;background:#e5e7eb"><td colspan="3">TOTALES</td><td style="text-align:right">${contFmt(totales.venta)}</td><td style="text-align:right">${contFmt(totales.costo)}</td><td style="text-align:right">${contFmt(totales.margen)}</td><td style="text-align:right">${totalMargenPct.toFixed(2)}%</td></tr>`;
+        html += `</tbody></table></body></html>`;
+        const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url; link.download = `VentasYCostos_${getTodayDate()}.xls`;
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      };
+
+      return (
+        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black">
+          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf flex-wrap gap-2">
+            <button onClick={() => setShowVentasCostosReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
+            <div className="flex flex-wrap gap-2 items-center">
+              <input type="date" value={vcFiltDesde} onChange={e=>setVcFiltDesde(e.target.value)} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none"/>
+              <input type="date" value={vcFiltHasta} onChange={e=>setVcFiltHasta(e.target.value)} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none"/>
+              <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
+                  <button key={v} onClick={()=>setVcFiltOp(v)} className={`px-3 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${vcFiltOp===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>{lbl}</button>
+                ))}
+              </div>
+              <input value={vcBusq} onChange={e=>setVcBusq(e.target.value)} placeholder="Buscar artículo..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-48"/>
+              <button onClick={exportarExcelVC} className="bg-emerald-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-emerald-700"><FileSpreadsheet size={14}/> Excel</button>
+              <button onClick={() => handleExportPDF('Reporte_Ventas_Costos', false)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
+            </div>
+          </div>
+          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
+          <div className="text-center mb-2"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Ventas y Costos</h2></div>
+          <p className="text-center text-[10px] text-gray-500 font-bold uppercase mb-6">Detalle por artículo facturado · {vcFiltOp==='con'?'Solo con OP':vcFiltOp==='sin'?'Solo sin OP':'Todas las ventas'} · {contDd(vcFiltDesde)||'Inicio'} al {contDd(vcFiltHasta)||'Hoy'}</p>
+          <table className="w-full text-[10px] border-collapse border border-gray-300">
+            <thead className="bg-gray-100 uppercase"><tr>
+              <th className="p-2 border text-left">Artículo</th><th className="p-2 border">Unidad</th><th className="p-2 border text-right">Cantidad</th>
+              <th className="p-2 border text-right">Venta ($)</th><th className="p-2 border text-right">Costo ($)</th><th className="p-2 border text-right">Margen ($)</th><th className="p-2 border text-right">Margen %</th>
+            </tr></thead>
+            <tbody>
+              {filas.length===0 && <tr><td colSpan={7} className="p-4 text-center text-gray-400">Sin artículos para este filtro.</td></tr>}
+              {filas.map((a,i)=>(
+                <tr key={i}>
+                  <td className="p-2 border font-bold">{a.desc}</td>
+                  <td className="p-2 border text-center">{a.unidad}</td>
+                  <td className="p-2 border text-right">{formatNum(a.cantidad)}</td>
+                  <td className="p-2 border text-right">${formatNum(a.venta)}</td>
+                  <td className="p-2 border text-right">${formatNum(a.costo)}</td>
+                  <td className={`p-2 border text-right font-bold ${a.margen>=0?'text-emerald-600':'text-red-600'}`}>${formatNum(a.margen)}</td>
+                  <td className={`p-2 border text-right font-bold ${a.margenPct>=0?'text-emerald-600':'text-red-600'}`}>{a.margenPct.toFixed(2)}%</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-gray-100 font-black"><tr>
+              <td colSpan={3} className="p-2 border text-right">TOTALES:</td>
+              <td className="p-2 border text-right">${formatNum(totales.venta)}</td>
+              <td className="p-2 border text-right">${formatNum(totales.costo)}</td>
+              <td className={`p-2 border text-right ${totales.margen>=0?'text-emerald-700':'text-red-700'}`}>${formatNum(totales.margen)}</td>
+              <td className={`p-2 border text-right ${totalMargenPct>=0?'text-emerald-700':'text-red-700'}`}>{totalMargenPct.toFixed(2)}%</td>
+            </tr></tfoot>
+          </table>
+        </div>
+      );
+    }
+
     if (showGeneralInvoicesReport) {
       const totalBaseGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.montoBase), 0);
       const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.iva), 0);
@@ -28017,7 +28151,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         )}
         {ventasView === 'facturacion' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-             <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowCuentasIngresoModal(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1.5"><Settings2 size={12}/> CUENTAS DE INGRESOS</button><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
+             <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowCuentasIngresoModal(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1.5"><Settings2 size={12}/> CUENTAS DE INGRESOS</button><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>setShowVentasCostosReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">VENTAS Y COSTOS</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
             {showCuentasIngresoModal && (
               <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentasIngresoModal(false)}>
                 <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4" onClick={e=>e.stopPropagation()}>
@@ -43343,7 +43477,7 @@ ${resumenHtml}
     }));
     const cuentasParaArbol = Object.values(cuentasConMov)
       .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()));
-    const treeMayor = ccBuildArbol(cuentasParaArbol, planDeCuentas, ['1','2','3','4','5','6','7'], () => ({usd:0,bs:0}));
+    const treeMayor = ccBuildArbolNav(cuentasParaArbol, planDeCuentas, ['1','2','3','4','5','6','7']);
     let saldoAcum = 0;
     let saldoAcumUSD = 0;
     const movsCuenta = !mayorCuentaSelApp ? [] : asientosPeriodo.flatMap(a=>
@@ -43571,13 +43705,17 @@ ${resumenHtml}
       })
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
-    const treeIngresos = ccBuildArbol(cuentasAgg, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-    const treeCostos    = ccBuildArbol(cuentasAgg, planDeCuentas, ['5.1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
-    const cuentasGastos = cuentasAgg.filter(c=>c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')));
+    const cuentasAggUsar = contERVistaPlanta
+      ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || /orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
+      : cuentasAgg;
+    const treeIngresos = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+    const treeCostos    = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['5.1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
-    if (treeCostos[0]) treeCostos[0].n = 'COSTO DE VENTAS';
+    if (treeIngresos[0] && contERVistaPlanta) treeIngresos[0].n = 'INGRESOS POR PRODUCCIÓN';
+    if (treeCostos[0]) treeCostos[0].n = contERVistaPlanta ? 'COSTO DE PRODUCCIÓN' : 'COSTO DE VENTAS';
     if (treeGastosReal[0]) treeGastosReal[0].n = 'GASTOS OPERATIVOS';
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
@@ -43624,6 +43762,7 @@ ${resumenHtml}
                 <button onClick={()=>{setContERExpandAll(true);setContERExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Expandir Todos</button>
                 <button onClick={()=>{setContERExpandAll(false);setContERExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Contraer Todos</button>
               </div>
+              <button onClick={()=>setContERVistaPlanta(v=>!v)} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaPlanta?'bg-indigo-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><Factory size={13}/> {contERVistaPlanta?'Viendo Resultado Planta':'Resultado Planta'}</button>
               <div className="flex gap-2 ml-auto">
                 <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
                 <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
