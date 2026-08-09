@@ -14427,7 +14427,7 @@ function App() {
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'NÓMINA', modulo:'Nómina', concepto:a.concepto||'Nómina',
         lineas:(a.lineas||[]).map((l,li)=>{
           const r = aplicarReclasLinea('nomina', a.id, li, l.codigo||'', l.cuenta||'—');
-          return {codigo:r.codigo, cuenta:r.cuenta, debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
+          return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
         })});
     });
     return out;
@@ -43759,7 +43759,7 @@ ${resumenHtml}
       .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
       .map(a=>{
         const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
-        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
+        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
       })
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
@@ -43868,7 +43868,7 @@ ${resumenHtml}
       .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
       .map(a=>{
         const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
-        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
+        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
       })
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
@@ -44002,7 +44002,7 @@ ${resumenHtml}
       .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
       .map(a=>{
         const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
-        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
+        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
       })
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
