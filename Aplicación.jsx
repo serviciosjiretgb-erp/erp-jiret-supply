@@ -14469,15 +14469,16 @@ function App() {
         const data=d.data();
         const idGuardado = data.cuentaContableId;
         if (!idGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
-        const existe = planDeCuentas.some(p=>p.id===idGuardado);
+        const cuentaVigente = planDeCuentas.find(p=>p.id===idGuardado);
+        const nombreGuardado = extraerNombre(data.cuentaContableNombre);
+        const existe = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreGuardado;
         if (existe) return; // el vínculo sigue siendo válido, no tocar
-        const nombreBuscado = extraerNombre(data.cuentaContableNombre);
-        const nueva = buscarCuentaNueva(nombreBuscado);
+        const nueva = buscarCuentaNueva(nombreGuardado);
         if (nueva) {
           batch.update(getDocRef(col.nombre, d.id), {cuentaContableId:nueva.id, cuentaContableNombre:`${nueva.codigo} — ${nueva.nombre}`});
           reparados++;
         } else {
-          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreBuscado||'—'}")`);
+          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreGuardado||'—'}")`);
         }
       });
     }
@@ -14488,9 +14489,10 @@ function App() {
         const data=d.data();
         const codGuardado = data.cuentaContableCod;
         if (!codGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
-        const existe = planDeCuentas.some(p=>p.codigo===codGuardado);
-        if (existe) return; // el código sigue siendo válido, no tocar
         const nombreBuscado = String(data.cuentaContableNom||'').trim().toUpperCase();
+        const cuentaVigente = planDeCuentas.find(p=>p.codigo===codGuardado);
+        const existe = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreBuscado;
+        if (existe) return; // el código sigue siendo válido, no tocar
         const nueva = buscarCuentaNueva(nombreBuscado);
         if (nueva) {
           batch.update(getDocRef(col.nombre, d.id), {cuentaContableCod:nueva.codigo, cuentaContableNom:nueva.nombre});
