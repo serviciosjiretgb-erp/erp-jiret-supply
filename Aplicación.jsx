@@ -11563,6 +11563,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [reclasMasivaLoading, setReclasMasivaLoading] = useState(false);
   const [reclasMasivaAplicando, setReclasMasivaAplicando] = useState(false);
   const [pidiendoClaveReclasMasiva, setPidiendoClaveReclasMasiva] = useState(false);
+  const [asignarMasivaModalCC, setAsignarMasivaModalCC] = useState(null);
   const [claveReclasMasivaInput, setClaveReclasMasivaInput] = useState('');
   const [reclasBusq, setReclasBusq] = useState('');
   const [reclasSaving, setReclasSaving] = useState(false);
@@ -12253,6 +12254,115 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       alert('Error al aplicar: '+e.message);
     } finally { setReclasMasivaAplicando(false); }
   };
+  // ── Reparar Cuentas Contables: reconecta por nombre los vínculos rotos de Clientes,
+  // Proveedores, Categorías, Servicios, Inventario, Cuentas Bancarias/Cajas y los ítems de
+  // Facturas de Compra — todo lo que apunta a una cuenta contable fuera de los comprobantes
+  // ya contabilizados (eso lo cubre Reclasificación Masiva, arriba).
+  const repararCuentasContables = async () => {
+    const extraerNombre = (txt) => {
+      const partes = String(txt||'').split('—');
+      return (partes.length>1 ? partes.slice(1).join('—') : partes[0]).trim().toUpperCase();
+    };
+    const limpiarTxtRC = (s) => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase();
+    const buscarCuentaNueva = (nombreBuscado) => {
+      const n = limpiarTxtRC(nombreBuscado);
+      if (!n) return null;
+      let m = planCuentasC.find(p=>limpiarTxtRC(p.nombre)===n);
+      if (!m) m = planCuentasC.find(p=>{ const pn=limpiarTxtRC(p.nombre); return pn.includes(n) || n.includes(pn); });
+      return m||null;
+    };
+    const colecciones = [
+      {nombre:'clientes', label:'Clientes', campoNombre:'razonSocial'},
+      {nombre:'procura_proveedores', label:'Proveedores', campoNombre:'razonSocial'},
+      {nombre:'procura_categorias_servicio', label:'Categorías de Servicio', campoNombre:'nombre'},
+      {nombre:'procura_servicios', label:'Servicios', campoNombre:'nombre'},
+      {nombre:'inventory', label:'Inventario', campoNombre:'desc'},
+    ];
+    const coleccionesPorCodigo = [
+      {nombre:'banco_cuentas', label:'Cuentas Bancarias', campoNombre:'banco'},
+      {nombre:'caja_cuentas', label:'Cajas', campoNombre:'nombre'},
+    ];
+    let reparados=0; const sinCoincidencia=[]; const batch=writeBatch(db);
+    const sinCuentaNunca={};
+    for (const col of colecciones) {
+      const snap = await getDocs(getColRef(col.nombre));
+      sinCuentaNunca[col.nombre]=[];
+      snap.docs.forEach(d=>{
+        const data=d.data();
+        const idGuardado = data.cuentaContableId;
+        if (!idGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
+        const cuentaVigente = planCuentasC.find(p=>p.id===idGuardado);
+        const nombreGuardado = extraerNombre(data.cuentaContableNombre);
+        const existe = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreGuardado;
+        if (existe) return;
+        const nueva = buscarCuentaNueva(nombreGuardado);
+        if (nueva) {
+          batch.update(getDocRef(col.nombre, d.id), {cuentaContableId:nueva.id, cuentaContableNombre:`${nueva.codigo} — ${nueva.nombre}`});
+          reparados++;
+        } else {
+          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreGuardado||'—'}")`);
+        }
+      });
+    }
+    for (const col of coleccionesPorCodigo) {
+      const snap = await getDocs(getColRef(col.nombre));
+      sinCuentaNunca[col.nombre]=[];
+      snap.docs.forEach(d=>{
+        const data=d.data();
+        const codGuardado = data.cuentaContableCod;
+        if (!codGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
+        const nombreBuscado = String(data.cuentaContableNom||'').trim().toUpperCase();
+        const cuentaVigente = planCuentasC.find(p=>p.codigo===codGuardado);
+        const existe = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreBuscado;
+        if (existe) return;
+        const nueva = buscarCuentaNueva(nombreBuscado);
+        if (nueva) {
+          batch.update(getDocRef(col.nombre, d.id), {cuentaContableCod:nueva.codigo, cuentaContableNom:nueva.nombre});
+          reparados++;
+        } else {
+          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreBuscado||'—'}")`);
+        }
+      });
+    }
+    {
+      const snap = await getDocs(getColRef('procura_facturas_compra'));
+      let itemsReparados = 0; const itemsSinCoincidencia = [];
+      snap.docs.forEach(d=>{
+        const data = d.data();
+        const items = data.itemsOC;
+        if (!Array.isArray(items) || !items.length) return;
+        let huboCambio = false;
+        const itemsNuevos = items.map(it=>{
+          const texto = it.cuentaContableNombre || '';
+          if (!texto || texto.includes('Sin cuenta')) return it;
+          const partes = texto.split('—');
+          const codigoGuardado = (partes[0]||'').trim();
+          const nombreGuardado = (partes.length>1 ? partes.slice(1).join('—') : '').trim().toUpperCase();
+          const cuentaVigente = planCuentasC.find(p=>p.codigo===codigoGuardado);
+          const vigente = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreGuardado;
+          if (vigente) return it;
+          const nueva = buscarCuentaNueva(nombreGuardado);
+          if (nueva) { huboCambio = true; itemsReparados++; return {...it, cuentaContableNombre: `${nueva.codigo} — ${nueva.nombre}`}; }
+          itemsSinCoincidencia.push(`Factura ${data.nroFactura||d.id} — ${it.desc||'ítem'} (buscaba "${nombreGuardado||'—'}")`);
+          return it;
+        });
+        if (huboCambio) batch.update(getDocRef('procura_facturas_compra', d.id), {itemsOC: itemsNuevos});
+      });
+      if (itemsReparados>0) reparados += itemsReparados;
+      if (itemsSinCoincidencia.length) sinCoincidencia.push(...itemsSinCoincidencia.slice(0,15).map(s=>`Facturas de Compra: ${s}`));
+    }
+    if (reparados>0) await batch.commit();
+    const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
+      (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
+    const colConFaltantes = [...colecciones, ...coleccionesPorCodigo].filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, items:sinCuentaNunca[col.nombre]}));
+    if (colConFaltantes.length) {
+      if (window.confirm(`${texto}\n\nAdemás, ${colConFaltantes.map(c=>`${c.cantidad} en ${c.label}`).join(', ')} nunca tuvieron cuenta asignada.\n\n¿Quieres asignarles una cuenta a todos de una vez ahora?`)) {
+        setAsignarMasivaModalCC({colecciones:colConFaltantes, cuentaId:'', destino:colConFaltantes[0].nombre});
+      }
+    } else {
+      alert('Reparación de Cuentas Contables\n\n'+texto);
+    }
+  };
 
   // ── Reclasificar cuenta ──────────────────────────────────────────────────────────────
   const claveReclas = (tabId, compId, lineIdx) => `${tabId}__${compId}__${lineIdx}`;
@@ -12557,6 +12667,13 @@ ${valoresHtml}
               <p className="text-[10px] text-purple-600 font-bold mt-0.5">Busca en Banco/Caja y Ajustes las líneas que quedaron con un código del plan de cuentas anterior, y propone la cuenta nueva por coincidencia de nombre — para tu revisión antes de aplicar nada.</p>
             </div>
             <button onClick={escanearReclasMasiva} disabled={reclasMasivaLoading} className="bg-purple-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13} className={reclasMasivaLoading?'animate-spin':''}/> {reclasMasivaLoading?'Escaneando...':'Escanear'}</button>
+          </div>
+          <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-black text-orange-800 uppercase">Reparar Cuentas Contables</p>
+              <p className="text-[10px] text-orange-600 font-bold mt-0.5">Reconecta por nombre las cuentas contables de Clientes, Proveedores, Categorías, Servicios, Inventario, Cuentas Bancarias/Cajas y los ítems de Facturas de Compra que quedaron con el código anterior.</p>
+            </div>
+            <button onClick={repararCuentasContables} className="bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13}/> Reparar</button>
           </div>
           {lista.length===0 ? (
             <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
@@ -13636,6 +13753,85 @@ ${valoresHtml}
           </div>
         </div>
       )}
+      {asignarMasivaModalCC && (() => {
+        const col = asignarMasivaModalCC.colecciones.find(c=>c.nombre===asignarMasivaModalCC.destino);
+        const restantes = asignarMasivaModalCC.colecciones.filter(c=>c.nombre!==asignarMasivaModalCC.destino);
+        const seleccionados = asignarMasivaModalCC.seleccionados || col.items.map(it=>it.id);
+        const qBusq = (asignarMasivaModalCC.busq||'').toUpperCase();
+        const itemsFiltrados = qBusq ? col.items.filter(it=>String(it.label||'').toUpperCase().includes(qBusq)) : col.items;
+        const toggleUno = (id) => setAsignarMasivaModalCC(m=>{
+          const sel = m.seleccionados || col.items.map(it=>it.id);
+          return {...m, seleccionados: sel.includes(id) ? sel.filter(x=>x!==id) : [...sel, id]};
+        });
+        const toggleTodos = (marcar) => setAsignarMasivaModalCC(m=>({...m, seleccionados: marcar ? col.items.map(it=>it.id) : []}));
+        const aplicar = async () => {
+          const cta = planCuentasC.find(p=>p.id===asignarMasivaModalCC.cuentaId);
+          if (!cta) { alert('Selecciona una cuenta primero.'); return; }
+          if (!seleccionados.length) { alert('No hay ningún registro tildado.'); return; }
+          try {
+            const esPorCodigo = col.nombre==='banco_cuentas' || col.nombre==='caja_cuentas';
+            const batch = writeBatch(db);
+            seleccionados.forEach(id => batch.update(getDocRef(col.nombre, id), esPorCodigo
+              ? {cuentaContableCod:cta.codigo, cuentaContableNom:cta.nombre}
+              : {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
+            await batch.commit();
+            const itemsRestantesCol = col.items.filter(it=>!seleccionados.includes(it.id));
+            if (itemsRestantesCol.length) {
+              setAsignarMasivaModalCC({colecciones:[{...col, cantidad:itemsRestantesCol.length, items:itemsRestantesCol}, ...restantes], cuentaId:'', destino:col.nombre, seleccionados:null, busq:''});
+              alert(`Aplicado\n\nSe asignó "${cta.codigo} — ${cta.nombre}" a ${seleccionados.length} registro(s) de ${col.label}. Quedan ${itemsRestantesCol.length} más en ${col.label} — puedes darles otra cuenta distinta ahora, o "Ahora no" para dejarlos para después.`);
+            } else if (restantes.length) {
+              setAsignarMasivaModalCC({colecciones:restantes, cuentaId:'', destino:restantes[0].nombre, seleccionados:null, busq:''});
+            } else {
+              setAsignarMasivaModalCC(null);
+              alert(`Listo\n\nSe asignó "${cta.codigo} — ${cta.nombre}" a ${seleccionados.length} registro(s) de ${col.label}.`);
+            }
+          } catch(e) { alert('Error: '+e.message); }
+        };
+        return (
+          <div className="fixed inset-0 bg-black/70 z-[99998] flex items-center justify-center p-4" onClick={()=>setAsignarMasivaModalCC(null)}>
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+              <div className="p-6 pb-4 border-b border-gray-100">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-lg text-gray-800">Asignar cuenta a {col.label}</h3>
+                  <button onClick={()=>setAsignarMasivaModalCC(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                </div>
+                <p className="text-xs text-gray-500 font-bold mt-1">{col.cantidad} registro(s) de {col.label} nunca tuvieron cuenta asignada. Revisa la lista — si varios necesitan cuentas distintas, destilda los que no correspondan y aplícalos en tandas separadas.</p>
+              </div>
+              <div className="p-6 py-4 space-y-3 border-b border-gray-100">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Contable a aplicar</label>
+                  <select value={asignarMasivaModalCC.cuentaId} onChange={e=>setAsignarMasivaModalCC(m=>({...m,cuentaId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar cuenta —</option>
+                    {planCuentasC.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select>
+                </div>
+                <input value={asignarMasivaModalCC.busq||''} onChange={e=>setAsignarMasivaModalCC(m=>({...m,busq:e.target.value}))} placeholder="Buscar en la lista..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                <div className="flex items-center justify-between text-[10px] font-black uppercase text-gray-500">
+                  <span>{seleccionados.length} de {col.items.length} tildado(s)</span>
+                  <div className="flex gap-3">
+                    <button onClick={()=>toggleTodos(true)} className="text-orange-600 hover:underline">Marcar todos</button>
+                    <button onClick={()=>toggleTodos(false)} className="text-gray-400 hover:underline">Desmarcar todos</button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-2">
+                {itemsFiltrados.map(it=>(
+                  <label key={it.id} className="flex items-center gap-3 py-1.5 border-b border-gray-50 cursor-pointer hover:bg-gray-50 rounded px-1">
+                    <input type="checkbox" checked={seleccionados.includes(it.id)} onChange={()=>toggleUno(it.id)} className="w-4 h-4 rounded cursor-pointer flex-shrink-0"/>
+                    <span className="text-xs font-bold text-gray-700">{it.label}</span>
+                  </label>
+                ))}
+                {itemsFiltrados.length===0 && <p className="text-center text-gray-400 text-xs py-6">Sin resultados para esa búsqueda.</p>}
+              </div>
+              {restantes.length>0 && <p className="px-6 text-[10px] text-gray-400 font-bold pt-2">Después de esta colección, sigue: {restantes.map(c=>c.label).join(', ')}.</p>}
+              <div className="flex gap-2 p-6 pt-4">
+                <button onClick={()=>setAsignarMasivaModalCC(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Ahora no</button>
+                <button onClick={aplicar} disabled={!asignarMasivaModalCC.cuentaId || !seleccionados.length} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-40">Aplicar a los {seleccionados.length} tildado(s)</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {reclasMasivaProp && (() => {
         const {propuestas, sinCoincidencia, aprobadas} = reclasMasivaProp;
         const toggleUna = (i) => setReclasMasivaProp(m=>({...m, aprobadas: m.aprobadas.includes(i) ? m.aprobadas.filter(x=>x!==i) : [...m.aprobadas, i]}));
@@ -14436,121 +14632,6 @@ function App() {
   const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
-  const [asignarMasivaModal, setAsignarMasivaModal] = useState(null); // {colecciones:[{nombre,label,cantidad}], cuentaId}
-  const repararCuentasContables = async () => {
-    const extraerNombre = (txt) => {
-      const partes = String(txt||'').split('—');
-      return (partes.length>1 ? partes.slice(1).join('—') : partes[0]).trim().toUpperCase();
-    };
-    const buscarCuentaNueva = (nombreBuscado) => {
-      if (!nombreBuscado) return null;
-      let m = planDeCuentas.find(p=>(p.nombre||'').trim().toUpperCase()===nombreBuscado);
-      if (!m) m = planDeCuentas.find(p=>(p.nombre||'').trim().toUpperCase().includes(nombreBuscado) || nombreBuscado.includes((p.nombre||'').trim().toUpperCase()));
-      return m||null;
-    };
-    const colecciones = [
-      {nombre:'clientes', label:'Clientes', campoNombre:'razonSocial'},
-      {nombre:'procura_proveedores', label:'Proveedores', campoNombre:'razonSocial'},
-      {nombre:'procura_categorias_servicio', label:'Categorías de Servicio', campoNombre:'nombre'},
-      {nombre:'procura_servicios', label:'Servicios', campoNombre:'nombre'},
-      {nombre:'inventory', label:'Inventario', campoNombre:'desc'},
-    ];
-    // Estas dos NO guardan un ID de plan de cuentas — guardan el código y el nombre directo
-    // (cuentaContableCod/cuentaContableNom), configurado una sola vez en "Cuentas Bancarias"/"Cajas"
-    // y reutilizado en CADA movimiento nuevo. Si el código quedó viejo, sigue generando "sin
-    // clasificar" para siempre, sin importar cuántas veces se reclasifiquen los asientos históricos.
-    const coleccionesPorCodigo = [
-      {nombre:'banco_cuentas', label:'Cuentas Bancarias', campoNombre:'banco'},
-      {nombre:'caja_cuentas', label:'Cajas', campoNombre:'nombre'},
-    ];
-    let reparados=0; const sinCoincidencia=[]; const batch=writeBatch(db);
-    const sinCuentaNunca={}; // {nombreColeccion: [{id, label}]}
-    for (const col of colecciones) {
-      const snap = await getDocs(getColRef(col.nombre));
-      sinCuentaNunca[col.nombre]=[];
-      snap.docs.forEach(d=>{
-        const data=d.data();
-        const idGuardado = data.cuentaContableId;
-        if (!idGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
-        const cuentaVigente = planDeCuentas.find(p=>p.id===idGuardado);
-        const nombreGuardado = extraerNombre(data.cuentaContableNombre);
-        const existe = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreGuardado;
-        if (existe) return; // el vínculo sigue siendo válido, no tocar
-        const nueva = buscarCuentaNueva(nombreGuardado);
-        if (nueva) {
-          batch.update(getDocRef(col.nombre, d.id), {cuentaContableId:nueva.id, cuentaContableNombre:`${nueva.codigo} — ${nueva.nombre}`});
-          reparados++;
-        } else {
-          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreGuardado||'—'}")`);
-        }
-      });
-    }
-    for (const col of coleccionesPorCodigo) {
-      const snap = await getDocs(getColRef(col.nombre));
-      sinCuentaNunca[col.nombre]=[];
-      snap.docs.forEach(d=>{
-        const data=d.data();
-        const codGuardado = data.cuentaContableCod;
-        if (!codGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
-        const nombreBuscado = String(data.cuentaContableNom||'').trim().toUpperCase();
-        const cuentaVigente = planDeCuentas.find(p=>p.codigo===codGuardado);
-        const existe = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreBuscado;
-        if (existe) return; // el código sigue siendo válido, no tocar
-        const nueva = buscarCuentaNueva(nombreBuscado);
-        if (nueva) {
-          batch.update(getDocRef(col.nombre, d.id), {cuentaContableCod:nueva.codigo, cuentaContableNom:nueva.nombre});
-          reparados++;
-        } else {
-          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreBuscado||'—'}")`);
-        }
-      });
-    }
-    // Facturas de Compra: cada ítem trae su propio "código — nombre" grabado en el momento en
-    // que se creó la factura (itemsOC[].cuentaContableNombre) — no se recalcula después, así
-    // que si el código quedó viejo, cada reporte que lea esa factura lo sigue mostrando mal
-    // para siempre. Aquí sí se revisa código Y nombre juntos (vienen combinados en un string).
-    {
-      const snap = await getDocs(getColRef('procura_facturas_compra'));
-      let facturasTocadas = 0, itemsReparados = 0; const itemsSinCoincidencia = [];
-      snap.docs.forEach(d=>{
-        const data = d.data();
-        const items = data.itemsOC;
-        if (!Array.isArray(items) || !items.length) return;
-        let huboCambio = false;
-        const itemsNuevos = items.map(it=>{
-          const texto = it.cuentaContableNombre || '';
-          if (!texto || texto.includes('Sin cuenta')) return it; // sin código guardado, se resuelve dinámico — no tocar
-          const partes = texto.split('—');
-          const codigoGuardado = (partes[0]||'').trim();
-          const nombreGuardado = (partes.length>1 ? partes.slice(1).join('—') : '').trim().toUpperCase();
-          const cuentaVigente = planDeCuentas.find(p=>p.codigo===codigoGuardado);
-          const vigente = cuentaVigente && (cuentaVigente.nombre||'').trim().toUpperCase()===nombreGuardado;
-          if (vigente) return it;
-          const nueva = buscarCuentaNueva(nombreGuardado);
-          if (nueva) {
-            huboCambio = true; itemsReparados++;
-            return {...it, cuentaContableNombre: `${nueva.codigo} — ${nueva.nombre}`};
-          }
-          itemsSinCoincidencia.push(`Factura ${data.nroFactura||d.id} — ${it.desc||'ítem'} (buscaba "${nombreGuardado||'—'}")`);
-          return it;
-        });
-        if (huboCambio) { batch.update(getDocRef('procura_facturas_compra', d.id), {itemsOC: itemsNuevos}); facturasTocadas++; }
-      });
-      if (itemsReparados>0) reparados += itemsReparados;
-      if (itemsSinCoincidencia.length) sinCoincidencia.push(...itemsSinCoincidencia.slice(0,15).map(s=>`Facturas de Compra: ${s}`));
-    }
-    if (reparados>0) await batch.commit();
-    const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
-      (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
-    const colConFaltantes = [...colecciones, ...coleccionesPorCodigo].filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, items:sinCuentaNunca[col.nombre]}));
-    if (colConFaltantes.length) {
-      setDialog({title:'Reparación de Cuentas Contables', type:'confirm',
-        text: texto + `\n\nAdemás, ${colConFaltantes.map(c=>`${c.cantidad} en ${c.label}`).join(', ')} nunca tuvieron cuenta asignada.\n\n¿Quieres asignarles una cuenta a todos de una vez ahora?`,
-        onConfirm: ()=>setAsignarMasivaModal({colecciones:colConFaltantes, cuentaId:'', destino:colConFaltantes[0].nombre})});
-    } else {
-      setDialog({title:'Reparación de Cuentas Contables', text:texto, type:'alert'});
-    }
-  };
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate(), cuentaContableId: '', cuentaContableNombre: '', pctRetencionIva: '' };
 
 
@@ -27707,10 +27788,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <button onClick={()=>{setShowAddClientForm(v=>!v); setEditingClientId(null); setNewClientForm(initialClientForm);}}
                   className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${showAddClientForm?'bg-gray-200 text-gray-700':'bg-black text-white hover:bg-gray-800'}`}>
                   {showAddClientForm ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Agregar Cliente</>}
-                </button>
-                <button onClick={()=>requireAdminPassword(repararCuentasContables,'Reparar Cuentas Contables (Clientes, Proveedores, Categorías, Servicios, Inventario)')}
-                  className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase bg-orange-100 text-orange-700 hover:bg-orange-200 flex items-center gap-2 transition-all" title="Reconecta por nombre las cuentas contables que quedaron sin vínculo tras actualizar el Plan de Cuentas">
-                  <RefreshCw size={13}/> Reparar Cuentas Contables
                 </button>
                 <label className="cursor-pointer px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
                   <Download size={13}/> Importar Excel
@@ -49128,87 +49205,6 @@ const RestaurarCobrosView = ({settings, appUser}) => {
              </div>
           </div>
         )}
-
-        {asignarMasivaModal && (() => {
-          const col = asignarMasivaModal.colecciones.find(c=>c.nombre===asignarMasivaModal.destino);
-          const restantes = asignarMasivaModal.colecciones.filter(c=>c.nombre!==asignarMasivaModal.destino);
-          const seleccionados = asignarMasivaModal.seleccionados || col.items.map(it=>it.id);
-          const qBusq = (asignarMasivaModal.busq||'').toUpperCase();
-          const itemsFiltrados = qBusq ? col.items.filter(it=>String(it.label||'').toUpperCase().includes(qBusq)) : col.items;
-          const toggleUno = (id) => setAsignarMasivaModal(m=>{
-            const sel = m.seleccionados || col.items.map(it=>it.id);
-            return {...m, seleccionados: sel.includes(id) ? sel.filter(x=>x!==id) : [...sel, id]};
-          });
-          const toggleTodos = (marcar) => setAsignarMasivaModal(m=>({...m, seleccionados: marcar ? col.items.map(it=>it.id) : []}));
-          const aplicar = async () => {
-            const cta = planDeCuentas.find(p=>p.id===asignarMasivaModal.cuentaId);
-            if (!cta) { setDialog({title:'Aviso', text:'Selecciona una cuenta primero.', type:'alert'}); return; }
-            if (!seleccionados.length) { setDialog({title:'Aviso', text:'No hay ningún registro tildado.', type:'alert'}); return; }
-            try {
-              const esPorCodigo = col.nombre==='banco_cuentas' || col.nombre==='caja_cuentas';
-              const batch = writeBatch(db);
-              seleccionados.forEach(id => batch.update(getDocRef(col.nombre, id), esPorCodigo
-                ? {cuentaContableCod:cta.codigo, cuentaContableNom:cta.nombre}
-                : {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
-              await batch.commit();
-              const itemsRestantesCol = col.items.filter(it=>!seleccionados.includes(it.id));
-              if (itemsRestantesCol.length) {
-                // Quedan registros de esta misma colección sin tocar — se puede asignarles otra cuenta distinta
-                setAsignarMasivaModal({colecciones:[{...col, cantidad:itemsRestantesCol.length, items:itemsRestantesCol}, ...restantes], cuentaId:'', destino:col.nombre, seleccionados:null, busq:''});
-                setDialog({title:'Aplicado', text:`Se asignó "${cta.codigo} — ${cta.nombre}" a ${seleccionados.length} registro(s) de ${col.label}. Quedan ${itemsRestantesCol.length} más en ${col.label} — puedes darles otra cuenta distinta ahora, o "Ahora no" para dejarlos para después.`, type:'alert'});
-              } else if (restantes.length) {
-                setAsignarMasivaModal({colecciones:restantes, cuentaId:'', destino:restantes[0].nombre, seleccionados:null, busq:''});
-              } else {
-                setAsignarMasivaModal(null);
-                setDialog({title:'Listo', text:`Se asignó "${cta.codigo} — ${cta.nombre}" a ${seleccionados.length} registro(s) de ${col.label}.`, type:'alert'});
-              }
-            } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
-          };
-          return (
-            <div className="fixed inset-0 bg-black/70 z-[99998] flex items-center justify-center p-4" onClick={()=>setAsignarMasivaModal(null)}>
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e=>e.stopPropagation()}>
-                <div className="p-6 pb-4 border-b border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-black text-lg text-gray-800">Asignar cuenta a {col.label}</h3>
-                    <button onClick={()=>setAsignarMasivaModal(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
-                  </div>
-                  <p className="text-xs text-gray-500 font-bold mt-1">{col.cantidad} registro(s) de {col.label} nunca tuvieron cuenta asignada. Revisa la lista — si varios necesitan cuentas distintas, destilda los que no correspondan y aplícalos en tandas separadas.</p>
-                </div>
-                <div className="p-6 py-4 space-y-3 border-b border-gray-100">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Contable a aplicar</label>
-                    <select value={asignarMasivaModal.cuentaId} onChange={e=>setAsignarMasivaModal(m=>({...m,cuentaId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
-                      <option value="">— Seleccionar cuenta —</option>
-                      {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                    </select>
-                  </div>
-                  <input value={asignarMasivaModal.busq||''} onChange={e=>setAsignarMasivaModal(m=>({...m,busq:e.target.value}))} placeholder="Buscar en la lista..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
-                  <div className="flex items-center justify-between text-[10px] font-black uppercase text-gray-500">
-                    <span>{seleccionados.length} de {col.items.length} tildado(s)</span>
-                    <div className="flex gap-3">
-                      <button onClick={()=>toggleTodos(true)} className="text-orange-600 hover:underline">Marcar todos</button>
-                      <button onClick={()=>toggleTodos(false)} className="text-gray-400 hover:underline">Desmarcar todos</button>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto px-6 py-2">
-                  {itemsFiltrados.map(it=>(
-                    <label key={it.id} className="flex items-center gap-3 py-1.5 border-b border-gray-50 cursor-pointer hover:bg-gray-50 rounded px-1">
-                      <input type="checkbox" checked={seleccionados.includes(it.id)} onChange={()=>toggleUno(it.id)} className="w-4 h-4 rounded cursor-pointer flex-shrink-0"/>
-                      <span className="text-xs font-bold text-gray-700">{it.label}</span>
-                    </label>
-                  ))}
-                  {itemsFiltrados.length===0 && <p className="text-center text-gray-400 text-xs py-6">Sin resultados para esa búsqueda.</p>}
-                </div>
-                {restantes.length>0 && <p className="px-6 text-[10px] text-gray-400 font-bold pt-2">Después de esta colección, sigue: {restantes.map(c=>c.label).join(', ')}.</p>}
-                <div className="flex gap-2 p-6 pt-4">
-                  <button onClick={()=>setAsignarMasivaModal(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Ahora no</button>
-                  <button onClick={aplicar} disabled={!asignarMasivaModal.cuentaId || !seleccionados.length} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-40">Aplicar a los {seleccionados.length} tildado(s)</button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
 
         {/* ============================================================ */}
