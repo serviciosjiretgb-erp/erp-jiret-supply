@@ -11041,6 +11041,18 @@ const generateDefaultPermissions = () => {
 
 // ============================================================================
 const contFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+const sugerirTipoPartida = (codigo) => {
+  const c = String(codigo||'');
+  if (/^1\.1\.01/.test(c)) return 'MONETARIA';      // Efectivo, Bancos
+  if (/^1\.1\.02/.test(c)) return 'MONETARIA';      // Cuentas por Cobrar
+  if (/^1\.1\.03/.test(c)) return 'NO_MONETARIA';   // Inventario
+  if (/^1\.2/.test(c))     return 'NO_MONETARIA';   // Activo Fijo
+  if (/^1/.test(c))        return 'MONETARIA';      // resto de Activo, por defecto
+  if (/^2/.test(c))        return 'MONETARIA';      // Pasivo (cuentas por pagar, préstamos)
+  if (/^3/.test(c))        return 'NO_MONETARIA';   // Patrimonio
+  if (/^[4-7]/.test(c))    return 'NO_MONETARIA';   // Ingresos, Costos, Gastos, ISLR — ctas de resultado, se reexpresan
+  return 'MONETARIA';
+};
 const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(Number(n) || 0));
 
 // ════════════════════════════════════════════════════════════════════════
@@ -11069,6 +11081,7 @@ const ccSortTreeNodes = (nodes) => {
 // cuentasAgregadas: [{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}] — lo que YA arma cada
 // módulo. gruposIncluir: ['1'] etc. calcularSaldo(entry)=>{usd,bs} define el signo según el
 // tipo de cuenta (distinto entre Activo, Pasivo, Ingresos, etc.) — lo decide quien llama.
+const ccNormCodigo = s => String(s||'').trim().replace(/\.+$/,'');
 const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcularSaldo) => {
   const root = [];
   const normKey = s => (s||'').trim().replace(/\s+/g,' ').toUpperCase();
@@ -11076,10 +11089,13 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
   (cuentasAgregadas||[]).filter(c=>gruposIncluir.some(g=>String(c.codigo).startsWith(g))).forEach(c=>{
     const {usd,bs} = calcularSaldo(c);
     if (Math.abs(usd)<0.005 && Math.abs(bs)<0.005) return;
-    const pdc = (planDeCuentasArr||[]).find(p=>p.codigo===c.codigo);
+    const codC = ccNormCodigo(c.codigo);
+    const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
     const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
     const grNom = grupoMap[grKey] || pdc?.grupo || grKey;
-    const pathArray = [grNom, pdc?.grupo&&pdc.grupo!==grNom?pdc.grupo:'', pdc?.subGrupo||''].filter(Boolean);
+    const pathArray = pdc
+      ? [grNom, pdc.grupo&&pdc.grupo!==grNom?pdc.grupo:'', pdc.subGrupo||''].filter(Boolean)
+      : [grNom, 'SIN CLASIFICAR EN PLAN DE CUENTAS'];
     let cur = root;
     pathArray.forEach(folderName=>{
       const key = normKey(folderName);
@@ -11094,10 +11110,14 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
   root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
   return root;
 };
-const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, defaultOpen=true }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, expandSignal }) => {
+  const [isOpen, setIsOpen] = useState(true);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
   const [resaltado, setResaltado] = useState(false);
+  // El botón global "Expandir/Contraer Todos" cambia expandSignal={abrir:boolean, key:number}.
+  // Este efecto SOLO controla isOpen (grupos) — no toca detalleAbierto ni resaltado, así que
+  // no borra lo que el usuario ya tenía abierto o marcado a nivel de cuenta.
+  useEffect(() => { if (expandSignal) setIsOpen(expandSignal.abrir); }, [expandSignal?.key]);
   const isLeaf = !node.c || node.c.length===0;
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const pct = totalBase && node.u!==0 ? `${((Math.abs(node.u)/totalBase)*100).toFixed(2)}%` : '';
@@ -11161,7 +11181,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, def
         </td>
         <td colSpan={3}/>
       </tr>
-      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle} defaultOpen={defaultOpen}/>)}
+      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle} expandSignal={expandSignal}/>)}
       {isOpen && (
         <tr className={isRoot?'bg-gray-800 text-white':'bg-gray-100 text-gray-800 border-y border-gray-300'}>
           <td style={{paddingLeft:level*16+24}} className="py-1.5 px-3 font-black text-[9px] uppercase tracking-wider">Total {node.n}</td>
@@ -13856,7 +13876,7 @@ function App() {
   const [showPDCImport, setShowPDCImport] = useState(false);
   const [showPDCForm, setShowPDCForm] = useState(false);
   const [pdcEditando, setPdcEditando] = useState(null);
-  const [pdcForm, setPdcForm] = useState({codigo:'',nombre:'',grupo:'',subGrupo:''});
+  const [pdcForm, setPdcForm] = useState({codigo:'',nombre:'',grupo:'',subGrupo:'',cuenta:'',subcuenta:''});
   const [pdcSearchTerm, setPdcSearchTerm] = useState('');
   // Cuenta contable para ingresos (configurable)
   const [ingresosCuentaCodigo, setIngresosCuentaCodigo] = useState('');
@@ -40670,13 +40690,16 @@ ${resumenHtml}
         const sep = line.includes('\t') ? '\t' : line.includes('|') ? '|' : ';';
         const parts = line.split(sep).map(p => p.trim());
         if (parts.length < 2) continue;
-        const [codigo, nombre, grupo, subGrupo, cuenta, subcuenta] = parts;
+        const [codigo, nombre, grupo, subGrupo, cuenta, subcuenta, partida] = parts;
         if (!codigo || !nombre) continue;
         const docId = codigo.replace(/\./g, '_').replace(/\s/g, '_');
+        const partidaNorm = (partida||'').toUpperCase().replace(/\s+/g,'_');
         batch.set(getDocRef('planDeCuentas', docId), {
           codigo, nombre: nombre.toUpperCase(), grupo: (grupo||'').toUpperCase(),
           subGrupo: (subGrupo||'').toUpperCase(), cuenta: (cuenta||'').toUpperCase(),
-          subcuenta: (subcuenta||'').toUpperCase(), timestamp: Date.now()
+          subcuenta: (subcuenta||'').toUpperCase(),
+          tipoPartida: (partidaNorm==='MONETARIA'||partidaNorm==='NO_MONETARIA') ? partidaNorm : sugerirTipoPartida(codigo),
+          timestamp: Date.now()
         });
         count++;
       }
@@ -42845,16 +42868,16 @@ ${resumenHtml}
                     <th className="px-3 py-2 text-right">%</th>
                   </tr>
                 </thead>
-                <tbody key={contERExpandKey}>
-                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} defaultOpen={contERExpandAll}/>)}
-                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} defaultOpen={contERExpandAll}/>)}
+                <tbody>
+                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
+                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
                   <tr className="bg-blue-50 border-y-2 border-blue-200">
                     <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Utilidad Bruta</td>
                     {showUSD && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaUSD)}</td>}
                     {showBS  && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaBs>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaBs)}</td>}
                     <td/>
                   </tr>
-                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} defaultOpen={contERExpandAll}/>)}
+                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
                   <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
                     <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
                     {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
@@ -43750,57 +43773,82 @@ const RestaurarCobrosView = ({settings, appUser}) => {
     // bancos, cuentas por cobrar/pagar y obligaciones financieras son MONETARIAS (no se
     // reexpresan); inventario, activo fijo y patrimonio son NO MONETARIAS (sí se reexpresan).
     // Es solo una sugerencia inicial — se puede corregir cuenta por cuenta.
-    const sugerirTipoPartida = (codigo) => {
-      const c = String(codigo||'');
-      if (/^1\.1\.01/.test(c)) return 'MONETARIA';      // Efectivo, Bancos
-      if (/^1\.1\.02/.test(c)) return 'MONETARIA';      // Cuentas por Cobrar
-      if (/^1\.1\.03/.test(c)) return 'NO_MONETARIA';   // Inventario
-      if (/^1\.2/.test(c))     return 'NO_MONETARIA';   // Activo Fijo
-      if (/^1/.test(c))        return 'MONETARIA';      // resto de Activo, por defecto
-      if (/^2/.test(c))        return 'MONETARIA';      // Pasivo (cuentas por pagar, préstamos)
-      if (/^3/.test(c))        return 'NO_MONETARIA';   // Patrimonio
-      return 'MONETARIA';
-    };
     const renderPlanDeCuentasModule = () => { try { return (
-      <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
+      <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in">
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <div className="flex justify-between items-center mb-6 border-b pb-4">
              <h2 className="text-xl font-black uppercase text-black flex items-center gap-3">
                <FileText className="text-blue-500"/> Plan de Cuentas
              </h2>
              <div className="flex gap-2">
-               <button onClick={()=>{setPdcEditando(null);setPdcForm({codigo:'',nombre:'',grupo:'',subGrupo:''});setShowPDCForm(true);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-700"><Plus size={14}/> Agregar Cuenta</button>
+               <button onClick={()=>{setPdcEditando(null);setPdcForm({codigo:'',nombre:'',grupo:'',subGrupo:'',cuenta:'',subcuenta:''});setShowPDCForm(true);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-700"><Plus size={14}/> Agregar Cuenta</button>
                <button onClick={()=>setShowPDCImport(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700"><ArrowDownToLine size={14}/> IMPORTAR TXT</button>
                {planDeCuentas.length > 0 && <button onClick={()=>setDialog({title:'Limpiar Plan',text:'Eliminar TODAS las cuentas del plan? Esta accion es irreversible.',type:'confirm',onConfirm:async()=>{const b=writeBatch(db);planDeCuentas.forEach(p=>b.delete(getDocRef('planDeCuentas',p.id)));await b.commit();}})} className="bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><Trash2 size={14}/></button>}
              </div>
            </div>
 
-           {showPDCForm && (
+           {showPDCForm && (() => {
+               // Última cuenta ya existente en el MISMO segmento exacto (Grupo+Sub-grupo+Cuenta+Subcuenta),
+               // para que el usuario vea de un vistazo si ya hay algo parecido antes de crear una duplicada.
+               const segmentoActual = (planDeCuentas||[])
+                 .filter(p => p.id !== (pdcEditando?.id) &&
+                   (!pdcForm.grupo || p.grupo === pdcForm.grupo) &&
+                   (!pdcForm.subGrupo || p.subGrupo === pdcForm.subGrupo) &&
+                   (!pdcForm.cuenta || p.cuenta === pdcForm.cuenta) &&
+                   (!pdcForm.subcuenta || p.subcuenta === pdcForm.subcuenta))
+                 .sort((a,b) => (b.codigo||'').localeCompare(a.codigo||'', undefined, {numeric:true}));
+               const ultimaDelSegmento = segmentoActual[0];
+               const nombreYaExiste = pdcForm.nombre && segmentoActual.some(p => (p.nombre||'').trim() === pdcForm.nombre.trim());
+               return (
              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 mb-6">
                <h3 className="text-sm font-black uppercase text-emerald-800 mb-3">{pdcEditando?'Editar Cuenta':'Agregar Cuenta'}</h3>
                <div className="grid grid-cols-2 gap-3">
                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Código</label>
                    <input value={pdcForm.codigo} onChange={e=>setPdcForm(f=>({...f,codigo:e.target.value,tipoPartida:f.tipoPartida||sugerirTipoPartida(e.target.value)}))} placeholder="1.1.01.04.002" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta</label>
-                   <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/></div>
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo</label>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre / Cuenta de Movimiento</label>
+                   <input value={pdcForm.nombre} onChange={e=>setPdcForm(f=>({...f,nombre:e.target.value.toUpperCase()}))} placeholder="NOMBRE DE LA CUENTA" className={`w-full border-2 rounded-xl px-3 py-2 text-xs font-bold outline-none ${nombreYaExiste?'border-red-400 focus:border-red-500':'border-gray-200 focus:border-emerald-500'}`}/>
+                   {nombreYaExiste && <p className="text-[9px] font-black text-red-600 mt-1">⚠ Ya existe una cuenta con este nombre en este mismo segmento</p>}
+                 </div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Grupo (Nivel 1)</label>
                    {pdcForm.grupo==='__nuevo__'?(
                      <input autoFocus value={pdcForm._grupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_grupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,grupo:f._grupoNuevo||''}))} placeholder="Escriba el grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
                    ):(
-                     <select value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value,_grupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                     <select value={pdcForm.grupo} onChange={e=>setPdcForm(f=>({...f,grupo:e.target.value,_grupoNuevo:'',subGrupo:'',cuenta:'',subcuenta:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
                        <option value="">— Seleccione grupo —</option>
                        {[...new Set((planDeCuentas||[]).map(p=>p.grupo).filter(Boolean))].sort().map(g=><option key={g} value={g}>{g}</option>)}
                        <option value="__nuevo__">+ Otro (escribir nuevo)</option>
                      </select>
                    )}
                  </div>
-                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Sub-grupo</label>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Sub-grupo (Nivel 2)</label>
                    {pdcForm.subGrupo==='__nuevo__'?(
                      <input autoFocus value={pdcForm._subGrupoNuevo||''} onChange={e=>setPdcForm(f=>({...f,_subGrupoNuevo:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,subGrupo:f._subGrupoNuevo||''}))} placeholder="Escriba el sub-grupo nuevo" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
                    ):(
-                     <select value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value,_subGrupoNuevo:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                     <select value={pdcForm.subGrupo} onChange={e=>setPdcForm(f=>({...f,subGrupo:e.target.value,_subGrupoNuevo:'',cuenta:'',subcuenta:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
                        <option value="">— Seleccione sub-grupo —</option>
                        {[...new Set((planDeCuentas||[]).filter(p=>!pdcForm.grupo||p.grupo===pdcForm.grupo).map(p=>p.subGrupo).filter(Boolean))].sort().map(sg=><option key={sg} value={sg}>{sg}</option>)}
+                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
+                     </select>
+                   )}
+                 </div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta (Nivel 3)</label>
+                   {pdcForm.cuenta==='__nuevo__'?(
+                     <input autoFocus value={pdcForm._cuentaNueva||''} onChange={e=>setPdcForm(f=>({...f,_cuentaNueva:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,cuenta:f._cuentaNueva||''}))} placeholder="Escriba la cuenta nueva" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
+                   ):(
+                     <select value={pdcForm.cuenta} onChange={e=>setPdcForm(f=>({...f,cuenta:e.target.value,_cuentaNueva:'',subcuenta:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                       <option value="">— Seleccione cuenta —</option>
+                       {[...new Set((planDeCuentas||[]).filter(p=>(!pdcForm.grupo||p.grupo===pdcForm.grupo)&&(!pdcForm.subGrupo||p.subGrupo===pdcForm.subGrupo)).map(p=>p.cuenta).filter(Boolean))].sort().map(c=><option key={c} value={c}>{c}</option>)}
+                       <option value="__nuevo__">+ Otro (escribir nuevo)</option>
+                     </select>
+                   )}
+                 </div>
+                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Subcuenta (Nivel 4)</label>
+                   {pdcForm.subcuenta==='__nuevo__'?(
+                     <input autoFocus value={pdcForm._subcuentaNueva||''} onChange={e=>setPdcForm(f=>({...f,_subcuentaNueva:e.target.value.toUpperCase()}))} onBlur={()=>setPdcForm(f=>({...f,subcuenta:f._subcuentaNueva||''}))} placeholder="Escriba la subcuenta nueva" className="w-full border-2 border-emerald-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500"/>
+                   ):(
+                     <select value={pdcForm.subcuenta} onChange={e=>setPdcForm(f=>({...f,subcuenta:e.target.value,_subcuentaNueva:''}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500">
+                       <option value="">— Seleccione subcuenta —</option>
+                       {[...new Set((planDeCuentas||[]).filter(p=>(!pdcForm.grupo||p.grupo===pdcForm.grupo)&&(!pdcForm.subGrupo||p.subGrupo===pdcForm.subGrupo)&&(!pdcForm.cuenta||p.cuenta===pdcForm.cuenta)).map(p=>p.subcuenta).filter(Boolean))].sort().map(sc=><option key={sc} value={sc}>{sc}</option>)}
                        <option value="__nuevo__">+ Otro (escribir nuevo)</option>
                      </select>
                    )}
@@ -43813,24 +43861,38 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                    </select>
                  </div>
                </div>
+
+               {(pdcForm.grupo && pdcForm.grupo!=='__nuevo__') && (
+                 <div className="mt-4 bg-white border-2 border-dashed border-emerald-300 rounded-xl p-3">
+                   <p className="text-[9px] font-black text-emerald-700 uppercase mb-1">Última cuenta creada en este segmento</p>
+                   {ultimaDelSegmento ? (
+                     <p className="text-xs font-bold text-gray-700"><span className="font-mono text-emerald-700">{ultimaDelSegmento.codigo}</span> — {ultimaDelSegmento.nombre}</p>
+                   ) : (
+                     <p className="text-xs text-gray-400 italic">Ninguna todavía — esta sería la primera cuenta de este segmento.</p>
+                   )}
+                 </div>
+               )}
+
                <div className="flex gap-2 mt-4">
                  <button onClick={()=>setShowPDCForm(false)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
                  <button onClick={async()=>{
                    if(!pdcForm.codigo||!pdcForm.nombre) return setDialog({title:'Aviso',text:'Código y Nombre son obligatorios.',type:'alert'});
                    const id=pdcEditando?pdcEditando.id:pdcForm.codigo.replace(/\./g,'-');
-                   const {_grupoNuevo,_subGrupoNuevo,...pdcClean}=pdcForm;
+                   const {_grupoNuevo,_subGrupoNuevo,_cuentaNueva,_subcuentaNueva,...pdcClean}=pdcForm;
                    await setDoc(getDocRef('planDeCuentas',id),{...pdcClean,id});
                    setShowPDCForm(false);setPdcEditando(null);
                  }} className="bg-emerald-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700">{pdcEditando?'Guardar Cambios':'Agregar'}</button>
                </div>
              </div>
-           )}
+               );
+             })()}
 
            {showPDCImport && (
              <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6 mb-6">
                <h3 className="text-sm font-black uppercase text-blue-800 mb-3">Importar Plan de Cuentas desde TXT</h3>
                <p className="text-xs font-bold text-blue-600 mb-4">Formato requerido (separado por tabulaciones o pipes):<br/>
-                 <code className="bg-white px-2 py-1 rounded font-mono text-[10px]">Codigo | Nombre | Grupo | Sub-grupo | Cuenta | Subcuenta</code>
+                 <code className="bg-white px-2 py-1 rounded font-mono text-[10px]">Codigo | Nombre | Grupo | Sub-grupo | Cuenta | Subcuenta | Partida</code>
+                 <br/><span className="text-[10px] font-bold text-blue-500">La columna Partida es opcional (MONETARIA / NO_MONETARIA) — si se omite, se sugiere automáticamente según el código.</span>
                </p>
                <div className="flex gap-3 items-center">
                  <input type="file" accept=".txt,.csv,.tsv" onChange={e=>{ if(e.target.files[0]) handleImportPlanCuentasTXT(e.target.files[0]); }} className="flex-1 text-xs file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:font-black file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200" />
@@ -43851,30 +43913,38 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                <p className="text-xs mt-2">Importe un archivo TXT con el formato indicado</p>
              </div>
            ) : (
-             <div className="rounded-xl border border-gray-200 max-h-[500px] overflow-y-auto">
-               <table className="w-full text-xs text-left table-fixed">
-                 <thead className="bg-gray-100 border-b-2 border-gray-200 sticky top-0">
+             <div className="rounded-xl border border-gray-200 max-h-[600px] overflow-auto">
+               <table className="w-full min-w-[1100px] text-xs text-left table-fixed">
+                 <thead className="bg-gray-100 border-b-2 border-gray-200 sticky top-0 z-10">
                    <tr className="uppercase font-black text-[9px] text-gray-600 tracking-widest">
-                     <th className="py-2 px-3 border-r w-[14%]">Codigo</th>
-                     <th className="py-2 px-3 border-r w-[38%]">Nombre / Cuenta</th>
-                     <th className="py-2 px-3 border-r w-[18%]">Grupo</th>
-                     <th className="py-2 px-3 border-r w-[18%]">Sub-grupo</th>
-                     <th className="py-2 px-3 text-center w-[12%]">Accion</th>
+                     <th className="py-2 px-3 border-r w-[10%] bg-gray-100">Codigo</th>
+                     <th className="py-2 px-3 border-r w-[22%] bg-gray-100">Cuenta de Movimiento</th>
+                     <th className="py-2 px-3 border-r w-[10%] bg-gray-100">Grupo</th>
+                     <th className="py-2 px-3 border-r w-[13%] bg-gray-100">Sub-grupo</th>
+                     <th className="py-2 px-3 border-r w-[15%] bg-gray-100">Cuenta</th>
+                     <th className="py-2 px-3 border-r w-[15%] bg-gray-100">Subcuenta</th>
+                     <th className="py-2 px-3 border-r w-[8%] bg-gray-100">Partida</th>
+                     <th className="py-2 px-3 text-center w-[7%] bg-gray-100">Accion</th>
                    </tr>
                  </thead>
                  <tbody className="divide-y divide-gray-100">
                    {planDeCuentas.filter(p => {
                      const q = pdcSearchTerm.toUpperCase();
-                     return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q);
+                     return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q) || (p.cuenta||'').includes(q) || (p.subcuenta||'').includes(q);
                    }).map(p => (
                      <tr key={p.id} className="hover:bg-gray-50">
                        <td className="py-2 px-3 border-r font-black text-blue-600 font-mono text-[10px] break-words">{p.codigo}</td>
                        <td className="py-2 px-3 border-r font-bold uppercase text-[10px] break-words whitespace-normal">{p.nombre}</td>
                        <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.grupo}</td>
                        <td className="py-2 px-3 border-r font-bold text-[9px] break-words whitespace-normal">{p.subGrupo}</td>
+                       <td className="py-2 px-3 border-r text-[9px] break-words whitespace-normal text-gray-600">{p.cuenta}</td>
+                       <td className="py-2 px-3 border-r text-[9px] break-words whitespace-normal text-gray-600">{p.subcuenta}</td>
+                       <td className="py-2 px-3 border-r text-center">
+                         <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${(p.tipoPartida||sugerirTipoPartida(p.codigo))==='MONETARIA'?'bg-sky-100 text-sky-700':'bg-amber-100 text-amber-700'}`}>{(p.tipoPartida||sugerirTipoPartida(p.codigo))==='MONETARIA'?'Monet.':'No Mon.'}</span>
+                       </td>
                        <td className="py-2 px-3 text-center">
                          <div className="flex justify-center gap-1">
-                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||'',tipoPartida:p.tipoPartida||sugerirTipoPartida(p.codigo)});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
+                           <button onClick={()=>{setPdcEditando(p);setPdcForm({codigo:p.codigo||'',nombre:p.nombre||'',grupo:p.grupo||'',subGrupo:p.subGrupo||'',cuenta:p.cuenta||'',subcuenta:p.subcuenta||'',tipoPartida:p.tipoPartida||sugerirTipoPartida(p.codigo)});setShowPDCForm(true);}} className="p-1 text-blue-400 hover:text-blue-600"><Edit size={12}/></button>
                            <button onClick={()=>handleDeleteCuenta(p.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
                          </div>
                        </td>
@@ -43882,7 +43952,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                    ))}
                  </tbody>
                </table>
-               <div className="px-4 py-2 bg-gray-50 border-t text-xs font-bold text-gray-500">{planDeCuentas.length} cuentas en el plan</div>
+               <div className="px-4 py-2 bg-gray-50 border-t text-xs font-bold text-gray-500 sticky left-0">{planDeCuentas.length} cuentas en el plan</div>
              </div>
            )}
         </div>
