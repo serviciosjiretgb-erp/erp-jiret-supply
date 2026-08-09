@@ -12220,7 +12220,7 @@ ${valoresHtml}
       const labelTab = (id) => TABS_CC.find(t=>t.id===id)?.label || id;
       const lista = Object.values(reclasificacionesC||{})
         .filter(rc => { const q=buscarCC.toUpperCase(); return !q || (rc.cuenta||'').toUpperCase().includes(q) || (rc.cuentaOriginal||'').toUpperCase().includes(q) || (rc.conceptoComprobante||'').toUpperCase().includes(q); })
-        .filter(rc => (!filtDesde || (rc.fechaComprobante||'')>=filtDesde) && (!filtHasta || (rc.fechaComprobante||'')<=filtHasta))
+        .filter(rc => (!filtDesde || !rc.fechaComprobante || rc.fechaComprobante>=filtDesde) && (!filtHasta || !rc.fechaComprobante || rc.fechaComprobante<=filtHasta))
         .sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       return (
         <div className="p-6 space-y-4">
@@ -14001,6 +14001,7 @@ function App() {
   const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
+  const [asignarMasivaModal, setAsignarMasivaModal] = useState(null); // {colecciones:[{nombre,label,cantidad}], cuentaId}
   const repararCuentasContables = async () => {
     const extraerNombre = (txt) => {
       const partes = String(txt||'').split('—');
@@ -14020,12 +14021,14 @@ function App() {
       {nombre:'inventory', label:'Inventario', campoNombre:'desc'},
     ];
     let reparados=0; const sinCoincidencia=[]; const batch=writeBatch(db);
+    const sinCuentaNunca={}; // {nombreColeccion: [{id, label}]}
     for (const col of colecciones) {
       const snap = await getDocs(getColRef(col.nombre));
+      sinCuentaNunca[col.nombre]=[];
       snap.docs.forEach(d=>{
         const data=d.data();
         const idGuardado = data.cuentaContableId;
-        if (!idGuardado) return; // nunca tuvo cuenta asignada, no es un vínculo roto
+        if (!idGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
         const existe = planDeCuentas.some(p=>p.id===idGuardado);
         if (existe) return; // el vínculo sigue siendo válido, no tocar
         const nombreBuscado = extraerNombre(data.cuentaContableNombre);
@@ -14041,7 +14044,14 @@ function App() {
     if (reparados>0) await batch.commit();
     const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
       (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
-    setDialog({title:'Reparación de Cuentas Contables', text:texto, type:'alert'});
+    const colConFaltantes = colecciones.filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, ids:sinCuentaNunca[col.nombre].map(x=>x.id)}));
+    if (colConFaltantes.length) {
+      setDialog({title:'Reparación de Cuentas Contables', type:'confirm',
+        text: texto + `\n\nAdemás, ${colConFaltantes.map(c=>`${c.cantidad} en ${c.label}`).join(', ')} nunca tuvieron cuenta asignada.\n\n¿Quieres asignarles una cuenta a todos de una vez ahora?`,
+        onConfirm: ()=>setAsignarMasivaModal({colecciones:colConFaltantes, cuentaId:'', destino:colConFaltantes[0].nombre})});
+    } else {
+      setDialog({title:'Reparación de Cuentas Contables', text:texto, type:'alert'});
+    }
   };
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate(), cuentaContableId: '', cuentaContableNombre: '', pctRetencionIva: '' };
 
@@ -48536,6 +48546,46 @@ const RestaurarCobrosView = ({settings, appUser}) => {
              </div>
           </div>
         )}
+
+        {asignarMasivaModal && (() => {
+          const col = asignarMasivaModal.colecciones.find(c=>c.nombre===asignarMasivaModal.destino);
+          const restantes = asignarMasivaModal.colecciones.filter(c=>c.nombre!==asignarMasivaModal.destino);
+          const aplicar = async () => {
+            const cta = planDeCuentas.find(p=>p.id===asignarMasivaModal.cuentaId);
+            if (!cta) { setDialog({title:'Aviso', text:'Selecciona una cuenta primero.', type:'alert'}); return; }
+            try {
+              const batch = writeBatch(db);
+              col.ids.forEach(id => batch.update(getDocRef(col.nombre, id), {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
+              await batch.commit();
+              if (restantes.length) setAsignarMasivaModal({colecciones:restantes, cuentaId:'', destino:restantes[0].nombre});
+              else { setAsignarMasivaModal(null); setDialog({title:'Listo', text:`Se asignó "${cta.codigo} — ${cta.nombre}" a ${col.cantidad} registro(s) de ${col.label}.`, type:'alert'}); }
+            } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+          };
+          return (
+            <div className="fixed inset-0 bg-black/70 z-[99998] flex items-center justify-center p-4" onClick={()=>setAsignarMasivaModal(null)}>
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-lg text-gray-800">Asignar cuenta a {col.label}</h3>
+                  <button onClick={()=>setAsignarMasivaModal(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                </div>
+                <p className="text-xs text-gray-500 font-bold">{col.cantidad} registro(s) de {col.label} nunca tuvieron cuenta contable asignada. Elige una cuenta y se les aplicará a todos por igual.</p>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Contable</label>
+                  <select value={asignarMasivaModal.cuentaId} onChange={e=>setAsignarMasivaModal(m=>({...m,cuentaId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar cuenta —</option>
+                    {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                  </select>
+                </div>
+                {restantes.length>0 && <p className="text-[10px] text-gray-400 font-bold">Después de esta, sigue: {restantes.map(c=>c.label).join(', ')}.</p>}
+                <div className="flex gap-2 pt-2">
+                  <button onClick={()=>setAsignarMasivaModal(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Ahora no</button>
+                  <button onClick={aplicar} disabled={!asignarMasivaModal.cuentaId} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-40">Aplicar a los {col.cantidad}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
 
         {/* ============================================================ */}
         {/* MODAL: VER / IMPRIMIR TOMA FÍSICA PDF CON MEMBRETE          */}
