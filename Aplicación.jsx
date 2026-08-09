@@ -14424,6 +14424,7 @@ function App() {
   const [neFiltMes, setNeFiltMes] = useState('');    // 'MM' o '' para todos
   const [neFiltAnio, setNeFiltAnio] = useState('');  // 'YYYY' o '' para todos
   const [neFiltVendedor, setNeFiltVendedor] = useState('TODOS');
+  const [neFiltOp, setNeFiltOp] = useState('todos'); // 'todos' | 'con' | 'sin'
   const [invFiltMes, setInvFiltMes] = useState('');  // 'MM' o '' para todos
   const [invFiltAnio, setInvFiltAnio] = useState(''); // 'YYYY' o '' para todos
   const [reqFiltMes, setReqFiltMes] = useState('');  // 'MM' o '' para todos
@@ -14827,6 +14828,7 @@ function App() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
   const [selectedMonths, setSelectedMonths] = useState([]); // multi-month filter for Rentabilidad
   const [pvClienteFilter, setPvClienteFilter] = useState('TODOS');
+  const [pvOpFilterVendidos, setPvOpFilterVendidos] = useState('todos'); // 'todos' | 'con' | 'sin'
   // ── Comisiones de vendedores ──
   const [comVendedor, setComVendedor] = useState('');
   const [comMes, setComMes] = useState(new Date().getMonth()+1);
@@ -24342,6 +24344,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!pvFiltProducto||pvFiltProducto==='TODOS'||s.producto.toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
             (pvAlmacenFilter==='TODOS'||s.almacen===pvAlmacenFilter) &&
             (pvCategoriaFilter==='TODAS'||s.categoria===pvCategoriaFilter) &&
+            (pvOpFilterVendidos==='todos'||(pvOpFilterVendidos==='con'?(s.opId&&s.opId!=='—'):(!s.opId||s.opId==='—'))) &&
             pvMatchPeriod(s.fecha)
           );
           return (
@@ -24397,6 +24400,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       className="border-2 border-gray-200 rounded-xl px-3 py-2 text-[9px] font-black outline-none focus:border-green-400 bg-white w-44">
                       {pvAlmacenes.map(a=><option key={a} value={a}>{a}</option>)}
                     </select>
+                  </div>
+                  <div>
+                    <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">Orden de Producción</label>
+                    <div className="flex gap-1 bg-green-50 p-1 rounded-xl border-2 border-green-200">
+                      {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
+                        <button key={v} onClick={()=>setPvOpFilterVendidos(v)} className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase transition-colors ${pvOpFilterVendidos===v?'bg-green-600 text-white':'text-gray-500 hover:bg-white'}`}>{lbl}</button>
+                      ))}
+                    </div>
                   </div>
                   <div>
                     <label className="text-[8px] font-black text-gray-500 uppercase block mb-0.5">🔍 Cliente</label>
@@ -27287,7 +27298,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const matchAnio=!neFiltAnio||(ne.fecha||'').startsWith(neFiltAnio);
             const matchMes=!neFiltMes||(ne.fecha||'').substring(5,7)===neFiltMes;
             const matchVendedor=neFiltVendedor==='TODOS'||(ne.vendedor||'').trim().toUpperCase()===neFiltVendedor.toUpperCase();
-            return matchSearch&&matchStatus&&matchAnio&&matchMes&&matchVendedor;
+            const tieneOpNE=!!(ne.opRelacionada||ne.opId||ne.opAsignada);
+            const matchOp=neFiltOp==='todos'||(neFiltOp==='con'?tieneOpNE:!tieneOpNE);
+            return matchSearch&&matchStatus&&matchAnio&&matchMes&&matchVendedor&&matchOp;
           }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
           const nePage = Math.max(0, Math.min(nePagina, Math.ceil(neFiltradas.length/PAGE_SIZE)-1));
           const nePageItems = neFiltradas.slice(nePage*PAGE_SIZE, (nePage+1)*PAGE_SIZE);
@@ -27569,6 +27582,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <select value={neFiltVendedor} onChange={e=>{setNeFiltVendedor(e.target.value);setNePagina(0);}} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
                     {neVendedores.map(v=><option key={v} value={v}>{v==='TODOS'?'Todos':v}</option>)}
                   </select></div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Orden de Producción</label>
+                  <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+                    {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
+                      <button key={v} onClick={()=>{setNeFiltOp(v);setNePagina(0);}} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-colors ${neFiltOp===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>{lbl}</button>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex gap-2 items-center">
                   <div className="text-right"><div className="text-[9px] text-gray-400 font-bold">{neFiltradas.length} NE</div><div className="font-black text-sm text-orange-600">${formatNum(totalNEbase)}</div><div className="text-[9px] text-gray-400">+IVA ${formatNum(totalNEiva)} = ${formatNum(totalNEtotal)}</div></div>
                   <button onClick={exportarNEPDF} title="Exportar PDF — respeta los filtros activos" className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
