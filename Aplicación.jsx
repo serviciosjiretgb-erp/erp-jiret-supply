@@ -4103,6 +4103,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   const [categoriasSrv,setCategoriasSrv]=useState([]);
   const [catForm,setCatForm]=useState({});
   const [catModal,setCatModal]=useState(false);
+  const [catSeleccionadas,setCatSeleccionadas]=useState([]);
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -4191,15 +4192,26 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     try{await deleteDoc(getDocRef('procura_categorias_servicio',c.id));}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
+  const elimCatMultiples=()=>{
+    const nombres=categoriasSrv.filter(c=>catSeleccionadas.includes(c.id)).map(c=>c.nombre);
+    setDialog({title:`¿Eliminar ${catSeleccionadas.length} categoría(s)?`,text:`Se eliminarán: ${nombres.slice(0,5).join(', ')}${nombres.length>5?` y ${nombres.length-5} más`:''}. Las órdenes de compra ya registradas no se ven afectadas.`,type:'confirm',onConfirm:async()=>{
+      try{
+        const batch=writeBatch(db);
+        catSeleccionadas.forEach(id=>batch.delete(getDocRef('procura_categorias_servicio',id)));
+        await batch.commit();
+        setCatSeleccionadas([]);
+      }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+    }});
+  };
 
   return (
     <div>
       {/* Tabs */}
       <div className="flex gap-2 mb-4">
-        <button onClick={()=>setTab('categorias')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='categorias'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+        <button onClick={()=>{setTab('categorias');setCatSeleccionadas([]);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='categorias'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
           🗂️ Categorías de Servicio
         </button>
-        <button onClick={()=>setTab('inventario')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='inventario'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+        <button onClick={()=>{setTab('inventario');setCatSeleccionadas([]);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${tab==='inventario'?'bg-slate-900 text-white':'bg-white border border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
           🏭 Productos (Inventario)
         </button>
         <div className="flex-1 relative">
@@ -4207,6 +4219,9 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar..." className={`${inp} pl-9 h-full`}/>
         </div>
         {tab==='categorias'&&<>
+          {catSeleccionadas.length>0&&
+            <PBd onClick={elimCatMultiples}><Trash2 size={14}/> Eliminar ({catSeleccionadas.length})</PBd>
+          }
           <PBg onClick={()=>{setCatForm(initCat());setCatModal(true);}}><Plus size={14}/> Nueva categoría</PBg>
           <label className="cursor-pointer px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
             <Download size={13}/> Importar Excel
@@ -4278,12 +4293,14 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
         <PCard noPad>
           <table className="w-full">
             <thead><tr>
+              <PTh><input type="checkbox" checked={catFiltrado.length>0&&catFiltrado.every(c=>catSeleccionadas.includes(c.id))} onChange={e=>setCatSeleccionadas(e.target.checked?catFiltrado.map(c=>c.id):[])} className="w-4 h-4 rounded cursor-pointer"/></PTh>
               <PTh>Categoría</PTh><PTh>Cuenta Contable</PTh><PTh>Unidad ref.</PTh><PTh right>Precio ref.</PTh><PTh>Estado</PTh><PTh>Acciones</PTh>
             </tr></thead>
             <tbody>
-              {catFiltrado.length===0?<tr><td colSpan={6} className="py-12"><PEmpty icon={Layers} title="Sin categorías" desc="Registra tu primera categoría de servicio"/></td></tr>:
+              {catFiltrado.length===0?<tr><td colSpan={7} className="py-12"><PEmpty icon={Layers} title="Sin categorías" desc="Registra tu primera categoría de servicio"/></td></tr>:
               catFiltrado.map(c=>(
                 <tr key={c.id} className="hover:bg-slate-50">
+                  <PTd><input type="checkbox" checked={catSeleccionadas.includes(c.id)} onChange={e=>setCatSeleccionadas(e.target.checked?[...catSeleccionadas,c.id]:catSeleccionadas.filter(id=>id!==c.id))} className="w-4 h-4 rounded cursor-pointer"/></PTd>
                   <PTd><span className="font-black text-slate-800 text-xs">{c.nombre||'—'}</span></PTd>
                   <PTd><span className="text-[10px] text-blue-600">{c.cuentaContableNombre||<span className="text-slate-400">Sin asignar</span>}</span></PTd>
                   <PTd>{c.unidad||'und'}</PTd>
