@@ -14271,6 +14271,7 @@ function App() {
   const [ventasView, setVentasView] = useState('facturacion');
   const [formulasView, setFormulasView] = useState('formulas');
   const [pvFilter, setPvFilter] = useState('general');
+  const [pvFiltOp, setPvFiltOp] = useState('todos');
   const [pvAlmacenFilter, setPvAlmacenFilter] = useState('TODOS');
   const [pvCategoriaFilter, setPvCategoriaFilter] = useState('TODAS');
   const [pvFiltCliente, setPvFiltCliente] = useState('');
@@ -14601,11 +14602,6 @@ function App() {
   const [showNewReqPanel, setShowNewReqPanel] = useState(false);
   const [showNewInvoicePanel, setShowNewInvoicePanel] = useState(false);
   const [showGeneralInvoicesReport, setShowGeneralInvoicesReport] = useState(false);
-  const [showVentasCostosReport, setShowVentasCostosReport] = useState(false);
-  const [vcFiltDesde, setVcFiltDesde] = useState('');
-  const [vcFiltHasta, setVcFiltHasta] = useState('');
-  const [vcFiltOp, setVcFiltOp] = useState('todos'); // 'todos' | 'con' | 'sin'
-  const [vcBusq, setVcBusq] = useState('');
   const [showClientReport, setShowClientReport] = useState(false);
   const [showReqReport, setShowReqReport] = useState(false);
   const [showSingleReqReport, setShowSingleReqReport] = useState(null);
@@ -24019,101 +24015,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
     const filteredClients = filteredClientsMemo;
     const filteredInvoices = filteredInvoicesMemo;
 
-    if (showVentasCostosReport) {
-      const facturasFiltradas = (invoices||[]).filter(f=>{
-        if (f.esAnulacionFiscal) return false;
-        const fecha = f.fecha||'';
-        if (vcFiltDesde && fecha < vcFiltDesde) return false;
-        if (vcFiltHasta && fecha > vcFiltHasta) return false;
-        const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
-        if (vcFiltOp==='con' && !tieneOp) return false;
-        if (vcFiltOp==='sin' && tieneOp) return false;
-        return true;
-      });
-      const porArticulo = {};
-      facturasFiltradas.forEach(f=>{
-        const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
-        (f.itemsFacturados&&f.itemsFacturados.length ? f.itemsFacturados : [{desc:f.productoMaquilado||'MAQUILA / SERVICIO', cantidad:1, precioUnit:parseNum(f.montoBase), costoUnit:0, costoTotal:0, unidad:''}]).forEach(it=>{
-          const key = (it.invCode||it.desc||'—').trim().toUpperCase();
-          if (!porArticulo[key]) porArticulo[key] = {desc: it.desc||'—', unidad: it.unidad||'', cantidad:0, venta:0, costo:0, conOp:0, sinOp:0};
-          const cant = parseNum(it.cantidad)||0;
-          const venta = parseNum(it.precioUnit||0)*cant || parseNum(f.montoBase)/Math.max((f.itemsFacturados||[]).length,1);
-          const costo = parseNum(it.costoTotal||0) || parseNum(it.costoUnit||0)*cant;
-          porArticulo[key].cantidad += cant;
-          porArticulo[key].venta += venta;
-          porArticulo[key].costo += costo;
-          if (tieneOp) porArticulo[key].conOp += venta; else porArticulo[key].sinOp += venta;
-        });
-      });
-      const filas = Object.values(porArticulo)
-        .filter(a=>!vcBusq || a.desc.toUpperCase().includes(vcBusq.toUpperCase()))
-        .map(a=>({...a, margen: a.venta-a.costo, margenPct: a.venta>0 ? ((a.venta-a.costo)/a.venta*100) : 0}))
-        .sort((a,b)=>b.venta-a.venta);
-      const totales = filas.reduce((s,a)=>({venta:s.venta+a.venta, costo:s.costo+a.costo, margen:s.margen+a.margen}), {venta:0,costo:0,margen:0});
-      const totalMargenPct = totales.venta>0 ? (totales.margen/totales.venta*100) : 0;
-
-      const exportarExcelVC = () => {
-        const ths = ['Artículo','Unidad','Cantidad','Venta $','Costo $','Margen $','Margen %'];
-        let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>Reporte General de Ventas y Costos</h3><p>Filtro: ${vcFiltOp==='con'?'Con OP':vcFiltOp==='sin'?'Sin OP':'Todas'} · ${contDd(vcFiltDesde)||'inicio'} al ${contDd(vcFiltHasta)||'hoy'}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
-        filas.forEach(a=>{ html += `<tr><td>${a.desc}</td><td>${a.unidad}</td><td style="text-align:right">${contFmt(a.cantidad)}</td><td style="text-align:right">${contFmt(a.venta)}</td><td style="text-align:right">${contFmt(a.costo)}</td><td style="text-align:right">${contFmt(a.margen)}</td><td style="text-align:right">${a.margenPct.toFixed(2)}%</td></tr>`; });
-        html += `<tr style="font-weight:bold;background:#e5e7eb"><td colspan="3">TOTALES</td><td style="text-align:right">${contFmt(totales.venta)}</td><td style="text-align:right">${contFmt(totales.costo)}</td><td style="text-align:right">${contFmt(totales.margen)}</td><td style="text-align:right">${totalMargenPct.toFixed(2)}%</td></tr>`;
-        html += `</tbody></table></body></html>`;
-        const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
-        const link = document.createElement('a'); link.href = url; link.download = `VentasYCostos_${getTodayDate()}.xls`;
-        document.body.appendChild(link); link.click(); document.body.removeChild(link);
-      };
-
-      return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-4 no-pdf flex-wrap gap-2">
-            <button onClick={() => setShowVentasCostosReport(false)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
-            <div className="flex flex-wrap gap-2 items-center">
-              <input type="date" value={vcFiltDesde} onChange={e=>setVcFiltDesde(e.target.value)} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none"/>
-              <input type="date" value={vcFiltHasta} onChange={e=>setVcFiltHasta(e.target.value)} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none"/>
-              <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-                {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
-                  <button key={v} onClick={()=>setVcFiltOp(v)} className={`px-3 py-1.5 rounded text-[10px] font-black uppercase transition-colors ${vcFiltOp===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>{lbl}</button>
-                ))}
-              </div>
-              <input value={vcBusq} onChange={e=>setVcBusq(e.target.value)} placeholder="Buscar artículo..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-48"/>
-              <button onClick={exportarExcelVC} className="bg-emerald-600 text-white px-4 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-emerald-700"><FileSpreadsheet size={14}/> Excel</button>
-              <button onClick={() => handleExportPDF('Reporte_Ventas_Costos', false)} className="bg-black text-white px-6 py-2 rounded-xl flex items-center gap-2 font-black text-xs uppercase hover:bg-gray-800"><Printer size={16}/> Imprimir</button>
-            </div>
-          </div>
-          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-          <div className="text-center mb-2"><h2 className="text-xl font-black uppercase border-b-2 border-orange-500 inline-block pb-1">Reporte General de Ventas y Costos</h2></div>
-          <p className="text-center text-[10px] text-gray-500 font-bold uppercase mb-6">Detalle por artículo facturado · {vcFiltOp==='con'?'Solo con OP':vcFiltOp==='sin'?'Solo sin OP':'Todas las ventas'} · {contDd(vcFiltDesde)||'Inicio'} al {contDd(vcFiltHasta)||'Hoy'}</p>
-          <table className="w-full text-[10px] border-collapse border border-gray-300">
-            <thead className="bg-gray-100 uppercase"><tr>
-              <th className="p-2 border text-left">Artículo</th><th className="p-2 border">Unidad</th><th className="p-2 border text-right">Cantidad</th>
-              <th className="p-2 border text-right">Venta ($)</th><th className="p-2 border text-right">Costo ($)</th><th className="p-2 border text-right">Margen ($)</th><th className="p-2 border text-right">Margen %</th>
-            </tr></thead>
-            <tbody>
-              {filas.length===0 && <tr><td colSpan={7} className="p-4 text-center text-gray-400">Sin artículos para este filtro.</td></tr>}
-              {filas.map((a,i)=>(
-                <tr key={i}>
-                  <td className="p-2 border font-bold">{a.desc}</td>
-                  <td className="p-2 border text-center">{a.unidad}</td>
-                  <td className="p-2 border text-right">{formatNum(a.cantidad)}</td>
-                  <td className="p-2 border text-right">${formatNum(a.venta)}</td>
-                  <td className="p-2 border text-right">${formatNum(a.costo)}</td>
-                  <td className={`p-2 border text-right font-bold ${a.margen>=0?'text-emerald-600':'text-red-600'}`}>${formatNum(a.margen)}</td>
-                  <td className={`p-2 border text-right font-bold ${a.margenPct>=0?'text-emerald-600':'text-red-600'}`}>{a.margenPct.toFixed(2)}%</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-gray-100 font-black"><tr>
-              <td colSpan={3} className="p-2 border text-right">TOTALES:</td>
-              <td className="p-2 border text-right">${formatNum(totales.venta)}</td>
-              <td className="p-2 border text-right">${formatNum(totales.costo)}</td>
-              <td className={`p-2 border text-right ${totales.margen>=0?'text-emerald-700':'text-red-700'}`}>${formatNum(totales.margen)}</td>
-              <td className={`p-2 border text-right ${totalMargenPct>=0?'text-emerald-700':'text-red-700'}`}>{totalMargenPct.toFixed(2)}%</td>
-            </tr></tfoot>
-          </table>
-        </div>
-      );
-    }
-
     if (showGeneralInvoicesReport) {
       const totalBaseGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.montoBase), 0);
       const totalIvaGeneral = (invoices || []).reduce((acc, curr) => acc + parseNum(curr?.iva), 0);
@@ -25368,6 +25269,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(invFiltMes && _fechaMostrada.substring(5,7)!==invFiltMes) return false;
             if(pvFiltCliente){ const cli=(inv.clientName||inv.client||'').toUpperCase(); const rif=(inv.clientRif||'').toUpperCase(); if(!cli.includes(pvFiltCliente.toUpperCase())&&!rif.includes(pvFiltCliente.toUpperCase())) return false; }
             if(pvFiltDoc){ const doc=(inv.documento||'').toUpperCase(); const fisc=(inv.nroFiscal||'').toUpperCase(); if(!doc.includes(pvFiltDoc.toUpperCase())&&!fisc.includes(pvFiltDoc.toUpperCase())) return false; }
+            const _tieneOp=!!(inv.opAsignada||(inv.opsAsignadas&&inv.opsAsignadas.length>0));
+            if(pvFiltOp==='con' && !_tieneOp) return false;
+            if(pvFiltOp==='sin' && _tieneOp) return false;
             return true;
           }).sort((a,b)=>((b.fechaFactura||b.fecha||'')).localeCompare(a.fechaFactura||a.fecha||''));
           const rows = [];
@@ -25530,6 +25434,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(invFiltAnio&&!fechaNC.startsWith(invFiltAnio)&&!fechaFactVinc.startsWith(invFiltAnio)) return false;
             if(invFiltMes&&fechaNC.substring(5,7)!==invFiltMes&&fechaFactVinc.substring(5,7)!==invFiltMes) return false;
             if(pvFiltDoc){const d=nc.nroDocumento||'';const f=inv?.nroFiscal||'';if(!d.toUpperCase().includes(pvFiltDoc.toUpperCase())&&!f.toUpperCase().includes(pvFiltDoc.toUpperCase()))return false;}
+            const _tieneOpNC=!!(inv?.opAsignada||(inv?.opsAsignadas&&inv.opsAsignadas.length>0));
+            if(pvFiltOp==='con' && !_tieneOpNC) return false;
+            if(pvFiltOp==='sin' && _tieneOpNC) return false;
             return true;
           }).map(nc=>{
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
@@ -25591,6 +25498,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <Search size={12} className="text-gray-400"/>
                     <input type="text" value={pvFiltDoc} onChange={e=>setPvFiltDoc(e.target.value.toUpperCase())} placeholder="Documento / Fiscal..." className="outline-none text-xs font-bold w-36 bg-white uppercase"/>
                     {pvFiltDoc && <button onClick={()=>setPvFiltDoc('')} className="text-gray-400 hover:text-red-500"><X size={10}/></button>}
+                  </div>
+                  <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+                    {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
+                      <button key={v} onClick={()=>setPvFiltOp(v)} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-colors ${pvFiltOp===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>{lbl}</button>
+                    ))}
                   </div>
                   <span className="text-[9px] font-black text-gray-400">{allRows.length} reg.</span>
                   <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=allRows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
@@ -28151,7 +28063,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         )}
         {ventasView === 'facturacion' && (
           <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in">
-             <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowCuentasIngresoModal(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1.5"><Settings2 size={12}/> CUENTAS DE INGRESOS</button><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>setShowVentasCostosReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">VENTAS Y COSTOS</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
+             <div className="px-8 py-6 border-b bg-gray-50 flex justify-between items-center"><h2 className="text-xl font-black text-black uppercase flex items-center gap-3 tracking-tighter"><Receipt className="text-orange-500" size={24}/> Facturación de Venta</h2><div className="flex gap-2"><button onClick={()=>setShowCuentasIngresoModal(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-1.5"><Settings2 size={12}/> CUENTAS DE INGRESOS</button><button onClick={()=>setShowGeneralInvoicesReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase shadow-sm hover:bg-gray-50 transition-colors">REPORTE GENERAL</button><button onClick={()=>{setShowNewInvoicePanel(!showNewInvoicePanel); setNewInvoiceForm(initialInvoiceForm);}} className="bg-black text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md hover:bg-slate-800 transition-colors">{showNewInvoicePanel ? 'CANCELAR' : 'NUEVA FACTURA'}</button></div></div>
             {showCuentasIngresoModal && (
               <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentasIngresoModal(false)}>
                 <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4" onClick={e=>e.stopPropagation()}>
@@ -43709,13 +43621,21 @@ ${resumenHtml}
       ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || /orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
       : cuentasAgg;
     const treeIngresos = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-    const treeCostos    = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['5.1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    // En Resultado Planta, el Costo de Producción incluye 5.1 (costo directo) Y 5.2 (Costo
+    // Operacional: personal de producción) — este último vive dentro de "Gastos Operativos" en
+    // el plan normal, pero es costo de planta, no gasto administrativo, así que aquí sí cuenta.
+    const gruposCostoPlanta = contERVistaPlanta ? ['5.1','5.2'] : ['5.1'];
+    let treeCostos    = ccBuildArbol(cuentasAggUsar, planDeCuentas, gruposCostoPlanta, c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    if (contERVistaPlanta && treeCostos.length) {
+      const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
+      treeCostos = [{ n:'COSTO DE PRODUCCIÓN', c: treeCostos, u, b }];
+    }
     const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
     if (treeIngresos[0] && contERVistaPlanta) treeIngresos[0].n = 'INGRESOS POR PRODUCCIÓN';
-    if (treeCostos[0]) treeCostos[0].n = contERVistaPlanta ? 'COSTO DE PRODUCCIÓN' : 'COSTO DE VENTAS';
+    if (treeCostos[0] && !contERVistaPlanta) treeCostos[0].n = 'COSTO DE VENTAS';
     if (treeGastosReal[0]) treeGastosReal[0].n = 'GASTOS OPERATIVOS';
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
