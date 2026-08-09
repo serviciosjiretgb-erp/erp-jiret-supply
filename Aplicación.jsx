@@ -3012,23 +3012,23 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
       montoUSD:tot.sub,montoBs:tot.subBs});
   }
   if(tot.ivaTotal>0){
-    lineas.push({tipo:'DEBITO',cuenta:'1.1.02.03.001 — IVA Crédito Fiscal',
+    lineas.push({tipo:'DEBITO',cuenta:'1.1.04.01.001 — I.V.A CREDITOS FISCALES (COMPRAS)',
       concepto:`IVA${tot.iva16>0?' 16%':''}${tot.iva8>0?' 8%':''} soportado`,
       montoUSD:tot.ivaTotal,montoBs:tasa?tot.ivaTotal*tasa:0});
   }
   const prov=(proveedoresArg||[]).find(p=>p.id===f.proveedorId);
-  const ctaProv=prov?.cuentaContableNombre||'2.1.01.01.002 — Cuentas por Pagar Proveedores';
+  const ctaProv=prov?.cuentaContableNombre||'2.1.01.01.001 — CUENTAS POR PAGAR PROVEEDORES';
   lineas.push({tipo:'CREDITO',cuenta:ctaProv,
     concepto:`${f.proveedor||'—'} · Fact. ${f.nroFactura||'—'}`,
     montoUSD:neto.monto,montoBs:neto.montoBs});
   if(retIVA.monto>0){
-    lineas.push({tipo:'CREDITO',cuenta:'2.1.03.01.001 — Retenciones IVA por enterar',
+    lineas.push({tipo:'CREDITO',cuenta:'2.1.04.02.002 — RETENCIÓN IVA (100-75%)',
       concepto:`Ret. IVA ${f.pctRetIVA||75}% · ${f.proveedor||'—'}`,
       montoUSD:retIVA.monto,montoBs:retIVA.montoBs});
   }
   retISLRLista.forEach(r=>{
     if(r.monto>0){
-      lineas.push({tipo:'CREDITO',cuenta:'2.1.03.02.001 — Retenciones ISLR por enterar',
+      lineas.push({tipo:'CREDITO',cuenta:'2.1.04.01.001 — RETENCIONES I.S.L.R. POR PAGAR',
         concepto:`Ret. ISLR ${r.pct}% · ${r.concepto||r.codigo} · ${f.proveedor||'—'}`,
         montoUSD:r.monto,montoBs:r.montoBs});
     }
@@ -3063,7 +3063,7 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
     concepto:`Venta ${tieneOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
     montoUSD:montoBase,montoBs:tasa?montoBase*tasa:0});
   if(iva>0){
-    lineas.push({tipo:'CREDITO',cuenta:'2.1.02.01.001 — IVA Débito Fiscal',
+    lineas.push({tipo:'CREDITO',cuenta:'2.1.04.02.001 — I.V.A. DÉBITO FISCAL (VENTAS)',
       concepto:`IVA 16% repercutido · Fact. ${f.nroFiscal||f.documento||'—'}`,
       montoUSD:iva,montoBs:tasa?iva*tasa:0});
   }
@@ -11940,8 +11940,8 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // ── Reclasificar cuenta ──────────────────────────────────────────────────────────────
   const claveReclas = (tabId, compId, lineIdx) => `${tabId}__${compId}__${lineIdx}`;
   const cuentaReclas = (tabId, compId, lineIdx) => reclasificacionesC[claveReclas(tabId,compId,lineIdx)] || null;
-  const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual) => {
-    setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual});
+  const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual, ctxComprobante) => {
+    setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual, ...(ctxComprobante||{})});
     setReclasBusq('');
   };
   const guardarReclasificacion = async (cta) => {
@@ -11952,6 +11952,8 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
         codigo: cta.codigo||'', cuenta: cta.nombre||'', tabId:reclasificando.tabId, compId:reclasificando.compId, lineIdx:reclasificando.lineIdx,
         codigoOriginal: reclasificando.codigoActual||'', cuentaOriginal: reclasificando.cuentaActual||'', timestamp: Date.now(),
+        fechaComprobante: reclasificando.fechaComprobante||'', nroComprobante: reclasificando.nroComprobante||'',
+        conceptoComprobante: reclasificando.conceptoComprobante||'', montoBs: reclasificando.montoBs||0, montoUSD: reclasificando.montoUSD||0,
       });
       setReclasificando(null);
     }catch(e){ alert('Error al reclasificar: '+e.message); }
@@ -11969,7 +11971,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   };
   // Celda de código+cuenta reutilizable: aplica el override si existe y da acceso a reclasificar
   // con un clic (reemplaza el par de <td> código/cuenta que se repite en las 8 pestañas).
-  const CeldaCuentaCC = ({tabId, compId, li, l}) => {
+  const CeldaCuentaCC = ({tabId, compId, li, l, r}) => {
     const ov = cuentaReclas(tabId, compId, li);
     const codigo = ov?.codigo || l.codigo;
     const cuenta = ov?.cuenta || l.cuenta;
@@ -11978,7 +11980,10 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
         <td className="px-3 py-2 font-mono text-blue-500">{codigo||'—'}</td>
         <td className="px-3 py-2 font-bold text-gray-700 uppercase group relative cursor-pointer hover:bg-orange-50"
           style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}
-          onClick={()=>abrirReclasificar(tabId, compId, li, codigo, cuenta)}
+          onClick={()=>abrirReclasificar(tabId, compId, li, codigo, cuenta, {
+            fechaComprobante: r?.fecha||'', nroComprobante: r?.comprobante||r?.id||'',
+            conceptoComprobante: r?.concepto||r?.descripcion||'', montoBs: l.dBs||l.hBs||0, montoUSD: l.dUSD||l.hUSD||0,
+          })}
           title="Clic para reclasificar esta cuenta">
           {cuenta||'—'}{ov && <span className="ml-1 text-[8px] font-black text-purple-500 uppercase">● reclasificada</span>}
           <Edit size={10} className="inline-block ml-1 opacity-0 group-hover:opacity-60"/>
@@ -12177,10 +12182,95 @@ ${valoresHtml}
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
+    { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
   ];
   const activo = sub || initialSub || 'banco';
 
+  const filaHtmlReclas = (rc, labelTab) => `<tr>
+    <td>${escCC(rc.timestamp?new Date(rc.timestamp).toLocaleString('es-VE',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—')}</td>
+    <td>${escCC(labelTab(rc.tabId))}</td>
+    <td>${escCC(rc.nroComprobante||'—')}</td>
+    <td>${escCC(rc.fechaComprobante?contDd(rc.fechaComprobante):'—')}</td>
+    <td>${escCC(rc.conceptoComprobante||'—')}</td>
+    <td style="text-align:right">${rc.montoUSD?'$'+contFmt(rc.montoUSD):(rc.montoBs?'Bs.'+contFmt(rc.montoBs):'—')}</td>
+    <td style="background:#fee2e2"><b>${escCC(rc.codigoOriginal||'—')}</b><br/>${escCC(rc.cuentaOriginal||'—')}</td>
+    <td style="background:#d1fae5"><b>${escCC(rc.codigo||'—')}</b><br/>${escCC(rc.cuenta||'—')}</td>
+  </tr>`;
+  const exportarPDFReclasificaciones = (lista, labelTab) => {
+    const filas = lista.map(rc=>filaHtmlReclas(rc,labelTab)).join('');
+    const html = `<p style="font-size:11px;color:#555;margin-bottom:10px">Cuenta original (como se contabilizó primero) y cuenta reclasificada (corregida), con el comprobante de origen — para revisión con el personal.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:10px"><thead><tr style="background:#111827;color:#fff">
+      <th>Reclasificado el</th><th>Origen</th><th>Nro Comp.</th><th>Fecha Comp.</th><th>Concepto</th><th>Monto</th><th>Cuenta Original</th><th>Cuenta Reclasificada</th>
+      </tr></thead><tbody>${filas}</tbody></table>`;
+    _abrirVentanaReporteCC(html, 'Reclasificaciones de Cuentas Contables');
+  };
+  const exportarExcelReclasificaciones = (lista, labelTab) => {
+    const filas = lista.map(rc=>filaHtmlReclas(rc,labelTab)).join('');
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/></head><body>
+      <h2>SERVICIOS JIRET G&amp;B, C.A. — Reclasificaciones de Cuentas Contables</h2>
+      <table border="1"><thead><tr><th>Reclasificado el</th><th>Origen</th><th>Nro Comp.</th><th>Fecha Comp.</th><th>Concepto</th><th>Monto</th><th>Cuenta Original</th><th>Cuenta Reclasificada</th></tr></thead>
+      <tbody>${filas}</tbody></table></body></html>`;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
+    const link = document.createElement('a'); link.href = url; link.download = `Reclasificaciones_${getTodayDate()}.xls`;
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  };
+
   const contenido = () => {
+    if (activo === 'reclasificaciones') {
+      const labelTab = (id) => TABS_CC.find(t=>t.id===id)?.label || id;
+      const lista = Object.values(reclasificacionesC||{})
+        .filter(rc => { const q=buscarCC.toUpperCase(); return !q || (rc.cuenta||'').toUpperCase().includes(q) || (rc.cuentaOriginal||'').toUpperCase().includes(q) || (rc.conceptoComprobante||'').toUpperCase().includes(q); })
+        .filter(rc => (!filtDesde || (rc.fechaComprobante||'')>=filtDesde) && (!filtHasta || (rc.fechaComprobante||'')<=filtHasta))
+        .sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde (fecha del comprobante)</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Cuenta, concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lista.length} reclasificación(es)</p>
+            <button onClick={()=>exportarPDFReclasificaciones(lista,labelTab)} className="bg-gray-800 hover:bg-black text-white px-3 py-1.5 rounded-lg font-black text-[10px] flex items-center gap-1 whitespace-nowrap"><Printer size={12}/>PDF</button>
+            <button onClick={()=>exportarExcelReclasificaciones(lista,labelTab)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-black text-[10px] flex items-center gap-1 whitespace-nowrap"><Download size={12}/>Excel</button>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Cada fila muestra cómo se contabilizó originalmente y a qué cuenta se movió, con la fecha en que se hizo el cambio. Las reclasificaciones hechas antes de esta actualización pueden no traer fecha/concepto/monto del comprobante — solo el cambio de cuenta.</div>
+          {lista.length===0 ? (
+            <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Reclasificado el</th>
+                    <th className="px-3 py-2 text-left">Origen</th>
+                    <th className="px-3 py-2 text-left">Nro Comprobante</th>
+                    <th className="px-3 py-2 text-left">Fecha Comprobante</th>
+                    <th className="px-3 py-2 text-left">Concepto</th>
+                    <th className="px-3 py-2 text-right">Monto</th>
+                    <th className="px-3 py-2 text-left bg-red-950">Cuenta Original (incorrecta)</th>
+                    <th className="px-3 py-2 text-left bg-emerald-950">Cuenta Reclasificada (correcta)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {lista.map((rc,i)=>(
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-500">{rc.timestamp?new Date(rc.timestamp).toLocaleString('es-VE',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+                      <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[9px] font-black uppercase">{labelTab(rc.tabId)}</span></td>
+                      <td className="px-3 py-2 font-mono font-bold text-gray-700">{rc.nroComprobante||<span className="text-gray-300 italic">sin dato</span>}</td>
+                      <td className="px-3 py-2 font-bold">{rc.fechaComprobante?contDd(rc.fechaComprobante):<span className="text-gray-300 italic">sin dato</span>}</td>
+                      <td className="px-3 py-2 text-gray-600 max-w-[220px] truncate" title={rc.conceptoComprobante}>{rc.conceptoComprobante||<span className="text-gray-300 italic">sin dato</span>}</td>
+                      <td className="px-3 py-2 text-right font-mono font-bold">{rc.montoUSD?`$${contFmt(rc.montoUSD)}`:(rc.montoBs?`Bs.${contFmt(rc.montoBs)}`:<span className="text-gray-300 italic">—</span>)}</td>
+                      <td className="px-3 py-2 bg-red-50"><span className="font-mono text-red-700 font-black">{rc.codigoOriginal||'—'}</span><br/><span className="text-red-600 text-[10px]">{rc.cuentaOriginal||'—'}</span></td>
+                      <td className="px-3 py-2 bg-emerald-50"><span className="font-mono text-emerald-700 font-black">{rc.codigo||'—'}</span><br/><span className="text-emerald-700 text-[10px]">{rc.cuenta||'—'}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
     if (activo === 'procura') {
       const lineasProc = filtrarPorBusquedaCC(construirLineasProcura());
       return (
@@ -12209,7 +12299,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='procura' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='procura' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -12267,7 +12357,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-teal-600">{li===0?(<>{r.tipoNota&&<span className={`mr-1 px-1.5 py-0.5 rounded text-[8px] ${r.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoNota}</span>}{r.comprobante}</>):''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='ventas' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='ventas' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -12320,7 +12410,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-purple-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='ret_cli' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='ret_cli' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -12375,7 +12465,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='ret_prov' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='ret_prov' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -12431,7 +12521,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-stone-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='deprec' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='deprec' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -12499,7 +12589,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-indigo-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='imp_enterar' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='imp_enterar' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -12556,7 +12646,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='ajustes' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='ajustes' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?(r.tasa?contFmt(r.tasa):'—'):''}</td>
@@ -12704,7 +12794,7 @@ ${valoresHtml}
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='relacionadas' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='relacionadas' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -13161,7 +13251,7 @@ ${valoresHtml}
                   <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                     <td className="px-3 py-2 font-mono font-black text-blue-600">{li===0?r.comprobante:''}</td>
                     <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                    <CeldaCuentaCC tabId={esBanco?'banco':'caja'} compId={r.id} li={li} l={l}/>
+                    <CeldaCuentaCC tabId={esBanco?'banco':'caja'} compId={r.id} li={li} l={l} r={r}/>
                     <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                     <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                     <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
@@ -13911,7 +14001,51 @@ function App() {
   const [originalUsername, setOriginalUsername] = useState(null);
 
   // Formularios de Ventas
+  const repararCuentasContables = async () => {
+    const extraerNombre = (txt) => {
+      const partes = String(txt||'').split('—');
+      return (partes.length>1 ? partes.slice(1).join('—') : partes[0]).trim().toUpperCase();
+    };
+    const buscarCuentaNueva = (nombreBuscado) => {
+      if (!nombreBuscado) return null;
+      let m = planDeCuentas.find(p=>(p.nombre||'').trim().toUpperCase()===nombreBuscado);
+      if (!m) m = planDeCuentas.find(p=>(p.nombre||'').trim().toUpperCase().includes(nombreBuscado) || nombreBuscado.includes((p.nombre||'').trim().toUpperCase()));
+      return m||null;
+    };
+    const colecciones = [
+      {nombre:'clientes', label:'Clientes', campoNombre:'razonSocial'},
+      {nombre:'procura_proveedores', label:'Proveedores', campoNombre:'razonSocial'},
+      {nombre:'procura_categorias_servicio', label:'Categorías de Servicio', campoNombre:'nombre'},
+      {nombre:'procura_servicios', label:'Servicios', campoNombre:'nombre'},
+      {nombre:'inventory', label:'Inventario', campoNombre:'desc'},
+    ];
+    let reparados=0; const sinCoincidencia=[]; const batch=writeBatch(db);
+    for (const col of colecciones) {
+      const snap = await getDocs(getColRef(col.nombre));
+      snap.docs.forEach(d=>{
+        const data=d.data();
+        const idGuardado = data.cuentaContableId;
+        if (!idGuardado) return; // nunca tuvo cuenta asignada, no es un vínculo roto
+        const existe = planDeCuentas.some(p=>p.id===idGuardado);
+        if (existe) return; // el vínculo sigue siendo válido, no tocar
+        const nombreBuscado = extraerNombre(data.cuentaContableNombre);
+        const nueva = buscarCuentaNueva(nombreBuscado);
+        if (nueva) {
+          batch.update(getDocRef(col.nombre, d.id), {cuentaContableId:nueva.id, cuentaContableNombre:`${nueva.codigo} — ${nueva.nombre}`});
+          reparados++;
+        } else {
+          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreBuscado||'—'}")`);
+        }
+      });
+    }
+    if (reparados>0) await batch.commit();
+    const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
+      (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
+    setDialog({title:'Reparación de Cuentas Contables', text:texto, type:'alert'});
+  };
   const initialClientForm = { rif: '', razonSocial: '', direccion: '', ciudad: '', estado: '', telefono: '', email: '', personaContacto: '', vendedor: '', diasCredito: '0', fechaCreacion: getTodayDate(), cuentaContableId: '', cuentaContableNombre: '', pctRetencionIva: '' };
+
+
 // ── Ciudades de Venezuela con su Estado ─────────────────────────────────────
   const VE_CIUDADES = [
     ['Acarigua','Portuguesa'],['Barinas','Barinas'],['Barcelona','Anzoátegui'],
@@ -27065,6 +27199,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <button onClick={()=>{setShowAddClientForm(v=>!v); setEditingClientId(null); setNewClientForm(initialClientForm);}}
                   className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase transition-all flex items-center gap-2 ${showAddClientForm?'bg-gray-200 text-gray-700':'bg-black text-white hover:bg-gray-800'}`}>
                   {showAddClientForm ? <><X size={13}/> Cancelar</> : <><Plus size={13}/> Agregar Cliente</>}
+                </button>
+                <button onClick={()=>requireAdminPassword(repararCuentasContables,'Reparar Cuentas Contables (Clientes, Proveedores, Categorías, Servicios, Inventario)')}
+                  className="px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase bg-orange-100 text-orange-700 hover:bg-orange-200 flex items-center gap-2 transition-all" title="Reconecta por nombre las cuentas contables que quedaron sin vínculo tras actualizar el Plan de Cuentas">
+                  <RefreshCw size={13}/> Reparar Cuentas Contables
                 </button>
                 <label className="cursor-pointer px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
                   <Download size={13}/> Importar Excel
