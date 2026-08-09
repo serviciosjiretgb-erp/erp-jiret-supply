@@ -11965,12 +11965,12 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const escanearReclasMasiva = async () => {
     setReclasMasivaLoading(true);
     try {
-      const codigosVigentes = new Set((planDeCuentas||[]).map(p=>p.codigo));
+      const codigosVigentes = new Set((planCuentasC||[]).map(p=>p.codigo));
       const buscarPorNombre = (nombreTxt) => {
         const n = String(nombreTxt||'').trim().toUpperCase();
         if (!n) return null;
-        let m = (planDeCuentas||[]).find(p=>(p.nombre||'').trim().toUpperCase()===n);
-        if (!m) m = (planDeCuentas||[]).find(p=>(p.nombre||'').trim().toUpperCase().includes(n) || n.includes((p.nombre||'').trim().toUpperCase()));
+        let m = (planCuentasC||[]).find(p=>(p.nombre||'').trim().toUpperCase()===n);
+        if (!m) m = (planCuentasC||[]).find(p=>(p.nombre||'').trim().toUpperCase().includes(n) || n.includes((p.nombre||'').trim().toUpperCase()));
         return m||null;
       };
       const colecciones = [
