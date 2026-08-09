@@ -14044,7 +14044,7 @@ function App() {
     if (reparados>0) await batch.commit();
     const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
       (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
-    const colConFaltantes = colecciones.filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, ids:sinCuentaNunca[col.nombre].map(x=>x.id)}));
+    const colConFaltantes = colecciones.filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, items:sinCuentaNunca[col.nombre]}));
     if (colConFaltantes.length) {
       setDialog({title:'Reparación de Cuentas Contables', type:'confirm',
         text: texto + `\n\nAdemás, ${colConFaltantes.map(c=>`${c.cantidad} en ${c.label}`).join(', ')} nunca tuvieron cuenta asignada.\n\n¿Quieres asignarles una cuenta a todos de una vez ahora?`,
@@ -48550,36 +48550,75 @@ const RestaurarCobrosView = ({settings, appUser}) => {
         {asignarMasivaModal && (() => {
           const col = asignarMasivaModal.colecciones.find(c=>c.nombre===asignarMasivaModal.destino);
           const restantes = asignarMasivaModal.colecciones.filter(c=>c.nombre!==asignarMasivaModal.destino);
+          const seleccionados = asignarMasivaModal.seleccionados || col.items.map(it=>it.id);
+          const qBusq = (asignarMasivaModal.busq||'').toUpperCase();
+          const itemsFiltrados = qBusq ? col.items.filter(it=>String(it.label||'').toUpperCase().includes(qBusq)) : col.items;
+          const toggleUno = (id) => setAsignarMasivaModal(m=>{
+            const sel = m.seleccionados || col.items.map(it=>it.id);
+            return {...m, seleccionados: sel.includes(id) ? sel.filter(x=>x!==id) : [...sel, id]};
+          });
+          const toggleTodos = (marcar) => setAsignarMasivaModal(m=>({...m, seleccionados: marcar ? col.items.map(it=>it.id) : []}));
           const aplicar = async () => {
             const cta = planDeCuentas.find(p=>p.id===asignarMasivaModal.cuentaId);
             if (!cta) { setDialog({title:'Aviso', text:'Selecciona una cuenta primero.', type:'alert'}); return; }
+            if (!seleccionados.length) { setDialog({title:'Aviso', text:'No hay ningún registro tildado.', type:'alert'}); return; }
             try {
               const batch = writeBatch(db);
-              col.ids.forEach(id => batch.update(getDocRef(col.nombre, id), {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
+              seleccionados.forEach(id => batch.update(getDocRef(col.nombre, id), {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
               await batch.commit();
-              if (restantes.length) setAsignarMasivaModal({colecciones:restantes, cuentaId:'', destino:restantes[0].nombre});
-              else { setAsignarMasivaModal(null); setDialog({title:'Listo', text:`Se asignó "${cta.codigo} — ${cta.nombre}" a ${col.cantidad} registro(s) de ${col.label}.`, type:'alert'}); }
+              const itemsRestantesCol = col.items.filter(it=>!seleccionados.includes(it.id));
+              if (itemsRestantesCol.length) {
+                // Quedan registros de esta misma colección sin tocar — se puede asignarles otra cuenta distinta
+                setAsignarMasivaModal({colecciones:[{...col, cantidad:itemsRestantesCol.length, items:itemsRestantesCol}, ...restantes], cuentaId:'', destino:col.nombre, seleccionados:null, busq:''});
+                setDialog({title:'Aplicado', text:`Se asignó "${cta.codigo} — ${cta.nombre}" a ${seleccionados.length} registro(s) de ${col.label}. Quedan ${itemsRestantesCol.length} más en ${col.label} — puedes darles otra cuenta distinta ahora, o "Ahora no" para dejarlos para después.`, type:'alert'});
+              } else if (restantes.length) {
+                setAsignarMasivaModal({colecciones:restantes, cuentaId:'', destino:restantes[0].nombre, seleccionados:null, busq:''});
+              } else {
+                setAsignarMasivaModal(null);
+                setDialog({title:'Listo', text:`Se asignó "${cta.codigo} — ${cta.nombre}" a ${seleccionados.length} registro(s) de ${col.label}.`, type:'alert'});
+              }
             } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
           };
           return (
             <div className="fixed inset-0 bg-black/70 z-[99998] flex items-center justify-center p-4" onClick={()=>setAsignarMasivaModal(null)}>
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e=>e.stopPropagation()}>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-black text-lg text-gray-800">Asignar cuenta a {col.label}</h3>
-                  <button onClick={()=>setAsignarMasivaModal(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+                <div className="p-6 pb-4 border-b border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-black text-lg text-gray-800">Asignar cuenta a {col.label}</h3>
+                    <button onClick={()=>setAsignarMasivaModal(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                  </div>
+                  <p className="text-xs text-gray-500 font-bold mt-1">{col.cantidad} registro(s) de {col.label} nunca tuvieron cuenta asignada. Revisa la lista — si varios necesitan cuentas distintas, destilda los que no correspondan y aplícalos en tandas separadas.</p>
                 </div>
-                <p className="text-xs text-gray-500 font-bold">{col.cantidad} registro(s) de {col.label} nunca tuvieron cuenta contable asignada. Elige una cuenta y se les aplicará a todos por igual.</p>
-                <div>
-                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Contable</label>
-                  <select value={asignarMasivaModal.cuentaId} onChange={e=>setAsignarMasivaModal(m=>({...m,cuentaId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
-                    <option value="">— Seleccionar cuenta —</option>
-                    {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                  </select>
+                <div className="p-6 py-4 space-y-3 border-b border-gray-100">
+                  <div>
+                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Contable a aplicar</label>
+                    <select value={asignarMasivaModal.cuentaId} onChange={e=>setAsignarMasivaModal(m=>({...m,cuentaId:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                      <option value="">— Seleccionar cuenta —</option>
+                      {planDeCuentas.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                    </select>
+                  </div>
+                  <input value={asignarMasivaModal.busq||''} onChange={e=>setAsignarMasivaModal(m=>({...m,busq:e.target.value}))} placeholder="Buscar en la lista..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                  <div className="flex items-center justify-between text-[10px] font-black uppercase text-gray-500">
+                    <span>{seleccionados.length} de {col.items.length} tildado(s)</span>
+                    <div className="flex gap-3">
+                      <button onClick={()=>toggleTodos(true)} className="text-orange-600 hover:underline">Marcar todos</button>
+                      <button onClick={()=>toggleTodos(false)} className="text-gray-400 hover:underline">Desmarcar todos</button>
+                    </div>
+                  </div>
                 </div>
-                {restantes.length>0 && <p className="text-[10px] text-gray-400 font-bold">Después de esta, sigue: {restantes.map(c=>c.label).join(', ')}.</p>}
-                <div className="flex gap-2 pt-2">
+                <div className="flex-1 overflow-y-auto px-6 py-2">
+                  {itemsFiltrados.map(it=>(
+                    <label key={it.id} className="flex items-center gap-3 py-1.5 border-b border-gray-50 cursor-pointer hover:bg-gray-50 rounded px-1">
+                      <input type="checkbox" checked={seleccionados.includes(it.id)} onChange={()=>toggleUno(it.id)} className="w-4 h-4 rounded cursor-pointer flex-shrink-0"/>
+                      <span className="text-xs font-bold text-gray-700">{it.label}</span>
+                    </label>
+                  ))}
+                  {itemsFiltrados.length===0 && <p className="text-center text-gray-400 text-xs py-6">Sin resultados para esa búsqueda.</p>}
+                </div>
+                {restantes.length>0 && <p className="px-6 text-[10px] text-gray-400 font-bold pt-2">Después de esta colección, sigue: {restantes.map(c=>c.label).join(', ')}.</p>}
+                <div className="flex gap-2 p-6 pt-4">
                   <button onClick={()=>setAsignarMasivaModal(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Ahora no</button>
-                  <button onClick={aplicar} disabled={!asignarMasivaModal.cuentaId} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-40">Aplicar a los {col.cantidad}</button>
+                  <button onClick={aplicar} disabled={!asignarMasivaModal.cuentaId || !seleccionados.length} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-40">Aplicar a los {seleccionados.length} tildado(s)</button>
                 </div>
               </div>
             </div>
