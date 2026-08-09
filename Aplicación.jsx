@@ -11982,7 +11982,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
           style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}
           onClick={()=>abrirReclasificar(tabId, compId, li, codigo, cuenta, {
             fechaComprobante: r?.fecha||'', nroComprobante: r?.comprobante||r?.id||'',
-            conceptoComprobante: r?.concepto||r?.descripcion||'', montoBs: l.dBs||l.hBs||0, montoUSD: l.dUSD||l.hUSD||0,
+            conceptoComprobante: r?.conc||'', montoBs: l.dBs||l.hBs||0, montoUSD: l.dUSD||l.hUSD||0,
           })}
           title="Clic para reclasificar esta cuenta">
           {cuenta||'—'}{ov && <span className="ml-1 text-[8px] font-black text-purple-500 uppercase">● reclasificada</span>}
