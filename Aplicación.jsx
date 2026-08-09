@@ -4104,6 +4104,8 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
   const [catForm,setCatForm]=useState({});
   const [catModal,setCatModal]=useState(false);
   const [catSeleccionadas,setCatSeleccionadas]=useState([]);
+  const [pidiendoClaveElimCat,setPidiendoClaveElimCat]=useState(false);
+  const [claveElimCatInput,setClaveElimCatInput]=useState('');
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -4193,12 +4195,6 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
   const elimCatMultiples=()=>{
-    const clave=window.prompt('Esta acción requiere clave de administrador.\nIngrese la clave:');
-    if(clave===null) return; // canceló
-    if(clave!==ADMIN_PASSWORD && clave!=='Supply2026.Admin'){
-      setDialog({title:'Clave incorrecta',text:'La clave de administrador ingresada no es correcta. No se eliminó nada.',type:'alert'});
-      return;
-    }
     const nombres=categoriasSrv.filter(c=>catSeleccionadas.includes(c.id)).map(c=>c.nombre);
     setDialog({title:`¿Eliminar ${catSeleccionadas.length} categoría(s)?`,text:`Se eliminarán: ${nombres.slice(0,5).join(', ')}${nombres.length>5?` y ${nombres.length-5} más`:''}. Las órdenes de compra ya registradas no se ven afectadas.`,type:'confirm',onConfirm:async()=>{
       try{
@@ -4226,7 +4222,7 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
         </div>
         {tab==='categorias'&&<>
           {catSeleccionadas.length>0&&
-            <PBd onClick={elimCatMultiples}><Trash2 size={14}/> Eliminar ({catSeleccionadas.length})</PBd>
+            <PBd onClick={()=>setPidiendoClaveElimCat(true)}><Trash2 size={14}/> Eliminar ({catSeleccionadas.length})</PBd>
           }
           <PBg onClick={()=>{setCatForm(initCat());setCatModal(true);}}><Plus size={14}/> Nueva categoría</PBg>
           <label className="cursor-pointer px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-green-600 text-white hover:bg-green-700 flex items-center gap-2 transition-all">
@@ -4431,6 +4427,26 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
             </div>
           </div>
         </PModal>
+      )}
+
+      {/* Modal de clave admin para Eliminar Seleccionadas — propio de la app, no del navegador */}
+      {pidiendoClaveElimCat && (
+        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4" onClick={()=>{setPidiendoClaveElimCat(false);setClaveElimCatInput('');}}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+            <h3 className="font-black text-lg text-slate-800">Confirmar con clave de administrador</h3>
+            <p className="text-xs text-slate-500 font-bold">Vas a eliminar {catSeleccionadas.length} categoría(s). Ingresa la clave de administrador para continuar.</p>
+            <input type="password" autoFocus value={claveElimCatInput} onChange={e=>setClaveElimCatInput(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter'){ if(claveElimCatInput===ADMIN_PASSWORD||claveElimCatInput==='Supply2026.Admin'){ setPidiendoClaveElimCat(false); setClaveElimCatInput(''); elimCatMultiples(); } else { setDialog({title:'Clave incorrecta',text:'La clave de administrador ingresada no es correcta. No se eliminó nada.',type:'alert'}); } } }}
+              placeholder="Clave de administrador" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-red-400"/>
+            <div className="flex gap-2">
+              <button onClick={()=>{setPidiendoClaveElimCat(false);setClaveElimCatInput('');}} className="flex-1 bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-slate-300">Cancelar</button>
+              <button onClick={()=>{
+                if(claveElimCatInput===ADMIN_PASSWORD||claveElimCatInput==='Supply2026.Admin'){ setPidiendoClaveElimCat(false); setClaveElimCatInput(''); elimCatMultiples(); }
+                else { setDialog({title:'Clave incorrecta',text:'La clave de administrador ingresada no es correcta. No se eliminó nada.',type:'alert'}); }
+              }} className="flex-1 bg-red-500 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-600">Confirmar</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal Categoría de Servicio */}
@@ -11987,13 +12003,13 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       setReclasMasivaProp({propuestas, sinCoincidencia, aprobadas: propuestas.map((_,i)=>i)});
     } catch(e) {
       console.error('Error en escanearReclasMasiva:', e);
-      setDialog({title:'Error', text:'No se pudo escanear: '+e.message, type:'alert'});
+      alert('Error: No se pudo escanear.\n\n'+e.message);
     } finally { setReclasMasivaLoading(false); }
   };
   const aplicarReclasMasiva = async () => {
     if (!reclasMasivaProp) return;
     const aElegir = reclasMasivaProp.propuestas.filter((_,i)=>reclasMasivaProp.aprobadas.includes(i));
-    if (!aElegir.length) { setDialog({title:'Aviso', text:'No hay ninguna tildada para aplicar.', type:'alert'}); return; }
+    if (!aElegir.length) { alert('No hay ninguna tildada para aplicar.'); return; }
     setReclasMasivaAplicando(true);
     try {
       // Se agrupa por documento porque puede haber varias líneas del mismo comprobante a corregir.
@@ -12010,9 +12026,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       }
       await batch.commit();
       setReclasMasivaProp(null);
-      setDialog({title:'Reclasificación Masiva Aplicada', text:`${aElegir.length} línea(s) reclasificada(s) en ${Object.keys(porDoc).length} comprobante(s).`, type:'alert'});
+      alert(`Reclasificación Masiva Aplicada\n\n${aElegir.length} línea(s) reclasificada(s) en ${Object.keys(porDoc).length} comprobante(s).`);
     } catch(e) {
-      setDialog({title:'Error', text:'Error al aplicar: '+e.message, type:'alert'});
+      alert('Error al aplicar: '+e.message);
     } finally { setReclasMasivaAplicando(false); }
   };
 
@@ -13386,13 +13402,13 @@ ${valoresHtml}
             <h3 className="font-black text-lg text-gray-800">Confirmar con clave de administrador</h3>
             <p className="text-xs text-gray-500 font-bold">Esta acción va a modificar {reclasMasivaProp?.aprobadas.length} línea(s) ya contabilizadas. Ingresa la clave de administrador para continuar.</p>
             <input type="password" autoFocus value={claveReclasMasivaInput} onChange={e=>setClaveReclasMasivaInput(e.target.value)}
-              onKeyDown={e=>{ if(e.key==='Enter'){ if(claveReclasMasivaInput===ADMIN_PASSWORD||claveReclasMasivaInput==='Supply2026.Admin'){ setPidiendoClaveReclasMasiva(false); setClaveReclasMasivaInput(''); aplicarReclasMasiva(); } else { setDialog({title:'Clave incorrecta', text:'La clave de administrador ingresada no es correcta.', type:'alert'}); } } }}
+              onKeyDown={e=>{ if(e.key==='Enter'){ if(claveReclasMasivaInput===ADMIN_PASSWORD||claveReclasMasivaInput==='Supply2026.Admin'){ setPidiendoClaveReclasMasiva(false); setClaveReclasMasivaInput(''); aplicarReclasMasiva(); } else { alert('Clave incorrecta.\n\nLa clave de administrador ingresada no es correcta.'); } } }}
               placeholder="Clave de administrador" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-purple-500"/>
             <div className="flex gap-2">
               <button onClick={()=>{setPidiendoClaveReclasMasiva(false);setClaveReclasMasivaInput('');}} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
               <button onClick={()=>{
                 if(claveReclasMasivaInput===ADMIN_PASSWORD||claveReclasMasivaInput==='Supply2026.Admin'){ setPidiendoClaveReclasMasiva(false); setClaveReclasMasivaInput(''); aplicarReclasMasiva(); }
-                else { setDialog({title:'Clave incorrecta', text:'La clave de administrador ingresada no es correcta.', type:'alert'}); }
+                else { alert('Clave incorrecta.\n\nLa clave de administrador ingresada no es correcta.'); }
               }} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700">Confirmar</button>
             </div>
           </div>
