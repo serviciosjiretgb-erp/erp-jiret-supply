@@ -14516,6 +14516,7 @@ function App() {
   const [tvPagina, setTvPagina] = useState(0);
   const [tvBuscarDoc, setTvBuscarDoc] = useState('');
   const [tvBuscarDesc, setTvBuscarDesc] = useState('');
+  const [tvFiltOp, setTvFiltOp] = useState('todos'); // 'todos' | 'con' | 'sin'
   const [facturaPagina, setFacturaPagina] = useState(0);
   const [cotizPagina, setCotizPagina] = useState(0);
   const [clientesPagina, setClientesPagina] = useState(0);
@@ -27720,10 +27721,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(ne.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
+            const opNE = ne.opRelacionada||ne.opId||ne.opAsignada||'';
+            if(tvFiltOp==='con' && !opNE) return;
+            if(tvFiltOp==='sin' && opNE) return;
             const costo=parseNum(ne.costoTotal||0)||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0);
             const utilidad=(ne.montoBase||0)-costo;
             const pctUtil=(ne.montoBase||0)>0?(utilidad/(ne.montoBase||0)*100):0;
-            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE'});
+            rows.push({fecha:ne.fecha,documento:doc,descripcion:ne.clientName||'—',montoBruto:ne.montoBase||0,iva:ne.ivaAmt||0,tNeto:ne.total||0,costo,utilidad,pctUtil,neId:ne.id,facturaId:ne.facturaId||'',status:ne.status,fuente:'NE',op:opNE});
           });
           // ── NC/ND excluidas de Transacciones de Ventas: afectan el Libro de Ventas
           // (NC resta, ND suma) pero no son parte de este reporte — solo Notas de Entrega.
@@ -27763,6 +27767,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 </div>
                 <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cliente / Descripción</label>
                   <input value={tvBuscarDesc} onChange={e=>{setTvBuscarDesc(e.target.value);setTvPagina(0);}} placeholder="Buscar cliente..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Orden de Producción</label>
+                  <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+                    {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
+                      <button key={v} onClick={()=>{setTvFiltOp(v);setTvPagina(0);}} className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-colors ${tvFiltOp===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>{lbl}</button>
+                    ))}
+                  </div>
                 </div>
                 <div className="ml-auto text-right"><div className="font-black text-lg text-gray-900">${formatNum(tot.montoBruto)}</div><div className="text-[10px] text-gray-400 font-bold">{rows.length} ops. · Base sin IVA</div></div>
               </div>
