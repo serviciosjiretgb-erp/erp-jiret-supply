@@ -11581,6 +11581,8 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [notasVentaC, setNotasVentaC] = useState([]);
   // ── Ajustes: asientos manuales multimoneda, no derivados de ningún otro módulo ──
   const [ajustesC, setAjustesC] = useState([]);
+  const [nominaC, setNominaC] = useState([]);
+  const [nominaImportando, setNominaImportando] = useState(false);
   const [showAjusteModal, setShowAjusteModal] = useState(false);
   const [ajusteEditando, setAjusteEditando] = useState(null);
   const [ajusteForm, setAjusteForm] = useState({fecha:getTodayDate(), nroComprobante:'', concepto:'', tasa:'', lineas:[]});
@@ -11626,6 +11628,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       onSnapshot(getColRef('procura_ret_islr'), s => setRetIslrProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('activos_fijos'), s => setActivosFijosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_ajustes'), s => setAjustesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('comprobantes_nomina'), s => setNominaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
       onSnapshot(doc(db,'settings','general'), d => { if(d.exists()) setSettingsCC(d.data()); }),
       onSnapshot(getDocRef('settings','actividadEconomica'), d => { if(d.exists()) setAeCfgCC(d.data()); }),
@@ -12131,6 +12134,21 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       })),
     }));
   };
+  const construirLineasNomina = () => {
+    return (nominaC||[]).filter(a => {
+      if (filtDesde && a.fecha < filtDesde) return false;
+      if (filtHasta && a.fecha > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(a => ({
+      id: a.id, comprobante: a.nroComprobante||'NÓMINA', fecha: a.fecha, doc: a.nroComprobante||'—',
+      tasa: Number(a.tasa||0), conc: a.concepto||'Nómina', _raw:a,
+      lineas: (a.lineas||[]).map(l => ({
+        codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipo, detalle: l.detalle||'',
+        dBs: l.tipo==='D'?Number(l.montoBs||0):0, hBs: l.tipo==='H'?Number(l.montoBs||0):0,
+        dUSD: l.tipo==='D'?Number(l.montoUSD||0):0, hUSD: l.tipo==='H'?Number(l.montoUSD||0):0,
+      })),
+    }));
+  };
 
   const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:'', detalle:''});
 
@@ -12210,6 +12228,127 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     if(!window.confirm('¿Eliminar este ajuste? Esta acción no se puede deshacer.')) return;
     try{ await deleteDoc(getDocRef('comprobantes_ajustes', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
+  const eliminarNomina = async (id) => {
+    if(!window.confirm('¿Eliminar este comprobante de nómina? Esta acción no se puede deshacer.')) return;
+    try{ await deleteDoc(getDocRef('comprobantes_nomina', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+  // ── Importar Nómina desde Excel ───────────────────────────────────────────────
+  // Columnas esperadas (en cualquier orden, detectadas por nombre de encabezado):
+  // Fecha | Código | Cuenta de movimiento | Nro Documento | Detalle | Tasa | Debe Bs | Haber Bs
+  // Cada combinación única de Fecha+Nro Documento se agrupa en UN solo comprobante, con todas
+  // sus filas como líneas D/H — así una nómina con muchas cuentas queda en un solo asiento.
+  const importarNominaExcel = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.xls';
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setNominaImportando(true);
+      try {
+        const arrayBuffer = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=ev=>res(ev.target.result); r.onerror=rej; r.readAsArrayBuffer(file); });
+        let XLSX; try{XLSX=window.XLSX;}catch(_){}
+        if (!XLSX) {
+          await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+          XLSX=window.XLSX;
+        }
+        const wb = XLSX.read(arrayBuffer,{type:'array', cellDates:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const filas = XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
+        if (!filas.length) { alert('El archivo está vacío.'); setNominaImportando(false); return; }
+
+        // Detectar fila de encabezado (primeras 5 filas) y mapear cada columna por nombre —
+        // no importa el orden en que vengan en el Excel.
+        const normEnc = (s)=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+        let headerIdx=-1, colMap={};
+        for (let i=0; i<Math.min(5,filas.length); i++) {
+          const fila = filas[i]||[];
+          const map={};
+          fila.forEach((c,ci)=>{
+            const n = normEnc(c);
+            if (n==='FECHA') map.fecha=ci;
+            else if (n==='CODIGO') map.codigo=ci;
+            else if (n.startsWith('CUENTA')) map.cuenta=ci;
+            else if (n.startsWith('NRO DOC')||n.startsWith('NUMERO DOC')||n==='DOCUMENTO') map.nroDoc=ci;
+            else if (n==='DETALLE') map.detalle=ci;
+            else if (n==='TASA') map.tasa=ci;
+            else if (n.startsWith('DEBE')) map.debe=ci;
+            else if (n.startsWith('HABER')) map.haber=ci;
+          });
+          if (map.fecha!=null && map.codigo!=null && (map.debe!=null || map.haber!=null)) { headerIdx=i; colMap=map; break; }
+        }
+        if (headerIdx<0) {
+          alert('No se encontró la fila de encabezados. Verifica que el archivo tenga las columnas: Fecha, Código, Cuenta de movimiento, Nro Documento, Detalle, Tasa, Debe Bs, Haber Bs.');
+          setNominaImportando(false); return;
+        }
+
+        const fmtFecha = (v) => {
+          if (v==null || v==='') return '';
+          if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+          const s = String(v).trim();
+          const m1 = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m1) return `${m1[1]}-${m1[2]}-${m1[3]}`;
+          const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m2) return `${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`;
+          return s;
+        };
+        const numOrCero = (v) => { const n = parseFloat(String(v??'').replace(/\./g,'').replace(',','.')); return isNaN(n) ? (parseFloat(v)||0) : n; };
+
+        const grupos = {}; // clave "fecha__nroDoc" -> {fecha, nroDoc, tasa, lineas:[]}
+        let filasIgnoradas = 0;
+        for (let i=headerIdx+1; i<filas.length; i++) {
+          const fila = filas[i]||[];
+          const fecha = fmtFecha(fila[colMap.fecha]);
+          const codigo = String(fila[colMap.codigo]??'').trim();
+          if (!fecha || !codigo) { if (fila.some(c=>c!=null && c!=='')) filasIgnoradas++; continue; }
+          const cuenta = String(fila[colMap.cuenta]??'').trim();
+          const nroDoc = String(fila[colMap.nroDoc]??'').trim() || 'NOMINA';
+          const detalle = String(fila[colMap.detalle]??'').trim();
+          const tasaFila = numOrCero(fila[colMap.tasa]);
+          const debeBs = numOrCero(fila[colMap.debe]);
+          const haberBs = numOrCero(fila[colMap.haber]);
+          if (debeBs<=0 && haberBs<=0) { filasIgnoradas++; continue; }
+          const clave = `${fecha}__${nroDoc}`;
+          if (!grupos[clave]) grupos[clave] = { fecha, nroDoc, tasa: tasaFila, lineas: [] };
+          if (!grupos[clave].tasa && tasaFila) grupos[clave].tasa = tasaFila;
+          const tasaUsar = tasaFila || grupos[clave].tasa || 0;
+          grupos[clave].lineas.push({
+            codigo, cuenta: cuenta||codigo, tipo: debeBs>0?'D':'H',
+            montoBs: debeBs>0?debeBs:haberBs,
+            montoUSD: tasaUsar>0 ? parseFloat(((debeBs>0?debeBs:haberBs)/tasaUsar).toFixed(2)) : 0,
+            detalle,
+          });
+        }
+
+        const clavesGrupos = Object.keys(grupos);
+        if (!clavesGrupos.length) {
+          alert(`No se encontraron filas válidas para importar.${filasIgnoradas?` (${filasIgnoradas} fila(s) ignoradas por falta de datos)`:''}`);
+          setNominaImportando(false); return;
+        }
+        const descuadrados = [];
+        const batch = writeBatch(db);
+        clavesGrupos.forEach(clave=>{
+          const g = grupos[clave];
+          const totD = g.lineas.reduce((s,l)=>s+(l.tipo==='D'?l.montoBs:0),0);
+          const totH = g.lineas.reduce((s,l)=>s+(l.tipo==='H'?l.montoBs:0),0);
+          if (Math.abs(totD-totH)>0.02) descuadrados.push(`${g.nroDoc} (${g.fecha}): Debe Bs.${contFmt(totD)} vs Haber Bs.${contFmt(totH)}`);
+          const id = `NOM-${(g.nroDoc||'').replace(/\s+/g,'_')}-${g.fecha}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+          batch.set(getDocRef('comprobantes_nomina', id), {
+            id, fecha: g.fecha, nroComprobante: g.nroDoc, concepto: `Nómina — ${g.nroDoc}`,
+            tasa: g.tasa||0, lineas: g.lineas, createdAt: Date.now(), user: appUser?.name||'Sistema', origen:'import_excel',
+          });
+        });
+        await batch.commit();
+        const totalLineas = clavesGrupos.reduce((s,c)=>s+grupos[c].lineas.length,0);
+        alert(`Nómina importada\n\n${clavesGrupos.length} comprobante(s) creado(s), ${totalLineas} línea(s) en total.` +
+          (filasIgnoradas?`\n${filasIgnoradas} fila(s) ignoradas por falta de datos.`:'') +
+          (descuadrados.length?`\n\n⚠ ${descuadrados.length} comprobante(s) quedaron descuadrados (revisar):\n${descuadrados.slice(0,10).join('\n')}${descuadrados.length>10?`\n...y ${descuadrados.length-10} más`:''}`:''));
+      } catch(err) {
+        alert('Error al importar: '+err.message);
+      } finally {
+        setNominaImportando(false);
+      }
+    };
+    input.click();
+  };
 
   // ── Reclasificación masiva de comprobantes ya contabilizados con códigos viejos ──────
   // Busca líneas cuyo código ya no existe en el Plan de Cuentas actual, y propone el código
@@ -12233,6 +12372,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
             montoUSD: l.debeUSD||l.haberUSD||0, montoBs: l.debeBs||l.haberBs||0 })},
         {nombre:'comprobantes_ajustes', label:'Ajuste Contable',
           extraer: (data,l) => ({ fecha: data.fecha||'', comprobante: data.nroComprobante||'', concepto: data.concepto||'',
+            montoUSD: l.montoUSD||0, montoBs: l.montoBs||0 })},
+        {nombre:'comprobantes_nomina', label:'Nómina',
+          extraer: (data,l) => ({ fecha: data.fecha||'', comprobante: data.nroComprobante||'', concepto: l.detalle||data.concepto||'',
             montoUSD: l.montoUSD||0, montoBs: l.montoBs||0 })},
       ];
       const propuestas=[]; const sinCoincidencia=[];
@@ -12616,6 +12758,8 @@ ${valoresHtml}
       }
       case 'ajustes':
         return {...comunes, titulo:'Ajustes Contables', primeraCol:'Comprobante', docLabel:'Nro Comp.', tasa:true, ordenBsPrimero:true, unidad:'ajuste(s)', lineas:aplicarReclasCC('ajustes',construirLineasAjustes())};
+      case 'nomina':
+        return {...comunes, titulo:'Nómina', primeraCol:'Comprobante', docLabel:'Nro Doc.', tasa:true, ordenBsPrimero:true, unidad:'nómina(s)', lineas:aplicarReclasCC('nomina',construirLineasNomina())};
       case 'relacionadas':
         return {...comunes, titulo:'Cuentas por Pagar Relacionadas', primeraCol:'Tercero', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('relacionadas',construirLineasRelacionadas())};
       default: return null;
@@ -12642,6 +12786,7 @@ ${valoresHtml}
     { id:'deprec', label:'Depreciaciones', icon:'📉', activo:true },
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
+    { id:'nomina', label:'Nómina', icon:'💰', activo:true },
     { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
   ];
@@ -13237,6 +13382,66 @@ ${valoresHtml}
               </div>
             );
           })()}
+        </div>
+      );
+    }
+    if (activo === 'nomina') {
+      const lineasNom = filtrarPorBusquedaCC(construirLineasNomina());
+      const totalNomUSD = lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <button onClick={importarNominaExcel} disabled={nominaImportando} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5 disabled:opacity-50"><Download size={14}/> {nominaImportando?'Importando...':'Importar Excel'}</button>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasNom.length} nómina(s) · Total ${contFmt(totalNomUSD)}</p>
+            <BotonesExportCC tabId="nomina"/>
+          </div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ Importa un Excel con las columnas: Fecha, Código, Cuenta de movimiento, Nro Documento, Detalle, Tasa, Debe Bs, Haber Bs. Cada Fecha+Nro Documento se agrupa en un solo comprobante con todas sus líneas.</div>
+          {lineasNom.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <FileText size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin nóminas para este período</p>
+              <p className="text-[10px] mt-1">Usa "Importar Excel" para cargar la primera</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'950px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta','T','Detalle','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acción'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7&&i<=10?'text-right':i===4||i===11?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasNom.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <CeldaCuentaCC tabId='nomina' compId={r.id} li={li} l={l} r={r}/>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 text-gray-500">{l.detalle||''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?(r.tasa?contFmt(r.tasa):'—'):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className="px-3 py-2 text-center">{li===0&&(
+                        <button onClick={()=>eliminarNomina(r.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
+                      )}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={6} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasNom.length} nómina(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                  <td></td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
         </div>
       );
     }
@@ -14059,6 +14264,7 @@ function App() {
   const [tercerosRelApp, setTercerosRelApp] = useState([]);
   const [pagosRelApp, setPagosRelApp] = useState([]);
   const [ajustesApp, setAjustesApp] = useState([]);
+  const [nominaApp, setNominaApp] = useState([]);
   useEffect(()=>{
     const subs = [
       onSnapshot(getColRef('procura_facturas_compra'), s=>setFacturasCompraApp(s.docs.map(d=>({id:d.id,...d.data()})))),
@@ -14073,6 +14279,7 @@ function App() {
       onSnapshot(getColRef('cxp_terceros_relacionados'), s=>setTercerosRelApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('cxp_pagos_relacionados'), s=>setPagosRelApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('comprobantes_ajustes'), s=>setAjustesApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('comprobantes_nomina'), s=>setNominaApp(s.docs.map(d=>({id:d.id,...d.data()})))),
     ];
     return ()=>subs.forEach(u=>u());
   },[]);
@@ -14206,6 +14413,15 @@ function App() {
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
         lineas:(a.lineas||[]).map((l,li)=>{
           const r = aplicarReclasLinea('ajustes', a.id, li, l.codigo||'', l.cuenta||'—');
+          return {codigo:r.codigo, cuenta:r.cuenta, debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
+        })});
+    });
+    // 8) Nómina — comprobantes importados desde Excel (Fecha/Código/Cuenta/Nro Doc/Detalle/
+    // Tasa/Debe Bs/Haber Bs), agrupados por Fecha+Nro Documento al importar.
+    (nominaApp||[]).forEach(a=>{
+      out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'NÓMINA', modulo:'Nómina', concepto:a.concepto||'Nómina',
+        lineas:(a.lineas||[]).map((l,li)=>{
+          const r = aplicarReclasLinea('nomina', a.id, li, l.codigo||'', l.cuenta||'—');
           return {codigo:r.codigo, cuenta:r.cuenta, debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
         })});
     });
