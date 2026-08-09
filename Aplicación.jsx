@@ -12290,7 +12290,12 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
           const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if (m2) return `${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`;
           return s;
         };
-        const numOrCero = (v) => { const n = parseFloat(String(v??'').replace(/\./g,'').replace(',','.')); return isNaN(n) ? (parseFloat(v)||0) : n; };
+        const numOrCero = (v) => {
+          if (v==null || v==='') return 0;
+          if (typeof v==='number') return isNaN(v) ? 0 : v; // Excel ya lo entrega como número — usar directo, no tocar el punto decimal
+          const n = parseFloat(String(v).trim().replace(/\./g,'').replace(',','.'));
+          return isNaN(n) ? (parseFloat(v)||0) : n;
+        };
 
         const grupos = {}; // clave "fecha__nroDoc" -> {fecha, nroDoc, tasa, lineas:[]}
         let filasIgnoradas = 0;
