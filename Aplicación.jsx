@@ -12132,7 +12132,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     }));
   };
 
-  const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:''});
+  const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:'', detalle:''});
 
   const abrirNuevoAjuste = () => {
     setAjusteEditando(null);
@@ -12143,7 +12143,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const abrirEditarAjuste = (raw) => {
     setAjusteEditando(raw);
     setAjusteForm({fecha:raw.fecha||getTodayDate(), nroComprobante:raw.nroComprobante||'', concepto:raw.concepto||'', tasa:raw.tasa?String(raw.tasa):'',
-      lineas:(raw.lineas||[]).map(l=>({codigo:l.codigo||'',cuenta:l.cuenta||'',tipo:l.tipo||'D',montoBs:l.montoBs?String(l.montoBs):'',montoUSD:l.montoUSD?String(l.montoUSD):''}))});
+      lineas:(raw.lineas||[]).map(l=>({codigo:l.codigo||'',cuenta:l.cuenta||'',tipo:l.tipo||'D',montoBs:l.montoBs?String(l.montoBs):'',montoUSD:l.montoUSD?String(l.montoUSD):'',detalle:l.detalle||''}))});
     setAjusteBusqCuentaIdx(-1); setAjusteBusqCuentaTxt('');
     setShowAjusteModal(true);
   };
@@ -12192,7 +12192,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       const payload = {
         fecha: ajusteForm.fecha, nroComprobante: ajusteForm.nroComprobante, concepto: ajusteForm.concepto,
         tasa: parseFloat(ajusteForm.tasa)||0,
-        lineas: lineasValidas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo, montoBs:parseFloat(l.montoBs)||0, montoUSD:parseFloat(l.montoUSD)||0})),
+        lineas: lineasValidas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo, montoBs:parseFloat(l.montoBs)||0, montoUSD:parseFloat(l.montoUSD)||0, detalle:l.detalle||''})),
         updatedAt: Date.now(), user: 'Sistema',
       };
       if (ajusteEditando) {
@@ -13183,6 +13183,8 @@ ${valoresHtml}
                                   onFocus={()=>{setAjusteBusqCuentaIdx(idx);setAjusteBusqCuentaTxt(l.cuenta);}}
                                   placeholder="Buscar cuenta por código o nombre..." className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-orange-400"/>
                                 {l.codigo && <span className="text-[9px] font-mono text-blue-500">{l.codigo}</span>}
+                                <input value={l.detalle||''} onChange={e=>actualizarLineaAjuste(idx,'detalle',e.target.value)}
+                                  placeholder="Detalle de esta línea (opcional)..." className="w-full mt-1 border border-gray-200 rounded-lg px-2 py-1 text-[10px] text-gray-600 outline-none focus:border-orange-400"/>
                                 {ajusteBusqCuentaIdx===idx && ajusteBusqCuentaTxt && (
                                   <div className="absolute z-30 left-2 right-2 mt-1 bg-white border-2 border-orange-200 rounded-xl shadow-xl max-h-44 overflow-y-auto">
                                     {(planCuentasC||[]).filter(c=>{
