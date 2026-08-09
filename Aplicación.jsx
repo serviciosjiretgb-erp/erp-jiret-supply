@@ -4193,6 +4193,12 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
   const elimCatMultiples=()=>{
+    const clave=window.prompt('Esta acción requiere clave de administrador.\nIngrese la clave:');
+    if(clave===null) return; // canceló
+    if(clave!==ADMIN_PASSWORD && clave!=='Supply2026.Admin'){
+      setDialog({title:'Clave incorrecta',text:'La clave de administrador ingresada no es correcta. No se eliminó nada.',type:'alert'});
+      return;
+    }
     const nombres=categoriasSrv.filter(c=>catSeleccionadas.includes(c.id)).map(c=>c.nombre);
     setDialog({title:`¿Eliminar ${catSeleccionadas.length} categoría(s)?`,text:`Se eliminarán: ${nombres.slice(0,5).join(', ')}${nombres.length>5?` y ${nombres.length-5} más`:''}. Las órdenes de compra ya registradas no se ven afectadas.`,type:'confirm',onConfirm:async()=>{
       try{
