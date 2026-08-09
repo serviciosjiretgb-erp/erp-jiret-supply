@@ -13956,17 +13956,22 @@ function App() {
       const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
       const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
       const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
+      const relLinea0 = aplicarReclasLinea('relacionadas', p.id, 0, codCtaOrigen, nombreCtaOrigen);
+      const relLinea1 = aplicarReclasLinea('relacionadas', p.id, 1, codRelFinal, `${nomRelFinal} — ${nombreTercero}`);
       out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas', concepto:`${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${nombreTercero}`,
         lineas:[
-          {codigo:codCtaOrigen, cuenta:nombreCtaOrigen, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
-          {codigo:codRelFinal, cuenta:`${nomRelFinal} — ${nombreTercero}`, debeBs:esIngreso?0:montoBs, haberBs:esIngreso?montoBs:0, debeUSD:esIngreso?0:montoUSD, haberUSD:esIngreso?montoUSD:0},
+          {codigo:relLinea0.codigo, cuenta:relLinea0.cuenta, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
+          {codigo:relLinea1.codigo, cuenta:relLinea1.cuenta, debeBs:esIngreso?0:montoBs, haberBs:esIngreso?montoBs:0, debeUSD:esIngreso?0:montoUSD, haberUSD:esIngreso?montoUSD:0},
         ]});
     });
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
-        lineas:(a.lineas||[]).map(l=>({codigo:l.codigo||'', cuenta:l.cuenta||'—', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0}))});
+        lineas:(a.lineas||[]).map((l,li)=>{
+          const r = aplicarReclasLinea('ajustes', a.id, li, l.codigo||'', l.cuenta||'—');
+          return {codigo:r.codigo, cuenta:r.cuenta, debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
+        })});
     });
     return out;
   };
@@ -14447,6 +14452,14 @@ function App() {
       {nombre:'procura_servicios', label:'Servicios', campoNombre:'nombre'},
       {nombre:'inventory', label:'Inventario', campoNombre:'desc'},
     ];
+    // Estas dos NO guardan un ID de plan de cuentas — guardan el código y el nombre directo
+    // (cuentaContableCod/cuentaContableNom), configurado una sola vez en "Cuentas Bancarias"/"Cajas"
+    // y reutilizado en CADA movimiento nuevo. Si el código quedó viejo, sigue generando "sin
+    // clasificar" para siempre, sin importar cuántas veces se reclasifiquen los asientos históricos.
+    const coleccionesPorCodigo = [
+      {nombre:'banco_cuentas', label:'Cuentas Bancarias', campoNombre:'banco'},
+      {nombre:'caja_cuentas', label:'Cajas', campoNombre:'nombre'},
+    ];
     let reparados=0; const sinCoincidencia=[]; const batch=writeBatch(db);
     const sinCuentaNunca={}; // {nombreColeccion: [{id, label}]}
     for (const col of colecciones) {
@@ -14468,10 +14481,29 @@ function App() {
         }
       });
     }
+    for (const col of coleccionesPorCodigo) {
+      const snap = await getDocs(getColRef(col.nombre));
+      sinCuentaNunca[col.nombre]=[];
+      snap.docs.forEach(d=>{
+        const data=d.data();
+        const codGuardado = data.cuentaContableCod;
+        if (!codGuardado) { sinCuentaNunca[col.nombre].push({id:d.id, label:data[col.campoNombre]||d.id}); return; }
+        const existe = planDeCuentas.some(p=>p.codigo===codGuardado);
+        if (existe) return; // el código sigue siendo válido, no tocar
+        const nombreBuscado = String(data.cuentaContableNom||'').trim().toUpperCase();
+        const nueva = buscarCuentaNueva(nombreBuscado);
+        if (nueva) {
+          batch.update(getDocRef(col.nombre, d.id), {cuentaContableCod:nueva.codigo, cuentaContableNom:nueva.nombre});
+          reparados++;
+        } else {
+          sinCoincidencia.push(`${col.label}: ${data[col.campoNombre]||d.id} (buscaba "${nombreBuscado||'—'}")`);
+        }
+      });
+    }
     if (reparados>0) await batch.commit();
     const texto = `${reparados} vínculo(s) reparado(s) automáticamente por coincidencia de nombre.` +
       (sinCoincidencia.length ? `\n\n⚠ ${sinCoincidencia.length} sin coincidencia — hay que asignarles cuenta a mano:\n${sinCoincidencia.slice(0,15).join('\n')}${sinCoincidencia.length>15?`\n...y ${sinCoincidencia.length-15} más`:''}` : '\n\nTodos los vínculos rotos se pudieron reparar.');
-    const colConFaltantes = colecciones.filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, items:sinCuentaNunca[col.nombre]}));
+    const colConFaltantes = [...colecciones, ...coleccionesPorCodigo].filter(col=>sinCuentaNunca[col.nombre].length>0).map(col=>({...col, cantidad:sinCuentaNunca[col.nombre].length, items:sinCuentaNunca[col.nombre]}));
     if (colConFaltantes.length) {
       setDialog({title:'Reparación de Cuentas Contables', type:'confirm',
         text: texto + `\n\nAdemás, ${colConFaltantes.map(c=>`${c.cantidad} en ${c.label}`).join(', ')} nunca tuvieron cuenta asignada.\n\n¿Quieres asignarles una cuenta a todos de una vez ahora?`,
@@ -49074,8 +49106,11 @@ const RestaurarCobrosView = ({settings, appUser}) => {
             if (!cta) { setDialog({title:'Aviso', text:'Selecciona una cuenta primero.', type:'alert'}); return; }
             if (!seleccionados.length) { setDialog({title:'Aviso', text:'No hay ningún registro tildado.', type:'alert'}); return; }
             try {
+              const esPorCodigo = col.nombre==='banco_cuentas' || col.nombre==='caja_cuentas';
               const batch = writeBatch(db);
-              seleccionados.forEach(id => batch.update(getDocRef(col.nombre, id), {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
+              seleccionados.forEach(id => batch.update(getDocRef(col.nombre, id), esPorCodigo
+                ? {cuentaContableCod:cta.codigo, cuentaContableNom:cta.nombre}
+                : {cuentaContableId:cta.id, cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}));
               await batch.commit();
               const itemsRestantesCol = col.items.filter(it=>!seleccionados.includes(it.id));
               if (itemsRestantesCol.length) {
