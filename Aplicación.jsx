@@ -11242,42 +11242,250 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
     </>
   );
 };
-// Excel: mismo patrón de tabla HTML con namespace de Excel que usa el resto del archivo
-// (handleExportExcel), no una librería nueva. flatRows: [{label,level,isSection,isTotal,u,b}]
-const ccFlattenArbol = (nodes, level=0, rows=[]) => {
+// ── Árbol de 4 columnas (Debe/Haber, Bs./USD por separado) para Balance de Comprobación ──
+// A diferencia de ccBuildArbol (saldo neto u/b), aquí cada cuenta mantiene su Debe y su Haber
+// sin compensar, que es justamente lo que un balance de comprobación necesita mostrar.
+const ccBuildArbolBC = (cuentasAgregadas, planDeCuentasArr) => {
+  const root = [];
+  const normKey = s => (s||'').trim().replace(/\s+/g,' ').toUpperCase();
+  const grupoMap={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5.1':'COSTOS','5':'GASTOS','6':'GASTOS','7':'ISLR'};
+  (cuentasAgregadas||[]).forEach(c=>{
+    if (Math.abs(c.dBs)<0.005 && Math.abs(c.hBs)<0.005 && Math.abs(c.dUSD)<0.005 && Math.abs(c.hUSD)<0.005) return;
+    const codC = ccNormCodigo(c.codigo);
+    const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
+    const grKey = String(c.codigo).startsWith('5.1') ? '5.1' : String(c.codigo).charAt(0);
+    const grNom = pdc?.grupo || grupoMap[grKey] || grKey;
+    const crudo = pdc ? [grNom, pdc.subGrupo, pdc.cuenta, pdc.subcuenta] : [grNom, 'SIN CLASIFICAR EN PLAN DE CUENTAS'];
+    const pathArray = [];
+    crudo.filter(Boolean).forEach(seg=>{
+      const segN = normKey(seg);
+      const prevN = pathArray.length ? normKey(pathArray[pathArray.length-1]) : null;
+      if (segN !== prevN) pathArray.push(seg);
+    });
+    let cur = root;
+    pathArray.forEach(folderName=>{
+      const key = normKey(folderName);
+      let folder = cur.find(n=>normKey(n.n)===key);
+      if (!folder) { folder = {n:folderName.trim(), c:[], dBs:0,hBs:0,dUSD:0,hUSD:0}; cur.push(folder); }
+      cur = folder.c;
+    });
+    cur.push({ n:`${c.codigo} - ${c.cuenta||''}`, codigo:c.codigo, dBs:c.dBs,hBs:c.hBs,dUSD:c.dUSD,hUSD:c.hUSD, isLeaf:true });
+  });
+  const compute = (nodes) => { const t={dBs:0,hBs:0,dUSD:0,hUSD:0}; nodes.forEach(n=>{ if(!n.isLeaf){ const s=compute(n.c); n.dBs=s.dBs;n.hBs=s.hBs;n.dUSD=s.dUSD;n.hUSD=s.hUSD; } t.dBs+=n.dBs;t.hBs+=n.hBs;t.dUSD+=n.dUSD;t.hUSD+=n.hUSD; }); return t; };
+  compute(root);
+  ccSortTreeNodes(root);
+  root.forEach(function marcar(n){ if(n.c&&n.c.length){ ccSortTreeNodes(n.c); n.c.forEach(marcar); } });
+  return root;
+};
+const CCArbolRowBC = ({ node, level=0, currency='both', getDetalle, expandSignal }) => {
+  const [isOpen, setIsOpen] = useState(true);
+  const [detalleAbierto, setDetalleAbierto] = useState(false);
+  const isLeaf = !node.c || node.c.length===0;
+  useEffect(() => { if (expandSignal && isLeaf) setDetalleAbierto(expandSignal.abrir); }, [expandSignal?.key]);
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const indent = { paddingLeft: `${level*16+10}px` };
+  const isRoot = level===0;
+  const fmtCelda = (v) => Math.abs(v)>0.01 ? ccFmtR(v) : '';
+
+  if (isLeaf) {
+    const detalle = detalleAbierto && getDetalle ? getDetalle(node.codigo) : null;
+    return (
+      <>
+        <tr onClick={()=>getDetalle&&setDetalleAbierto(!detalleAbierto)} className={`border-b border-gray-100 bg-white hover:bg-gray-50 ${getDetalle?'cursor-pointer':''}`}>
+          <td style={indent} className="py-1.5 px-3 font-bold text-[10px] text-gray-700 flex items-center gap-1.5">
+            {getDetalle && <span className={`flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 border rounded-sm text-[10px] leading-none ${detalleAbierto?'border-gray-400 text-gray-600 bg-white':'border-gray-300 text-gray-400 bg-white'}`}>{detalleAbierto?'−':'+'}</span>}
+            <span className="truncate">{node.n}</span>
+          </td>
+          {showBS && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-emerald-700">{fmtCelda(node.dBs)}</td>}
+          {showBS && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-red-600">{fmtCelda(node.hBs)}</td>}
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-emerald-700">{fmtCelda(node.dUSD)}</td>}
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-bold text-red-600">{fmtCelda(node.hUSD)}</td>}
+        </tr>
+        {detalleAbierto && (
+          <tr>
+            <td colSpan={5} className="p-0 bg-slate-50">
+              {!detalle || detalle.length===0 ? (
+                <p className="px-8 py-2 text-[10px] text-gray-400 italic">Sin movimientos en el período para esta cuenta.</p>
+              ) : (
+                <table className="w-full text-[9px]">
+                  <thead className="text-gray-400 uppercase font-black">
+                    <tr><th className="px-2 py-1 text-left" style={{paddingLeft:level*16+34}}>Fecha</th><th className="px-2 py-1 text-left">Módulo</th><th className="px-2 py-1 text-left">Comprobante</th><th className="px-2 py-1 text-left">Concepto</th>{showBS&&<th className="px-2 py-1 text-right">Debe Bs.</th>}{showBS&&<th className="px-2 py-1 text-right">Haber Bs.</th>}{showUSD&&<th className="px-2 py-1 text-right">Debe USD</th>}{showUSD&&<th className="px-2 py-1 text-right">Haber USD</th>}</tr>
+                  </thead>
+                  <tbody>
+                    {detalle.map((d,i)=>(
+                      <tr key={i} className="border-t border-slate-200">
+                        <td className="px-2 py-1 text-gray-500" style={{paddingLeft:level*16+34}}>{contDd(d.fecha)}</td>
+                        <td className="px-2 py-1 text-gray-500">{d.modulo}</td>
+                        <td className="px-2 py-1 text-gray-500 font-mono">{d.comprobante}</td>
+                        <td className="px-2 py-1 text-gray-600 truncate max-w-[240px]">{d.concepto}</td>
+                        {showBS && <td className="px-2 py-1 text-right font-mono text-emerald-700">{d.debeBs?ccFmtR(d.debeBs):''}</td>}
+                        {showBS && <td className="px-2 py-1 text-right font-mono text-red-600">{d.haberBs?ccFmtR(d.haberBs):''}</td>}
+                        {showUSD && <td className="px-2 py-1 text-right font-mono text-emerald-700">{d.debeUSD?ccFmtR(d.debeUSD):''}</td>}
+                        {showUSD && <td className="px-2 py-1 text-right font-mono text-red-600">{d.haberUSD?ccFmtR(d.haberUSD):''}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </td>
+          </tr>
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+      <tr onClick={()=>setIsOpen(!isOpen)} className={isRoot?'bg-gray-900 cursor-pointer':'bg-gray-50 cursor-pointer hover:bg-gray-100'}>
+        <td style={indent} className={isRoot?'py-2 px-3 text-orange-400 font-black text-[10px] uppercase tracking-widest flex items-center gap-1.5':'py-1.5 px-3 font-black text-[10px] text-gray-700 uppercase flex items-center gap-1.5'}>
+          <span className={`inline-flex items-center justify-center w-3.5 h-3.5 border rounded-sm text-[10px] leading-none flex-shrink-0 ${isRoot?(isOpen?'border-orange-400 text-orange-400':'border-gray-500 text-gray-500'):(isOpen?'border-gray-400 text-gray-600 bg-white':'border-gray-300 text-gray-400 bg-white')}`}>{isOpen?'−':'+'}</span>
+          <span className="truncate">{node.n}</span>
+        </td>
+        <td colSpan={4}/>
+      </tr>
+      {isOpen && node.c.map((child,i)=><CCArbolRowBC key={i} node={child} level={level+1} currency={currency} getDetalle={getDetalle} expandSignal={expandSignal}/>)}
+      {isOpen && (
+        <tr className={isRoot?'bg-gray-800 text-white':'bg-gray-100 text-gray-800 border-y border-gray-300'}>
+          <td style={{paddingLeft:level*16+24}} className="py-1.5 px-3 font-black text-[9px] uppercase tracking-wider">Total {node.n}</td>
+          {showBS && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{fmtCelda(node.dBs)}</td>}
+          {showBS && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{fmtCelda(node.hBs)}</td>}
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{fmtCelda(node.dUSD)}</td>}
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-[10px] font-black">{fmtCelda(node.hUSD)}</td>}
+        </tr>
+      )}
+    </>
+  );
+};
+const ccFlattenArbol = (nodes, level=0, rows=[], totalBase=0) => {
   nodes.forEach(n=>{
     const isAccountNode = /^\d+[.\d]*\s*-/.test(n.n) || (!n.c || n.c.length===0);
+    const pct = totalBase && n.u!==0 ? `${((Math.abs(n.u)/totalBase)*100).toFixed(2)}%` : '';
     if (!n.isLeaf && n.c?.length) {
-      rows.push({label:n.n, level, isSection:!isAccountNode, u:null, b:null});
-      ccFlattenArbol(n.c, level+1, rows);
-      rows.push({label:'Total '+n.n, level, isTotal:true, u:n.u, b:n.b});
-    } else rows.push({label:n.n, level, u:n.u, b:n.b});
+      rows.push({label:n.n, level, isSection:!isAccountNode, u:null, b:null, pct:''});
+      ccFlattenArbol(n.c, level+1, rows, totalBase);
+      rows.push({label:'Total '+n.n, level, isTotal:true, u:n.u, b:n.b, pct});
+    } else rows.push({label:n.n, level, u:n.u, b:n.b, pct});
   });
   return rows;
 };
-const ccExportExcelHTML = (titulo, subtitulo, tree, currency) => {
+// Fila compacta para el selector jerárquico del Mayor Analítico — solo navegación, sin montos,
+// reutiliza el mismo árbol (ccBuildArbol) que ya arma la jerarquía de 4 niveles del plan.
+// A nivel de módulo, como CCArbolRow, para no perder isOpen cada vez que App() se re-renderiza.
+const MayorPickerRow = ({ node, level, seleccionada, onSeleccionar }) => {
+  const [isOpen, setIsOpen] = useState(true);
+  const isLeaf = !node.c || node.c.length===0;
+  if (isLeaf) {
+    return (
+      <button onClick={()=>onSeleccionar(node.codigo)} style={{paddingLeft:`${level*12+10}px`}}
+        className={`w-full text-left px-2 py-1.5 rounded-lg text-[10px] font-bold transition-colors truncate ${seleccionada===node.codigo?'bg-orange-500 text-white':'hover:bg-white text-gray-700'}`}>
+        {node.n}
+      </button>
+    );
+  }
+  return (
+    <div>
+      <button onClick={()=>setIsOpen(!isOpen)} style={{paddingLeft:`${level*12+6}px`}}
+        className="w-full text-left px-2 py-1.5 rounded-lg text-[9px] font-black uppercase text-gray-500 hover:bg-white flex items-center gap-1.5 truncate">
+        <span className="flex-shrink-0 inline-flex items-center justify-center w-3 h-3 border border-gray-300 rounded-sm text-[9px] leading-none">{isOpen?'−':'+'}</span>
+        <span className="truncate">{node.n}</span>
+      </button>
+      {isOpen && node.c.map((child,i)=><MayorPickerRow key={i} node={child} level={level+1} seleccionada={seleccionada} onSeleccionar={onSeleccionar}/>)}
+    </div>
+  );
+};
+const ccFlattenArbolBC = (nodes, level=0, rows=[]) => {
+  nodes.forEach(n=>{
+    const isAccountNode = /^\d+[.\d]*\s*-/.test(n.n) || (!n.c || n.c.length===0);
+    if (!n.isLeaf && n.c?.length) {
+      rows.push({label:n.n, level, isSection:!isAccountNode, dBs:null,hBs:null,dUSD:null,hUSD:null});
+      ccFlattenArbolBC(n.c, level+1, rows);
+      rows.push({label:'Total '+n.n, level, isTotal:true, dBs:n.dBs,hBs:n.hBs,dUSD:n.dUSD,hUSD:n.hUSD});
+    } else rows.push({label:n.n, level, dBs:n.dBs,hBs:n.hBs,dUSD:n.dUSD,hUSD:n.hUSD});
+  });
+  return rows;
+};
+const ccExportExcelHTMLBC = (titulo, subtitulo, tree, currency) => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
-  const rows = ccFlattenArbol(tree);
-  const ths = ['Cuenta', ...(showUSD?['USD']:[]), ...(showBS?['Bs.']:[])];
+  const rows = ccFlattenArbolBC(tree);
+  const ths = ['Cuenta', ...(showBS?['Debe Bs.','Haber Bs.']:[]), ...(showUSD?['Debe USD','Haber USD']:[])];
   let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child{text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>${titulo}</h3><p>${subtitulo}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
   rows.forEach(r=>{
     const indent='&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(r.level);
-    const bg = r.isSection?'#f3f4f6':r.isTotal?'#e5e7eb':'#fff';
+    const bg = ccBgPorNivel(r);
     const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
-    html += `<tr style="background:${bg};${bold}"><td>${indent}${r.label}</td>${showUSD?`<td>${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td>${r.b!=null?ccFmtR(r.b):''}</td>`:''}</tr>`;
+    const c = (v)=> v!=null && Math.abs(v)>0.01 ? ccFmtR(v) : '';
+    html += `<tr style="background:${bg};${bold}"><td>${indent}${r.label}</td>${showBS?`<td>${c(r.dBs)}</td><td>${c(r.hBs)}</td>`:''}${showUSD?`<td>${c(r.dUSD)}</td><td>${c(r.hUSD)}</td>`:''}</tr>`;
   });
   html += `</tbody></table></body></html>`;
   return html;
 };
-const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra) => {
+const ccExportPDFHTMLBC = (titulo, subtitulo, tree, currency, filaExtra) => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
-  const rows = ccFlattenArbol(tree);
+  const rows = ccFlattenArbolBC(tree);
+  let filas = '';
+  const c = (v)=> v!=null && Math.abs(v)>0.01 ? ccFmtR(v) : '';
+  rows.forEach(r=>{
+    const indent = (r.level*14)+8;
+    const bg = ccBgPorNivel(r);
+    const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
+    filas += `<tr style="background:${bg};${bold}border-bottom:1px solid #eee"><td style="padding:5px 6px;padding-left:${indent}px">${r.label}</td>${showBS?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${c(r.dBs)}</td><td style="padding:5px 6px;text-align:right;font-family:monospace">${c(r.hBs)}</td>`:''}${showUSD?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${c(r.dUSD)}</td><td style="padding:5px 6px;text-align:right;font-family:monospace">${c(r.hUSD)}</td>`:''}</tr>`;
+  });
+  if (filaExtra) filas += filaExtra;
+  const ths = [...(showBS?['Debe Bs.','Haber Bs.']:[]), ...(showUSD?['Debe USD','Haber USD']:[])];
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
+<style>
+  @page { size: A4 landscape; margin: 16mm 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 9pt; color: #111; background: #fff; padding: 16px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 3px solid #E8541A; }
+  .logo { font-size: 18pt; font-weight: 900; color: #E8541A; }
+  .company { text-align: right; }
+  .company .name { font-weight: 900; font-size: 11pt; }
+  .company .sub { font-size: 7.5pt; color: #555; }
+  h3 { text-transform: uppercase; margin: 10px 0 2px; }
+  p.sub { color: #666; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+  th { background: #111827; color: #fff; padding: 6px; text-align: right; font-size: 8pt; text-transform: uppercase; }
+  th:first-child, td:first-child { text-align: left; }
+  @media print { .btn-print { display: none; } tr { break-inside: avoid; } }
+</style></head><body>
+<div class="header"><div class="logo">Supply G&amp;B</div><div class="company"><div class="name">SERVICIOS JIRET G&amp;B, C.A.</div><div class="sub">RIF: J-412309374<br>AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB<br>SECTOR EL TREBOL MARACAIBO-ZULIA</div></div></div>
+<h3>${titulo}</h3><p class="sub">${subtitulo}</p>
+<table><thead><tr><th>Cuenta</th>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${filas}</tbody></table>
+<br><button class="btn-print" onclick="window.print()" style="padding:8px 20px;background:#E8541A;color:#fff;border:none;border-radius:4px;font-weight:900;cursor:pointer;font-size:10pt;">🖨 IMPRIMIR / GUARDAR PDF</button>
+</body></html>`;
+};
+// Sombreado más oscuro en los niveles superiores (Grupo) y más claro hacia el detalle
+// (Subcuenta), para que la jerarquía de 4 niveles se distinga de un vistazo, impresa o en Excel.
+const ccBgPorNivel = (r) => {
+  if (r.isTotal) return '#e5e7eb';
+  if (!r.isSection) return '#fff';
+  const tonos = ['#d1d5db','#e5e7eb','#eef0f2','#f6f7f8'];
+  return tonos[Math.min(r.level, tonos.length-1)];
+};
+const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0) => {
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const rows = ccFlattenArbol(tree, 0, [], totalBase);
+  const ths = ['Cuenta', ...(showUSD?['USD']:[]), ...(showBS?['Bs.']:[]), '%'];
+  let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child{text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>${titulo}</h3><p>${subtitulo}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const indent='&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(r.level);
+    const bg = ccBgPorNivel(r);
+    const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
+    html += `<tr style="background:${bg};${bold}"><td>${indent}${r.label}</td>${showUSD?`<td>${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td>${r.b!=null?ccFmtR(r.b):''}</td>`:''}<td style="text-align:right">${r.pct||''}</td></tr>`;
+  });
+  html += `</tbody></table></body></html>`;
+  return html;
+};
+const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra, totalBase=0) => {
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const rows = ccFlattenArbol(tree, 0, [], totalBase);
   let filas = '';
   rows.forEach(r=>{
-    const indent = (r.level*16)+8;
-    const bg = r.isSection?'#f3f4f6':r.isTotal?'#e5e7eb':'#fff';
+    const indent = (r.level*14)+8;
+    const bg = ccBgPorNivel(r);
     const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
-    filas += `<tr style="background:${bg};${bold}border-bottom:1px solid #eee"><td style="padding:5px 6px;padding-left:${indent}px">${r.label}</td>${showUSD?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.b!=null?ccFmtR(r.b):''}</td>`:''}</tr>`;
+    const tam = r.level===0 && r.isSection ? 'font-size:9.5pt;' : '';
+    filas += `<tr style="background:${bg};${bold}${tam}border-bottom:1px solid #eee"><td style="padding:5px 6px;padding-left:${indent}px">${r.label}</td>${showUSD?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.b!=null?ccFmtR(r.b):''}</td>`:''}<td style="padding:5px 6px;text-align:right;font-family:monospace;color:#888;font-size:8pt">${r.pct||''}</td></tr>`;
   });
   if (filaExtra) filas += filaExtra;
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
@@ -11295,11 +11503,11 @@ const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra) => {
   table { width: 100%; border-collapse: collapse; font-size: 9pt; }
   th { background: #111827; color: #fff; padding: 6px; text-align: right; font-size: 8pt; text-transform: uppercase; }
   th:first-child, td:first-child { text-align: left; }
-  @media print { .btn-print { display: none; } }
+  @media print { .btn-print { display: none; } tr { break-inside: avoid; } }
 </style></head><body>
 <div class="header"><div class="logo">Supply G&amp;B</div><div class="company"><div class="name">SERVICIOS JIRET G&amp;B, C.A.</div><div class="sub">RIF: J-412309374<br>AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB<br>SECTOR EL TREBOL MARACAIBO-ZULIA</div></div></div>
 <h3>${titulo}</h3><p class="sub">${subtitulo}</p>
-<table><thead><tr><th>Cuenta</th>${showUSD?'<th>USD</th>':''}${showBS?'<th>Bs.</th>':''}</tr></thead><tbody>${filas}</tbody></table>
+<table><thead><tr><th>Cuenta</th>${showUSD?'<th>USD</th>':''}${showBS?'<th>Bs.</th>':''}<th>%</th></tr></thead><tbody>${filas}</tbody></table>
 <br><button class="btn-print" onclick="window.print()" style="padding:8px 20px;background:#E8541A;color:#fff;border:none;border-radius:4px;font-weight:900;cursor:pointer;font-size:10pt;">🖨 IMPRIMIR / GUARDAR PDF</button>
 </body></html>`;
 };
@@ -13590,6 +13798,11 @@ function App() {
   const [contERExpandAll, setContERExpandAll] = useState(true);
   const [contERExpandKey, setContERExpandKey] = useState(0);
   const [contBGCurrency, setContBGCurrency] = useState('both');
+  const [contBGExpandAll, setContBGExpandAll] = useState(true);
+  const [contBGExpandKey, setContBGExpandKey] = useState(0);
+  const [contBCCurrency, setContBCCurrency] = useState('both');
+  const [contBCExpandAll, setContBCExpandAll] = useState(true);
+  const [contBCExpandKey, setContBCExpandKey] = useState(0);
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
@@ -42956,12 +43169,13 @@ ${resumenHtml}
     }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
     const cuentasConMov = {};
     asientosPeriodo.forEach(a=>(a.lineas||[]).forEach(l=>{
-      const cod=l.codigo||'—';
+      const cod=l.codigo||'';
+      if(!cod) return;
       if(!cuentasConMov[cod]) cuentasConMov[cod]={codigo:cod, cuenta:l.cuenta||''};
     }));
-    const listaCuentas = Object.values(cuentasConMov)
-      .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()))
-      .sort((a,b)=>a.codigo.localeCompare(b.codigo));
+    const cuentasParaArbol = Object.values(cuentasConMov)
+      .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()));
+    const treeMayor = ccBuildArbol(cuentasParaArbol, planDeCuentas, ['1','2','3','4','5','6','7'], () => ({usd:0,bs:0}));
     let saldoAcum = 0;
     let saldoAcumUSD = 0;
     const movsCuenta = !mayorCuentaSelApp ? [] : asientosPeriodo.flatMap(a=>
@@ -42971,7 +43185,7 @@ ${resumenHtml}
         return {...l, fecha:a.fecha, referencia:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum, saldoAcumUSD};
       })
     );
-    const cuentaInfo = listaCuentas.find(c=>c.codigo===mayorCuentaSelApp);
+    const cuentaInfo = cuentasConMov[mayorCuentaSelApp];
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -42987,15 +43201,10 @@ ${resumenHtml}
                 <input type="date" className="w-1/2 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/>
               </div>
               <input value={mayorBusqCuentaApp} onChange={e=>setMayorBusqCuentaApp(e.target.value)} placeholder="Buscar cuenta..." className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
-              <p className="text-[9px] text-gray-400 font-bold">{listaCuentas.length} cuenta(s) con movimiento{(!contFiltDesde&&!contFiltHasta)?' (todo el historial)':''}</p>
-              <div className="max-h-[55vh] overflow-y-auto space-y-1">
-                {listaCuentas.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el rango elegido.</p>}
-                {listaCuentas.map(c=>(
-                  <button key={c.codigo} onClick={()=>setMayorCuentaSelApp(c.codigo)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-[10px] font-bold transition-colors ${mayorCuentaSelApp===c.codigo?'bg-orange-500 text-white':'hover:bg-white text-gray-700'}`}>
-                    <span className="font-mono font-black">{c.codigo}</span><br/>{c.cuenta}
-                  </button>
-                ))}
+              <p className="text-[9px] text-gray-400 font-bold">{Object.keys(cuentasConMov).length} cuenta(s) con movimiento{(!contFiltDesde&&!contFiltHasta)?' (todo el historial)':''}</p>
+              <div className="max-h-[55vh] overflow-y-auto space-y-0.5">
+                {treeMayor.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el rango elegido.</p>}
+                {treeMayor.map((n,i)=><MayorPickerRow key={i} node={n} level={0} seleccionada={mayorCuentaSelApp} onSeleccionar={setMayorCuentaSelApp}/>)}
               </div>
             </div>
             <div className="flex-1 bg-white rounded-xl border border-gray-200 p-4">
@@ -43069,17 +43278,41 @@ ${resumenHtml}
     const porCuenta = {};
     asientosPeriodo.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
-        const cod = l.codigo||'—';
+        const cod = l.codigo||'';
+        if(!cod) return;
         if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', dBs:0, hBs:0, dUSD:0, hUSD:0};
         porCuenta[cod].dBs += parseNum(l.debeBs||0); porCuenta[cod].hBs += parseNum(l.haberBs||0);
         porCuenta[cod].dUSD += parseNum(l.debeUSD||0); porCuenta[cod].hUSD += parseNum(l.haberUSD||0);
       });
     });
-    const filasBalance = Object.values(porCuenta)
-      .filter(c=>!contBuscar || c.codigo.toUpperCase().includes(contBuscar.toUpperCase()) || c.cuenta.toUpperCase().includes(contBuscar.toUpperCase()))
-      .sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const totBal = filasBalance.reduce((s,c)=>({dBs:s.dBs+c.dBs,hBs:s.hBs+c.hBs,dUSD:s.dUSD+c.dUSD,hUSD:s.hUSD+c.hUSD}),{dBs:0,hBs:0,dUSD:0,hUSD:0});
+    const cuentasAgg = Object.values(porCuenta);
+    const getDetalleCuenta = (codigo) => asientosPeriodo
+      .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
+      .map(a=>{
+        const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
+        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
+      })
+      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+    const cuentasFiltradas = !contBuscar ? cuentasAgg : cuentasAgg.filter(c=>c.codigo.toUpperCase().includes(contBuscar.toUpperCase()) || c.cuenta.toUpperCase().includes(contBuscar.toUpperCase()));
+    const treeBC = ccBuildArbolBC(cuentasFiltradas, planDeCuentas);
+    const totBal = cuentasFiltradas.reduce((s,c)=>({dBs:s.dBs+c.dBs,hBs:s.hBs+c.hBs,dUSD:s.dUSD+c.dUSD,hUSD:s.hUSD+c.hUSD}),{dBs:0,hBs:0,dUSD:0,hUSD:0});
     const cuadrado = Math.abs(totBal.dBs-totBal.hBs)<0.02 && Math.abs(totBal.dUSD-totBal.hUSD)<0.02;
+    const showUSD = contBCCurrency!=='bs'; const showBS = contBCCurrency!=='usd';
+    const nCuentas = (function contar(nodes){ let n=0; nodes.forEach(x=>{ if(x.isLeaf) n++; else n+=contar(x.c); }); return n; })(treeBC);
+
+    const filaExtraBC = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">TOTALES</td>${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totBal.dBs)}</td><td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totBal.hBs)}</td>`:''}${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totBal.dUSD)}</td><td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totBal.hUSD)}</td>`:''}</tr>`;
+    const exportarExcel = () => {
+      const html = ccExportExcelHTMLBC('Balance de Comprobación', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, treeBC, contBCCurrency);
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = `BalanceComprobacion_${getTodayDate()}.xls`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    };
+    const exportarPDF = () => {
+      const html = ccExportPDFHTMLBC('Balance de Comprobación', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, treeBC, contBCCurrency, filaExtraBC);
+      ccAbrirVentana(html);
+    };
+
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -43094,38 +43327,43 @@ ${resumenHtml}
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar cuenta</label>
                 <input value={contBuscar} onChange={e=>setContBuscar(e.target.value)} placeholder="Código o nombre..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-56"/></div>
+              <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
+                {[['both','USD + Bs'],['usd','Solo USD'],['bs','Solo Bs']].map(([v,lbl])=>(
+                  <button key={v} onClick={()=>setContBCCurrency(v)} className={`px-2.5 py-1.5 rounded text-[9px] font-black uppercase transition-colors ${contBCCurrency===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-gray-100'}`}>{lbl}</button>
+                ))}
+              </div>
+              <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
+                <button onClick={()=>{setContBCExpandAll(true);setContBCExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Expandir Todos</button>
+                <button onClick={()=>{setContBCExpandAll(false);setContBCExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Contraer Todos</button>
+              </div>
               <span className={`text-[10px] font-black uppercase px-3 py-2 rounded-lg ${cuadrado?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>{cuadrado?'✓ Cuadrado':'⚠ Descuadrado'}</span>
-              <p className="text-[10px] text-gray-400 ml-auto">{filasBalance.length} cuenta(s){(!contFiltDesde&&!contFiltHasta)?' · todo el historial':''}</p>
+              <p className="text-[10px] text-gray-400">{nCuentas} cuenta(s){(!contFiltDesde&&!contFiltHasta)?' · todo el historial':''}</p>
+              <div className="flex gap-2 ml-auto">
+                <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
+                <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
+              </div>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
               <table className="w-full text-xs">
-                <thead><tr style={{background:'#0f172a'}}>
-                  <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Código</th>
-                  <th className="px-3 py-2.5 text-left text-[9px] font-black uppercase text-gray-300">Cuenta</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe Bs.</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber Bs.</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Debe $</th>
-                  <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Haber $</th>
-                </tr></thead>
+                <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Cuenta</th>
+                    {showBS && <th className="px-3 py-2 text-right">Debe Bs.</th>}
+                    {showBS && <th className="px-3 py-2 text-right">Haber Bs.</th>}
+                    {showUSD && <th className="px-3 py-2 text-right">Debe $</th>}
+                    {showUSD && <th className="px-3 py-2 text-right">Haber $</th>}
+                  </tr>
+                </thead>
                 <tbody>
-                  {filasBalance.length===0 && <tr><td colSpan={6} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
-                  {filasBalance.map(c=>(
-                    <tr key={c.codigo} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-3 py-2 font-mono font-black text-orange-600">{c.codigo}</td>
-                      <td className="px-3 py-2 font-bold text-gray-700">{c.cuenta}</td>
-                      <td className="px-3 py-2 text-right font-mono">{c.dBs>0.01?contFmt(c.dBs):'—'}</td>
-                      <td className="px-3 py-2 text-right font-mono">{c.hBs>0.01?contFmt(c.hBs):'—'}</td>
-                      <td className="px-3 py-2 text-right font-mono">{c.dUSD>0.01?contFmt(c.dUSD):'—'}</td>
-                      <td className="px-3 py-2 text-right font-mono">{c.hUSD>0.01?contFmt(c.hUSD):'—'}</td>
-                    </tr>
-                  ))}
+                  {treeBC.length===0 && <tr><td colSpan={5} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
+                  {treeBC.map((n,i)=><CCArbolRowBC key={i} node={n} currency={contBCCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBCExpandAll, key:contBCExpandKey}}/>)}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={2} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(totBal.dBs)}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(totBal.hBs)}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(totBal.dUSD)}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(totBal.hUSD)}</td>
+                  <td className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES</td>
+                  {showBS && <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(totBal.dBs)}</td>}
+                  {showBS && <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(totBal.hBs)}</td>}
+                  {showUSD && <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(totBal.dUSD)}</td>}
+                  {showUSD && <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(totBal.hUSD)}</td>}
                 </tr></tfoot>
               </table>
             </div>
@@ -43185,7 +43423,7 @@ ${resumenHtml}
 
     const exportarExcel = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
-      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency);
+      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
@@ -43193,7 +43431,7 @@ ${resumenHtml}
     const exportarPDF = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">RESULTADO DEL EJERCICIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
-      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra);
+      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas);
       ccAbrirVentana(html);
     };
 
@@ -43269,31 +43507,60 @@ ${resumenHtml}
       (a.lineas||[]).forEach(l=>{
         const cod = l.codigo||'';
         if(!cod) return;
-        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0};
+        if(!porCuenta[cod]) porCuenta[cod] = {codigo:cod, cuenta:l.cuenta||'', debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
         porCuenta[cod].debeBs += parseNum(l.debeBs||0);
         porCuenta[cod].haberBs += parseNum(l.haberBs||0);
+        porCuenta[cod].debeUSD += parseNum(l.debeUSD||0);
+        porCuenta[cod].haberUSD += parseNum(l.haberUSD||0);
       });
     });
-    const cuentas = Object.values(porCuenta);
-    const activos = cuentas.filter(c=>c.codigo.startsWith('1')).map(c=>({...c,saldo:c.debeBs-c.haberBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const pasivos = cuentas.filter(c=>c.codigo.startsWith('2')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const patrimonio = cuentas.filter(c=>c.codigo.startsWith('3')).map(c=>({...c,saldo:c.haberBs-c.debeBs})).filter(c=>Math.abs(c.saldo)>0.01).sort((a,b)=>a.codigo.localeCompare(b.codigo));
-    const ingresosTot = cuentas.filter(c=>c.codigo.startsWith('4')).reduce((s,c)=>s+(c.haberBs-c.debeBs),0);
-    const costosTot = cuentas.filter(c=>c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const gastosTot = cuentas.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')).reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const utilidadEjercicio = ingresosTot - costosTot - gastosTot;
-    const totalActivo = activos.reduce((s,c)=>s+c.saldo,0);
-    const totalPasivo = pasivos.reduce((s,c)=>s+c.saldo,0);
-    const totalPatrimonio = patrimonio.reduce((s,c)=>s+c.saldo,0) + utilidadEjercicio;
-    const totalPasivoPatrimonio = totalPasivo + totalPatrimonio;
-    const cuadrado = Math.abs(totalActivo - totalPasivoPatrimonio) < 0.5;
-    const FilaBG = ({c}) => (
-      <tr className="border-b border-gray-100">
-        <td className="px-3 py-1.5 pl-6 font-mono text-[9px] text-gray-400">{c.codigo}</td>
-        <td className="px-3 py-1.5 text-gray-600">{c.cuenta}</td>
-        <td className="px-3 py-1.5 text-right font-mono">{contFmt(c.saldo)}</td>
-      </tr>
-    );
+    const cuentasAgg = Object.values(porCuenta);
+
+    const getDetalleCuenta = (codigo) => asientosHastaCorte
+      .filter(a=>(a.lineas||[]).some(l=>l.codigo===codigo))
+      .map(a=>{
+        const linea = (a.lineas||[]).find(l=>l.codigo===codigo) || {};
+        return { fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0 };
+      })
+      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+    const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+    const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+
+    const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
+    const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
+    const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
+    // Utilidad del ejercicio (acumulada hasta la fecha de corte) — mismo cálculo que ya se usaba,
+    // se agrega al Patrimonio como una fila propia (no un asiento real, así que no es cuenta del árbol).
+    const ingresosTot = cuentasAgg.filter(c=>c.codigo.startsWith('4')).reduce((s,c)=>({usd:s.usd+(c.haberUSD-c.debeUSD),bs:s.bs+(c.haberBs-c.debeBs)}),{usd:0,bs:0});
+    const costosTot = cuentasAgg.filter(c=>c.codigo.startsWith('5.1')).reduce((s,c)=>({usd:s.usd+(c.debeUSD-c.haberUSD),bs:s.bs+(c.debeBs-c.haberBs)}),{usd:0,bs:0});
+    const gastosTot = cuentasAgg.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')||c.codigo.startsWith('6')).reduce((s,c)=>({usd:s.usd+(c.debeUSD-c.haberUSD),bs:s.bs+(c.debeBs-c.haberBs)}),{usd:0,bs:0});
+    const utilEjUSD = ingresosTot.usd-costosTot.usd-gastosTot.usd, utilEjBs = ingresosTot.bs-costosTot.bs-gastosTot.bs;
+    const totalPatrimonioUSD=sumTree(treePatrimonio,'u')+utilEjUSD, totalPatrimonioBs=sumTree(treePatrimonio,'b')+utilEjBs;
+    const totalPasPatUSD = totalPasivoUSD+totalPatrimonioUSD, totalPasPatBs = totalPasivoBs+totalPatrimonioBs;
+    const cuadrado = Math.abs(totalActivoUSD-totalPasPatUSD)<0.5;
+    const showUSD = contBGCurrency!=='bs'; const showBS = contBGCurrency!=='usd';
+    const baseActivo = totalActivoUSD||1;
+
+    const filaUtilidadHTML = (moneda) => {
+      const v = moneda==='bs'?utilEjBs:utilEjUSD;
+      return `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">Utilidad del Ejercicio (acumulada)</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(v)}</td></tr>`;
+    };
+    const exportarExcel = () => {
+      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
+      const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo);
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = `BalanceGeneral_${getTodayDate()}.xls`;
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    };
+    const exportarPDF = () => {
+      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
+      const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">TOTAL PASIVO + PATRIMONIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatBs)}</td>`:''}</tr>`;
+      const html = ccExportPDFHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, filaExtra, baseActivo);
+      ccAbrirVentana(html);
+    };
+
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
@@ -43305,37 +43572,67 @@ ${resumenHtml}
           <div className="p-6 space-y-4">
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de corte</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
+              <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
+                {[['both','USD + Bs'],['usd','Solo USD'],['bs','Solo Bs']].map(([v,lbl])=>(
+                  <button key={v} onClick={()=>setContBGCurrency(v)} className={`px-2.5 py-1.5 rounded text-[9px] font-black uppercase transition-colors ${contBGCurrency===v?'bg-orange-500 text-white':'text-gray-500 hover:bg-gray-100'}`}>{lbl}</button>
+                ))}
+              </div>
+              <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
+                <button onClick={()=>{setContBGExpandAll(true);setContBGExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Expandir Todos</button>
+                <button onClick={()=>{setContBGExpandAll(false);setContBGExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Contraer Todos</button>
+              </div>
               <span className={`text-[10px] font-black uppercase px-3 py-2 rounded-lg ${cuadrado?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>{cuadrado?'✓ Cuadrado':'⚠ Descuadrado'}</span>
-              <p className="text-[10px] text-gray-400">Al {corte}</p>
+              <div className="flex gap-2 ml-auto">
+                <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
+                <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
+              </div>
             </div>
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <table className="w-full text-xs">
-                  <tbody>
-                    <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Activo</td></tr>
-                    {activos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin saldo.</td></tr>}
-                    {activos.map(c=><FilaBG key={c.codigo} c={c}/>)}
-                    <tr className="bg-blue-50 border-y-2 border-blue-200"><td colSpan={2} className="px-3 py-2.5 font-black text-blue-700 text-[10px] uppercase">Total Activo</td><td className="px-3 py-2.5 text-right font-mono font-black text-blue-700">{contFmt(totalActivo)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                <table className="w-full text-xs">
-                  <tbody>
-                    <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300">Pasivo</td></tr>
-                    {pasivos.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin saldo.</td></tr>}
-                    {pasivos.map(c=><FilaBG key={c.codigo} c={c}/>)}
-                    <tr className="bg-red-50 border-y-2 border-red-200"><td colSpan={2} className="px-3 py-2.5 font-black text-red-700 text-[10px] uppercase">Total Pasivo</td><td className="px-3 py-2.5 text-right font-mono font-black text-red-700">{contFmt(totalPasivo)}</td></tr>
-
-                    <tr style={{background:'#0f172a'}}><td colSpan={3} className="px-3 py-2 text-[10px] font-black uppercase text-gray-300 pt-4">Patrimonio</td></tr>
-                    {patrimonio.length===0 && <tr><td colSpan={3} className="px-3 py-2 text-center text-gray-400 text-[10px]">Sin saldo.</td></tr>}
-                    {patrimonio.map(c=><FilaBG key={c.codigo} c={c}/>)}
-                    <tr className="border-b border-gray-100"><td className="px-3 py-1.5 pl-6 font-mono text-[9px] text-gray-400">—</td><td className="px-3 py-1.5 text-gray-600 italic">Utilidad del Ejercicio (acumulada)</td><td className="px-3 py-1.5 text-right font-mono">{contFmt(utilidadEjercicio)}</td></tr>
-                    <tr className="bg-emerald-50 border-y-2 border-emerald-200"><td colSpan={2} className="px-3 py-2.5 font-black text-emerald-700 text-[10px] uppercase">Total Patrimonio</td><td className="px-3 py-2.5 text-right font-mono font-black text-emerald-700">{contFmt(totalPatrimonio)}</td></tr>
-                    <tr className="bg-gray-900"><td colSpan={2} className="px-3 py-3 font-black text-white text-[11px] uppercase">Total Pasivo + Patrimonio</td><td className="px-3 py-3 text-right font-mono font-black text-white text-[11px]">{contFmt(totalPasivoPatrimonio)}</td></tr>
-                  </tbody>
-                </table>
-              </div>
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Cuenta</th>
+                    {showUSD && <th className="px-3 py-2 text-right">USD</th>}
+                    {showBS  && <th className="px-3 py-2 text-right">Bs.</th>}
+                    <th className="px-3 py-2 text-right">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {treeActivo.map((n,i)=><CCArbolRow key={'act'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  <tr className="bg-blue-50 border-y-2 border-blue-200">
+                    <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Total Activo</td>
+                    {showUSD && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-blue-800">{ccFmtR(totalActivoUSD)}</td>}
+                    {showBS  && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-blue-800">{ccFmtR(totalActivoBs)}</td>}
+                    <td/>
+                  </tr>
+                  {treePasivo.map((n,i)=><CCArbolRow key={'pas'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  <tr className="bg-red-50 border-y-2 border-red-200">
+                    <td className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Pasivo</td>
+                    {showUSD && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-red-700">{ccFmtR(totalPasivoUSD)}</td>}
+                    {showBS  && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-red-700">{ccFmtR(totalPasivoBs)}</td>}
+                    <td/>
+                  </tr>
+                  {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  <tr className="border-b border-gray-100">
+                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">Utilidad del Ejercicio (acumulada)</td>
+                    {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjUSD)}</td>}
+                    {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjBs)}</td>}
+                    <td/>
+                  </tr>
+                  <tr className="bg-emerald-50 border-y-2 border-emerald-200">
+                    <td className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Patrimonio</td>
+                    {showUSD && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-emerald-700">{ccFmtR(totalPatrimonioUSD)}</td>}
+                    {showBS  && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-emerald-700">{ccFmtR(totalPatrimonioBs)}</td>}
+                    <td/>
+                  </tr>
+                  <tr className="bg-gray-900">
+                    <td className="px-3 py-3 font-black text-white text-sm uppercase">Total Pasivo + Patrimonio</td>
+                    {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(totalPasPatUSD)}</td>}
+                    {showBS  && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(totalPasPatBs)}</td>}
+                    <td/>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
