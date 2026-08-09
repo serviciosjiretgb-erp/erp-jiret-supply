@@ -11967,10 +11967,10 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     try {
       const codigosVigentes = new Set((planCuentasC||[]).map(p=>p.codigo));
       const buscarPorNombre = (nombreTxt) => {
-        const n = String(nombreTxt||'').trim().toUpperCase();
+        const n = String(nombreTxt||'').normalize('NFC').trim().toUpperCase();
         if (!n) return null;
-        let m = (planCuentasC||[]).find(p=>(p.nombre||'').trim().toUpperCase()===n);
-        if (!m) m = (planCuentasC||[]).find(p=>(p.nombre||'').trim().toUpperCase().includes(n) || n.includes((p.nombre||'').trim().toUpperCase()));
+        let m = (planCuentasC||[]).find(p=>String(p.nombre||'').normalize('NFC').trim().toUpperCase()===n);
+        if (!m) m = (planCuentasC||[]).find(p=>{ const pn=String(p.nombre||'').normalize('NFC').trim().toUpperCase(); return pn.includes(n) || n.includes(pn); });
         return m||null;
       };
       const colecciones = [
