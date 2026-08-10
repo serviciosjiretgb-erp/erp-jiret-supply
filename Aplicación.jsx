@@ -14840,16 +14840,18 @@ function App() {
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
-  // ── Activo Fijo (Contabilidad) — submódulo Configuración: cada Centro de Costo (sede)
-  // se despliega en sus 8 rubros de activo, y cada rubro tiene su propia Cuenta del Activo +
-  // Cuenta Dep. Acumulada. Así, al registrar un activo con su Centro de Costo + Rubro, las
-  // cuentas contables ya quedan parametrizadas — no hay que elegirlas cada vez. La cuenta de
-  // Depreciación (gasto) sigue única/global, igual que ya la usa Comprobantes Contables.
-  // afSubTabC queda listo para un futuro submódulo "Registro", hoy solo hay uno. ──
-  const [afSubTabC, setAfSubTabC] = useState('configuracion');
+  // ── Activo Fijo (Contabilidad) — vive en Contabilidad con 3 submódulos (mismo patrón de
+  // header + sub-nav de pestañas que Procura & Compras): Configuración, Registro de Activo
+  // Fijo y Relación de Activos. Cada Centro de Costo (sede) se despliega en sus 8 rubros de
+  // activo, y cada rubro tiene su propia Cuenta del Activo + Cuenta Dep. Acumulada + Cuenta
+  // de Costo/Gasto — no se generaliza en una sola cuenta global, porque según el rubro
+  // corresponde a Costos (5.x) o a Gastos (6.x) distintos. Con eso, Registro solo pide
+  // Centro de Costo + Rubro y las 3 cuentas quedan resueltas automáticamente. Relación de
+  // Activos lee la misma colección 'activos_fijos' que ya usa Finanzas (activosFijos), para
+  // que ambos módulos vean los mismos activos — es el "espejo" que se mencionó antes. ──
+  const [afSubTabC, setAfSubTabC] = useState('configuracion'); // 'configuracion' | 'registro' | 'relacion'
   const [activoFijoCfgC, setActivoFijoCfgC] = useState({
-    centrosCosto: [], // [{codigo, nombre, rubros:{<rubro>:{activoId,activoNombre,deprAcumId,deprAcumNombre}}}]
-    gastoDeprecId:'', gastoDeprecNombre:'',
+    centrosCosto: [], // [{codigo, nombre, rubros:{<rubro>:{activoId,activoNombre,deprAcumId,deprAcumNombre,costoGastoId,costoGastoNombre}}}]
   });
   useEffect(()=>{
     const u=onSnapshot(doc(db,'settings','activoFijoContabilidadCfg'),d=>d.exists()&&setActivoFijoCfgC(x=>({...x,...d.data()})));
@@ -14864,7 +14866,10 @@ function App() {
   const [afcNuevoCC, setAfcNuevoCC] = useState({codigo:'',nombre:''});
   const [afcEditandoCC, setAfcEditandoCC] = useState(null); // código del centro de costo en edición, o null
   const [afcExpandidoCC, setAfcExpandidoCC] = useState({}); // {[codigo]: true/false}
+  const afRegFormVacioC = () => ({id:null, nombre:'', centroCosto:'', rubro:'', fechaAdquisicion:getTodayDate(), valorCosto:'', valorResidual:'0', vidaUtilAnios:'5', ubicacion:''});
+  const [afRegForm, setAfRegForm] = useState(afRegFormVacioC());
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
+  // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Contables (Procura + Ventas + Retenciones a Clientes + Banco + Caja), EXCLUYENDO
   // Retenciones a Proveedores a propósito: ya está completa dentro de Procura (cada
@@ -45529,22 +45534,25 @@ ${resumenHtml}
 
   // ============================================================================
   // ACTIVO FIJO (CONTABILIDAD) — vive en el portal Contabilidad, junto a los demás
-  // reportes "_cc". Por ahora solo el submódulo Configuración: cada Centro de Costo
-  // (sede) se despliega en sus 8 rubros de activo (mismas categorías que usa el registro
-  // de Activos Fijos en Finanzas, renderActivosFijosModule) y cada rubro tiene su propia
-  // Cuenta del Activo + Cuenta Dep. Acumulada — así, al registrar un activo con su Centro
-  // de Costo + Rubro, las cuentas ya quedan parametrizadas, sin elegirlas cada vez.
-  // La cuenta de Depreciación (gasto) sigue única/global, igual a como ya la usa
-  // Comprobantes Contables (construirLineasDepreciacion).
-  // El submódulo Registro/Listado (espejo del de Finanzas) queda para una sesión futura —
-  // afSubTabC ya está listo para eso, solo falta agregar la pestaña cuando se pida.
+  // reportes "_cc" (ContNavBar arriba para moverse entre ellos). Internamente tiene su
+  // propio header + sub-nav de 3 pestañas, mismo patrón visual que "Procura & Compras"
+  // (top bar oscuro + fila de tabs con ícono/label/badge, borde inferior naranja en la
+  // activa): Configuración, Registro de Activo Fijo, Relación de Activos.
+  // Cada Centro de Costo (sede) se despliega en sus 8 rubros de activo (mismas categorías
+  // que usa el registro de Activos Fijos en Finanzas, renderActivosFijosModule) y cada
+  // rubro tiene su propia Cuenta del Activo + Cuenta Dep. Acumulada + Cuenta de Costo/Gasto
+  // — no se generaliza en una sola cuenta global, porque según el rubro corresponde a
+  // Costos (5.x) o a Gastos (6.x) distintos. Con eso, Registro de Activo Fijo solo pide
+  // Centro de Costo + Rubro y las 3 cuentas quedan resueltas automáticamente.
+  // Relación de Activos lee la misma colección 'activos_fijos' que ya usa Finanzas
+  // (estado activosFijos de este mismo componente) — mismos activos en ambos lados.
   // No modifica renderActivosFijosModule, CATEGORIAS_ACTIVO_FIJO ni construirLineasDepreciacion.
   // ============================================================================
   const renderActivosFijosCModule = () => {
     const RUBROS_ACTIVO_FIJO_CC = ['Inmueble','Maquinarias y Equipos','Equipos de Computación','Vehículos','Servidores y Plataformas','Mobiliario y Equipo','Maquinarias Revaluados','Planta Eléctrica'];
-    const rubrosVaciosCC = () => Object.fromEntries(RUBROS_ACTIVO_FIJO_CC.map(r=>[r,{activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''}]));
+    const rubrosVaciosCC = () => Object.fromEntries(RUBROS_ACTIVO_FIJO_CC.map(r=>[r,{activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:'',costoGastoId:'',costoGastoNombre:''}]));
     const cuentasAF = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.06'));
-    const cuentasGasto = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('5'));
+    const cuentasCostoGasto = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('5')||String(c.codigo).startsWith('6'));
 
     const toggleExpandCC = (codigo) => setAfcExpandidoCC(x=>({...x,[codigo]:!x[codigo]}));
 
@@ -45579,24 +45587,79 @@ ${resumenHtml}
       }});
     };
 
+    const iniciarNuevoActivo = () => setAfRegForm(afRegFormVacioC());
+    const iniciarEditarActivo = (a) => {
+      setAfRegForm({id:a.id, nombre:a.nombre||'', centroCosto:a.centroCosto||'', rubro:a.categoria||'', fechaAdquisicion:a.fechaAdquisicion||getTodayDate(), valorCosto:String(a.valorCosto??''), valorResidual:String(a.valorResidual??'0'), vidaUtilAnios:String(a.vidaUtilAnios??'5'), ubicacion:a.ubicacion||''});
+      setAfSubTabC('registro');
+    };
+    const guardarRegistroActivoC = async () => {
+      if(!afRegForm.nombre.trim()||!afRegForm.centroCosto||!afRegForm.rubro||!afRegForm.valorCosto||!afRegForm.fechaAdquisicion){
+        setDialog({title:'Faltan datos',text:'Nombre, Centro de Costo, Rubro, Costo y Fecha de Adquisición son obligatorios.',type:'alert'}); return;
+      }
+      const ccSel = (activoFijoCfgC.centrosCosto||[]).find(c=>c.codigo===afRegForm.centroCosto);
+      const cfgSel = ccSel?.rubros?.[afRegForm.rubro] || {};
+      const payload = {
+        nombre: afRegForm.nombre.trim(), categoria: afRegForm.rubro, centroCosto: afRegForm.centroCosto,
+        cuentaActivoNombre: cfgSel.activoNombre||'', cuentaDeprAcumNombre: cfgSel.deprAcumNombre||'', cuentaCostoGastoNombre: cfgSel.costoGastoNombre||'',
+        fechaAdquisicion: afRegForm.fechaAdquisicion, valorCosto: parseFloat(afRegForm.valorCosto)||0,
+        valorResidual: parseFloat(afRegForm.valorResidual)||0, vidaUtilAnios: parseFloat(afRegForm.vidaUtilAnios)||0,
+        ubicacion: afRegForm.ubicacion||'', status: 'ACTIVO', updatedAt: Date.now(),
+      };
+      try{
+        if(afRegForm.id) await updateDoc(getDocRef('activos_fijos', afRegForm.id), payload);
+        else await addDoc(getColRef('activos_fijos'), {...payload, createdAt:Date.now()});
+        setDialog({title:'✅ Guardado',text:`Activo ${afRegForm.id?'actualizado':'registrado'} correctamente.`,type:'alert'});
+        setAfRegForm(afRegFormVacioC());
+      }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    };
+
+    const TABS_AF_CC = [
+      {id:'configuracion', label:'Configuración', icon:<Settings2 size={13}/>},
+      {id:'registro', label:'Registro de Activo Fijo', icon:<PlusCircle size={13}/>},
+      {id:'relacion', label:'Relación de Activos', icon:<ClipboardList size={13}/>, badge:(activosFijos||[]).length},
+    ];
+
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           <ContNavBar active="activos_fijos_cc"/>
-          <div className="px-8 py-6 border-b-2 border-black">
-            <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><Building2 size={28} className="text-stone-500"/> Activo Fijo</h1>
-            <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Configuración de cuentas contables y centros de costo</p>
+
+          {/* ── TOP BAR estilo Procura ── */}
+          <div className="flex items-center gap-3 px-4 py-2.5" style={{background:'#111827',borderBottom:'2px solid #f97316'}}>
+            <Building2 size={15} className="text-orange-500"/>
+            <span className="font-black text-white text-[11px] uppercase tracking-widest">Activo Fijo</span>
+            <div className="flex-1"/>
+            <div className="hidden md:flex items-center gap-4 text-[10px]">
+              <span className="text-gray-400">Centros de Costo: <span className="font-black text-white">{(activoFijoCfgC.centrosCosto||[]).length}</span></span>
+              <span className="text-gray-400">Activos Registrados: <span className="font-black text-orange-400">{(activosFijos||[]).length}</span></span>
+            </div>
           </div>
+
+          {/* ── SUB-NAV TABS estilo Procura ── */}
+          <div style={{background:'#111827',borderBottom:'2px solid #f97316'}}>
+            <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+              {TABS_AF_CC.map(t=>(
+                <button key={t.id} onClick={()=>setAfSubTabC(t.id)}
+                  className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${afSubTabC===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                  {t.icon} {t.label}
+                  {t.badge>0&&<span className="ml-1 bg-orange-500 text-white text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{t.badge}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── CONFIGURACIÓN ── */}
+          {afSubTabC==='configuracion' && (
           <div className="p-6 space-y-6">
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Centros de Costo</h3>
-              <p className="text-[10px] text-gray-400 font-bold mb-4">Cada centro de costo (sede) se despliega en sus 8 rubros de activo — asigna la cuenta del activo y de depreciación acumulada de cada rubro una sola vez, y al registrar un activo con su Centro de Costo + Rubro, las cuentas ya quedan parametrizadas.</p>
+              <p className="text-[10px] text-gray-400 font-bold mb-4">Cada centro de costo (sede) se despliega en sus 8 rubros de activo — asigna las 3 cuentas de cada rubro una sola vez, y al registrar un activo con su Centro de Costo + Rubro, las cuentas ya quedan parametrizadas.</p>
 
               <div className="space-y-3 mb-5">
                 {(activoFijoCfgC.centrosCosto||[]).length===0 && <p className="text-[11px] text-gray-400 font-bold">Sin centros de costo registrados todavía.</p>}
                 {(activoFijoCfgC.centrosCosto||[]).map(cc=>{
                   const abierto = !!afcExpandidoCC[cc.codigo];
-                  const configurados = RUBROS_ACTIVO_FIJO_CC.filter(r=>cc.rubros?.[r]?.activoId).length;
+                  const configurados = RUBROS_ACTIVO_FIJO_CC.filter(r=>cc.rubros?.[r]?.activoId && cc.rubros?.[r]?.deprAcumId && cc.rubros?.[r]?.costoGastoId).length;
                   return (
                     <div key={cc.codigo} className="border-2 border-gray-200 rounded-2xl overflow-hidden">
                       <div className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer" onClick={()=>toggleExpandCC(cc.codigo)}>
@@ -45615,21 +45678,30 @@ ${resumenHtml}
                           {RUBROS_ACTIVO_FIJO_CC.map(rubro=>{
                             const cfg = cc.rubros?.[rubro]||{};
                             return (
-                              <div key={rubro} className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                                <p className="text-xs font-black text-gray-700">{rubro}</p>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta del Activo</label>
-                                  <select value={cfg.activoId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'activo',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
-                                    <option value="">— Seleccionar —</option>
-                                    {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta Dep. Acumulada</label>
-                                  <select value={cfg.deprAcumId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'deprAcum',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
-                                    <option value="">— Seleccionar —</option>
-                                    {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                                  </select>
+                              <div key={rubro} className="p-4">
+                                <p className="text-xs font-black text-gray-700 mb-2">{rubro}</p>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                  <div>
+                                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta del Activo</label>
+                                    <select value={cfg.activoId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'activo',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                                      <option value="">— Seleccionar —</option>
+                                      {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta Dep. Acumulada</label>
+                                    <select value={cfg.deprAcumId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'deprAcum',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                                      <option value="">— Seleccionar —</option>
+                                      {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta de Costo/Gasto</label>
+                                    <select value={cfg.costoGastoId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'costoGasto',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                                      <option value="">— Seleccionar —</option>
+                                      {cuentasCostoGasto.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                                    </select>
+                                  </div>
                                 </div>
                               </div>
                             );
@@ -45652,19 +45724,130 @@ ${resumenHtml}
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Cuenta de Depreciación (Gasto)</h3>
-              <p className="text-[10px] text-gray-400 font-bold mb-3">Una sola cuenta global, igual a como ya la usa Comprobantes Contables</p>
-              <select value={activoFijoCfgC.gastoDeprecId||''} onChange={e=>{const cta=cuentasGasto.find(c=>c.id===e.target.value);setActivoFijoCfgC(x=>({...x,gastoDeprecId:e.target.value,gastoDeprecNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full md:w-1/2 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
-                <option value="">— Seleccionar —</option>
-                {cuentasGasto.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-              </select>
-            </div>
-
             <div className="flex justify-end">
               <button onClick={guardarActivoFijoCfgC} className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase flex items-center gap-2"><Save size={16}/> Guardar Configuración</button>
             </div>
           </div>
+          )}
+
+          {/* ── REGISTRO DE ACTIVO FIJO ── */}
+          {afSubTabC==='registro' && (
+          <div className="p-6">
+            <div className="bg-white rounded-2xl border border-gray-200 p-6 max-w-2xl space-y-4">
+              <h3 className="text-xs font-black uppercase text-gray-700">{afRegForm.id?'Editar Activo':'Nuevo Activo'}</h3>
+              <div>
+                <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Nombre / Descripción</label>
+                <input value={afRegForm.nombre} onChange={e=>setAfRegForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Laptop Dell Latitude" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-orange-500"/>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Centro de Costo</label>
+                  <select value={afRegForm.centroCosto} onChange={e=>setAfRegForm(f=>({...f,centroCosto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar —</option>
+                    {(activoFijoCfgC.centrosCosto||[]).map(cc=><option key={cc.codigo} value={cc.codigo}>{cc.codigo} — {cc.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Rubro</label>
+                  <select value={afRegForm.rubro} onChange={e=>setAfRegForm(f=>({...f,rubro:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <option value="">— Seleccionar —</option>
+                    {RUBROS_ACTIVO_FIJO_CC.map(r=><option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              </div>
+              {afRegForm.centroCosto && afRegForm.rubro && (() => {
+                const ccSel = (activoFijoCfgC.centrosCosto||[]).find(c=>c.codigo===afRegForm.centroCosto);
+                const cfgSel = ccSel?.rubros?.[afRegForm.rubro]||{};
+                const completo = cfgSel.activoId && cfgSel.deprAcumId && cfgSel.costoGastoId;
+                return completo ? (
+                  <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 text-[10px] space-y-0.5">
+                    <p className="font-black text-emerald-700 uppercase text-[9px] mb-1">✓ Cuentas ya parametrizadas para {afRegForm.centroCosto} / {afRegForm.rubro}</p>
+                    <p className="text-emerald-800"><b>Activo:</b> {cfgSel.activoNombre}</p>
+                    <p className="text-emerald-800"><b>Dep. Acumulada:</b> {cfgSel.deprAcumNombre}</p>
+                    <p className="text-emerald-800"><b>Costo/Gasto:</b> {cfgSel.costoGastoNombre}</p>
+                  </div>
+                ) : (
+                  <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-[10px] font-bold text-amber-700">
+                    ⚠ Este Centro de Costo + Rubro no tiene las 3 cuentas configuradas todavía. Ve a la pestaña Configuración para completarlas antes de guardar.
+                  </div>
+                );
+              })()}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha Adquisición</label>
+                  <input type="date" value={afRegForm.fechaAdquisicion} onChange={e=>setAfRegForm(f=>({...f,fechaAdquisicion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Costo ($)</label>
+                  <input type="number" step="0.01" value={afRegForm.valorCosto} onChange={e=>setAfRegForm(f=>({...f,valorCosto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Valor Residual ($)</label>
+                  <input type="number" step="0.01" value={afRegForm.valorResidual} onChange={e=>setAfRegForm(f=>({...f,valorResidual:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Vida Útil (años)</label>
+                  <input type="number" step="0.5" value={afRegForm.vidaUtilAnios} onChange={e=>setAfRegForm(f=>({...f,vidaUtilAnios:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Ubicación / Responsable</label>
+                  <input value={afRegForm.ubicacion} onChange={e=>setAfRegForm(f=>({...f,ubicacion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={guardarRegistroActivoC} className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase flex items-center gap-2"><Save size={16}/> {afRegForm.id?'Guardar Cambios':'Registrar Activo'}</button>
+                {afRegForm.id && <button onClick={iniciarNuevoActivo} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-5 py-3 rounded-2xl text-xs font-black uppercase">Cancelar Edición</button>}
+              </div>
+            </div>
+          </div>
+          )}
+
+          {/* ── RELACIÓN DE ACTIVOS ── */}
+          {afSubTabC==='relacion' && (() => {
+            const hoy = getTodayDate();
+            const lista = [...(activosFijos||[])].sort((a,b)=>(a.fechaAdquisicion||'').localeCompare(b.fechaAdquisicion||''));
+            return (
+              <div className="p-6">
+                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                  {lista.length===0 ? (
+                    <div className="p-12 text-center text-gray-400"><ClipboardList size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Sin activos registrados</p><p className="text-xs mt-1">Usa la pestaña "Registro de Activo Fijo" para empezar.</p></div>
+                  ) : (
+                    <div className="overflow-x-auto"><table className="w-full text-xs">
+                      <thead><tr style={{background:'#0f172a'}}>
+                        {['Activo','Rubro','Centro de Costo','Adquisición','Costo','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
+                          <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=4&&i<=6?'text-right':i===8?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                        ))}
+                      </tr></thead>
+                      <tbody>
+                        {lista.map(a=>{
+                          const {deprAcumulada,valorLibros} = calcDepreciacionActivo(a,hoy);
+                          const deBaja = a.status==='VENDIDO'||a.status==='DE_BAJA';
+                          return (
+                            <tr key={a.id} className={`border-b border-gray-50 hover:bg-gray-50 ${deBaja?'opacity-50':''}`}>
+                              <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
+                              <td className="px-3 py-2 text-gray-500">{a.categoria||'—'}</td>
+                              <td className="px-3 py-2 text-gray-500 font-mono">{a.centroCosto||'—'}</td>
+                              <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
+                              <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
+                              <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
+                              <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
+                              <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
+                              <td className="px-3 py-2 text-center">
+                                {!deBaja && <button onClick={()=>iniciarEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table></div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
       </div>
     );
