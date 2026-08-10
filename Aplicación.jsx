@@ -13841,9 +13841,10 @@ ${valoresHtml}
             </div>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">✏️ Los campos con borde inferior son editables — escribe aquí los montos exactos de tu "Determinación de IVA" (Débitos, Créditos, Retenciones) para que el cierre cuadre perfecto con la declaración real. El sistema propone un cálculo automático, pero si no coincide, este campo manda.</div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
             <CampoEditable label="IVA Débito Fiscal" campo="debito" valor={totalDebito} valorAuto={totalDebitoAuto} bg="bg-red-50 border-red-200" txt="text-red-700"/>
             <CampoEditable label="IVA Crédito Fiscal" campo="credito" valor={totalCredito} valorAuto={totalCreditoAuto} bg="bg-emerald-50 border-emerald-200" txt="text-emerald-700"/>
+            <CampoEditable label="Excedente Créd. Fiscal Mes Anterior" campo="excedenteCreditoAnterior" valor={excedenteCreditoAnterior} valorAuto={excedenteCreditoAnterior} bg="bg-blue-50 border-blue-200" txt="text-blue-700" sub="Ítem 60 de la declaración anterior"/>
             <div className="bg-gray-100 border border-gray-200 rounded-xl p-3">
               <p className="text-[9px] font-black text-gray-500 uppercase">Cuota Tributaria</p>
               <p className="text-lg font-black text-gray-700 font-mono mt-1">Bs.{contFmt(cuotaTributaria)}</p>
@@ -14919,7 +14920,9 @@ function App() {
         ? (r.cuentaContableNombre ? {codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim()} : {codigo:'2.1.03.99.001', nombre:`${tipo} por enterar`})
         : (r.cuentaContableRetNombre ? {codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim()}
             : tipo==='IVA' && cuentasIvaCfgApp.retClienteNombre ? {codigo:cuentasIvaCfgApp.retClienteNombre.split('—')[0].trim(), nombre:cuentasIvaCfgApp.retClienteNombre.split('—').slice(1).join('—').trim()}
-            : {codigo: tipo==='IVA'?'2.1.03.01.001':'2.1.03.02.001', nombre:`Retenciones ${tipo} por enterar`});
+            : tipo==='IVA' && cuentasRetProvCfg.ivaNombre ? {codigo:cuentasRetProvCfg.ivaNombre.split('—')[0].trim(), nombre:cuentasRetProvCfg.ivaNombre.split('—').slice(1).join('—').trim()}
+            : tipo!=='IVA' && cuentasRetProvCfg.islrNombre ? {codigo:cuentasRetProvCfg.islrNombre.split('—')[0].trim(), nombre:cuentasRetProvCfg.islrNombre.split('—').slice(1).join('—').trim()}
+            : tipo==='IVA' ? {codigo:'2.1.04.02.002', nombre:'RETENCIÓN IVA (100-75%)'} : {codigo:'2.1.04.01.001', nombre:'RETENCIONES I.S.L.R. POR PAGAR'});
       const montoBs=Number(r.montoRetenido||0);
       const montoUSD=montoBs/Math.max(Number(r.tasa||1),1);
       const cliente = (clients||[]).find(c=>c.rif && r.clientRif && c.rif.replace(/\W/g,'')===String(r.clientRif).replace(/\W/g,''));
@@ -18006,6 +18009,19 @@ function App() {
     const cta = (planDeCuentas||[]).find(p=>p.id===cuentaId);
     const nueva = cta ? {id:cta.id, codigo:cta.codigo, nombre:cta.nombre} : {id:'', codigo:'', nombre:''};
     try{ await setDoc(doc(db,'settings','cuentaResultadoEjercicio'), nueva); setCuentaResultadoCfg(nueva); setShowCuentaResultadoModal(false); }
+    catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
+  // Cuenta de Utilidad Acumulada — todo lo de meses ANTERIORES al de la fecha de corte (distinta
+  // de la del Ejercicio, que es solo el mes en curso). Mismo patrón, documento separado.
+  const [cuentaUtilAcumCfg, setCuentaUtilAcumCfg] = useState({id:'', codigo:'', nombre:''});
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','cuentaUtilidadAcumulada'), d=>d.exists() && setCuentaUtilAcumCfg(d.data()));
+    return()=>u();
+  },[]);
+  const guardarCuentaUtilAcum = async (cuentaId) => {
+    const cta = (planDeCuentas||[]).find(p=>p.id===cuentaId);
+    const nueva = cta ? {id:cta.id, codigo:cta.codigo, nombre:cta.nombre} : {id:'', codigo:'', nombre:''};
+    try{ await setDoc(doc(db,'settings','cuentaUtilidadAcumulada'), nueva); setCuentaUtilAcumCfg(nueva); }
     catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
   // Cuentas de Retención IVA/ISLR a Proveedores — usadas por generarAsientoFC (Procura). Se
@@ -44882,22 +44898,46 @@ ${resumenHtml}
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
     const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
     const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
-    // Utilidad del ejercicio (acumulada hasta la fecha de corte) — mismo cálculo que ya se usaba,
-    // se agrega al Patrimonio como una fila propia (no un asiento real, así que no es cuenta del árbol).
-    const ingresosTot = cuentasAgg.filter(c=>c.codigo.startsWith('4')).reduce((s,c)=>({usd:s.usd+(c.haberUSD-c.debeUSD),bs:s.bs+(c.haberBs-c.debeBs)}),{usd:0,bs:0});
-    const costosTot = cuentasAgg.filter(c=>c.codigo.startsWith('5.1')).reduce((s,c)=>({usd:s.usd+(c.debeUSD-c.haberUSD),bs:s.bs+(c.debeBs-c.haberBs)}),{usd:0,bs:0});
-    const gastosTot = cuentasAgg.filter(c=>c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')||c.codigo.startsWith('6')).reduce((s,c)=>({usd:s.usd+(c.debeUSD-c.haberUSD),bs:s.bs+(c.debeBs-c.haberBs)}),{usd:0,bs:0});
-    const utilEjUSD = ingresosTot.usd-costosTot.usd-gastosTot.usd, utilEjBs = ingresosTot.bs-costosTot.bs-gastosTot.bs;
-    const totalPatrimonioUSD=sumTree(treePatrimonio,'u')+utilEjUSD, totalPatrimonioBs=sumTree(treePatrimonio,'b')+utilEjBs;
+    // Utilidad del Ejercicio = SOLO el mes de la fecha de corte (el resultado del mes en curso,
+    // el que "viaja" del Estado de Resultados). Utilidad Acumulada = todo lo de meses ANTERIORES
+    // a ese — así, al empezar un mes nuevo, lo del mes pasado ya está en la Acumulada, no se
+    // vuelve a contar dentro del Ejercicio del mes nuevo.
+    const inicioMesCorte = `${corte.slice(0,7)}-01`;
+    const calcResultado = (asientos) => {
+      const porC = {};
+      asientos.forEach(a=>(a.lineas||[]).forEach(l=>{
+        const cod=l.codigo||''; if(!cod) return;
+        if(!porC[cod]) porC[cod]={debeBs:0,haberBs:0,debeUSD:0,haberUSD:0};
+        porC[cod].debeBs+=parseNum(l.debeBs||0); porC[cod].haberBs+=parseNum(l.haberBs||0);
+        porC[cod].debeUSD+=parseNum(l.debeUSD||0); porC[cod].haberUSD+=parseNum(l.haberUSD||0);
+      }));
+      let ing={usd:0,bs:0}, cos={usd:0,bs:0}, gas={usd:0,bs:0};
+      Object.entries(porC).forEach(([cod,c])=>{
+        if(cod.startsWith('4')) { ing.usd+=c.haberUSD-c.debeUSD; ing.bs+=c.haberBs-c.debeBs; }
+        else if(cod.startsWith('5.1')) { cos.usd+=c.debeUSD-c.haberUSD; cos.bs+=c.debeBs-c.haberBs; }
+        else if((cod.startsWith('5')&&!cod.startsWith('5.1'))||cod.startsWith('6')) { gas.usd+=c.debeUSD-c.haberUSD; gas.bs+=c.debeBs-c.haberBs; }
+      });
+      return {usd: ing.usd-cos.usd-gas.usd, bs: ing.bs-cos.bs-gas.bs};
+    };
+    const asientosDelMes = asientosHastaCorte.filter(a=>(a.fecha||'')>=inicioMesCorte);
+    const asientosAntesDelMes = asientosHastaCorte.filter(a=>(a.fecha||'')<inicioMesCorte);
+    const resultadoMes = calcResultado(asientosDelMes);
+    const resultadoAcumulado = calcResultado(asientosAntesDelMes);
+    const utilEjUSD = resultadoMes.usd, utilEjBs = resultadoMes.bs;
+    const utilAcumUSD = resultadoAcumulado.usd, utilAcumBs = resultadoAcumulado.bs;
+    const totalPatrimonioUSD=sumTree(treePatrimonio,'u')+utilEjUSD+utilAcumUSD, totalPatrimonioBs=sumTree(treePatrimonio,'b')+utilEjBs+utilAcumBs;
     const totalPasPatUSD = totalPasivoUSD+totalPatrimonioUSD, totalPasPatBs = totalPasivoBs+totalPatrimonioBs;
     const cuadrado = Math.abs(totalActivoUSD-totalPasPatUSD)<0.5;
     const showUSD = contBGCurrency!=='bs'; const showBS = contBGCurrency!=='usd';
     const baseActivo = totalActivoUSD||1;
 
     const filaUtilidadHTML = (moneda) => {
-      const v = moneda==='bs'?utilEjBs:utilEjUSD;
-      const etiqueta = cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (acumulada)';
-      return `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${etiqueta}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(v)}</td></tr>`;
+      const vEj = moneda==='bs'?utilEjBs:utilEjUSD;
+      const vAc = moneda==='bs'?utilAcumBs:utilAcumUSD;
+      const etEj = cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (mes en curso)';
+      const etAc = cuentaUtilAcumCfg.codigo ? `${cuentaUtilAcumCfg.codigo} - ${cuentaUtilAcumCfg.nombre}` : 'Utilidad Acumulada (meses anteriores)';
+      return `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${etEj}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vEj)}</td></tr>
+      <tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${etAc}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vAc)}</td></tr>`;
     };
     const exportarExcel = () => {
       const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
@@ -44967,9 +45007,15 @@ ${resumenHtml}
                   </tr>
                   {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
                   <tr className="border-b border-gray-100">
-                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (acumulada) — sin cuenta configurada'}</td>
+                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (mes en curso) — sin cuenta configurada'}</td>
                     {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjUSD)}</td>}
                     {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjBs)}</td>}
+                    <td/>
+                  </tr>
+                  <tr className="border-b border-gray-100">
+                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{cuentaUtilAcumCfg.codigo ? `${cuentaUtilAcumCfg.codigo} - ${cuentaUtilAcumCfg.nombre}` : 'Utilidad Acumulada (meses anteriores) — sin cuenta configurada'}</td>
+                    {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumUSD)}</td>}
+                    {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumBs)}</td>}
                     <td/>
                   </tr>
                   <tr className="bg-emerald-50 border-y-2 border-emerald-200">
@@ -44993,14 +45039,24 @@ ${resumenHtml}
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentaResultadoModal(false)}>
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-3" onClick={e=>e.stopPropagation()}>
               <div className="flex items-center justify-between">
-                <h3 className="font-black text-lg text-gray-800">⚙️ Cuenta de Resultado del Ejercicio</h3>
+                <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas de Resultado</h3>
                 <button onClick={()=>setShowCuentaResultadoModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
               </div>
-              <p className="text-[11px] text-gray-500">Elige con qué cuenta del Plan de Cuentas (normalmente en Patrimonio, grupo 3) se identifica la Utilidad/Pérdida del Ejercicio en el Balance General. Se calcula sola cada período — esto solo define su código y nombre.</p>
-              <select defaultValue={cuentaResultadoCfg.id||''} onChange={e=>guardarCuentaResultado(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
-                <option value="">— Sin configurar (usa etiqueta genérica) —</option>
-                {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('3')).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-              </select>
+              <p className="text-[11px] text-gray-500">El mes en curso (Ejercicio) y los meses anteriores (Acumulada) van a cuentas separadas — normalmente en Patrimonio, grupo 3. Ambas se calculan solas cada corte de fecha; esto solo define su código y nombre.</p>
+              <div>
+                <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Utilidad del Ejercicio (mes en curso)</label>
+                <select defaultValue={cuentaResultadoCfg.id||''} onChange={e=>guardarCuentaResultado(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                  <option value="">— Sin configurar (usa etiqueta genérica) —</option>
+                  {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('3')).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Utilidad Acumulada (meses anteriores)</label>
+                <select defaultValue={cuentaUtilAcumCfg.id||''} onChange={e=>guardarCuentaUtilAcum(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                  <option value="">— Sin configurar (usa etiqueta genérica) —</option>
+                  {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('3')).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                </select>
+              </div>
             </div>
           </div>
         )}
