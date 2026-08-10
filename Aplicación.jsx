@@ -5365,6 +5365,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const [form,setForm]=useState({});
   const [tab,setTab]=useState('datos');
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
+  const [cuentasRetProvCfg,setCuentasRetProvCfg]=useState({});
   const [servicios,setServicios]=useState([]);
   const [cuentaServicioSearch,setCuentaServicioSearch]=useState('');
   const [pendingDeleteFact,setPendingDeleteFact]=useState(null);
@@ -5414,7 +5415,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   useEffect(()=>{
     const u1=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();};
+    const u3=onSnapshot(doc(db,'settings','cuentasRetencionProveedor'),d=>d.exists()&&setCuentasRetProvCfg(x=>({...x,...d.data()})));
+    return()=>{u1();u2();u3();};
 
   },[]);
 
