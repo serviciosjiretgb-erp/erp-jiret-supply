@@ -11423,15 +11423,24 @@ const CCArbolRowBC = ({ node, level=0, currency='both', getDetalle, expandSignal
     </>
   );
 };
-const ccFlattenArbol = (nodes, level=0, rows=[], totalBase=0) => {
+const ccFlattenArbol = (nodes, level=0, rows=[], totalBase=0, getDetalle=null, mostrarDetalle=false) => {
   nodes.forEach(n=>{
     const isAccountNode = /^\d+[.\d]*\s*-/.test(n.n) || (!n.c || n.c.length===0);
     const pct = totalBase && n.u!==0 ? `${((Math.abs(n.u)/totalBase)*100).toFixed(2)}%` : '';
     if (!n.isLeaf && n.c?.length) {
       rows.push({label:n.n, level, isSection:!isAccountNode, u:null, b:null, pct:''});
-      ccFlattenArbol(n.c, level+1, rows, totalBase);
+      ccFlattenArbol(n.c, level+1, rows, totalBase, getDetalle, mostrarDetalle);
       rows.push({label:'Total '+n.n, level, isTotal:true, u:n.u, b:n.b, pct});
-    } else rows.push({label:n.n, level, u:n.u, b:n.b, pct});
+    } else {
+      rows.push({label:n.n, level, u:n.u, b:n.b, pct});
+      if (mostrarDetalle && getDetalle && n.codigo) {
+        (getDetalle(n.codigo)||[]).forEach(d=>{
+          const usdMov = (d.debeUSD||0)-(d.haberUSD||0);
+          const bsMov = (d.debeBs||0)-(d.haberBs||0);
+          rows.push({label:`${d.fecha||''} · ${d.comprobante||''} · ${d.concepto||''}`, level:level+1, u:usdMov, b:bsMov, pct:'', isDetalle:true});
+        });
+      }
+    }
   });
   return rows;
 };
@@ -11530,29 +11539,30 @@ const ccBgPorNivel = (r) => {
   const tonos = ['#d1d5db','#e5e7eb','#eef0f2','#f6f7f8'];
   return tonos[Math.min(r.level, tonos.length-1)];
 };
-const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0) => {
+const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false) => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
-  const rows = ccFlattenArbol(tree, 0, [], totalBase);
+  const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
   const ths = ['Cuenta', ...(showUSD?['USD']:[]), ...(showBS?['Bs.']:[]), '%'];
   let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child{text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>${titulo}</h3><p>${subtitulo}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
   rows.forEach(r=>{
     const indent='&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(r.level);
-    const bg = ccBgPorNivel(r);
+    const bg = r.isDetalle ? '#ffffff' : ccBgPorNivel(r);
     const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
-    html += `<tr style="background:${bg};${bold}"><td>${indent}${r.label}</td>${showUSD?`<td>${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td>${r.b!=null?ccFmtR(r.b):''}</td>`:''}<td style="text-align:right">${r.pct||''}</td></tr>`;
+    const detStyle = r.isDetalle?'font-style:italic;color:#666;font-size:9px;':'';
+    html += `<tr style="background:${bg};${bold}${detStyle}"><td>${indent}${r.label}</td>${showUSD?`<td>${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td>${r.b!=null?ccFmtR(r.b):''}</td>`:''}<td style="text-align:right">${r.pct||''}</td></tr>`;
   });
   html += `</tbody></table></body></html>`;
   return html;
 };
-const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra, totalBase=0) => {
+const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra, totalBase=0, getDetalle=null, mostrarDetalle=false) => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
-  const rows = ccFlattenArbol(tree, 0, [], totalBase);
+  const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
   let filas = '';
   rows.forEach(r=>{
     const indent = (r.level*14)+8;
-    const bg = ccBgPorNivel(r);
+    const bg = r.isDetalle ? '#ffffff' : ccBgPorNivel(r);
     const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
-    const tam = r.level===0 && r.isSection ? 'font-size:9.5pt;' : '';
+    const tam = r.level===0 && r.isSection ? 'font-size:9.5pt;' : (r.isDetalle?'font-size:7.5pt;font-style:italic;color:#777;':'');
     filas += `<tr style="background:${bg};${bold}${tam}border-bottom:1px solid #eee"><td style="padding:5px 6px;padding-left:${indent}px">${r.label}</td>${showUSD?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td style="padding:5px 6px;text-align:right;font-family:monospace">${r.b!=null?ccFmtR(r.b):''}</td>`:''}<td style="padding:5px 6px;text-align:right;font-family:monospace;color:#888;font-size:8pt">${r.pct||''}</td></tr>`;
   });
   if (filaExtra) filas += filaExtra;
@@ -44793,7 +44803,7 @@ ${resumenHtml}
 
     const exportarExcel = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
-      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas);
+      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
@@ -44801,7 +44811,7 @@ ${resumenHtml}
     const exportarPDF = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">RESULTADO DEL EJERCICIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
-      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas);
+      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas, getDetalleCuenta, contERExpandAll);
       ccAbrirVentana(html);
     };
 
@@ -44885,25 +44895,13 @@ ${resumenHtml}
         porCuenta[cod].haberUSD += parseNum(l.haberUSD||0);
       });
     });
-    const cuentasAgg = Object.values(porCuenta);
-
-    const getDetalleCuenta = (codigo) => asientosHastaCorte
-      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
-        fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
-      })))
-      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
-
-    const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
-    const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-    const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-
-    const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
-    const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
-    const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
     // Utilidad del Ejercicio = SOLO el mes de la fecha de corte (el resultado del mes en curso,
     // el que "viaja" del Estado de Resultados). Utilidad Acumulada = todo lo de meses ANTERIORES
     // a ese — así, al empezar un mes nuevo, lo del mes pasado ya está en la Acumulada, no se
-    // vuelve a contar dentro del Ejercicio del mes nuevo.
+    // vuelve a contar dentro del Ejercicio del mes nuevo. Se calculan e INYECTAN dentro de
+    // porCuenta ANTES de construir el árbol, bajo el código configurado — así se fusionan con
+    // cualquier movimiento real que ya exista en esa cuenta (ej. una capitalización manual),
+    // en vez de aparecer como una fila aparte y duplicada.
     const inicioMesCorte = `${corte.slice(0,7)}-01`;
     const calcResultado = (asientos) => {
       const porC = {};
@@ -44927,7 +44925,34 @@ ${resumenHtml}
     const resultadoAcumulado = calcResultado(asientosAntesDelMes);
     const utilEjUSD = resultadoMes.usd, utilEjBs = resultadoMes.bs;
     const utilAcumUSD = resultadoAcumulado.usd, utilAcumBs = resultadoAcumulado.bs;
-    const totalPatrimonioUSD=sumTree(treePatrimonio,'u')+utilEjUSD+utilAcumUSD, totalPatrimonioBs=sumTree(treePatrimonio,'b')+utilEjBs+utilAcumBs;
+    const inyectarEnPorCuenta = (codigo, nombre, usd, bs) => {
+      if (!codigo) return false; // sin cuenta configurada, no hay dónde inyectar
+      if (!porCuenta[codigo]) porCuenta[codigo] = {codigo, cuenta:nombre, debeBs:0, haberBs:0, debeUSD:0, haberUSD:0};
+      porCuenta[codigo].haberUSD += usd; // el neto (haber-debe) del árbol queda en +usd, sea positivo o negativo
+      porCuenta[codigo].haberBs += bs;
+      return true;
+    };
+    const ejercicioInyectado = inyectarEnPorCuenta(cuentaResultadoCfg.codigo, cuentaResultadoCfg.nombre, utilEjUSD, utilEjBs);
+    const acumuladaInyectada = inyectarEnPorCuenta(cuentaUtilAcumCfg.codigo, cuentaUtilAcumCfg.nombre, utilAcumUSD, utilAcumBs);
+    const cuentasAgg = Object.values(porCuenta);
+
+    const getDetalleCuenta = (codigo) => asientosHastaCorte
+      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+        fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
+      })))
+      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+    const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+    const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+
+    const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
+    const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
+    const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
+    // Si alguna de las dos no tenía cuenta configurada, esa sí se suma aparte (no había dónde
+    // inyectarla) — si ambas se inyectaron, ya están contadas dentro del árbol y no se repiten.
+    const totalPatrimonioUSD=sumTree(treePatrimonio,'u')+(ejercicioInyectado?0:utilEjUSD)+(acumuladaInyectada?0:utilAcumUSD);
+    const totalPatrimonioBs=sumTree(treePatrimonio,'b')+(ejercicioInyectado?0:utilEjBs)+(acumuladaInyectada?0:utilAcumBs);
     const totalPasPatUSD = totalPasivoUSD+totalPatrimonioUSD, totalPasPatBs = totalPasivoBs+totalPatrimonioBs;
     const cuadrado = Math.abs(totalActivoUSD-totalPasPatUSD)<0.5;
     const showUSD = contBGCurrency!=='bs'; const showBS = contBGCurrency!=='usd';
@@ -44936,14 +44961,14 @@ ${resumenHtml}
     const filaUtilidadHTML = (moneda) => {
       const vEj = moneda==='bs'?utilEjBs:utilEjUSD;
       const vAc = moneda==='bs'?utilAcumBs:utilAcumUSD;
-      const etEj = cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (mes en curso)';
-      const etAc = cuentaUtilAcumCfg.codigo ? `${cuentaUtilAcumCfg.codigo} - ${cuentaUtilAcumCfg.nombre}` : 'Utilidad Acumulada (meses anteriores)';
-      return `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${etEj}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vEj)}</td></tr>
-      <tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${etAc}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vAc)}</td></tr>`;
+      let html = '';
+      if (!ejercicioInyectado) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">Utilidad del Ejercicio (mes en curso)</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vEj)}</td></tr>`;
+      if (!acumuladaInyectada) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">Utilidad Acumulada (meses anteriores)</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vAc)}</td></tr>`;
+      return html;
     };
     const exportarExcel = () => {
       const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
-      const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo);
+      const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `BalanceGeneral_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
@@ -44951,7 +44976,7 @@ ${resumenHtml}
     const exportarPDF = () => {
       const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">TOTAL PASIVO + PATRIMONIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatBs)}</td>`:''}</tr>`;
-      const html = ccExportPDFHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, filaExtra, baseActivo);
+      const html = ccExportPDFHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, filaExtra, baseActivo, getDetalleCuenta, contBGExpandAll);
       ccAbrirVentana(html);
     };
 
@@ -45008,19 +45033,22 @@ ${resumenHtml}
                     <td/>
                   </tr>
                   {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
-                  <tr className="border-b border-gray-100">
-                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (mes en curso) — sin cuenta configurada'}</td>
-                    {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjUSD)}</td>}
-                    {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjBs)}</td>}
-                    <td/>
-                  </tr>
-                  <tr className="border-b border-gray-100">
-                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{cuentaUtilAcumCfg.codigo ? `${cuentaUtilAcumCfg.codigo} - ${cuentaUtilAcumCfg.nombre}` : 'Utilidad Acumulada (meses anteriores) — sin cuenta configurada'}</td>
-                    {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumUSD)}</td>}
-                    {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumBs)}</td>}
-                    <td/>
-                  </tr>
-                  <tr className="bg-emerald-50 border-y-2 border-emerald-200">
+                  {!ejercicioInyectado && (
+                    <tr className="border-b border-gray-100">
+                      <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">Utilidad del Ejercicio (mes en curso) — sin cuenta configurada</td>
+                      {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjUSD)}</td>}
+                      {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjBs)}</td>}
+                      <td/>
+                    </tr>
+                  )}
+                  {!acumuladaInyectada && (
+                    <tr className="border-b border-gray-100">
+                      <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">Utilidad Acumulada (meses anteriores) — sin cuenta configurada</td>
+                      {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumUSD)}</td>}
+                      {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumBs)}</td>}
+                      <td/>
+                    </tr>
+                  )}                  <tr className="bg-emerald-50 border-y-2 border-emerald-200">
                     <td className="px-3 py-2 font-black text-emerald-700 text-[10px] uppercase">Total Patrimonio</td>
                     {showUSD && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-emerald-700">{ccFmtR(totalPatrimonioUSD)}</td>}
                     {showBS  && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-emerald-700">{ccFmtR(totalPatrimonioBs)}</td>}
