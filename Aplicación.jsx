@@ -11582,6 +11582,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // ── Ajustes: asientos manuales multimoneda, no derivados de ningún otro módulo ──
   const [ajustesC, setAjustesC] = useState([]);
   const [nominaC, setNominaC] = useState([]);
+  const [invMovementsC, setInvMovementsC] = useState([]);
+  const [inventoryC, setInventoryC] = useState([]);
+  const [cuentasProduccionCfgC, setCuentasProduccionCfgC] = useState({});
   const [nominaImportando, setNominaImportando] = useState(false);
   const [showAjusteModal, setShowAjusteModal] = useState(false);
   const [ajusteEditando, setAjusteEditando] = useState(null);
@@ -11629,6 +11632,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       onSnapshot(getColRef('activos_fijos'), s => setActivosFijosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_ajustes'), s => setAjustesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_nomina'), s => setNominaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('inventoryMovements'), s => setInvMovementsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('inventory'), s => setInventoryC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(doc(db,'settings','produccionCuentasContables'), d => d.exists() && setCuentasProduccionCfgC(d.data())),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
       onSnapshot(doc(db,'settings','general'), d => { if(d.exists()) setSettingsCC(d.data()); }),
       onSnapshot(getDocRef('settings','actividadEconomica'), d => { if(d.exists()) setAeCfgCC(d.data()); }),
@@ -12149,6 +12155,52 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       })),
     }));
   };
+  // ── Salidas de Inventario con cuenta contable configurada (Producción) ───────────────
+  // Mismo mapeo categoría→cuenta que usa getAsientosReales() en App(): Materia Prima/
+  // Consumibles/Productos Terminados (y el resto de categorías cae en Materia Prima por
+  // defecto). Se separan en dos comprobantes: Costos de Producción y Ventas (salidas
+  // normales) vs Consumos Internos / Muestras Clientes (autoconsumo, avería, muestra, pérdida).
+  const CATEGORIA_A_BALDE_CC = {
+    'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
+    'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
+    'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
+    'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
+  };
+  const construirLineasSalidasInventario = (tipos) => {
+    const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
+    const cfg = cuentasProduccionCfgC;
+    return (invMovementsC||[]).filter(m=>{
+      if (!tipos.includes(m.type)) return false;
+      if (filtDesde && m.date < filtDesde) return false;
+      if (filtHasta && m.date > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(m=>{
+      const item = itemPorId[m.itemId];
+      const balde = CATEGORIA_A_BALDE_CC[item?.category] || 'MATERIA_PRIMA';
+      const claveInv = {'MATERIA_PRIMA':'invMateriaPrima','CONSUMIBLES':'invConsumibles','TERMINADOS':'invTerminados'}[balde];
+      const cuentaInvNombre = cfg[`${claveInv}Nombre`]||'';
+      const claveDeb = m.type==='SALIDA'
+        ? (balde==='TERMINADOS'?'costoVentaMercancia':'costoVentaProduccion')
+        : m.type==='MUESTRA' ? 'muestrasClientes'
+        : m.type==='PERDIDA' ? (cfg.perdidaId?'perdida':'consumosInternos')
+        : 'consumosInternos';
+      const cuentaDebNombre = cfg[`${claveDeb}Nombre`]||'';
+      const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
+      const tasaUsar = Number(settingsCC?.tasaBCV||0)||1;
+      const [codDeb,nomDeb] = cuentaDebNombre ? cuentaDebNombre.split('—').map(s=>s.trim()) : ['⚠️ Sin configurar',''];
+      const [codInv,nomInv] = cuentaInvNombre ? cuentaInvNombre.split('—').map(s=>s.trim()) : ['⚠️ Sin configurar',''];
+      return {
+        id: m.id, comprobante: m.docRef||m.id, fecha: m.date, doc: m.docRef||'—',
+        tasa: tasaUsar, conc: `${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`, _raw:m,
+        lineas: [
+          {codigo:codDeb, cuenta:nomDeb||'(configura la cuenta en Producción)', tipo:'D', dBs:valor*tasaUsar, hBs:0, dUSD:valor, hUSD:0},
+          {codigo:codInv, cuenta:nomInv||'(configura la cuenta en Producción)', tipo:'H', dBs:0, hBs:valor*tasaUsar, dUSD:0, hUSD:valor},
+        ],
+      };
+    });
+  };
+  const construirLineasCostosProduccion = () => construirLineasSalidasInventario(['SALIDA']);
+  const construirLineasConsumosInternos = () => construirLineasSalidasInventario(['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA']);
 
   const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:'', detalle:''});
 
@@ -12765,6 +12817,10 @@ ${valoresHtml}
         return {...comunes, titulo:'Ajustes Contables', primeraCol:'Comprobante', docLabel:'Nro Comp.', tasa:true, ordenBsPrimero:true, unidad:'ajuste(s)', lineas:aplicarReclasCC('ajustes',construirLineasAjustes())};
       case 'nomina':
         return {...comunes, titulo:'Nómina', primeraCol:'Comprobante', docLabel:'Nro Doc.', tasa:true, ordenBsPrimero:true, unidad:'nómina(s)', lineas:aplicarReclasCC('nomina',construirLineasNomina())};
+      case 'costos_produccion':
+        return {...comunes, titulo:'Costos de Producción y Ventas', primeraCol:'Comprobante', docLabel:'Ref.', tasa:true, ordenBsPrimero:true, unidad:'salida(s)', lineas:aplicarReclasCC('costos_produccion',construirLineasCostosProduccion())};
+      case 'consumos_internos':
+        return {...comunes, titulo:'Consumos Internos / Muestras Clientes', primeraCol:'Comprobante', docLabel:'Ref.', tasa:true, ordenBsPrimero:true, unidad:'salida(s)', lineas:aplicarReclasCC('consumos_internos',construirLineasConsumosInternos())};
       case 'relacionadas':
         return {...comunes, titulo:'Cuentas por Pagar Relacionadas', primeraCol:'Tercero', docLabel:'Referencia', tasa:true, ordenBsPrimero:true, unidad:'movimiento(s)', lineas:aplicarReclasCC('relacionadas',construirLineasRelacionadas())};
       default: return null;
@@ -12792,6 +12848,8 @@ ${valoresHtml}
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'nomina', label:'Nómina', icon:'💰', activo:true },
+    { id:'costos_produccion', label:'Costos de Producción y Ventas', icon:'🏭', activo:true },
+    { id:'consumos_internos', label:'Consumos Internos / Muestras Clientes', icon:'📦', activo:true },
     { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
   ];
@@ -13443,6 +13501,66 @@ ${valoresHtml}
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
                   <td></td>
+                </tr></tfoot>
+              </table></div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (activo === 'costos_produccion' || activo === 'consumos_internos') {
+      const esCostos = activo === 'costos_produccion';
+      const lineasProd = filtrarPorBusquedaCC(esCostos ? construirLineasCostosProduccion() : construirLineasConsumosInternos());
+      const totalUSD = lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      const faltaConfig = !cuentasProduccionCfgC || Object.keys(cuentasProduccionCfgC).length===0;
+      const titulo = esCostos ? 'Costos de Producción y Ventas' : 'Consumos Internos / Muestras Clientes';
+      const tabIdActual = esCostos ? 'costos_produccion' : 'consumos_internos';
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasProd.length} salida(s) · Total ${contFmt(totalUSD)}</p>
+            <BotonesExportCC tabId={tabIdActual}/>
+          </div>
+          {faltaConfig && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ Las cuentas de Producción no están configuradas todavía. Ve al Panel Principal ERP — Producción y usa el botón "Configuración de Cuentas Contables" en la esquina superior derecha.</div>
+          )}
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ {esCostos ? 'Salidas normales de inventario a producción o venta (tipo SALIDA), separadas por Costo de Venta (Mercancía/Terminados) o Costo de Producción según la categoría del ítem.' : 'Autoconsumo, avería, muestras a clientes y pérdida/merma — se generan automáticamente desde Control de Inventario, no se registran aquí manualmente.'}</div>
+          {lineasProd.length===0?(
+            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+              <Package size={36} className="mx-auto mb-2 opacity-40"/>
+              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
+            </div>
+          ):(
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'950px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta','T','Concepto','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=6&&i<=9?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}</tr></thead>
+                <tbody>
+                  {lineasProd.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                    <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
+                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <CeldaCuentaCC tabId={tabIdActual} compId={r.id} li={li} l={l} r={r}/>
+                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <td className="px-3 py-2 text-gray-500">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    </tr>
+                  )))}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                  <td colSpan={5} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} salida(s)</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -14430,31 +14548,50 @@ function App() {
           return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
         })});
     });
-    // 9) Salidas de Inventario con cuenta configurada — Autoconsumo, Regalía a Cliente,
-    // Avería, Pérdida/Merma y Costo de Producción (salida normal). La cuenta de Inventario
-    // configurada va siempre en crédito como contrapartida. Si una salida no tiene su cuenta
-    // configurada en "Configuración de Cuentas Contables" (portal Producción), se omite —
-    // no se inventa una cuenta ni se contabiliza a medias.
+    // 9) Salidas de Inventario con cuenta configurada — Autoconsumo/Avería (combinados),
+    // Muestras a Clientes, Pérdida/Merma y Costo de Venta (separado Mercancía vs Producción).
+    // La cuenta de Inventario depende de la CATEGORÍA real del ítem (Materia Prima, Consumibles,
+    // Productos Terminados, etc. — el campo "category" en Inventario, no el almacén físico).
+    // Si a una salida le falta su cuenta de débito o de inventario configurada, se omite.
     {
-      const TIPO_CUENTA_SALIDA = {
-        'AUTOCONSUMO': ['autoconsumoId','autoconsumoNombre'],
-        'MUESTRA': ['regaliaId','regaliaNombre'],
-        'AVERIA': ['averiaId','averiaNombre'],
-        'PERDIDA': ['perdidaId','perdidaNombre'],
-        'SALIDA': ['costoProduccionId','costoProduccionNombre'],
+      const CATEGORIA_A_BALDE = {
+        'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
+        'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
+        'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
+        'Consumibles':'CONSUMIBLES',
+        'Productos Terminados':'TERMINADOS',
+      };
+      const CUENTA_INVENTARIO_POR_BALDE = {
+        'MATERIA_PRIMA': ['invMateriaPrimaId','invMateriaPrimaNombre'],
+        'CONSUMIBLES': ['invConsumiblesId','invConsumiblesNombre'],
+        'TERMINADOS': ['invTerminadosId','invTerminadosNombre'],
+      };
+      const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
+      const balderDeMovimiento = (m) => {
+        const item = itemPorId[m.itemId];
+        return CATEGORIA_A_BALDE[item?.category] || 'MATERIA_PRIMA'; // si el ítem no existe o no tiene categoría reconocida, cae en Materia Prima por defecto
+      };
+      const cuentaDebitoPorMovimiento = (m, balde) => {
+        if (m.type==='SALIDA') return balde==='TERMINADOS' ? ['costoVentaMercanciaId','costoVentaMercanciaNombre'] : ['costoVentaProduccionId','costoVentaProduccionNombre'];
+        if (m.type==='AUTOCONSUMO' || m.type==='AVERIA') return ['consumosInternosId','consumosInternosNombre'];
+        if (m.type==='MUESTRA') return ['muestrasClientesId','muestrasClientesNombre'];
+        if (m.type==='PERDIDA') return cuentasProduccionCfg.perdidaId ? ['perdidaId','perdidaNombre'] : ['consumosInternosId','consumosInternosNombre'];
+        return null;
       };
       const tasaDefecto = Number(settings?.tasaBCV||0)||1;
       (invMovements||[]).forEach(m=>{
-        const claves = TIPO_CUENTA_SALIDA[m.type];
-        if (!claves) return; // tipo de movimiento no contemplado (ENTRADA, TRASLADO, etc.)
-        const [campoId, campoNombre] = claves;
-        const cuentaDebitoNombre = cuentasProduccionCfg[campoNombre];
-        const cuentaInventarioNombre = cuentasProduccionCfg.inventarioNombre;
-        if (!cuentasProduccionCfg[campoId] || !cuentasProduccionCfg.inventarioId) return; // sin configurar, se omite
+        if (!['SALIDA','AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return;
+        const balde = balderDeMovimiento(m);
+        const claveInv = CUENTA_INVENTARIO_POR_BALDE[balde];
+        const claveDebito = cuentaDebitoPorMovimiento(m, balde);
+        if (!claveInv || !claveDebito) return;
+        const [invId, invNombreCampo] = claveInv;
+        const [debId, debNombreCampo] = claveDebito;
+        if (!cuentasProduccionCfg[invId] || !cuentasProduccionCfg[debId]) return; // sin configurar, se omite
         const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
         if (valor<=0) return;
-        const [codDebito, nomDebito] = cuentaDebitoNombre.split('—').map(s=>s.trim());
-        const [codInv, nomInv] = cuentaInventarioNombre.split('—').map(s=>s.trim());
+        const [codDebito, nomDebito] = cuentasProduccionCfg[debNombreCampo].split('—').map(s=>s.trim());
+        const [codInv, nomInv] = cuentasProduccionCfg[invNombreCampo].split('—').map(s=>s.trim());
         const tasa = tasaDefecto;
         out.push({fecha:m.date||'', comprobante:m.docRef||m.id, modulo:'Producción', concepto:`${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`,
           lineas:[
@@ -17332,15 +17469,17 @@ function App() {
   };
   // ── Configuración de Cuentas Contables — Producción ──────────────────────────
   // Define a qué cuenta va cada tipo de salida de inventario (autoconsumo, regalía a
-  // cliente, avería, pérdida/merma) y la cuenta de costo cuando la salida es a producción/
-  // venta normal, más la cuenta de Inventario (contrapartida en crédito en todos los casos).
+  // cliente, consumo interno/avería combinados) y la cuenta de costo (separada Mercancía vs
+  // Producción), más una cuenta de Inventario por cada almacén (contrapartida en crédito).
   const [showCuentasProduccionModal, setShowCuentasProduccionModal] = useState(false);
   const [cuentasProduccionCfg, setCuentasProduccionCfg] = useState({
-    inventarioId:'', inventarioNombre:'',
-    costoProduccionId:'', costoProduccionNombre:'',
-    autoconsumoId:'', autoconsumoNombre:'',
-    regaliaId:'', regaliaNombre:'',
-    averiaId:'', averiaNombre:'',
+    invMateriaPrimaId:'', invMateriaPrimaNombre:'',
+    invConsumiblesId:'', invConsumiblesNombre:'',
+    invTerminadosId:'', invTerminadosNombre:'',
+    costoVentaMercanciaId:'', costoVentaMercanciaNombre:'',
+    costoVentaProduccionId:'', costoVentaProduccionNombre:'',
+    consumosInternosId:'', consumosInternosNombre:'',
+    muestrasClientesId:'', muestrasClientesNombre:'',
     perdidaId:'', perdidaNombre:'',
   });
   useEffect(()=>{
@@ -19334,12 +19473,16 @@ function App() {
                     <button onClick={()=>setShowCuentasProduccionModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
                   </div>
                   <p className="text-[11px] text-gray-500">Define a qué cuenta va cada tipo de salida de inventario. Se configuran una sola vez y generan el asiento contable automáticamente — Inventario en crédito, y la cuenta correspondiente en débito.</p>
-                  <CampoCuenta label="Inventario (contrapartida en crédito)" campo="inventario" hint="Se usa en el crédito de toda salida — el activo que sale del almacén."/>
-                  <CampoCuenta label="Costo de Producción / Costo de Venta" campo="costoProduccion" hint="Salidas normales a producción o venta (tipo SALIDA)."/>
-                  <CampoCuenta label="Autoconsumo" campo="autoconsumo" hint="Salidas por uso interno de la empresa (tipo AUTOCONSUMO)."/>
-                  <CampoCuenta label="Regalía a Cliente" campo="regalia" hint="Muestras entregadas a clientes (tipo MUESTRA)."/>
-                  <CampoCuenta label="Avería" campo="averia" hint="Salidas por daño del producto (tipo AVERIA)."/>
-                  <CampoCuenta label="Pérdida / Merma" campo="perdida" hint="Salidas por pérdida o merma (tipo PERDIDA)."/>
+                  <p className="text-[10px] font-black text-gray-500 uppercase pt-1">Inventario por almacén (crédito)</p>
+                  <CampoCuenta label="Inventario — Materia Prima" campo="invMateriaPrima"/>
+                  <CampoCuenta label="Inventario — Consumibles" campo="invConsumibles"/>
+                  <CampoCuenta label="Inventario — Productos Terminados / Mercancía" campo="invTerminados" hint="El sistema no distingue una categoría 'Mercancía' aparte — se usa Productos Terminados para lo que ya está listo para vender."/>
+                  <p className="text-[10px] font-black text-gray-500 uppercase pt-2">Cuentas de débito por tipo de salida</p>
+                  <CampoCuenta label="Costo de Venta (Mercancía)" campo="costoVentaMercancia" hint="Salidas normales del almacén de Mercancía."/>
+                  <CampoCuenta label="Costo de Venta (Producción)" campo="costoVentaProduccion" hint="Salidas normales de Materia Prima, Consumibles o Terminados."/>
+                  <CampoCuenta label="Consumos Internos / Averías" campo="consumosInternos" hint="Autoconsumo y avería van a la misma cuenta (tipos AUTOCONSUMO y AVERIA)."/>
+                  <CampoCuenta label="Muestras Clientes" campo="muestrasClientes" hint="Muestras entregadas a clientes (tipo MUESTRA)."/>
+                  <CampoCuenta label="Pérdida / Merma" campo="perdida" hint="Opcional — si se deja vacío, usa Consumos Internos / Averías."/>
                   <div className="flex gap-2 pt-2">
                     <button onClick={()=>setShowCuentasProduccionModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
                     <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
