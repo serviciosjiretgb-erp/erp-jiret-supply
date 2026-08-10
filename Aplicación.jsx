@@ -12280,7 +12280,6 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (facturasVentaC||[]).filter(f=>{
       if (f.esAnulacionFiscal) return false;
-      if (!f.opAsignada && !(f.opsAsignadas&&f.opsAsignadas.length>0)) return false; // Costo de Producción es solo lo que tiene OP
       const items = f.itemsFacturados||[];
       if (!items.some(it=>Number(it.costoTotal||0)>0)) return false;
       const fecha = f.fecha||'';
@@ -12296,20 +12295,22 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         const balde = CATEGORIA_A_BALDE_CC[invItem?.category] || 'MATERIA_PRIMA';
         if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
       });
+      const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
       const tasaUsar = tasasManualesProdC[f.id] || Number(settingsCC?.tasaBCV||0) || 1;
-      const [codDeb,nomDeb] = partirCuenta(cfg.costoVentaProduccionNombre);
+      // Con OP: el costo va a Costo de Venta (Producción). Sin OP: va a Costo de Venta
+      // (Mercancía). Son cuentas distintas, ambas configuradas en Producción.
+      const [codDeb,nomDeb] = partirCuenta(tieneOp ? cfg.costoVentaProduccionNombre : cfg.costoVentaMercanciaNombre);
       const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
       const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
       const [codInvTerm,nomInvTerm] = partirCuenta(cfg.invTerminadosNombre);
       const totalVal = totalMP+totalCons+totalTerm;
-      const lineas = [{codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:totalVal*tasaUsar, hBs:0, dUSD:totalVal, hUSD:0, detalle:'Costo de venta de la factura'}];
+      const lineas = [{codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:totalVal*tasaUsar, hBs:0, dUSD:totalVal, hUSD:0, detalle:tieneOp?'Costo de venta (con OP)':'Costo de venta (sin OP)'}];
       if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, tipo:'H', dBs:0, hBs:totalMP*tasaUsar, dUSD:0, hUSD:totalMP, detalle:'Materia Prima'});
       if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, tipo:'H', dBs:0, hBs:totalCons*tasaUsar, dUSD:0, hUSD:totalCons, detalle:'Consumibles'});
       if (totalTerm>0.005) lineas.push({codigo:codInvTerm, cuenta:nomInvTerm, tipo:'H', dBs:0, hBs:totalTerm*tasaUsar, dUSD:0, hUSD:totalTerm, detalle:'Productos Terminados'});
-      const tieneOp = f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0);
       return {
         id: f.id, comprobante: f.nroFiscal||f.documento||f.id, fecha: f.fecha||'', doc: f.nroFiscal||f.documento||'—',
-        tasa: tasaUsar, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${tieneOp?' · OP:'+(f.opAsignada||f.opsAsignadas[0]):''}`, _raw:f,
+        tasa: tasaUsar, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${tieneOp?' · OP:'+(f.opAsignada||f.opsAsignadas[0]):' · Sin OP'}`, _raw:f,
         lineas,
       };
     }).filter(x => x.lineas.some(l=>l.dUSD>0||l.hUSD>0)); // por si acaso, aunque ya se filtró arriba
@@ -12321,6 +12322,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (invMovementsC||[]).filter(m=>{
       if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return false;
+      if (m.status==='ANULADO') return false;
       if (/^MOV-\d+-/.test(m.docRef||'')) return false; // generado por transformación/carga masiva, no es autoconsumo real
       if (filtDesde && m.date < filtDesde) return false;
       if (filtHasta && m.date > filtHasta) return false;
@@ -13753,7 +13755,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
-            <p className="text-[10px] text-gray-400 ml-auto">{lineasProd.length} {esCostos?'OP(s)':'salida(s)'} · Total ${contFmt(totalUSD)}</p>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasProd.length} {esCostos?'factura(s)':'salida(s)'} · Total ${contFmt(totalUSD)}</p>
             <BotonesExportCC tabId={tabIdActual}/>
           </div>
           {faltaConfig && (
@@ -13796,7 +13798,7 @@ ${valoresHtml}
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={6} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} {esCostos?'OP(s)':'salida(s)'}</td>
+                  <td colSpan={6} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} {esCostos?'factura(s)':'salida(s)'}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
@@ -14801,7 +14803,7 @@ function App() {
       };
       const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
       const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : null;
-      (invoices||[]).filter(f=>!f.esAnulacionFiscal && (f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0))).forEach(f=>{
+      (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
         let totalMP=0, totalCons=0, totalTerm=0;
         (f.itemsFacturados||[]).forEach(it=>{
           const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
@@ -14811,7 +14813,8 @@ function App() {
           if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
         });
         if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005) return;
-        const debC = partirCuenta(cuentasProduccionCfg.costoVentaProduccionNombre);
+        const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+        const debC = partirCuenta(tieneOp ? cuentasProduccionCfg.costoVentaProduccionNombre : cuentasProduccionCfg.costoVentaMercanciaNombre);
         const invMPC = partirCuenta(cuentasProduccionCfg.invMateriaPrimaNombre);
         const invConsC = partirCuenta(cuentasProduccionCfg.invConsumiblesNombre);
         const invTermC = partirCuenta(cuentasProduccionCfg.invTerminadosNombre);
@@ -14822,7 +14825,7 @@ function App() {
         if (totalMP>0.005) lineas.push({codigo:invMPC[0], cuenta:invMPC[1], debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP});
         if (totalCons>0.005) lineas.push({codigo:invConsC[0], cuenta:invConsC[1], debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons});
         if (totalTerm>0.005) lineas.push({codigo:invTermC[0], cuenta:invTermC[1], debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm});
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${tieneOp?'':' · Sin OP'}`, lineas});
       });
     }
     // 9b) Consumos Internos / Muestras Clientes — Autoconsumo, Avería (combinados), Muestra y
@@ -14842,6 +14845,7 @@ function App() {
       const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
       (invMovements||[]).forEach(m=>{
         if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return;
+        if (m.status==='ANULADO') return;
         if (/^MOV-\d+-/.test(m.docRef||'')) return; // generado por transformación/carga masiva, no es autoconsumo real
         const item = itemPorId[m.itemId];
         const balde = CATEGORIA_A_BALDE[item?.category] || 'MATERIA_PRIMA';
@@ -15542,6 +15546,8 @@ function App() {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterProduct, setFilterProduct] = useState('');
+  const [filterTipoMov, setFilterTipoMov] = useState('TODOS');
+  const [editandoMov, setEditandoMov] = useState(null);
   const [osaFilterDate, setOsaFilterDate] = useState('');
   const [osaFilterNum, setOsaFilterNum] = useState('');
   const [kardexDateFrom, setKardexDateFrom] = useState('');
@@ -19745,8 +19751,8 @@ function App() {
                   <CampoCuenta label="Inventario — Consumibles" campo="invConsumibles"/>
                   <CampoCuenta label="Inventario — Productos Terminados / Mercancía" campo="invTerminados" hint="El sistema no distingue una categoría 'Mercancía' aparte — se usa Productos Terminados para lo que ya está listo para vender."/>
                   <p className="text-[10px] font-black text-gray-500 uppercase pt-2">Cuentas de débito por tipo de salida</p>
-                  <CampoCuenta label="Costo de Venta (Mercancía)" campo="costoVentaMercancia" hint="Salidas normales del almacén de Mercancía."/>
-                  <CampoCuenta label="Costo de Venta (Producción)" campo="costoVentaProduccion" hint="Salidas normales de Materia Prima, Consumibles o Terminados."/>
+                  <CampoCuenta label="Costo de Venta (Mercancía)" campo="costoVentaMercancia" hint="Facturas SIN Orden de Producción asociada."/>
+                  <CampoCuenta label="Costo de Venta (Producción)" campo="costoVentaProduccion" hint="Facturas CON Orden de Producción asociada."/>
                   <CampoCuenta label="Consumos Internos / Averías" campo="consumosInternos" hint="Autoconsumo y avería van a la misma cuenta (tipos AUTOCONSUMO y AVERIA)."/>
                   <CampoCuenta label="Muestras Clientes" campo="muestrasClientes" hint="Muestras entregadas a clientes (tipo MUESTRA)."/>
                   <CampoCuenta label="Pérdida / Merma" campo="perdida" hint="Opcional — si se deja vacío, usa Consumos Internos / Averías."/>
@@ -20104,7 +20110,7 @@ function App() {
       const isEntradas = invView === 'entradas';
       const tipos = isEntradas
         ? [{val:'ENTRADA', label:'ENTRADA (COMPRA/PRODUCCIÓN)'}, {val:'ENTRADA_DEVOLUCION', label:'ENTRADA POR DEVOLUCIÓN'}, {val:'ENTRADA_INICIAL', label:'INVENTARIO INICIAL'}]
-        : [{val:'AUTOCONSUMO', label:'AUTOCONSUMO (USO INTERNO)'}, {val:'SALIDA', label:'SALIDA A PRODUCCIÓN'}, {val:'AVERIA', label:'AVERÍA / DAÑO'}, {val:'MUESTRA', label:'MUESTRA'}, {val:'DEVOLUCION', label:'DEVOLUCIÓN A PROVEEDOR'}, {val:'PERDIDA', label:'PÉRDIDA / MERMA'}];
+        : [{val:'AUTOCONSUMO', label:'AUTOCONSUMO (USO INTERNO)'}, {val:'SALIDA', label:'SALIDA A PRODUCCIÓN'}, {val:'TRANSFORMACION', label:'TRANSFORMACIÓN'}, {val:'AVERIA', label:'AVERÍA / DAÑO'}, {val:'MUESTRA', label:'MUESTRA'}, {val:'DEVOLUCION', label:'DEVOLUCIÓN A PROVEEDOR'}, {val:'PERDIDA', label:'PÉRDIDA / MERMA'}];
       const tipoVals = tipos.map(t=>t.val);
       const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
@@ -20399,7 +20405,11 @@ function App() {
                   className="border-2 border-gray-200 rounded-xl px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-400"/>
                 <input type="date" value={filterDateTo} onChange={e=>setFilterDateTo(e.target.value)} title="Hasta"
                   className="border-2 border-gray-200 rounded-xl px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-400"/>
-                {(filterProduct||filterDateFrom||filterDateTo) && <button onClick={()=>{setFilterProduct('');setFilterDateFrom('');setFilterDateTo('');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
+                <select value={filterTipoMov} onChange={e=>setFilterTipoMov(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-400">
+                  <option value="TODOS">Todos los tipos</option>
+                  {tipos.map(t=><option key={t.val} value={t.val}>{t.label}</option>)}
+                </select>
+                {(filterProduct||filterDateFrom||filterDateTo||filterTipoMov!=='TODOS') && <button onClick={()=>{setFilterProduct('');setFilterDateFrom('');setFilterDateTo('');setFilterTipoMov('TODOS');}} className="text-[9px] font-black text-red-500 uppercase hover:underline">✕ Limpiar</button>}
                 <button onClick={()=>{ setMovForm({itemId:'',qty:'',unitCost:'',docRef:'',notes:'',date:getTodayDate(), type: isEntradas ? 'ENTRADA' : 'AUTOCONSUMO'}); setShowMovForm(true); }} className="bg-black text-white px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-800 flex items-center gap-2">
                   <Plus size={13}/> {isEntradas ? 'Nueva Entrada' : 'Nueva Salida'}
                 </button>
@@ -20433,10 +20443,11 @@ function App() {
                         if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
                         if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
                         if(filterDateTo && (m.date||'') > filterDateTo) return false;
+                        if(filterTipoMov!=='TODOS' && m.type!==filterTipoMov) return false;
                         return true;
                       }).map(m => (
-                        <tr key={m.id||m.timestamp} className="hover:bg-gray-50">
-                          <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}</td>
+                        <tr key={m.id||m.timestamp} className={`hover:bg-gray-50 ${m.status==='ANULADO'?'opacity-40 bg-gray-50':''}`}>
+                          <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}{m.status==='ANULADO'&&<span className="ml-1.5 px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 text-[8px] font-black uppercase">Anulado</span>}</td>
                           <td className="py-2.5 px-3 border-r"><span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span><span className="text-[9px] text-gray-400">{m.itemDesc||''}</span></td>
                           <td className="py-2.5 px-3 border-r text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isEntradas?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type?.replace(/_/g,' ')}</span></td>
                           <td className="py-2.5 px-3 border-r text-center font-black">{formatNum(m.qty)}</td>
@@ -20446,6 +20457,7 @@ function App() {
                           <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.docRef||'—'} {m.notes&&<span className="text-gray-300">| {m.notes}</span>}</td>
                           <td className="py-2.5 px-3 text-center no-pdf">
                             <div className="flex gap-1 justify-center">
+                              {m.status!=='ANULADO' && <button onClick={()=>setEditandoMov({...m})} className="p-1 bg-amber-50 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white" title="Editar detalle"><Edit size={11}/></button>}
                               <button onClick={()=>{
                                 const w = window.open('','_blank');
                                 const nroControl = (isEntradas ? 'OEA-' : 'OSA-') + new Date().getFullYear() + '-' + String(m.timestamp||Date.now()).slice(-5);
@@ -20527,7 +20539,19 @@ function App() {
 </body></html>`);
                                 w.document.close();
                               }} className="p-1 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Imprimir Orden"><Printer size={11}/></button>
-                              <button onClick={()=>requireAdminPassword(async()=>{const inv=(inventory||[]).find(i=>i.id===m.itemId);if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});await deleteDoc(getDocRef('inventoryMovements',m.id));},'Eliminar y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={11}/></button>
+                              {m.status!=='ANULADO' && <button onClick={()=>requireAdminPassword(async()=>{
+                                const inv=(inventory||[]).find(i=>i.id===m.itemId);
+                                if(inv){
+                                  const stockActual = parseNum(inv.stock||0);
+                                  // Entrada anulada: se resta lo que había sumado. Salida anulada: se devuelve
+                                  // (se suma) lo que había restado. Siempre sobre el stock ACTUAL, no sobre
+                                  // previousStock — si hubo movimientos después de este, no se pisan.
+                                  const nuevoStock = isEntradas ? stockActual - parseNum(m.qty||0) : stockActual + parseNum(m.qty||0);
+                                  await updateDoc(getDocRef('inventory', m.itemId), {stock: Math.max(0,nuevoStock)});
+                                }
+                                await updateDoc(getDocRef('inventoryMovements', m.id), {status:'ANULADO', anuladoEn:Date.now(), anuladoPor:appUser?.name||'—'});
+                              }, 'Anular movimiento y devolver stock')} className="p-1 bg-purple-50 text-purple-500 rounded-lg hover:bg-purple-500 hover:text-white" title="Anular y devolver a almacén"><Ban size={11}/></button>}
+                              <button onClick={()=>requireAdminPassword(async()=>{const inv=(inventory||[]).find(i=>i.id===m.itemId);if(inv) await updateDoc(getDocRef('inventory',m.itemId),{stock:m.previousStock});await deleteDoc(getDocRef('inventoryMovements',m.id));},'Eliminar y revertir stock')} className="p-1 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar definitivamente"><Trash2 size={11}/></button>
                             </div>
                           </td>
                         </tr>
@@ -20535,10 +20559,10 @@ function App() {
                     </tbody>
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
                       <tr>
-                        <td colSpan="3" className="py-2.5 px-3 text-[10px] uppercase text-gray-500">Total: {movs.length} registros</td>
-                        <td className="py-2.5 px-3 text-center">{formatNum(movs.reduce((s,m)=>s+parseNum(m.qty),0))}</td>
+                        <td colSpan="3" className="py-2.5 px-3 text-[10px] uppercase text-gray-500">Total: {movs.filter(m=>m.status!=='ANULADO').length} registros{movs.some(m=>m.status==='ANULADO')?` (+${movs.filter(m=>m.status==='ANULADO').length} anulado(s), no cuentan)`:''}</td>
+                        <td className="py-2.5 px-3 text-center">{formatNum(movs.filter(m=>m.status!=='ANULADO').reduce((s,m)=>s+parseNum(m.qty),0))}</td>
                         <td></td>
-                        <td className="py-2.5 px-3 text-right">${formatNum(movs.reduce((s,m)=>s+parseNum(m.totalValue||0),0))}</td>
+                        <td className="py-2.5 px-3 text-right">${formatNum(movs.filter(m=>m.status!=='ANULADO').reduce((s,m)=>s+parseNum(m.totalValue||0),0))}</td>
                         <td colSpan="3"></td>
                       </tr>
                     </tfoot>
@@ -20547,6 +20571,52 @@ function App() {
               )}
             </div>
           </div>
+          {editandoMov && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setEditandoMov(null)}>
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-3" onClick={e=>e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-lg text-gray-800">✏️ Editar Detalle</h3>
+                  <button onClick={()=>setEditandoMov(null)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                </div>
+                <p className="text-[10px] text-gray-400">{editandoMov.itemId} — {editandoMov.itemDesc}</p>
+                <p className="text-[10px] text-amber-600 bg-amber-50 rounded-lg px-3 py-2 font-bold">⚠ La cantidad no se puede editar aquí (afecta el stock en cadena). Para corregir cantidad, elimina el registro y créalo de nuevo.</p>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                  <input type="date" value={editandoMov.date||''} onChange={e=>setEditandoMov(x=>({...x,date:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo de Operación</label>
+                  <select value={editandoMov.type||''} onChange={e=>setEditandoMov(x=>({...x,type:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                    {tipos.map(t=><option key={t.val} value={t.val}>{t.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Costo Unitario ($)</label>
+                  <input type="number" step="0.01" value={editandoMov.unitCost||''} onChange={e=>setEditandoMov(x=>({...x,unitCost:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Referencia (Doc.)</label>
+                  <input value={editandoMov.docRef||''} onChange={e=>setEditandoMov(x=>({...x,docRef:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Notas</label>
+                  <input value={editandoMov.notes||''} onChange={e=>setEditandoMov(x=>({...x,notes:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button onClick={()=>setEditandoMov(null)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                  <button onClick={()=>requireAdminPassword(async()=>{
+                    const nuevoCosto = parseFloat(editandoMov.unitCost)||0;
+                    const nuevoTotal = nuevoCosto*parseNum(editandoMov.qty||0);
+                    await updateDoc(getDocRef('inventoryMovements', editandoMov.id), {
+                      date: editandoMov.date, type: editandoMov.type, unitCost: nuevoCosto, totalValue: nuevoTotal,
+                      docRef: editandoMov.docRef||'', notes: editandoMov.notes||'',
+                    });
+                    setEditandoMov(null);
+                  }, 'Editar detalle del movimiento')} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
