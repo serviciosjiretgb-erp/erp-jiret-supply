@@ -11585,6 +11585,37 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [invMovementsC, setInvMovementsC] = useState([]);
   const [inventoryC, setInventoryC] = useState([]);
   const [cuentasProduccionCfgC, setCuentasProduccionCfgC] = useState({});
+  const [requirementsC, setRequirementsC] = useState([]);
+  const [invRequisitionsC, setInvRequisitionsC] = useState([]);
+  const [tasasManualesProdC, setTasasManualesProdC] = useState({});
+  const [fetchingBCV, setFetchingBCV] = useState(false);
+  const fetchTasaBCV = async (fecha) => {
+    setFetchingBCV(true);
+    try{
+      const hoy = new Date().toISOString().slice(0,10);
+      if(!fecha || fecha===hoy){
+        const r = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if(!r.ok) throw new Error('No se pudo consultar la tasa BCV ahora mismo.');
+        const d = await r.json();
+        const tasa = parseFloat(d.promedio || d.venta || 0);
+        if(!tasa || tasa<=0) throw new Error('La respuesta de la API no trajo una tasa válida.');
+        return tasa;
+      }
+      const r = await fetch('https://ve.dolarapi.com/v1/historicos/dolares/oficial');
+      if(!r.ok) throw new Error('No se pudo consultar el histórico BCV ahora mismo.');
+      const historico = await r.json();
+      const candidatos = historico.filter(h=>h.fecha<=fecha).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+      const tasa = parseFloat(candidatos[0]?.promedio || candidatos[0]?.venta || 0);
+      if(!tasa || tasa<=0) throw new Error('No hay tasa histórica disponible para esa fecha.');
+      return tasa;
+    }catch(e){ alert('Error al consultar BCV: '+e.message); return null; }
+    finally{ setFetchingBCV(false); }
+  };
+  const guardarTasaManualProd = async (id, tasa) => {
+    setTasasManualesProdC(x=>({...x,[id]:tasa})); // optimista
+    try{ await setDoc(doc(db,'produccion_tasas_manuales',id),{tasa,ts:Date.now()},{merge:true}); }
+    catch(e){ alert('No se pudo guardar la tasa: '+e.message); }
+  };
   const [nominaImportando, setNominaImportando] = useState(false);
   const [showAjusteModal, setShowAjusteModal] = useState(false);
   const [ajusteEditando, setAjusteEditando] = useState(null);
@@ -11635,6 +11666,9 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       onSnapshot(getColRef('inventoryMovements'), s => setInvMovementsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('inventory'), s => setInventoryC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(doc(db,'settings','produccionCuentasContables'), d => d.exists() && setCuentasProduccionCfgC(d.data())),
+      onSnapshot(getColRef('requirements'), s => setRequirementsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('invRequisitions'), s => setInvRequisitionsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('produccion_tasas_manuales'), s => setTasasManualesProdC(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa])))),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
       onSnapshot(doc(db,'settings','general'), d => { if(d.exists()) setSettingsCC(d.data()); }),
       onSnapshot(getDocRef('settings','actividadEconomica'), d => { if(d.exists()) setAeCfgCC(d.data()); }),
@@ -12166,11 +12200,52 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
     'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
   };
-  const construirLineasSalidasInventario = (tipos) => {
-    const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
+  const partirCuenta = (nombreCompleto) => nombreCompleto ? nombreCompleto.split('—').map(s=>s.trim()) : ['⚠️ Sin configurar',''];
+  // Costos de Producción: sale del consumo REAL de cada OP cerrada — sus requisiciones de
+  // inventario aprobadas, valoradas al costo actual del ítem (qty × cost), separado Materia
+  // Prima vs Consumibles para que cada uno salga de su propia cuenta de inventario en crédito.
+  const construirLineasCostosProduccion = () => {
     const cfg = cuentasProduccionCfgC;
+    const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
+    const normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
+    return (requirementsC||[]).filter(r=>{
+      if (r.status !== 'COMPLETADO') return false;
+      const f = r.fechaCierre || r.fecha || '';
+      if (filtDesde && f < filtDesde) return false;
+      if (filtHasta && f > filtHasta) return false;
+      return true;
+    }).sort((a,b)=>(b.fechaCierre||b.fecha||'').localeCompare(a.fechaCierre||a.fecha||'')).map(r=>{
+      const reqs = (invRequisitionsC||[]).filter(rq => normOp(rq.opId)===normOp(r.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(rq.status));
+      let totalMP = 0, totalCons = 0;
+      reqs.forEach(rq=>{
+        (rq.items||[]).forEach(it=>{
+          const invItem = itemPorId[it.id];
+          const val = Number(it.qty||0) * Number(invItem?.cost||0);
+          if ((CATEGORIA_A_BALDE_CC[invItem?.category]||'MATERIA_PRIMA')==='CONSUMIBLES') totalCons += val; else totalMP += val;
+        });
+      });
+      const tasaUsar = tasasManualesProdC[r.id] || Number(settingsCC?.tasaBCV||0) || 1;
+      const [codDeb,nomDeb] = partirCuenta(cfg.costoVentaProduccionNombre);
+      const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
+      const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
+      const totalVal = totalMP+totalCons;
+      const lineas = [{codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:totalVal*tasaUsar, hBs:0, dUSD:totalVal, hUSD:0, detalle:'Consumo total de la OP'}];
+      if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, tipo:'H', dBs:0, hBs:totalMP*tasaUsar, dUSD:0, hUSD:totalMP, detalle:'Materia Prima consumida'});
+      if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, tipo:'H', dBs:0, hBs:totalCons*tasaUsar, dUSD:0, hUSD:totalCons, detalle:'Consumibles consumidos'});
+      return {
+        id: r.id, comprobante: r.id, fecha: r.fechaCierre||r.fecha||'', doc: r.id,
+        tasa: tasaUsar, conc: `OP ${String(r.id).replace('OP-','')} — ${r.client||r.desc||r.categoria||''}`, _raw:r,
+        lineas,
+      };
+    }).filter(x => x.lineas.some(l=>l.dUSD>0||l.hUSD>0)); // omite OPs cerradas sin consumo registrado todavía
+  };
+  // Consumos Internos: autoconsumo, avería, muestras y pérdida — vienen directo de los
+  // movimientos de Salida en Control de Inventario, cada uno con su propia tasa editable.
+  const construirLineasConsumosInternos = () => {
+    const cfg = cuentasProduccionCfgC;
+    const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (invMovementsC||[]).filter(m=>{
-      if (!tipos.includes(m.type)) return false;
+      if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return false;
       if (filtDesde && m.date < filtDesde) return false;
       if (filtHasta && m.date > filtHasta) return false;
       return true;
@@ -12178,29 +12253,21 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       const item = itemPorId[m.itemId];
       const balde = CATEGORIA_A_BALDE_CC[item?.category] || 'MATERIA_PRIMA';
       const claveInv = {'MATERIA_PRIMA':'invMateriaPrima','CONSUMIBLES':'invConsumibles','TERMINADOS':'invTerminados'}[balde];
-      const cuentaInvNombre = cfg[`${claveInv}Nombre`]||'';
-      const claveDeb = m.type==='SALIDA'
-        ? (balde==='TERMINADOS'?'costoVentaMercancia':'costoVentaProduccion')
-        : m.type==='MUESTRA' ? 'muestrasClientes'
-        : m.type==='PERDIDA' ? (cfg.perdidaId?'perdida':'consumosInternos')
-        : 'consumosInternos';
-      const cuentaDebNombre = cfg[`${claveDeb}Nombre`]||'';
+      const claveDeb = m.type==='MUESTRA' ? 'muestrasClientes' : m.type==='PERDIDA' ? (cfg.perdidaId?'perdida':'consumosInternos') : 'consumosInternos';
       const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
-      const tasaUsar = Number(settingsCC?.tasaBCV||0)||1;
-      const [codDeb,nomDeb] = cuentaDebNombre ? cuentaDebNombre.split('—').map(s=>s.trim()) : ['⚠️ Sin configurar',''];
-      const [codInv,nomInv] = cuentaInvNombre ? cuentaInvNombre.split('—').map(s=>s.trim()) : ['⚠️ Sin configurar',''];
+      const tasaUsar = tasasManualesProdC[m.id] || Number(settingsCC?.tasaBCV||0) || 1;
+      const [codDeb,nomDeb] = partirCuenta(cfg[`${claveDeb}Nombre`]);
+      const [codInv,nomInv] = partirCuenta(cfg[`${claveInv}Nombre`]);
       return {
         id: m.id, comprobante: m.docRef||m.id, fecha: m.date, doc: m.docRef||'—',
-        tasa: tasaUsar, conc: `${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`, _raw:m,
+        tasa: tasaUsar, conc: `${m.type} — ${m.itemDesc||m.itemId||''}`, _raw:m,
         lineas: [
-          {codigo:codDeb, cuenta:nomDeb||'(configura la cuenta en Producción)', tipo:'D', dBs:valor*tasaUsar, hBs:0, dUSD:valor, hUSD:0},
-          {codigo:codInv, cuenta:nomInv||'(configura la cuenta en Producción)', tipo:'H', dBs:0, hBs:valor*tasaUsar, dUSD:0, hUSD:valor},
+          {codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:valor*tasaUsar, hBs:0, dUSD:valor, hUSD:0, detalle:m.notes||''},
+          {codigo:codInv, cuenta:nomInv, tipo:'H', dBs:0, hBs:valor*tasaUsar, dUSD:0, hUSD:valor, detalle:''},
         ],
       };
     });
   };
-  const construirLineasCostosProduccion = () => construirLineasSalidasInventario(['SALIDA']);
-  const construirLineasConsumosInternos = () => construirLineasSalidasInventario(['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA']);
 
   const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:'', detalle:''});
 
@@ -12838,8 +12905,8 @@ ${valoresHtml}
   );
 
   const TABS_CC = [
-    { id:'banco', label:'Comprobante de Banco', icon:'🏦', activo:true },
-    { id:'caja', label:'Comprobante de Caja', icon:'💵', activo:true },
+    { id:'banco', label:'Banco', icon:'🏦', activo:true },
+    { id:'caja', label:'Caja', icon:'💵', activo:true },
     { id:'procura', label:'Procura (Ctas x Pagar)', icon:'📋', activo:true },
     { id:'ventas', label:'Ventas (Ctas x Cobrar)', icon:'🧾', activo:true },
     { id:'ret_cli', label:'Retenciones a Clientes', icon:'📋', activo:true },
@@ -12848,9 +12915,9 @@ ${valoresHtml}
     { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'nomina', label:'Nómina', icon:'💰', activo:true },
-    { id:'costos_produccion', label:'Costos de Producción y Ventas', icon:'🏭', activo:true },
-    { id:'consumos_internos', label:'Consumos Internos / Muestras Clientes', icon:'📦', activo:true },
-    { id:'relacionadas', label:'Cuentas por Pagar Relacionadas', icon:'🤝', activo:true },
+    { id:'costos_produccion', label:'Costos de Producción', icon:'🏭', activo:true },
+    { id:'consumos_internos', label:'Consumos Internos', icon:'📦', activo:true },
+    { id:'relacionadas', label:'Ctas x Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
   ];
   const activo = sub || initialSub || 'banco';
@@ -13513,7 +13580,6 @@ ${valoresHtml}
       const lineasProd = filtrarPorBusquedaCC(esCostos ? construirLineasCostosProduccion() : construirLineasConsumosInternos());
       const totalUSD = lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       const faltaConfig = !cuentasProduccionCfgC || Object.keys(cuentasProduccionCfgC).length===0;
-      const titulo = esCostos ? 'Costos de Producción y Ventas' : 'Consumos Internos / Muestras Clientes';
       const tabIdActual = esCostos ? 'costos_produccion' : 'consumos_internos';
       return (
         <div className="p-6 space-y-4">
@@ -13522,23 +13588,23 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
-            <p className="text-[10px] text-gray-400 ml-auto">{lineasProd.length} salida(s) · Total ${contFmt(totalUSD)}</p>
+            <p className="text-[10px] text-gray-400 ml-auto">{lineasProd.length} {esCostos?'OP(s)':'salida(s)'} · Total ${contFmt(totalUSD)}</p>
             <BotonesExportCC tabId={tabIdActual}/>
           </div>
           {faltaConfig && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ Las cuentas de Producción no están configuradas todavía. Ve al Panel Principal ERP — Producción y usa el botón "Configuración de Cuentas Contables" en la esquina superior derecha.</div>
           )}
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ {esCostos ? 'Salidas normales de inventario a producción o venta (tipo SALIDA), separadas por Costo de Venta (Mercancía/Terminados) o Costo de Producción según la categoría del ítem.' : 'Autoconsumo, avería, muestras a clientes y pérdida/merma — se generan automáticamente desde Control de Inventario, no se registran aquí manualmente.'}</div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ {esCostos ? 'Consumo real de Materia Prima y Consumibles de cada OP cerrada (requisiciones aprobadas), valorado en $. Ajusta la tasa por comprobante para convertir a Bs. con el tipo de cambio del día que corresponda.' : 'Autoconsumo, avería, muestras a clientes y pérdida/merma — se generan automáticamente desde Control de Inventario. Ajusta la tasa por comprobante si el tipo de cambio del día fue distinto al actual.'}</div>
           {lineasProd.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <Package size={36} className="mx-auto mb-2 opacity-40"/>
-              <p className="text-xs font-black uppercase">Sin movimientos para este período</p>
+              <p className="text-xs font-black uppercase">Sin {esCostos?'OPs cerradas con consumo':'movimientos'} para este período</p>
             </div>
           ):(
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'950px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta','T','Concepto','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=6&&i<=9?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+              <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'1100px'}}>
+                <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta','T','Detalle','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acción'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=6&&i<=10?'text-right':i===4||i===11?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
                   {lineasProd.flatMap((r,ri)=>r.lineas.map((l,li)=>(
@@ -13547,20 +13613,30 @@ ${valoresHtml}
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId={tabIdActual} compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
-                      <td className="px-3 py-2 text-gray-500">{li===0?r.conc:''}</td>
+                      <td className="px-3 py-2 text-gray-500">{l.detalle||''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className="px-3 py-2 text-center">{li===0 && (
+                        <div className="flex items-center gap-1 justify-center">
+                          <input type="number" step="0.0001" defaultValue={r.tasa} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0) guardarTasaManualProd(r.id, v);}}
+                            className="w-16 border border-gray-200 rounded px-1 py-1 text-[10px] font-bold text-center outline-none focus:border-orange-400" title="Tasa manual para este comprobante"/>
+                          <button disabled={fetchingBCV} title="Aplicar tasa BCV del día" onClick={async()=>{const t=await fetchTasaBCV(r.fecha); if(t) guardarTasaManualProd(r.id, t);}}
+                            className="px-1.5 py-1 bg-orange-50 text-orange-600 border border-orange-200 rounded hover:bg-orange-500 hover:text-white disabled:opacity-50">{fetchingBCV?'⏳':'🔄'}</button>
+                        </div>
+                      )}</td>
                     </tr>
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={5} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} salida(s)</td>
+                  <td colSpan={6} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} {esCostos?'OP(s)':'salida(s)'}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                  <td></td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -14548,18 +14624,47 @@ function App() {
           return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
         })});
     });
-    // 9) Salidas de Inventario con cuenta configurada — Autoconsumo/Avería (combinados),
-    // Muestras a Clientes, Pérdida/Merma y Costo de Venta (separado Mercancía vs Producción).
-    // La cuenta de Inventario depende de la CATEGORÍA real del ítem (Materia Prima, Consumibles,
-    // Productos Terminados, etc. — el campo "category" en Inventario, no el almacén físico).
-    // Si a una salida le falta su cuenta de débito o de inventario configurada, se omite.
+    // 9a) Costo de Producción — consumo REAL de cada OP cerrada (requisiciones de inventario
+    // aprobadas, valoradas al costo actual del ítem), separado Materia Prima vs Consumibles en
+    // el crédito. Usa tasa manual guardada por comprobante si existe, si no la tasa BCV actual.
     {
       const CATEGORIA_A_BALDE = {
         'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
         'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
         'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
-        'Consumibles':'CONSUMIBLES',
-        'Productos Terminados':'TERMINADOS',
+        'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
+      };
+      const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
+      const normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
+      const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : null;
+      (requirements||[]).filter(r=>r.status==='COMPLETADO').forEach(r=>{
+        const reqs = (invRequisitions||[]).filter(rq => normOp(rq.opId)===normOp(r.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(rq.status));
+        let totalMP=0, totalCons=0;
+        reqs.forEach(rq=>(rq.items||[]).forEach(it=>{
+          const invItem=itemPorId[it.id]; const val=Number(it.qty||0)*Number(invItem?.cost||0);
+          if((CATEGORIA_A_BALDE[invItem?.category]||'MATERIA_PRIMA')==='CONSUMIBLES') totalCons+=val; else totalMP+=val;
+        }));
+        if (totalMP<=0.005 && totalCons<=0.005) return;
+        const debC = partirCuenta(cuentasProduccionCfg.costoVentaProduccionNombre);
+        const invMPC = partirCuenta(cuentasProduccionCfg.invMateriaPrimaNombre);
+        const invConsC = partirCuenta(cuentasProduccionCfg.invConsumiblesNombre);
+        if (!debC || (totalMP>0.005 && !invMPC) || (totalCons>0.005 && !invConsC)) return; // sin configurar, se omite
+        const tasa = tasasManualesProdApp[r.id] || Number(settings?.tasaBCV||0) || 1;
+        const totalVal = totalMP+totalCons;
+        const lineas = [{codigo:debC[0], cuenta:debC[1], debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0}];
+        if (totalMP>0.005) lineas.push({codigo:invMPC[0], cuenta:invMPC[1], debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP});
+        if (totalCons>0.005) lineas.push({codigo:invConsC[0], cuenta:invConsC[1], debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons});
+        out.push({fecha:r.fechaCierre||r.fecha||'', comprobante:r.id, modulo:'Producción', concepto:`OP ${normOp(r.id)} — ${r.client||r.desc||r.categoria||''}`, lineas});
+      });
+    }
+    // 9b) Consumos Internos / Muestras Clientes — Autoconsumo, Avería (combinados), Muestra y
+    // Pérdida/Merma, desde Control de Inventario. Misma tasa manual editable que en 9a.
+    {
+      const CATEGORIA_A_BALDE = {
+        'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
+        'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
+        'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
+        'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
       };
       const CUENTA_INVENTARIO_POR_BALDE = {
         'MATERIA_PRIMA': ['invMateriaPrimaId','invMateriaPrimaNombre'],
@@ -14567,24 +14672,12 @@ function App() {
         'TERMINADOS': ['invTerminadosId','invTerminadosNombre'],
       };
       const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
-      const balderDeMovimiento = (m) => {
-        const item = itemPorId[m.itemId];
-        return CATEGORIA_A_BALDE[item?.category] || 'MATERIA_PRIMA'; // si el ítem no existe o no tiene categoría reconocida, cae en Materia Prima por defecto
-      };
-      const cuentaDebitoPorMovimiento = (m, balde) => {
-        if (m.type==='SALIDA') return balde==='TERMINADOS' ? ['costoVentaMercanciaId','costoVentaMercanciaNombre'] : ['costoVentaProduccionId','costoVentaProduccionNombre'];
-        if (m.type==='AUTOCONSUMO' || m.type==='AVERIA') return ['consumosInternosId','consumosInternosNombre'];
-        if (m.type==='MUESTRA') return ['muestrasClientesId','muestrasClientesNombre'];
-        if (m.type==='PERDIDA') return cuentasProduccionCfg.perdidaId ? ['perdidaId','perdidaNombre'] : ['consumosInternosId','consumosInternosNombre'];
-        return null;
-      };
-      const tasaDefecto = Number(settings?.tasaBCV||0)||1;
       (invMovements||[]).forEach(m=>{
-        if (!['SALIDA','AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return;
-        const balde = balderDeMovimiento(m);
+        if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return;
+        const item = itemPorId[m.itemId];
+        const balde = CATEGORIA_A_BALDE[item?.category] || 'MATERIA_PRIMA';
         const claveInv = CUENTA_INVENTARIO_POR_BALDE[balde];
-        const claveDebito = cuentaDebitoPorMovimiento(m, balde);
-        if (!claveInv || !claveDebito) return;
+        const claveDebito = m.type==='MUESTRA' ? ['muestrasClientesId','muestrasClientesNombre'] : m.type==='PERDIDA' ? (cuentasProduccionCfg.perdidaId?['perdidaId','perdidaNombre']:['consumosInternosId','consumosInternosNombre']) : ['consumosInternosId','consumosInternosNombre'];
         const [invId, invNombreCampo] = claveInv;
         const [debId, debNombreCampo] = claveDebito;
         if (!cuentasProduccionCfg[invId] || !cuentasProduccionCfg[debId]) return; // sin configurar, se omite
@@ -14592,7 +14685,7 @@ function App() {
         if (valor<=0) return;
         const [codDebito, nomDebito] = cuentasProduccionCfg[debNombreCampo].split('—').map(s=>s.trim());
         const [codInv, nomInv] = cuentasProduccionCfg[invNombreCampo].split('—').map(s=>s.trim());
-        const tasa = tasaDefecto;
+        const tasa = tasasManualesProdApp[m.id] || Number(settings?.tasaBCV||0) || 1;
         out.push({fecha:m.date||'', comprobante:m.docRef||m.id, modulo:'Producción', concepto:`${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`,
           lineas:[
             {codigo:codDebito, cuenta:nomDebito, debeBs:valor*tasa, haberBs:0, debeUSD:valor, haberUSD:0},
@@ -17493,6 +17586,11 @@ function App() {
       setDialog({title:'✅ Guardado',text:'Cuentas contables de Producción guardadas. Aplican a todas las salidas de inventario, incluidas las ya registradas.',type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
+  const [tasasManualesProdApp, setTasasManualesProdApp] = useState({});
+  useEffect(()=>{
+    const u=onSnapshot(getColRef('produccion_tasas_manuales'), s=>setTasasManualesProdApp(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa]))));
+    return()=>u();
+  },[]);
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
 
   const handleCreateInvoice = async (e) => {
