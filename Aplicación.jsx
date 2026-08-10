@@ -11628,6 +11628,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [ivaMesSel, setIvaMesSel] = useState(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;});
   const [ivaQuincenaSel, setIvaQuincenaSel] = useState(()=>new Date().getDate()<=15?1:2);
   const [tasasManualesIvaC, setTasasManualesIvaC] = useState({});
+  const [overridesIvaC, setOverridesIvaC] = useState({});
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
@@ -11717,14 +11718,25 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if (f<desde || f>hasta) return;
       retencionesPeriodo += pNum(r.montoRetenido||0);
     });
+    // Si el usuario escribió los montos exactos de Determinación de IVA para esta quincena,
+    // esos mandan sobre el cálculo automático — Determinación de IVA incluye ajustes manuales
+    // (Libro de Compras, NC/ND, quincena asignada de cada retención) que este cálculo directo
+    // desde facturas no puede replicar con exactitud.
+    const ov = overridesIvaC[claveQ] || {};
+    let totalDebitoAuto=totalDebito, totalCreditoAuto=totalCredito, retencionesPeriodoAuto=retencionesPeriodo;
+    if (ov.debito!=null) totalDebito = Number(ov.debito);
+    if (ov.credito!=null) totalCredito = Number(ov.credito);
+    if (ov.retencionesPeriodo!=null) retencionesPeriodo = Number(ov.retencionesPeriodo);
     // Arrastre de la quincena anterior: lo que no se pudo aplicar de retenciones, y el excedente
     // de crédito fiscal que quedó a favor, ambos siguen disponibles esta quincena. Si no hay
     // cierre anterior registrado (ej. la primera quincena que se usa este módulo), se usa el
     // arranque manual configurado en "Configurar Cuentas" — para igualar el saldo real que ya
     // traías de declaraciones anteriores fuera de este sistema.
     const cierreAnterior = (cierresIvaC||[]).find(c=>c.id===`IVA-${quincenaAnteriorDe(claveQ)}`);
-    const retencionesAcumuladasAnteriores = cierreAnterior ? Number(cierreAnterior.retencionesAcumuladasSiguiente||0) : Number(cuentasIvaCfgC.arranqueRetencionesAcumuladas||0);
-    const excedenteCreditoAnterior = cierreAnterior ? Number(cierreAnterior.excedenteCreditoSiguiente||0) : Number(cuentasIvaCfgC.arranqueExcedenteCredito||0);
+    let retencionesAcumuladasAnteriores = cierreAnterior ? Number(cierreAnterior.retencionesAcumuladasSiguiente||0) : Number(cuentasIvaCfgC.arranqueRetencionesAcumuladas||0);
+    let excedenteCreditoAnterior = cierreAnterior ? Number(cierreAnterior.excedenteCreditoSiguiente||0) : Number(cuentasIvaCfgC.arranqueExcedenteCredito||0);
+    if (ov.retencionesAcumuladasAnteriores!=null) retencionesAcumuladasAnteriores = Number(ov.retencionesAcumuladasAnteriores);
+    if (ov.excedenteCreditoAnterior!=null) excedenteCreditoAnterior = Number(ov.excedenteCreditoAnterior);
     // Cuota tributaria: lo que se debería enterar ANTES de aplicar retenciones — el excedente de
     // crédito de la quincena anterior también resta, como un crédito fiscal más.
     const cuotaTributaria = totalDebito - totalCredito - excedenteCreditoAnterior;
@@ -11739,8 +11751,15 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       retencionesAcumuladasSiguiente = retencionesDisponibles; // no había cuota contra la cual aplicarlas, se arrastran completas
     }
     return {desde, hasta, tasaQ, totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
+      totalDebitoAuto, totalCreditoAuto, retencionesPeriodoAuto,
       cuotaTributaria, montoAplicado, ivaPorPagarEfectivo, retencionesAcumuladasSiguiente, excedenteCreditoSiguiente,
       diferencia: ivaPorPagarEfectivo>0?ivaPorPagarEfectivo:-excedenteCreditoSiguiente};
+  };
+  const guardarOverrideIva = async (claveQ, campo, valor) => {
+    const nuevo = {...(overridesIvaC[claveQ]||{}), [campo]: valor===''?null:Number(valor)};
+    setOverridesIvaC(x=>({...x,[claveQ]:nuevo})); // optimista
+    try{ await setDoc(doc(db,'iva_overrides_manuales',claveQ), nuevo, {merge:true}); }
+    catch(e){ alert('No se pudo guardar: '+e.message); }
   };
   const generarCierreIva = async (claveQ) => {
     const {desde, hasta, tasaQ, totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
@@ -11837,6 +11856,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       onSnapshot(getColRef('produccion_tasas_manuales'), s => setTasasManualesProdC(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa])))),
       onSnapshot(getColRef('comprobantes_cierre_iva'), s => setCierresIvaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('iva_tasas_manuales'), s => setTasasManualesIvaC(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa])))),
+      onSnapshot(getColRef('iva_overrides_manuales'), s => setOverridesIvaC(Object.fromEntries(s.docs.map(d=>[d.id, d.data()])))),
       onSnapshot(doc(db,'settings','cuentasIva'), d => d.exists() && setCuentasIvaCfgC(d.data())),
       onSnapshot(doc(db,'settings','cuentasRetencionProveedor'), d => d.exists() && setCuentasRetProvCfgC(x=>({...x,...d.data()}))),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
@@ -13776,10 +13796,24 @@ ${valoresHtml}
     if (activo === 'cierre_iva') {
       const claveQ = claveQuincena(ivaMesSel, ivaQuincenaSel);
       const {tasaQ, totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
+        totalDebitoAuto, totalCreditoAuto, retencionesPeriodoAuto,
         cuotaTributaria, montoAplicado, ivaPorPagarEfectivo, retencionesAcumuladasSiguiente, excedenteCreditoSiguiente} = calcularTotalesIva(claveQ);
       const yaExiste = (cierresIvaC||[]).some(c=>c.id===`IVA-${claveQ}`);
       const cierresOrdenados = [...(cierresIvaC||[])].sort((a,b)=>(b.id||'').localeCompare(a.id||''));
       const usdQ = (bs) => tasaQ>0?bs/tasaQ:0;
+      const CampoEditable = ({label, campo, valor, valorAuto, bg, txt, sub}) => (
+        <div className={`${bg} border rounded-xl p-3`}>
+          <p className={`text-[9px] font-black ${txt} uppercase`}>{label}</p>
+          <div className="flex items-baseline gap-1 mt-1">
+            <span className={`text-sm font-black ${txt}`}>Bs.</span>
+            <input key={valor} type="number" step="0.01" defaultValue={valor.toFixed(2)}
+              onBlur={e=>guardarOverrideIva(claveQ, campo, e.target.value)}
+              className={`w-full bg-transparent text-lg font-black font-mono outline-none border-b-2 border-transparent focus:border-current ${txt}`}/>
+          </div>
+          {Math.abs(valor-valorAuto)>0.01 && <p className="text-[8px] text-gray-400 mt-0.5">Auto: Bs.{contFmt(valorAuto)}</p>}
+          {sub && <p className="text-[8px] text-gray-400 mt-0.5">{sub}</p>}
+        </div>
+      );
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
@@ -13806,17 +13840,10 @@ ${valoresHtml}
               <button onClick={()=>generarCierreIva(claveQ)} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5"><RefreshCw size={13}/> {yaExiste?'Regenerar':'Generar'} Cierre</button>
             </div>
           </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">✏️ Los campos con borde inferior son editables — escribe aquí los montos exactos de tu "Determinación de IVA" (Débitos, Créditos, Retenciones) para que el cierre cuadre perfecto con la declaración real. El sistema propone un cálculo automático, pero si no coincide, este campo manda.</div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-              <p className="text-[9px] font-black text-red-500 uppercase">IVA Débito Fiscal</p>
-              <p className="text-lg font-black text-red-700 font-mono mt-1">Bs.{contFmt(totalDebito)}</p>
-              <p className="text-[10px] text-red-400 font-mono">${contFmt(usdQ(totalDebito))}</p>
-            </div>
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-              <p className="text-[9px] font-black text-emerald-600 uppercase">IVA Crédito Fiscal</p>
-              <p className="text-lg font-black text-emerald-700 font-mono mt-1">Bs.{contFmt(totalCredito)}</p>
-              <p className="text-[10px] text-emerald-500 font-mono">${contFmt(usdQ(totalCredito))}</p>
-            </div>
+            <CampoEditable label="IVA Débito Fiscal" campo="debito" valor={totalDebito} valorAuto={totalDebitoAuto} bg="bg-red-50 border-red-200" txt="text-red-700"/>
+            <CampoEditable label="IVA Crédito Fiscal" campo="credito" valor={totalCredito} valorAuto={totalCreditoAuto} bg="bg-emerald-50 border-emerald-200" txt="text-emerald-700"/>
             <div className="bg-gray-100 border border-gray-200 rounded-xl p-3">
               <p className="text-[9px] font-black text-gray-500 uppercase">Cuota Tributaria</p>
               <p className="text-lg font-black text-gray-700 font-mono mt-1">Bs.{contFmt(cuotaTributaria)}</p>
@@ -13830,11 +13857,17 @@ ${valoresHtml}
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4">
             <p className="text-[10px] font-black text-gray-500 uppercase mb-3">Retenciones de IVA — Clientes</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-center">
-              <div><p className="text-[8px] font-black text-gray-400 uppercase">Acumuladas (venían de antes)</p><p className="text-sm font-black font-mono text-gray-700 mt-1">Bs.{contFmt(retencionesAcumuladasAnteriores)}</p></div>
-              <div><p className="text-[8px] font-black text-gray-400 uppercase">De esta quincena</p><p className="text-sm font-black font-mono text-gray-700 mt-1">Bs.{contFmt(retencionesPeriodo)}</p></div>
-              <div><p className="text-[8px] font-black text-emerald-500 uppercase">Aplicadas esta quincena</p><p className="text-sm font-black font-mono text-emerald-600 mt-1">Bs.{contFmt(montoAplicado)}</p></div>
-              <div><p className="text-[8px] font-black text-amber-500 uppercase">Por descontar la próxima</p><p className="text-sm font-black font-mono text-amber-600 mt-1">Bs.{contFmt(retencionesAcumuladasSiguiente)}</p></div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <CampoEditable label="Acumuladas (venían de antes)" campo="retencionesAcumuladasAnteriores" valor={retencionesAcumuladasAnteriores} valorAuto={retencionesAcumuladasAnteriores} bg="bg-gray-50 border-gray-200" txt="text-gray-700"/>
+              <CampoEditable label="De esta quincena" campo="retencionesPeriodo" valor={retencionesPeriodo} valorAuto={retencionesPeriodoAuto} bg="bg-gray-50 border-gray-200" txt="text-gray-700"/>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                <p className="text-[9px] font-black text-emerald-500 uppercase">Aplicadas esta quincena</p>
+                <p className="text-lg font-black font-mono text-emerald-600 mt-1">Bs.{contFmt(montoAplicado)}</p>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-[9px] font-black text-amber-500 uppercase">Por descontar la próxima</p>
+                <p className="text-lg font-black font-mono text-amber-600 mt-1">Bs.{contFmt(retencionesAcumuladasSiguiente)}</p>
+              </div>
             </div>
           </div>
           {excedenteCreditoSiguiente>0.005 && (
