@@ -12280,6 +12280,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (facturasVentaC||[]).filter(f=>{
       if (f.esAnulacionFiscal) return false;
+      if (!f.opAsignada && !(f.opsAsignadas&&f.opsAsignadas.length>0)) return false; // Costo de Producción es solo lo que tiene OP
       const items = f.itemsFacturados||[];
       if (!items.some(it=>Number(it.costoTotal||0)>0)) return false;
       const fecha = f.fecha||'';
@@ -14800,7 +14801,7 @@ function App() {
       };
       const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
       const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : null;
-      (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+      (invoices||[]).filter(f=>!f.esAnulacionFiscal && (f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0))).forEach(f=>{
         let totalMP=0, totalCons=0, totalTerm=0;
         (f.itemsFacturados||[]).forEach(it=>{
           const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
