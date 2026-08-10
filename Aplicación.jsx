@@ -11549,7 +11549,7 @@ const contDd = (s) => { if (!s) return '—'; const [y, m, d] = String(s).split(
 const contNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const partesCtaCC = (str) => { const p=(str||'').split('—'); return { codigo:(p[0]||'').trim(), nombre:p.slice(1).join('—').trim() }; };
 
-function ComprobantesContablesApp({ onBack, initialSub }) {
+function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [sub, setSub] = useState(initialSub||''); // '', 'banco', 'caja', 'ret_cli'
   const [movBanco, setMovBanco] = useState([]);
   const [asientosCC, setAsientosCC] = useState([]);
@@ -11588,6 +11588,10 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   const [requirementsC, setRequirementsC] = useState([]);
   const [invRequisitionsC, setInvRequisitionsC] = useState([]);
   const [tasasManualesProdC, setTasasManualesProdC] = useState({});
+  const [cierresIvaC, setCierresIvaC] = useState([]);
+  const [cuentasIvaCfgC, setCuentasIvaCfgC] = useState({});
+  const [showCuentasIvaModal, setShowCuentasIvaModal] = useState(false);
+  const [ivaMesSel, setIvaMesSel] = useState(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;});
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
@@ -11615,6 +11619,67 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     setTasasManualesProdC(x=>({...x,[id]:tasa})); // optimista
     try{ await setDoc(doc(db,'produccion_tasas_manuales',id),{tasa,ts:Date.now()},{merge:true}); }
     catch(e){ alert('No se pudo guardar la tasa: '+e.message); }
+  };
+  // ── Cierre de Compensación de IVA ─────────────────────────────────────────────
+  // Cuentas por defecto según el Plan de Cuentas estándar de esta app — el modal de
+  // configuración las puede cambiar si el usuario usa otros códigos.
+  const CUENTAS_IVA_DEFAULT = {
+    debitoCod:'2.1.04.02.001', debitoNom:'I.V.A. DÉBITO FISCAL (VENTAS)',
+    creditoCod:'1.1.04.01.001', creditoNom:'I.V.A CREDITOS FISCALES (COMPRAS)',
+  };
+  const guardarCuentasIva = async () => {
+    try{ await setDoc(doc(db,'settings','cuentasIva'), cuentasIvaCfgC, {merge:true}); setShowCuentasIvaModal(false); alert('Cuentas de IVA guardadas.'); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  const calcularTotalesIva = (mesSel) => {
+    const desde = `${mesSel}-01`;
+    const [y,m] = mesSel.split('-').map(Number);
+    const hasta = `${mesSel}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+    const debCod = cuentasIvaCfgC.debitoCod || CUENTAS_IVA_DEFAULT.debitoCod;
+    const credCod = cuentasIvaCfgC.creditoCod || CUENTAS_IVA_DEFAULT.creditoCod;
+    let totalDebito=0, totalCredito=0;
+    if (getAsientosRealesFn) {
+      getAsientosRealesFn().forEach(a=>{
+        const f = a.fecha||'';
+        if (f<desde || f>hasta) return;
+        (a.lineas||[]).forEach(l=>{
+          if (l.codigo===debCod) totalDebito += Number(l.haberBs||0)-Number(l.debeBs||0); // el débito fiscal se acumula en el Haber
+          if (l.codigo===credCod) totalCredito += Number(l.debeBs||0)-Number(l.haberBs||0); // el crédito fiscal se acumula en el Debe
+        });
+      });
+    }
+    return {desde, hasta, totalDebito, totalCredito, diferencia: totalDebito-totalCredito};
+  };
+  const generarCierreIva = async (mesSel) => {
+    const {desde, hasta, totalDebito, totalCredito, diferencia} = calcularTotalesIva(mesSel);
+    if (totalDebito<=0.005 && totalCredito<=0.005) { alert('No hay movimiento de IVA en ese mes.'); return; }
+    const debCod = cuentasIvaCfgC.debitoCod || CUENTAS_IVA_DEFAULT.debitoCod;
+    const debNom = cuentasIvaCfgC.debitoNom || CUENTAS_IVA_DEFAULT.debitoNom;
+    const credCod = cuentasIvaCfgC.creditoCod || CUENTAS_IVA_DEFAULT.creditoCod;
+    const credNom = cuentasIvaCfgC.creditoNom || CUENTAS_IVA_DEFAULT.creditoNom;
+    const lineas = [
+      {codigo:debCod, cuenta:debNom, tipo:'D', montoBs:totalDebito},
+      {codigo:credCod, cuenta:credNom, tipo:'H', montoBs:totalCredito},
+    ];
+    if (diferencia>0.005) {
+      if (!cuentasIvaCfgC.porPagarCod) { alert('Falta configurar la cuenta "IVA por Pagar" — usa el botón de Configurar Cuentas.'); return; }
+      lineas.push({codigo:cuentasIvaCfgC.porPagarCod, cuenta:cuentasIvaCfgC.porPagarNom, tipo:'H', montoBs:diferencia});
+    } else if (diferencia<-0.005) {
+      if (!cuentasIvaCfgC.favorCod) { alert('Falta configurar la cuenta "Crédito Fiscal a Favor" — usa el botón de Configurar Cuentas.'); return; }
+      lineas.push({codigo:cuentasIvaCfgC.favorCod, cuenta:cuentasIvaCfgC.favorNom, tipo:'D', montoBs:Math.abs(diferencia)});
+    }
+    try{
+      const id = `IVA-${mesSel}`;
+      await setDoc(doc(db,'comprobantes_cierre_iva',id), {
+        id, mes:mesSel, fecha:hasta, nroComprobante:`CIERRE IVA ${mesSel}`, concepto:`Compensación de IVA — ${mesSel}`,
+        totalDebito, totalCredito, diferencia, lineas, createdAt:Date.now(),
+      });
+      alert(`Cierre de IVA generado para ${mesSel}.\n\nDébito Fiscal: Bs.${contFmt(totalDebito)}\nCrédito Fiscal: Bs.${contFmt(totalCredito)}\n${diferencia>0?'IVA por Pagar':'Crédito Fiscal a Favor'}: Bs.${contFmt(Math.abs(diferencia))}`);
+    }catch(e){ alert('Error al generar: '+e.message); }
+  };
+  const eliminarCierreIva = async (id) => {
+    if(!window.confirm('¿Eliminar este cierre de IVA? Esta acción no se puede deshacer.')) return;
+    try{ await deleteDoc(doc(db,'comprobantes_cierre_iva',id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
   const [nominaImportando, setNominaImportando] = useState(false);
   const [showAjusteModal, setShowAjusteModal] = useState(false);
@@ -11669,6 +11734,8 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
       onSnapshot(getColRef('requirements'), s => setRequirementsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('invRequisitions'), s => setInvRequisitionsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('produccion_tasas_manuales'), s => setTasasManualesProdC(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa])))),
+      onSnapshot(getColRef('comprobantes_cierre_iva'), s => setCierresIvaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(doc(db,'settings','cuentasIva'), d => d.exists() && setCuentasIvaCfgC(d.data())),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
       onSnapshot(doc(db,'settings','general'), d => { if(d.exists()) setSettingsCC(d.data()); }),
       onSnapshot(getDocRef('settings','actividadEconomica'), d => { if(d.exists()) setAeCfgCC(d.data()); }),
@@ -12204,40 +12271,47 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
   // Costos de Producción: sale del consumo REAL de cada OP cerrada — sus requisiciones de
   // inventario aprobadas, valoradas al costo actual del ítem (qty × cost), separado Materia
   // Prima vs Consumibles para que cada uno salga de su propia cuenta de inventario en crédito.
+  // Costo de Producción/Venta: el mismo costo que ya se captura en cada factura (costoUnit ×
+  // cantidad por ítem, congelado al momento de facturar) — la misma fuente que usa el Reporte
+  // General de Ventas y Costos. Una línea de Debe por factura, y una de Haber por cada
+  // categoría de inventario involucrada (Materia Prima/Consumibles/Terminados).
   const construirLineasCostosProduccion = () => {
     const cfg = cuentasProduccionCfgC;
     const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
-    const normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
-    return (requirementsC||[]).filter(r=>{
-      if (r.status !== 'COMPLETADO') return false;
-      const f = r.fechaCierre || r.fecha || '';
-      if (filtDesde && f < filtDesde) return false;
-      if (filtHasta && f > filtHasta) return false;
+    return (facturasVentaC||[]).filter(f=>{
+      if (f.esAnulacionFiscal) return false;
+      const items = f.itemsFacturados||[];
+      if (!items.some(it=>Number(it.costoTotal||0)>0)) return false;
+      const fecha = f.fecha||'';
+      if (filtDesde && fecha < filtDesde) return false;
+      if (filtHasta && fecha > filtHasta) return false;
       return true;
-    }).sort((a,b)=>(b.fechaCierre||b.fecha||'').localeCompare(a.fechaCierre||a.fecha||'')).map(r=>{
-      const reqs = (invRequisitionsC||[]).filter(rq => normOp(rq.opId)===normOp(r.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(rq.status));
-      let totalMP = 0, totalCons = 0;
-      reqs.forEach(rq=>{
-        (rq.items||[]).forEach(it=>{
-          const invItem = itemPorId[it.id];
-          const val = Number(it.qty||0) * Number(invItem?.cost||0);
-          if ((CATEGORIA_A_BALDE_CC[invItem?.category]||'MATERIA_PRIMA')==='CONSUMIBLES') totalCons += val; else totalMP += val;
-        });
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(f=>{
+      let totalMP=0, totalCons=0, totalTerm=0;
+      (f.itemsFacturados||[]).forEach(it=>{
+        const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
+        if (val<=0) return;
+        const invItem = it.invCode ? (inventoryC||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
+        const balde = CATEGORIA_A_BALDE_CC[invItem?.category] || 'MATERIA_PRIMA';
+        if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
       });
-      const tasaUsar = tasasManualesProdC[r.id] || Number(settingsCC?.tasaBCV||0) || 1;
+      const tasaUsar = tasasManualesProdC[f.id] || Number(settingsCC?.tasaBCV||0) || 1;
       const [codDeb,nomDeb] = partirCuenta(cfg.costoVentaProduccionNombre);
       const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
       const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
-      const totalVal = totalMP+totalCons;
-      const lineas = [{codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:totalVal*tasaUsar, hBs:0, dUSD:totalVal, hUSD:0, detalle:'Consumo total de la OP'}];
-      if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, tipo:'H', dBs:0, hBs:totalMP*tasaUsar, dUSD:0, hUSD:totalMP, detalle:'Materia Prima consumida'});
-      if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, tipo:'H', dBs:0, hBs:totalCons*tasaUsar, dUSD:0, hUSD:totalCons, detalle:'Consumibles consumidos'});
+      const [codInvTerm,nomInvTerm] = partirCuenta(cfg.invTerminadosNombre);
+      const totalVal = totalMP+totalCons+totalTerm;
+      const lineas = [{codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:totalVal*tasaUsar, hBs:0, dUSD:totalVal, hUSD:0, detalle:'Costo de venta de la factura'}];
+      if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, tipo:'H', dBs:0, hBs:totalMP*tasaUsar, dUSD:0, hUSD:totalMP, detalle:'Materia Prima'});
+      if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, tipo:'H', dBs:0, hBs:totalCons*tasaUsar, dUSD:0, hUSD:totalCons, detalle:'Consumibles'});
+      if (totalTerm>0.005) lineas.push({codigo:codInvTerm, cuenta:nomInvTerm, tipo:'H', dBs:0, hBs:totalTerm*tasaUsar, dUSD:0, hUSD:totalTerm, detalle:'Productos Terminados'});
+      const tieneOp = f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0);
       return {
-        id: r.id, comprobante: r.id, fecha: r.fechaCierre||r.fecha||'', doc: r.id,
-        tasa: tasaUsar, conc: `OP ${String(r.id).replace('OP-','')} — ${r.client||r.desc||r.categoria||''}`, _raw:r,
+        id: f.id, comprobante: f.nroFiscal||f.documento||f.id, fecha: f.fecha||'', doc: f.nroFiscal||f.documento||'—',
+        tasa: tasaUsar, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${tieneOp?' · OP:'+(f.opAsignada||f.opsAsignadas[0]):''}`, _raw:f,
         lineas,
       };
-    }).filter(x => x.lineas.some(l=>l.dUSD>0||l.hUSD>0)); // omite OPs cerradas sin consumo registrado todavía
+    }).filter(x => x.lineas.some(l=>l.dUSD>0||l.hUSD>0)); // por si acaso, aunque ya se filtró arriba
   };
   // Consumos Internos: autoconsumo, avería, muestras y pérdida — vienen directo de los
   // movimientos de Salida en Control de Inventario, cada uno con su propia tasa editable.
@@ -12920,6 +12994,7 @@ ${valoresHtml}
     { id:'consumos_internos', label:'Consumos Internos', icon:'📦', activo:true },
     { id:'relacionadas', label:'Ctas x Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
+    { id:'cierre_iva', label:'Cierre IVA', icon:'🧮', activo:true },
   ];
   const activo = sub || initialSub || 'banco';
 
@@ -13576,6 +13651,94 @@ ${valoresHtml}
         </div>
       );
     }
+    if (activo === 'cierre_iva') {
+      const {totalDebito, totalCredito, diferencia} = calcularTotalesIva(ivaMesSel);
+      const yaExiste = (cierresIvaC||[]).some(c=>c.mes===ivaMesSel);
+      const cierresOrdenados = [...(cierresIvaC||[])].sort((a,b)=>(b.mes||'').localeCompare(a.mes||''));
+      return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
+            <div>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes a compensar</label>
+              <input type="month" value={ivaMesSel} onChange={e=>setIvaMesSel(e.target.value)} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-orange-400"/>
+            </div>
+            <button onClick={()=>setShowCuentasIvaModal(true)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5"><Settings2 size={13}/> Configurar Cuentas</button>
+            <div className="ml-auto flex gap-2">
+              {yaExiste && <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-3 py-2.5 rounded-lg self-center">⚠ Ya existe un cierre para este mes — generar de nuevo lo reemplaza</span>}
+              <button onClick={()=>generarCierreIva(ivaMesSel)} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5"><RefreshCw size={13}/> {yaExiste?'Regenerar':'Generar'} Cierre</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+              <p className="text-[9px] font-black text-red-500 uppercase">IVA Débito Fiscal (Ventas)</p>
+              <p className="text-xl font-black text-red-700 font-mono mt-1">Bs.{contFmt(totalDebito)}</p>
+            </div>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+              <p className="text-[9px] font-black text-emerald-600 uppercase">IVA Crédito Fiscal (Compras)</p>
+              <p className="text-xl font-black text-emerald-700 font-mono mt-1">Bs.{contFmt(totalCredito)}</p>
+            </div>
+            <div className={`rounded-xl p-4 ${diferencia>0?'bg-gray-900':'bg-blue-50 border border-blue-200'}`}>
+              <p className={`text-[9px] font-black uppercase ${diferencia>0?'text-gray-400':'text-blue-600'}`}>{diferencia>0?'IVA por Pagar':'Crédito Fiscal a Favor'}</p>
+              <p className={`text-xl font-black font-mono mt-1 ${diferencia>0?'text-white':'text-blue-700'}`}>Bs.{contFmt(Math.abs(diferencia))}</p>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100"><p className="text-xs font-black text-gray-700 uppercase">Cierres generados</p></div>
+            {cierresOrdenados.length===0 ? (
+              <p className="text-center text-gray-400 text-xs py-8">Sin cierres generados todavía.</p>
+            ):(
+              <table className="w-full text-xs">
+                <thead><tr style={{background:'#0f172a'}}>
+                  <th className="px-3 py-2 text-left text-[9px] font-black uppercase text-gray-300">Mes</th>
+                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Débito Fiscal</th>
+                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Crédito Fiscal</th>
+                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Diferencia</th>
+                  <th className="px-3 py-2 text-center text-[9px] font-black uppercase text-gray-300">Acción</th>
+                </tr></thead>
+                <tbody>
+                  {cierresOrdenados.map(c=>(
+                    <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-3 py-2 font-black text-gray-700">{c.mes}</td>
+                      <td className="px-3 py-2 text-right font-mono">Bs.{contFmt(c.totalDebito)}</td>
+                      <td className="px-3 py-2 text-right font-mono">Bs.{contFmt(c.totalCredito)}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-black ${c.diferencia>0?'text-red-600':'text-blue-600'}`}>{c.diferencia>0?'Por Pagar':'A Favor'} Bs.{contFmt(Math.abs(c.diferencia))}</td>
+                      <td className="px-3 py-2 text-center"><button onClick={()=>eliminarCierreIva(c.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {showCuentasIvaModal && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentasIvaModal(false)}>
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-lg text-gray-800">🧮 Cuentas del Cierre de IVA</h3>
+                  <button onClick={()=>setShowCuentasIvaModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                </div>
+                <p className="text-[11px] text-gray-500">Débito y Crédito Fiscal ya traen el código estándar por defecto — solo hace falta configurar a dónde va la diferencia.</p>
+                {[['debito','IVA Débito Fiscal (Ventas)',CUENTAS_IVA_DEFAULT.debitoCod+' — '+CUENTAS_IVA_DEFAULT.debitoNom],
+                  ['credito','IVA Crédito Fiscal (Compras)',CUENTAS_IVA_DEFAULT.creditoCod+' — '+CUENTAS_IVA_DEFAULT.creditoNom],
+                  ['porPagar','IVA por Pagar (si Débito > Crédito)',null],
+                  ['favor','Crédito Fiscal a Favor (si Crédito > Débito)',null]].map(([campo,label,defecto])=>(
+                  <div key={campo}>
+                    <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
+                    <select value={cuentasIvaCfgC[`${campo}Cod`]||''} onChange={e=>{const cta=(planCuentasC||[]).find(p=>p.id===e.target.value);setCuentasIvaCfgC(x=>({...x,[`${campo}Cod`]:cta?.codigo||'',[`${campo}Nom`]:cta?.nombre||''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                      <option value="">{defecto ? `— Usar por defecto: ${defecto} —` : '— Seleccionar cuenta —'}</option>
+                      {(planCuentasC||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                    </select>
+                  </div>
+                ))}
+                <div className="flex gap-2 pt-2">
+                  <button onClick={()=>setShowCuentasIvaModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                  <button onClick={guardarCuentasIva} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
     if (activo === 'costos_produccion' || activo === 'consumos_internos') {
       const esCostos = activo === 'costos_produccion';
       const lineasProd = filtrarPorBusquedaCC(esCostos ? construirLineasCostosProduccion() : construirLineasConsumosInternos());
@@ -13595,7 +13758,7 @@ ${valoresHtml}
           {faltaConfig && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ Las cuentas de Producción no están configuradas todavía. Ve al Panel Principal ERP — Producción y usa el botón "Configuración de Cuentas Contables" en la esquina superior derecha.</div>
           )}
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ {esCostos ? 'Consumo real de Materia Prima y Consumibles de cada OP cerrada (requisiciones aprobadas), valorado en $. Ajusta la tasa por comprobante para convertir a Bs. con el tipo de cambio del día que corresponda.' : 'Autoconsumo, avería, muestras a clientes y pérdida/merma — se generan automáticamente desde Control de Inventario. Ajusta la tasa por comprobante si el tipo de cambio del día fue distinto al actual.'}</div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ {esCostos ? 'Costo de venta capturado en cada factura (mismo dato que el Reporte General de Ventas y Costos), agrupado por Materia Prima/Consumibles/Terminados. Ajusta la tasa por comprobante para convertir a Bs. con el tipo de cambio del día que corresponda.' : 'Autoconsumo, avería, muestras a clientes y pérdida/merma — se generan automáticamente desde Control de Inventario. Ajusta la tasa por comprobante si el tipo de cambio del día fue distinto al actual.'}</div>
           {lineasProd.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <Package size={36} className="mx-auto mb-2 opacity-40"/>
@@ -14625,9 +14788,9 @@ function App() {
           return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
         })});
     });
-    // 9a) Costo de Producción — consumo REAL de cada OP cerrada (requisiciones de inventario
-    // aprobadas, valoradas al costo actual del ítem), separado Materia Prima vs Consumibles en
-    // el crédito. Usa tasa manual guardada por comprobante si existe, si no la tasa BCV actual.
+    // 9a) Costo de Producción/Venta — el mismo costo que ya se captura en cada factura
+    // (costoUnit × cantidad por ítem, congelado al facturar), igual que el Reporte General de
+    // Ventas y Costos. Usa tasa manual guardada por comprobante si existe, si no la BCV actual.
     {
       const CATEGORIA_A_BALDE = {
         'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
@@ -14636,26 +14799,29 @@ function App() {
         'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
       };
       const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
-      const normOp = (x) => String(x||'').replace(/^OP-/i,'').trim();
       const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : null;
-      (requirements||[]).filter(r=>r.status==='COMPLETADO').forEach(r=>{
-        const reqs = (invRequisitions||[]).filter(rq => normOp(rq.opId)===normOp(r.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(rq.status));
-        let totalMP=0, totalCons=0;
-        reqs.forEach(rq=>(rq.items||[]).forEach(it=>{
-          const invItem=itemPorId[it.id]; const val=Number(it.qty||0)*Number(invItem?.cost||0);
-          if((CATEGORIA_A_BALDE[invItem?.category]||'MATERIA_PRIMA')==='CONSUMIBLES') totalCons+=val; else totalMP+=val;
-        }));
-        if (totalMP<=0.005 && totalCons<=0.005) return;
+      (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+        let totalMP=0, totalCons=0, totalTerm=0;
+        (f.itemsFacturados||[]).forEach(it=>{
+          const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
+          if (val<=0) return;
+          const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
+          const balde = CATEGORIA_A_BALDE[invItem?.category] || 'MATERIA_PRIMA';
+          if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
+        });
+        if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005) return;
         const debC = partirCuenta(cuentasProduccionCfg.costoVentaProduccionNombre);
         const invMPC = partirCuenta(cuentasProduccionCfg.invMateriaPrimaNombre);
         const invConsC = partirCuenta(cuentasProduccionCfg.invConsumiblesNombre);
-        if (!debC || (totalMP>0.005 && !invMPC) || (totalCons>0.005 && !invConsC)) return; // sin configurar, se omite
-        const tasa = tasasManualesProdApp[r.id] || Number(settings?.tasaBCV||0) || 1;
-        const totalVal = totalMP+totalCons;
+        const invTermC = partirCuenta(cuentasProduccionCfg.invTerminadosNombre);
+        if (!debC || (totalMP>0.005 && !invMPC) || (totalCons>0.005 && !invConsC) || (totalTerm>0.005 && !invTermC)) return; // sin configurar, se omite
+        const tasa = tasasManualesProdApp[f.id] || Number(settings?.tasaBCV||0) || 1;
+        const totalVal = totalMP+totalCons+totalTerm;
         const lineas = [{codigo:debC[0], cuenta:debC[1], debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0}];
         if (totalMP>0.005) lineas.push({codigo:invMPC[0], cuenta:invMPC[1], debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP});
         if (totalCons>0.005) lineas.push({codigo:invConsC[0], cuenta:invConsC[1], debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons});
-        out.push({fecha:r.fechaCierre||r.fecha||'', comprobante:r.id, modulo:'Producción', concepto:`OP ${normOp(r.id)} — ${r.client||r.desc||r.categoria||''}`, lineas});
+        if (totalTerm>0.005) lineas.push({codigo:invTermC[0], cuenta:invTermC[1], debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}`, lineas});
       });
     }
     // 9b) Consumos Internos / Muestras Clientes — Autoconsumo, Avería (combinados), Muestra y
@@ -43971,10 +44137,12 @@ ${resumenHtml}
       'Retenciones a Clientes':'📋 Retenciones a Clientes', 'Banco':'🏦 Comprobante de Banco',
       'Caja':'💵 Comprobante de Caja', 'Relacionadas':'🤝 Cuentas por Pagar Relacionadas', 'Ajustes':'🛠️ Ajustes',
     };
-    const asientosPeriodo = getAsientosReales().filter(a=>{
+    const todosLosAsientos = getAsientosReales();
+    const asientosPeriodo = todosLosAsientos.filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
     }).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const asientosAntes = contFiltDesde ? todosLosAsientos.filter(a=>(a.fecha||'')<contFiltDesde) : [];
     const cuentasConMov = {};
     asientosPeriodo.forEach(a=>(a.lineas||[]).forEach(l=>{
       const cod=l.codigo||'';
@@ -43984,8 +44152,18 @@ ${resumenHtml}
     const cuentasParaArbol = Object.values(cuentasConMov)
       .filter(c=>!mayorBusqCuentaApp || c.codigo.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()) || c.cuenta.toUpperCase().includes(mayorBusqCuentaApp.toUpperCase()));
     const treeMayor = ccBuildArbolNav(cuentasParaArbol, planDeCuentas, ['1','2','3','4','5','6','7']);
-    let saldoAcum = 0;
-    let saldoAcumUSD = 0;
+    // Saldo anterior: todo lo movido en esta cuenta ANTES de la fecha "Desde" — es el saldo con
+    // el que arranca el período, igual que el saldo final del mes anterior sería el inicial de este.
+    let saldoAnteriorBs = 0, saldoAnteriorUSD = 0;
+    if (mayorCuentaSelApp) {
+      asientosAntes.forEach(a=>(a.lineas||[]).forEach(l=>{
+        if (l.codigo!==mayorCuentaSelApp) return;
+        saldoAnteriorBs += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
+        saldoAnteriorUSD += parseNum(l.debeUSD||0) - parseNum(l.haberUSD||0);
+      }));
+    }
+    let saldoAcum = saldoAnteriorBs;
+    let saldoAcumUSD = saldoAnteriorUSD;
     const movsCuenta = !mayorCuentaSelApp ? [] : asientosPeriodo.flatMap(a=>
       (a.lineas||[]).filter(l=>l.codigo===mayorCuentaSelApp).map(l=>{
         saldoAcum += parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
@@ -43993,6 +44171,8 @@ ${resumenHtml}
         return {...l, fecha:a.fecha, referencia:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum, saldoAcumUSD};
       })
     );
+    const entradasBs = movsCuenta.reduce((s,l)=>s+parseNum(l.debeBs||0),0), salidasBs = movsCuenta.reduce((s,l)=>s+parseNum(l.haberBs||0),0);
+    const entradasUSD = movsCuenta.reduce((s,l)=>s+parseNum(l.debeUSD||0),0), salidasUSD = movsCuenta.reduce((s,l)=>s+parseNum(l.haberUSD||0),0);
     const cuentaInfo = cuentasConMov[mayorCuentaSelApp];
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
@@ -44019,14 +44199,26 @@ ${resumenHtml}
               {cuentaInfo && (
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <p className="text-xs font-black text-gray-700">{cuentaInfo.codigo} — {cuentaInfo.cuenta}</p>
-                  <div className="flex gap-3">
-                    <div className={`rounded-xl px-4 py-2.5 ${saldoAcum<0?'bg-red-50':'bg-gray-900'}`}>
-                      <p className={`text-[8px] font-black uppercase tracking-widest ${saldoAcum<0?'text-red-500':'text-gray-400'}`}>Saldo Bs.</p>
-                      <p className={`text-sm font-black font-mono ${saldoAcum<0?'text-red-600':'text-white'}`}>{contFmt(saldoAcum)}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <div className="rounded-xl px-3 py-2 bg-gray-100">
+                      <p className="text-[8px] font-black uppercase tracking-widest text-gray-500">Saldo Anterior</p>
+                      <p className={`text-xs font-black font-mono ${saldoAnteriorBs<0?'text-red-600':'text-gray-800'}`}>Bs.{contFmt(saldoAnteriorBs)}</p>
+                      <p className={`text-[10px] font-bold font-mono ${saldoAnteriorUSD<0?'text-red-500':'text-gray-500'}`}>${contFmt(saldoAnteriorUSD)}</p>
                     </div>
-                    <div className={`rounded-xl px-4 py-2.5 ${saldoAcumUSD<0?'bg-red-50':'bg-blue-700'}`}>
-                      <p className={`text-[8px] font-black uppercase tracking-widest ${saldoAcumUSD<0?'text-red-500':'text-blue-200'}`}>Saldo $</p>
-                      <p className={`text-sm font-black font-mono ${saldoAcumUSD<0?'text-red-600':'text-white'}`}>${contFmt(saldoAcumUSD)}</p>
+                    <div className="rounded-xl px-3 py-2 bg-emerald-50">
+                      <p className="text-[8px] font-black uppercase tracking-widest text-emerald-600">Entradas (Debe)</p>
+                      <p className="text-xs font-black font-mono text-emerald-700">Bs.{contFmt(entradasBs)}</p>
+                      <p className="text-[10px] font-bold font-mono text-emerald-600">${contFmt(entradasUSD)}</p>
+                    </div>
+                    <div className="rounded-xl px-3 py-2 bg-red-50">
+                      <p className="text-[8px] font-black uppercase tracking-widest text-red-500">Salidas (Haber)</p>
+                      <p className="text-xs font-black font-mono text-red-600">Bs.{contFmt(salidasBs)}</p>
+                      <p className="text-[10px] font-bold font-mono text-red-500">${contFmt(salidasUSD)}</p>
+                    </div>
+                    <div className={`rounded-xl px-3 py-2 ${saldoAcum<0?'bg-red-50':'bg-gray-900'}`}>
+                      <p className={`text-[8px] font-black uppercase tracking-widest ${saldoAcum<0?'text-red-500':'text-gray-400'}`}>Saldo Actual</p>
+                      <p className={`text-xs font-black font-mono ${saldoAcum<0?'text-red-600':'text-white'}`}>Bs.{contFmt(saldoAcum)}</p>
+                      <p className={`text-[10px] font-bold font-mono ${saldoAcumUSD<0?'text-red-500':'text-gray-300'}`}>${contFmt(saldoAcumUSD)}</p>
                     </div>
                   </div>
                 </div>
@@ -44049,6 +44241,15 @@ ${resumenHtml}
                       <th className="px-3 py-2.5 text-right text-[9px] font-black uppercase text-gray-300">Saldo $</th>
                     </tr></thead>
                     <tbody>
+                      {mayorCuentaSelApp && (
+                        <tr className="border-b-2 border-gray-200 bg-gray-50 italic">
+                          <td className="px-3 py-2 text-gray-400" colSpan={4}>— Saldo anterior al {contDd(contFiltDesde)||'inicio'} —</td>
+                          <td/><td/>
+                          <td className={`px-3 py-2 text-right font-mono font-black ${saldoAnteriorBs<0?'text-red-600':'text-gray-600'}`}>{contFmt(saldoAnteriorBs)}</td>
+                          <td className="border-l border-gray-100"/><td/>
+                          <td className={`px-3 py-2 text-right font-mono font-black ${saldoAnteriorUSD<0?'text-red-600':'text-blue-600'}`}>{contFmt(saldoAnteriorUSD)}</td>
+                        </tr>
+                      )}
                       {movsCuenta.length===0 && <tr><td colSpan={10} className="text-center py-8 text-gray-400">Sin movimientos en el rango elegido.</td></tr>}
                       {movsCuenta.map((m,i)=>(
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
@@ -49738,7 +49939,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            })()}
 
           {/* ── CONTABILIDAD — COMPROBANTES CONTABLES ── */}
-           {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')}/>}
+           {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} getAsientosRealesFn={getAsientosReales}/>}
            {activeTab === 'mayor_analitico_cc' && hasPerm('banco') && renderMayorAnaliticoModule()}
            {activeTab === 'balance_comprobacion_cc' && hasPerm('banco') && renderBalanceComprobacionModule()}
            {activeTab === 'estado_resultados_cc' && hasPerm('banco') && renderEstadoResultadosModule()}
