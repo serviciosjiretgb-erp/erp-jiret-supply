@@ -14840,6 +14840,35 @@ function App() {
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
+  // ── Activo Fijo (Contabilidad) — submódulo Configuración: cuentas por categoría (mismas
+  // 8 que usa el registro de Activos Fijos en Finanzas) + cuenta global de gasto + centros de
+  // costo. afSubTabC queda listo para un futuro submódulo "Registro", hoy solo hay uno. ──
+  const [afSubTabC, setAfSubTabC] = useState('configuracion');
+  const [activoFijoCfgC, setActivoFijoCfgC] = useState({
+    categorias: {
+      'Inmueble': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Maquinarias y Equipos': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Equipos de Computación': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Vehículos': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Servidores y Plataformas': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Mobiliario y Equipo': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Maquinarias Revaluados': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+      'Planta Eléctrica': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
+    },
+    gastoDeprecId:'', gastoDeprecNombre:'',
+    centrosCosto: [],
+  });
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','activoFijoContabilidadCfg'),d=>d.exists()&&setActivoFijoCfgC(x=>({...x,...d.data()})));
+    return()=>u();
+  },[]);
+  const guardarActivoFijoCfgC = async () => {
+    try{
+      await setDoc(doc(db,'settings','activoFijoContabilidadCfg'),activoFijoCfgC,{merge:true});
+      setDialog({title:'✅ Guardado',text:'Configuración de Activo Fijo (Contabilidad) actualizada.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+  const [afcNuevoCC, setAfcNuevoCC] = useState({codigo:'',nombre:''});
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Contables (Procura + Ventas + Retenciones a Clientes + Banco + Caja), EXCLUYENDO
@@ -19747,6 +19776,10 @@ function App() {
         stats: ()=>({ s1:'Reexpresión DPC-10', s2:'Por fecha de adquisición (FIFO)'}),
         chart:null
       },
+      hasPerm('banco') && { tab:'activos_fijos_cc', icon:<Building2 size={20}/>, title:'Activo Fijo', color:'#78716c',
+        stats: ()=>({ s1:'Contabilidad', s2:'Configuración de cuentas y centro de costo'}),
+        chart:null
+      },
       hasPerm('banco') && { tab:'banco', icon:<Building2 size={20}/>, title:'Bancos & Tesorería', color:'#7c3aed',
         stats: ()=>({ s1:'Cuentas, movimientos y conciliación', s2:'Módulo de Banco'}),
         chart:null
@@ -19769,7 +19802,7 @@ function App() {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
       administracion:      ['ventas','banco','procura','impuestos'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
-      contabilidad:        ['comprobantes_contables','plan_cuentas','mayor_analitico_cc','balance_comprobacion_cc','estado_resultados_cc','balance_general_cc','ajuste_inflacion_cc'],
+      contabilidad:        ['comprobantes_contables','plan_cuentas','mayor_analitico_cc','balance_comprobacion_cc','estado_resultados_cc','balance_general_cc','ajuste_inflacion_cc','activos_fijos_cc'],
       resena_portal:       ['resena'],
       vendedores_portal:   [],
       redes_portal:        [],
@@ -44761,6 +44794,7 @@ ${resumenHtml}
         {id:'estado_resultados_cc', label:'Estado de Resultados', icon:'📈'},
         {id:'balance_general_cc', label:'Balance General', icon:'🏛️'},
         {id:'ajuste_inflacion_cc', label:'Ajuste por Inflación', icon:'💹'},
+        {id:'activos_fijos_cc', label:'Activo Fijo', icon:'🏢'},
       ].map(t=>(
         <button key={t.id} onClick={()=>setActiveTab(t.id)}
           className={`flex items-center gap-1.5 px-4 py-3 text-[10px] font-black uppercase whitespace-nowrap border-b-2 transition-colors ${active===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white'}`}>
@@ -45491,6 +45525,109 @@ ${resumenHtml}
             </div>
             <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-3 text-[10px] font-bold text-blue-800">
               ℹ Este cálculo reexpresa cada cuenta marcada como "No Monetaria" en Plan de Cuentas, reconstruyendo sus capas por fecha de adquisición con el método FIFO. El asiento contable (Debe a la cuenta reexpresada / Haber a Resultado por Exposición a la Inflación) todavía debe registrarse manualmente en Comprobantes/Ajustes usando estos montos. El "Resultado Monetario del Ejercicio" no se calcula aquí.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================================================
+  // ACTIVO FIJO (CONTABILIDAD) — vive en el portal Contabilidad, junto a los demás
+  // reportes "_cc". Por ahora solo el submódulo Configuración: cuentas contables por
+  // categoría (mismas 8 categorías que usa el registro de Activos Fijos en Finanzas,
+  // renderActivosFijosModule) + cuenta global de gasto de depreciación (igual a como ya
+  // la usa Comprobantes Contables, construirLineasDepreciacion) + centros de costo.
+  // El submódulo Registro/Listado (espejo del de Finanzas) queda para una sesión futura —
+  // afSubTabC ya está listo para eso, solo falta agregar la pestaña cuando se pida.
+  // No modifica renderActivosFijosModule, CATEGORIAS_ACTIVO_FIJO ni construirLineasDepreciacion.
+  // ============================================================================
+  const renderActivosFijosCModule = () => {
+    const CATEGORIAS_AF_CC = Object.keys(activoFijoCfgC.categorias||{});
+    const cuentasAF = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.06'));
+    const cuentasGasto = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('5'));
+    const setCatCampo = (cat, campo, id) => {
+      const cta = cuentasAF.find(c=>c.id===id);
+      setActivoFijoCfgC(x=>({...x, categorias:{...x.categorias, [cat]:{...(x.categorias?.[cat]||{}), [`${campo}Id`]:id, [`${campo}Nombre`]: cta?`${cta.codigo} — ${cta.nombre}`:''}}}));
+    };
+    const agregarCentroCosto = () => {
+      if(!afcNuevoCC.codigo.trim()||!afcNuevoCC.nombre.trim()){ setDialog({title:'Faltan datos',text:'Código y nombre del centro de costo son obligatorios.',type:'alert'}); return; }
+      if((activoFijoCfgC.centrosCosto||[]).some(cc=>cc.codigo.toUpperCase()===afcNuevoCC.codigo.trim().toUpperCase())){ setDialog({title:'Ya existe',text:'Ese código de centro de costo ya está registrado.',type:'alert'}); return; }
+      setActivoFijoCfgC(x=>({...x, centrosCosto:[...(x.centrosCosto||[]), {codigo:afcNuevoCC.codigo.trim().toUpperCase(), nombre:afcNuevoCC.nombre.trim()}]}));
+      setAfcNuevoCC({codigo:'',nombre:''});
+    };
+    const quitarCentroCosto = (codigo) => setActivoFijoCfgC(x=>({...x, centrosCosto:(x.centrosCosto||[]).filter(cc=>cc.codigo!==codigo)}));
+
+    return (
+      <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
+        <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <ContNavBar active="activos_fijos_cc"/>
+          <div className="px-8 py-6 border-b-2 border-black">
+            <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><Building2 size={28} className="text-stone-500"/> Activo Fijo</h1>
+            <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Configuración de cuentas contables y centros de costo</p>
+          </div>
+          <div className="p-6 space-y-6">
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <div className="px-5 py-3 bg-gray-50 border-b border-gray-200">
+                <h3 className="text-xs font-black uppercase text-gray-700">Cuentas por Categoría</h3>
+                <p className="text-[10px] text-gray-400 font-bold mt-0.5">Mismas 8 categorías que usa el registro de Activos Fijos en Finanzas</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {CATEGORIAS_AF_CC.map(cat=>{
+                  const cfg = activoFijoCfgC.categorias?.[cat]||{};
+                  return (
+                    <div key={cat} className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                      <p className="text-xs font-black text-gray-700">{cat}</p>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta del Activo</label>
+                        <select value={cfg.activoId||''} onChange={e=>setCatCampo(cat,'activo',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                          <option value="">— Seleccionar —</option>
+                          {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta Dep. Acumulada</label>
+                        <select value={cfg.deprAcumId||''} onChange={e=>setCatCampo(cat,'deprAcum',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                          <option value="">— Seleccionar —</option>
+                          {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-5">
+              <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Cuenta de Depreciación (Gasto)</h3>
+              <p className="text-[10px] text-gray-400 font-bold mb-3">Una sola cuenta global, igual a como ya la usa Comprobantes Contables</p>
+              <select value={activoFijoCfgC.gastoDeprecId||''} onChange={e=>{const cta=cuentasGasto.find(c=>c.id===e.target.value);setActivoFijoCfgC(x=>({...x,gastoDeprecId:e.target.value,gastoDeprecNombre:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full md:w-1/2 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                <option value="">— Seleccionar —</option>
+                {cuentasGasto.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+              </select>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-5">
+              <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Centros de Costo</h3>
+              <p className="text-[10px] text-gray-400 font-bold mb-3">Sede donde está habilitado o funcionando el activo</p>
+              <div className="space-y-2 mb-4">
+                {(activoFijoCfgC.centrosCosto||[]).length===0 && <p className="text-[11px] text-gray-400 font-bold">Sin centros de costo registrados todavía.</p>}
+                {(activoFijoCfgC.centrosCosto||[]).map(cc=>(
+                  <div key={cc.codigo} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
+                    <p className="text-xs font-bold text-gray-700"><span className="font-mono font-black text-gray-500 mr-2">{cc.codigo}</span>{cc.nombre}</p>
+                    <button onClick={()=>quitarCentroCosto(cc.codigo)} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input value={afcNuevoCC.codigo} onChange={e=>setAfcNuevoCC(f=>({...f,codigo:e.target.value}))} placeholder="Código (ej: ZI)" className="sm:w-32 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                <input value={afcNuevoCC.nombre} onChange={e=>setAfcNuevoCC(f=>({...f,nombre:e.target.value}))} placeholder="Nombre de la sede" className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                <button onClick={agregarCentroCosto} className="bg-gray-800 hover:bg-black text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center justify-center gap-1.5"><Plus size={14}/> Agregar</button>
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button onClick={guardarActivoFijoCfgC} className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase flex items-center gap-2"><Save size={16}/> Guardar Configuración</button>
             </div>
           </div>
         </div>
@@ -50720,6 +50857,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            {activeTab === 'estado_resultados_cc' && hasPerm('banco') && renderEstadoResultadosModule()}
            {activeTab === 'balance_general_cc' && hasPerm('banco') && renderBalanceGeneralModule()}
            {activeTab === 'ajuste_inflacion_cc' && hasPerm('banco') && renderAjusteInflacionModule()}
+           {activeTab === 'activos_fijos_cc' && hasPerm('banco') && renderActivosFijosCModule()}
 
           {/* ── CONTABILIDAD — PLAN DE CUENTAS (movido desde Configuración) ── */}
            {activeTab === 'plan_cuentas' && (hasPerm('configuracion') || (SYSTEM_MODULES.find(m=>m.id==='configuracion')?.submodules||[]).some(s=>hasPerm(s.id))) && (
