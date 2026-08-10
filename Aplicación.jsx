@@ -44999,12 +44999,14 @@ const ActualizarCostosView = ({settings, appUser}) => {
   const acAnalizar = async () => {
     setAcBusy(true); setAcMsg(null); setAcPreview(null);
     try {
-      const [neSnap, invSnap, inventorySnap] = await Promise.all([
+      const [neSnap, invSnap, inventorySnap, fgSnap] = await Promise.all([
         getDocs(getColRef('notasEntrega')),
         getDocs(getColRef('maquilaInvoices')),
         getDocs(getColRef('inventory')),
+        getDocs(getColRef('finishedGoodsInventory')),
       ]);
       const inventarioAll = inventorySnap.docs.map(d=>({_id:d.id,...d.data()}));
+      const fgAll = fgSnap.docs.map(d=>({_id:d.id,...d.data()}));
       const getClean = (raw='') => (raw||'').split('___')[0]
         .replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/-COPY\d*$/i,'').replace(/_inv$/i,'').trim();
       const normDesc = (s='') => s.toUpperCase().replace(/[×x\s\-\.\/]/g,'').substring(0,24);
@@ -45021,19 +45023,64 @@ const ActualizarCostosView = ({settings, appUser}) => {
           if(short&&!costoPorDescNorm.has(short)) costoPorDescNorm.set(short,c);
         }
       }
-      // Costo actual: 1) código (limpio de sufijos) 2) descripción normalizada (mismo respaldo que usa el Reporte General)
+      // Productos Terminados: colección separada de Inventario normal, con su propio costo
+      // por Kg o por Millar según cómo se mida el producto — se usa el que venga con valor.
+      for(const fg of fgAll){
+        const code=getClean(fg.id||fg._id||'').toUpperCase();
+        const c=parseNum(fg.costoUnitario||0)||parseNum(fg.costoUnitarioMillar||0);
+        if(code&&c>0&&!costoPorCodigo.has(code)) costoPorCodigo.set(code,c);
+        if(c>0&&fg.producto){
+          const n=normDesc(fg.producto);
+          if(n&&!costoPorDescNorm.has(n)) costoPorDescNorm.set(n,c);
+          const short=n.substring(0,18);
+          if(short&&!costoPorDescNorm.has(short)) costoPorDescNorm.set(short,c);
+        }
+      }
+      // Costo actual: 1) código (limpio de sufijos) 2) código extraído del inicio de la
+      // descripción si viene como "CODIGO — Descripción" (ítems que se guardaron sin invCode
+      // separado) 3) descripción normalizada (mismo respaldo que usa el Reporte General)
       const buscarCostoActual=(it)=>{
         const codeRaw=getClean(resolverAliasCodigo(it.invCode||'')).toUpperCase();
         if(codeRaw&&costoPorCodigo.has(codeRaw)) return costoPorCodigo.get(codeRaw);
         const itDesc=it.desc||'';
-        if(itDesc){
-          const n=normDesc(itDesc);
+        const partesDesc = itDesc.match(/^([\w.\/-]+)\s*[—-]\s*(.+)$/);
+        if(partesDesc){
+          const codeDesdeDesc = getClean(partesDesc[1]||'').toUpperCase();
+          if(codeDesdeDesc && costoPorCodigo.has(codeDesdeDesc)) return costoPorCodigo.get(codeDesdeDesc);
+        }
+        const descLimpia = partesDesc ? partesDesc[2] : itDesc;
+        if(descLimpia){
+          const n=normDesc(descLimpia);
           if(costoPorDescNorm.has(n)) return costoPorDescNorm.get(n);
           const short=n.substring(0,18);
           if(costoPorDescNorm.has(short)) return costoPorDescNorm.get(short);
         }
         return null;
       };
+      const extraerCodigoDeItem = (it) => {
+        const codeRaw=getClean(resolverAliasCodigo(it.invCode||'')).toUpperCase();
+        if (codeRaw) return codeRaw;
+        const m = (it.desc||'').match(/^([\w.\/-]+)\s*[—-]\s*(.+)$/);
+        return m ? getClean(m[1]).toUpperCase() : '';
+      };
+      // Respaldo final: si ni el código ni la descripción encuentran costo en Inventario (el
+      // ítem del inventario tampoco tiene costo cargado), se usa el último costo real > 0
+      // registrado en cualquier otra factura o nota de entrega para ese mismo código.
+      const ultimoCostoPorCodigo = new Map(); // code -> {costo, fecha}
+      const todosLosDocs = [...neSnap.docs, ...invSnap.docs];
+      for (const d of todosLosDocs) {
+        const data = d.data();
+        const items = data.itemsFacturados || data.items || [];
+        const fecha = data.fecha || '';
+        items.forEach(it=>{
+          const costo = parseNum(it.costoUnit||0);
+          if (costo<=0) return;
+          const code = extraerCodigoDeItem(it);
+          if (!code) return;
+          const actual = ultimoCostoPorCodigo.get(code);
+          if (!actual || fecha > actual.fecha) ultimoCostoPorCodigo.set(code, {costo, fecha});
+        });
+      }
       const cambios=[];
       const procesar=(docs,coleccion)=>{
         const campo = coleccion==='maquilaInvoices' ? 'itemsFacturados' : 'items';
@@ -45043,7 +45090,7 @@ const ActualizarCostosView = ({settings, appUser}) => {
           const items=data[campo]||data.items||data.itemsFacturados||[];
           let modificado=false;
           const nuevos=items.map(it=>{
-            const nuevo=buscarCostoActual(it);
+            const nuevo = buscarCostoActual(it) || ultimoCostoPorCodigo.get(extraerCodigoDeItem(it))?.costo || null;
             if(nuevo&&Math.abs(parseNum(it.costoUnit||0)-nuevo)>0.005){
               modificado=true;
               return {...it,costoUnit:nuevo,_costoAnterior:parseNum(it.costoUnit||0)};
