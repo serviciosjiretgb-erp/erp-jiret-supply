@@ -14430,6 +14430,39 @@ function App() {
           return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
         })});
     });
+    // 9) Salidas de Inventario con cuenta configurada — Autoconsumo, Regalía a Cliente,
+    // Avería, Pérdida/Merma y Costo de Producción (salida normal). La cuenta de Inventario
+    // configurada va siempre en crédito como contrapartida. Si una salida no tiene su cuenta
+    // configurada en "Configuración de Cuentas Contables" (portal Producción), se omite —
+    // no se inventa una cuenta ni se contabiliza a medias.
+    {
+      const TIPO_CUENTA_SALIDA = {
+        'AUTOCONSUMO': ['autoconsumoId','autoconsumoNombre'],
+        'MUESTRA': ['regaliaId','regaliaNombre'],
+        'AVERIA': ['averiaId','averiaNombre'],
+        'PERDIDA': ['perdidaId','perdidaNombre'],
+        'SALIDA': ['costoProduccionId','costoProduccionNombre'],
+      };
+      const tasaDefecto = Number(settings?.tasaBCV||0)||1;
+      (invMovements||[]).forEach(m=>{
+        const claves = TIPO_CUENTA_SALIDA[m.type];
+        if (!claves) return; // tipo de movimiento no contemplado (ENTRADA, TRASLADO, etc.)
+        const [campoId, campoNombre] = claves;
+        const cuentaDebitoNombre = cuentasProduccionCfg[campoNombre];
+        const cuentaInventarioNombre = cuentasProduccionCfg.inventarioNombre;
+        if (!cuentasProduccionCfg[campoId] || !cuentasProduccionCfg.inventarioId) return; // sin configurar, se omite
+        const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
+        if (valor<=0) return;
+        const [codDebito, nomDebito] = cuentaDebitoNombre.split('—').map(s=>s.trim());
+        const [codInv, nomInv] = cuentaInventarioNombre.split('—').map(s=>s.trim());
+        const tasa = tasaDefecto;
+        out.push({fecha:m.date||'', comprobante:m.docRef||m.id, modulo:'Producción', concepto:`${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`,
+          lineas:[
+            {codigo:codDebito, cuenta:nomDebito, debeBs:valor*tasa, haberBs:0, debeUSD:valor, haberUSD:0},
+            {codigo:codInv, cuenta:nomInv, debeBs:0, haberBs:valor*tasa, debeUSD:0, haberUSD:valor},
+          ]});
+      });
+    }
     return out;
   };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
@@ -17297,6 +17330,30 @@ function App() {
       setDialog({title:'✅ Guardado',text:'Cuentas de ingresos guardadas. Aplican a todas las facturas, incluidas las ya registradas.',type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
+  // ── Configuración de Cuentas Contables — Producción ──────────────────────────
+  // Define a qué cuenta va cada tipo de salida de inventario (autoconsumo, regalía a
+  // cliente, avería, pérdida/merma) y la cuenta de costo cuando la salida es a producción/
+  // venta normal, más la cuenta de Inventario (contrapartida en crédito en todos los casos).
+  const [showCuentasProduccionModal, setShowCuentasProduccionModal] = useState(false);
+  const [cuentasProduccionCfg, setCuentasProduccionCfg] = useState({
+    inventarioId:'', inventarioNombre:'',
+    costoProduccionId:'', costoProduccionNombre:'',
+    autoconsumoId:'', autoconsumoNombre:'',
+    regaliaId:'', regaliaNombre:'',
+    averiaId:'', averiaNombre:'',
+    perdidaId:'', perdidaNombre:'',
+  });
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','produccionCuentasContables'),d=>d.exists()&&setCuentasProduccionCfg(x=>({...x,...d.data()})));
+    return()=>u();
+  },[]);
+  const guardarCuentasProduccion=async()=>{
+    try{
+      await setDoc(doc(db,'settings','produccionCuentasContables'),cuentasProduccionCfg,{merge:true});
+      setShowCuentasProduccionModal(false);
+      setDialog({title:'✅ Guardado',text:'Cuentas contables de Producción guardadas. Aplican a todas las salidas de inventario, incluidas las ya registradas.',type:'alert'});
+    }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
 
   const handleCreateInvoice = async (e) => {
@@ -19252,6 +19309,45 @@ function App() {
             </h1>
             <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
           </div>
+          {selectedPortal==='produccion' && (
+            <button onClick={()=>setShowCuentasProduccionModal(true)}
+              className="absolute top-4 right-4 sm:right-6 flex items-center gap-1.5 bg-white border-2 border-gray-200 hover:border-orange-400 text-gray-600 hover:text-orange-600 px-3 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm transition-colors">
+              <Settings2 size={12}/> Configuración de Cuentas Contables
+            </button>
+          )}
+          {showCuentasProduccionModal && (() => {
+            const CampoCuenta = ({label, campo, hint}) => (
+              <div>
+                <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
+                {hint && <p className="text-[10px] text-gray-400 mb-1">{hint}</p>}
+                <select value={cuentasProduccionCfg[`${campo}Id`]||''} onChange={e=>{const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);setCuentasProduccionCfg(x=>({...x,[`${campo}Id`]:e.target.value,[`${campo}Nombre`]:cta?`${cta.codigo} — ${cta.nombre}`:''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                  <option value="">— Seleccionar cuenta —</option>
+                  {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                </select>
+              </div>
+            );
+            return (
+              <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentasProduccionModal(false)}>
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas Contables de Producción</h3>
+                    <button onClick={()=>setShowCuentasProduccionModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                  </div>
+                  <p className="text-[11px] text-gray-500">Define a qué cuenta va cada tipo de salida de inventario. Se configuran una sola vez y generan el asiento contable automáticamente — Inventario en crédito, y la cuenta correspondiente en débito.</p>
+                  <CampoCuenta label="Inventario (contrapartida en crédito)" campo="inventario" hint="Se usa en el crédito de toda salida — el activo que sale del almacén."/>
+                  <CampoCuenta label="Costo de Producción / Costo de Venta" campo="costoProduccion" hint="Salidas normales a producción o venta (tipo SALIDA)."/>
+                  <CampoCuenta label="Autoconsumo" campo="autoconsumo" hint="Salidas por uso interno de la empresa (tipo AUTOCONSUMO)."/>
+                  <CampoCuenta label="Regalía a Cliente" campo="regalia" hint="Muestras entregadas a clientes (tipo MUESTRA)."/>
+                  <CampoCuenta label="Avería" campo="averia" hint="Salidas por daño del producto (tipo AVERIA)."/>
+                  <CampoCuenta label="Pérdida / Merma" campo="perdida" hint="Salidas por pérdida o merma (tipo PERDIDA)."/>
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={()=>setShowCuentasProduccionModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                    <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Grid — responsive: 1 col mobile, 2 tablet, 3 desktop */}
           <div className="px-4 sm:px-6 pb-8">
