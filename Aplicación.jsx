@@ -18061,6 +18061,81 @@ function App() {
     const u=onSnapshot(getColRef('comprobantes_cierre_iva'), s=>setCierresIvaApp(s.docs.map(d=>({id:d.id, ...d.data()}))));
     return()=>u();
   },[]);
+  // ── Activos Fijos — registro y depreciación ────────────────────────────────────
+  const [activosFijos, setActivosFijos] = useState([]);
+  useEffect(()=>{
+    const u=onSnapshot(getColRef('activos_fijos'), s=>setActivosFijos(s.docs.map(d=>({id:d.id, ...d.data()}))));
+    return()=>u();
+  },[]);
+  const [showActivoModal, setShowActivoModal] = useState(false);
+  const [activoEditando, setActivoEditando] = useState(null);
+  const [activoForm, setActivoForm] = useState({});
+  const [showBajaActivoModal, setShowBajaActivoModal] = useState(null); // activo a dar de baja/vender
+  const [bajaForm, setBajaForm] = useState({});
+  const CATEGORIAS_ACTIVO_FIJO = [
+    {cat:'Inmueble', ctaActivoDefault:'1.1.06.01.001 — INMUEBLE (GALPON)', ctaDeprDefault:'1.1.06.01.002 — DEP. ACUMULADA MEJORAS AL INMUEBLE (GALPON)'},
+    {cat:'Maquinarias y Equipos', ctaActivoDefault:'1.1.06.02.001 — MAQUINARIAS Y EQUIPOS', ctaDeprDefault:'1.1.06.02.002 — DEP. ACUMULADA MAQUINARIA Y EQUIPOS'},
+    {cat:'Equipos de Computación', ctaActivoDefault:'1.1.06.03.001 — EQUIPOS DE COMPUTACIÓN', ctaDeprDefault:'1.1.06.03.002 — DEP. ACUMULADA EQUIPOS DE COMPUTACIÓN'},
+    {cat:'Vehículos', ctaActivoDefault:'1.1.06.04.001 — VEHÍCULOS', ctaDeprDefault:'1.1.06.04.002 — DEP. ACUMULADA VEHÍCULOS'},
+    {cat:'Servidores y Plataformas', ctaActivoDefault:'1.1.06.05.001 — SERVIDORES Y PLATAFORMAS', ctaDeprDefault:'1.1.06.05.002 — DEP. ACUMULADA SERVIDORES Y PLATAFORMAS'},
+    {cat:'Mobiliario y Equipo', ctaActivoDefault:'1.1.06.06.001 — MOBILIARIO Y EQUIPO', ctaDeprDefault:'1.1.06.06.002 — DEP. ACUMULADA MOBILIARIO'},
+    {cat:'Maquinarias Revaluados', ctaActivoDefault:'1.1.06.07.001 — MAQUINARIAS Y EQUIPOS REVALUADOS', ctaDeprDefault:'1.1.06.07.002 — DEP. ACUMULADA MAQ. REVALUADOS'},
+    {cat:'Planta Eléctrica', ctaActivoDefault:'1.1.06.08.001 — PLANTA ELECTRICA', ctaDeprDefault:'1.1.06.08.002 — DEP. ACUMULADA PLANTA ELECTRICA'},
+  ];
+  const abrirNuevoActivo = () => { setActivoEditando(null); setActivoForm({categoria:'Vehículos', fechaAdquisicion:getTodayDate(), vidaUtilAnios:'5', valorResidual:'0'}); setShowActivoModal(true); };
+  const abrirEditarActivo = (a) => { setActivoEditando(a.id); setActivoForm({...a}); setShowActivoModal(true); };
+  const guardarActivoFijo = async () => {
+    if (!activoForm.nombre || !activoForm.valorCosto || !activoForm.fechaAdquisicion) { setDialog({title:'Faltan datos', text:'Nombre, Costo y Fecha de Adquisición son obligatorios.', type:'alert'}); return; }
+    try {
+      const payload = {
+        nombre: activoForm.nombre, categoria: activoForm.categoria||'Otros',
+        cuentaActivoNombre: activoForm.cuentaActivoNombre||'', cuentaDeprAcumNombre: activoForm.cuentaDeprAcumNombre||'',
+        fechaAdquisicion: activoForm.fechaAdquisicion, valorCosto: parseFloat(activoForm.valorCosto)||0,
+        valorResidual: parseFloat(activoForm.valorResidual)||0, vidaUtilAnios: parseFloat(activoForm.vidaUtilAnios)||0,
+        ubicacion: activoForm.ubicacion||'', notas: activoForm.notas||'', status: activoForm.status||'ACTIVO',
+        updatedAt: Date.now(),
+      };
+      if (activoEditando) await updateDoc(getDocRef('activos_fijos', activoEditando), payload);
+      else await addDoc(getColRef('activos_fijos'), {...payload, createdAt:Date.now()});
+      setShowActivoModal(false);
+      setDialog({title:'✅ Guardado', text:`Activo ${activoEditando?'actualizado':'registrado'} correctamente.`, type:'alert'});
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
+  const eliminarActivoFijo = async (id) => {
+    requireAdminPassword(async()=>{
+      try { await deleteDoc(getDocRef('activos_fijos', id)); } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+    }, 'Eliminar Activo Fijo');
+  };
+  const procesarBajaActivo = async (a) => {
+    const precio = Number(bajaForm.precioVenta||0);
+    const fecha = bajaForm.fecha || getTodayDate();
+    if (precio>0 && !bajaForm.cuentaCobroNombre) { setDialog({title:'Falta la cuenta', text:'Elige qué cuenta recibe el pago de la venta.', type:'alert'}); return; }
+    if (!a.cuentaActivoNombre || !a.cuentaDeprAcumNombre) { setDialog({title:'Faltan cuentas', text:'Este activo no tiene configurada su cuenta contable o de depreciación acumulada — edítalo primero.', type:'alert'}); return; }
+    const [codActivo, nomActivo] = a.cuentaActivoNombre.split('—').map(s=>s.trim());
+    const [codDepr, nomDepr] = a.cuentaDeprAcumNombre.split('—').map(s=>s.trim());
+    const ganancia = precio - a._valorLibros;
+    const tasa = Number(settings?.tasaBCV||0)||1;
+    const lineas = [
+      {codigo:codDepr, cuenta:nomDepr, tipo:'D', montoUSD:a._deprAcumulada, montoBs:a._deprAcumulada*tasa, detalle:'Cancela depreciación acumulada'},
+    ];
+    if (precio>0) {
+      const [codCobro, nomCobro] = bajaForm.cuentaCobroNombre.split('—').map(s=>s.trim());
+      lineas.push({codigo:codCobro, cuenta:nomCobro, tipo:'D', montoUSD:precio, montoBs:precio*tasa, detalle:'Precio de venta'});
+    }
+    lineas.push({codigo:codActivo, cuenta:nomActivo, tipo:'H', montoUSD:a.valorCosto, montoBs:a.valorCosto*tasa, detalle:'Cancela costo del activo'});
+    if (Math.abs(ganancia)>0.005) {
+      lineas.push({codigo:'4.2.01.01.001', cuenta:'INGRESOS POR VENTA DE ACTIVO', tipo:ganancia>0?'H':'D', montoUSD:Math.abs(ganancia), montoBs:Math.abs(ganancia)*tasa, detalle:ganancia>0?'Ganancia en venta de activo':'Pérdida en venta de activo'});
+    }
+    try {
+      await addDoc(getColRef('comprobantes_ajustes'), {
+        fecha, nroComprobante:`BAJA-${a.id}`, concepto:`${precio>0?'Venta':'Baja'} de Activo Fijo — ${a.nombre}`,
+        tasa, lineas, createdAt:Date.now(), user:appUser?.name||'—', origen:'activos_fijos',
+      });
+      await updateDoc(getDocRef('activos_fijos', a.id), {status: precio>0?'VENDIDO':'DE_BAJA', fechaBaja:fecha, precioVenta:precio, gananciaVenta:ganancia});
+      setShowBajaActivoModal(null); setBajaForm({});
+      setDialog({title:'✅ Procesado', text:`Activo ${precio>0?'vendido':'dado de baja'}. Se registró el asiento en Ajustes Contables — revísalo ahí para confirmar.`, type:'alert'});
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
 
   const handleCreateInvoice = async (e) => {
@@ -42328,6 +42403,211 @@ ${resumenHtml}
   );
 
   // ============================================================================
+  // ACTIVOS FIJOS — registro, depreciación en línea recta calculada al vuelo, y
+  // dar de baja/vender con generación automática del asiento de ganancia o pérdida.
+  // ============================================================================
+  const calcDepreciacionActivo = (a, fechaCorte) => {
+    const costo = Number(a.valorCosto||0), residual = Number(a.valorResidual||0), vidaAnios = Number(a.vidaUtilAnios||0);
+    const vidaMeses = vidaAnios*12;
+    if (!a.fechaAdquisicion || vidaMeses<=0) return {mesesTranscurridos:0, deprAcumulada:0, valorLibros:costo, deprMensual:0};
+    const [ya,ma] = a.fechaAdquisicion.substring(0,7).split('-').map(Number);
+    const [yc,mc] = (fechaCorte||getTodayDate()).substring(0,7).split('-').map(Number);
+    let meses = (yc*12+mc)-(ya*12+ma);
+    if (meses<0) meses=0; if (meses>vidaMeses) meses=vidaMeses;
+    const deprMensual = (costo-residual)/vidaMeses;
+    const deprAcumulada = deprMensual*meses;
+    return {mesesTranscurridos:meses, deprAcumulada, valorLibros:costo-deprAcumulada, deprMensual};
+  };
+  const renderActivosFijosModule = () => {
+    const hoy = getTodayDate();
+    const activosOrdenados = [...(activosFijos||[])].sort((a,b)=>(a.fechaAdquisicion||'').localeCompare(b.fechaAdquisicion||''));
+    const activosActivos = activosOrdenados.filter(a=>a.status!=='VENDIDO'&&a.status!=='DE_BAJA');
+    const totCosto = activosActivos.reduce((s,a)=>s+Number(a.valorCosto||0),0);
+    const totDepr = activosActivos.reduce((s,a)=>s+calcDepreciacionActivo(a,hoy).deprAcumulada,0);
+    const totLibros = totCosto-totDepr;
+    return (
+      <div className="w-full animate-in fade-in space-y-6">
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-black uppercase flex items-center gap-3 tracking-tighter">
+              <Building2 style={{color:'#78716c'}} size={32}/> Activos Fijos
+            </h2>
+            <p className="text-xs font-bold text-gray-500 uppercase mt-1">Registro y depreciación en línea recta</p>
+          </div>
+          <button onClick={abrirNuevoActivo} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-3 rounded-2xl text-xs font-black uppercase flex items-center gap-2"><Plus size={16}/> Nuevo Activo</button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white rounded-2xl border border-gray-200 p-4"><p className="text-[9px] font-black text-gray-400 uppercase">Costo Total (activos vigentes)</p><p className="text-xl font-black text-gray-800 font-mono mt-1">${contFmt(totCosto)}</p></div>
+          <div className="bg-white rounded-2xl border border-gray-200 p-4"><p className="text-[9px] font-black text-amber-500 uppercase">Depreciación Acumulada</p><p className="text-xl font-black text-amber-600 font-mono mt-1">${contFmt(totDepr)}</p></div>
+          <div className="bg-white rounded-2xl border border-gray-200 p-4"><p className="text-[9px] font-black text-emerald-500 uppercase">Valor en Libros</p><p className="text-xl font-black text-emerald-600 font-mono mt-1">${contFmt(totLibros)}</p></div>
+        </div>
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          {activosOrdenados.length===0 ? (
+            <div className="p-12 text-center text-gray-400"><Building2 size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Sin activos registrados</p><p className="text-xs mt-1">Usa "Nuevo Activo" para empezar.</p></div>
+          ) : (
+            <div className="overflow-x-auto"><table className="w-full text-xs">
+              <thead><tr style={{background:'#0f172a'}}>
+                {['Activo','Categoría','Adquisición','Costo','Vida Útil','Meses','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=3&&i<=7?'text-right':i===9?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {activosOrdenados.map(a=>{
+                  const {mesesTranscurridos,deprAcumulada,valorLibros} = calcDepreciacionActivo(a,hoy);
+                  const deBaja = a.status==='VENDIDO'||a.status==='DE_BAJA';
+                  return (
+                    <tr key={a.id} className={`border-b border-gray-50 hover:bg-gray-50 ${deBaja?'opacity-50':''}`}>
+                      <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
+                      <td className="px-3 py-2 text-gray-500">{a.categoria}</td>
+                      <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
+                      <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-500">{a.vidaUtilAnios} años</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-500">{mesesTranscurridos}</td>
+                      <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
+                      <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {!deBaja && <button onClick={()=>abrirEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
+                          {!deBaja && <button onClick={()=>setShowBajaActivoModal({...a, _valorLibros:valorLibros, _deprAcumulada:deprAcumulada})} className="p-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-500 hover:text-white" title="Dar de Baja / Vender"><LogOut size={12}/></button>}
+                          <button onClick={()=>eliminarActivoFijo(a.id)} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar"><Trash2 size={12}/></button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table></div>
+          )}
+        </div>
+        {showActivoModal && renderActivoFormModal()}
+        {showBajaActivoModal && renderBajaActivoModal()}
+      </div>
+    );
+  };
+  const renderActivoFormModal = () => (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowActivoModal(false)}>
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-black text-lg text-gray-800">🏢 {activoEditando?'Editar':'Nuevo'} Activo Fijo</h3>
+          <button onClick={()=>setShowActivoModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+        </div>
+        <div>
+          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Nombre / Descripción</label>
+          <input value={activoForm.nombre||''} onChange={e=>setActivoForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Camioneta Toyota Hilux 2022" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-orange-500"/>
+        </div>
+        <div>
+          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Categoría</label>
+          <select value={activoForm.categoria||''} onChange={e=>{
+            const cat = CATEGORIAS_ACTIVO_FIJO.find(c=>c.cat===e.target.value);
+            setActivoForm(f=>({...f,categoria:e.target.value,
+              cuentaActivoNombre: f.cuentaActivoNombre||cat?.ctaActivoDefault||'',
+              cuentaDeprAcumNombre: f.cuentaDeprAcumNombre||cat?.ctaDeprDefault||''}));
+          }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+            {CATEGORIAS_ACTIVO_FIJO.map(c=><option key={c.cat} value={c.cat}>{c.cat}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta del Activo</label>
+            <select value={activoForm.cuentaActivoNombre||''} onChange={e=>setActivoForm(f=>({...f,cuentaActivoNombre:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+              <option value="">— Seleccionar —</option>
+              {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.06')).map(c=><option key={c.id} value={`${c.codigo} — ${c.nombre}`}>{c.codigo} — {c.nombre}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta Depr. Acumulada</label>
+            <select value={activoForm.cuentaDeprAcumNombre||''} onChange={e=>setActivoForm(f=>({...f,cuentaDeprAcumNombre:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+              <option value="">— Seleccionar —</option>
+              {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.06')).map(c=><option key={c.id} value={`${c.codigo} — ${c.nombre}`}>{c.codigo} — {c.nombre}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha Adquisición</label>
+            <input type="date" value={activoForm.fechaAdquisicion||''} onChange={e=>setActivoForm(f=>({...f,fechaAdquisicion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Costo ($)</label>
+            <input type="number" step="0.01" value={activoForm.valorCosto||''} onChange={e=>setActivoForm(f=>({...f,valorCosto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Valor Residual ($)</label>
+            <input type="number" step="0.01" value={activoForm.valorResidual||''} onChange={e=>setActivoForm(f=>({...f,valorResidual:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Vida Útil (años)</label>
+            <input type="number" step="0.5" value={activoForm.vidaUtilAnios||''} onChange={e=>setActivoForm(f=>({...f,vidaUtilAnios:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+          </div>
+          <div>
+            <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Ubicación / Responsable</label>
+            <input value={activoForm.ubicacion||''} onChange={e=>setActivoForm(f=>({...f,ubicacion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-2">
+          <button onClick={()=>setShowActivoModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+          <button onClick={guardarActivoFijo} className="flex-1 bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
+        </div>
+      </div>
+    </div>
+  );
+  const renderBajaActivoModal = () => {
+    const a = showBajaActivoModal;
+    return (
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{setShowBajaActivoModal(null);setBajaForm({});}}>
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+          <div className="flex items-center justify-between">
+            <h3 className="font-black text-lg text-gray-800">🚪 Dar de Baja / Vender</h3>
+            <button onClick={()=>{setShowBajaActivoModal(null);setBajaForm({});}} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+          </div>
+          <p className="text-xs font-black text-gray-700">{a.nombre}</p>
+          <div className="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-3">
+            <div><p className="text-[8px] font-black text-gray-400 uppercase">Costo</p><p className="text-sm font-black font-mono">${contFmt(a.valorCosto)}</p></div>
+            <div><p className="text-[8px] font-black text-amber-500 uppercase">Depr. Acum.</p><p className="text-sm font-black font-mono text-amber-600">${contFmt(a._deprAcumulada)}</p></div>
+            <div><p className="text-[8px] font-black text-emerald-500 uppercase">Valor Libros</p><p className="text-sm font-black font-mono text-emerald-600">${contFmt(a._valorLibros)}</p></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha de Venta/Baja</label>
+              <input type="date" value={bajaForm.fecha||getTodayDate()} onChange={e=>setBajaForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Precio de Venta ($)</label>
+              <input type="number" step="0.01" value={bajaForm.precioVenta||''} onChange={e=>setBajaForm(f=>({...f,precioVenta:e.target.value}))} placeholder="0 si es solo baja" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+            </div>
+          </div>
+          {Number(bajaForm.precioVenta||0)>0 && (
+            <div>
+              <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta que recibe el pago</label>
+              <select value={bajaForm.cuentaCobroNombre||''} onChange={e=>setBajaForm(f=>({...f,cuentaCobroNombre:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                <option value="">— Seleccionar —</option>
+                {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.01')||String(c.codigo).startsWith('1.1.02.01')).map(c=><option key={c.id} value={`${c.codigo} — ${c.nombre}`}>{c.codigo} — {c.nombre}</option>)}
+              </select>
+            </div>
+          )}
+          {(() => {
+            const precio = Number(bajaForm.precioVenta||0);
+            const ganancia = precio - a._valorLibros;
+            return (
+              <div className={`rounded-xl p-3 text-center ${ganancia>=0?'bg-emerald-50 border border-emerald-200':'bg-red-50 border border-red-200'}`}>
+                <p className={`text-[9px] font-black uppercase ${ganancia>=0?'text-emerald-600':'text-red-600'}`}>{ganancia>=0?'Ganancia':'Pérdida'} en la operación</p>
+                <p className={`text-lg font-black font-mono ${ganancia>=0?'text-emerald-700':'text-red-700'}`}>${contFmt(Math.abs(ganancia))}</p>
+              </div>
+            );
+          })()}
+          <div className="flex gap-2 pt-2">
+            <button onClick={()=>{setShowBajaActivoModal(null);setBajaForm({});}} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+            <button onClick={()=>procesarBajaActivo(a)} className="flex-1 bg-amber-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-amber-700">Generar Asiento y Confirmar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================================================
   // RECIPROCIDAD BANCARIA — módulo propio (antes vivía como sub-reporte dentro de Reportes Financieros (Producción))
   // ============================================================================
   const renderReciprocidadBancariaModule = () => {
@@ -50491,7 +50771,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
              <div className="p-4 sm:p-6">{renderFinanzasPlaceholder('Inversiones', ArrowUpFromLine, '#ca8a04', 'Cartera de inversiones')}</div>
            )}
            {activeTab === 'activos_fijos' && (hasPerm('costos') || hasPerm('costos_reportes') || appUser?.role==='Master') && (
-             <div className="p-4 sm:p-6">{renderFinanzasPlaceholder('Activos Fijos', Building2, '#78716c', 'Registro y depreciación')}</div>
+             <div className="p-4 sm:p-6">{renderActivosFijosModule()}</div>
            )}
 
            {/* ── ESTADO DE RESULTADO SUB-NAV ── */}
