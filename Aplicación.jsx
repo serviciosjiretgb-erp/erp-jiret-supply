@@ -45039,7 +45039,17 @@ const ActualizarCostosView = ({settings, appUser}) => {
       // Costo actual: 1) código (limpio de sufijos) 2) código extraído del inicio de la
       // descripción si viene como "CODIGO — Descripción" (ítems que se guardaron sin invCode
       // separado) 3) descripción normalizada (mismo respaldo que usa el Reporte General)
+      // Mapa aparte por ID directo de Productos Terminados — el vínculo real que guardan las
+      // notas de entrega/facturas hacia finishedGoodsInventory es it.fgId (el id del documento
+      // tal cual), no un código de producto — por eso necesita su propio mapa por id.
+      const costoPorFgId = new Map();
+      for(const fg of fgAll){
+        const c=parseNum(fg.costoUnitario||0)||parseNum(fg.costoUnitarioMillar||0);
+        if(fg.id&&c>0) costoPorFgId.set(fg.id, c);
+        if(fg._id&&c>0) costoPorFgId.set(fg._id, c);
+      }
       const buscarCostoActual=(it)=>{
+        if(it.fgId && costoPorFgId.has(it.fgId)) return costoPorFgId.get(it.fgId);
         const codeRaw=getClean(resolverAliasCodigo(it.invCode||'')).toUpperCase();
         if(codeRaw&&costoPorCodigo.has(codeRaw)) return costoPorCodigo.get(codeRaw);
         const itDesc=it.desc||'';
