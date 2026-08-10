@@ -11689,27 +11689,42 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
   const calcularTotalesIva = (claveQ) => {
     const {desde, hasta} = rangoQuincena(claveQ);
-    const debCod = cuentasIvaCfgC.debitoCod || CUENTAS_IVA_DEFAULT.debitoCod;
-    const credCod = cuentasIvaCfgC.creditoCod || CUENTAS_IVA_DEFAULT.creditoCod;
-    const retCliCod = cuentasIvaCfgC.retClienteCod || '';
     const tasaQ = tasasManualesIvaC[claveQ] || Number(settingsCC?.tasaBCV||0) || 1;
+    // Misma fuente y mismo criterio que Determinación de IVA — solo facturas con número fiscal
+    // o de control asignado cuentan para la declaración; una factura sin esos números todavía
+    // no es un documento fiscal válido ante el SENIAT, así no infla el débito fiscal real.
     let totalDebito=0, totalCredito=0, retencionesPeriodo=0;
-    if (getAsientosRealesFn) {
-      getAsientosRealesFn().forEach(a=>{
-        const f = a.fecha||'';
-        if (f<desde || f>hasta) return;
-        (a.lineas||[]).forEach(l=>{
-          if (l.codigo===debCod) totalDebito += Number(l.haberBs||0)-Number(l.debeBs||0); // el débito fiscal se acumula en el Haber
-          if (l.codigo===credCod) totalCredito += Number(l.debeBs||0)-Number(l.haberBs||0); // el crédito fiscal se acumula en el Debe
-          if (retCliCod && l.codigo===retCliCod) retencionesPeriodo += Number(l.debeBs||0)-Number(l.haberBs||0); // retención que nos hicieron esta quincena
-        });
-      });
-    }
+    (facturasVentaC||[]).forEach(inv=>{
+      if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return;
+      if(inv.aplicaIva!=='SI') return;
+      const f = inv.fechaFactura||inv.fecha||'';
+      if (f<desde || f>hasta) return;
+      const tasaInv = pNum(inv.tasa||0)||tasaQ;
+      const ivaUSD = pNum(inv.iva||0)||parseFloat((pNum(inv.montoBase||0)*0.16).toFixed(2));
+      totalDebito += pNum(inv.ivaBs||0)||ivaUSD*tasaInv;
+    });
+    (facturasCompraC||[]).forEach(f=>{
+      if (f.afectaLibroCompras===false) return;
+      const fecha = f.fecha||'';
+      if (fecha<desde || fecha>hasta) return;
+      const tot = f.totales||{};
+      totalCredito += pNum(tot.iva16Bs||0)+pNum(tot.iva8Bs||0);
+      if (f.esImportacion && f.importacion) totalCredito += pNum(f.importacion.iva||0);
+    });
+    (retencionesC||[]).forEach(r=>{
+      if ((r.tipoRetencion||'IVA')!=='IVA') return;
+      const f = r.fechaComprobante||r.createdAt||'';
+      if (f<desde || f>hasta) return;
+      retencionesPeriodo += pNum(r.montoRetenido||0);
+    });
     // Arrastre de la quincena anterior: lo que no se pudo aplicar de retenciones, y el excedente
-    // de crédito fiscal que quedó a favor, ambos siguen disponibles esta quincena.
+    // de crédito fiscal que quedó a favor, ambos siguen disponibles esta quincena. Si no hay
+    // cierre anterior registrado (ej. la primera quincena que se usa este módulo), se usa el
+    // arranque manual configurado en "Configurar Cuentas" — para igualar el saldo real que ya
+    // traías de declaraciones anteriores fuera de este sistema.
     const cierreAnterior = (cierresIvaC||[]).find(c=>c.id===`IVA-${quincenaAnteriorDe(claveQ)}`);
-    const retencionesAcumuladasAnteriores = Number(cierreAnterior?.retencionesAcumuladasSiguiente||0);
-    const excedenteCreditoAnterior = Number(cierreAnterior?.excedenteCreditoSiguiente||0);
+    const retencionesAcumuladasAnteriores = cierreAnterior ? Number(cierreAnterior.retencionesAcumuladasSiguiente||0) : Number(cuentasIvaCfgC.arranqueRetencionesAcumuladas||0);
+    const excedenteCreditoAnterior = cierreAnterior ? Number(cierreAnterior.excedenteCreditoSiguiente||0) : Number(cuentasIvaCfgC.arranqueExcedenteCredito||0);
     // Cuota tributaria: lo que se debería enterar ANTES de aplicar retenciones — el excedente de
     // crédito de la quincena anterior también resta, como un crédito fiscal más.
     const cuotaTributaria = totalDebito - totalCredito - excedenteCreditoAnterior;
@@ -12259,6 +12274,22 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         ],
       });
     }
+    // Cierre de Compensación de IVA — se muestran las quincenas ya generadas que caen dentro
+    // del mes seleccionado, leyendo directo el comprobante ya guardado (mismas líneas exactas
+    // que se generaron en Cierre IVA, no se recalcula nada aquí).
+    ['Q1','Q2'].forEach(q=>{
+      const cierre = (cierresIvaC||[]).find(c=>c.id===`IVA-${mesKey}-${q}`);
+      if (!cierre) return;
+      lineas.push({
+        id:cierre.id, comprobante:`Cierre IVA — ${q==='Q1'?'1ra':'2da'} Quincena`, fecha:cierre.fecha, doc:cierre.nroComprobante||cierre.id, tasa:Number(cierre.tasa||0),
+        conc:cierre.concepto||`Compensación de IVA — ${mesKey} ${q}`,
+        lineas:(cierre.lineas||[]).map(l=>({
+          codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo,
+          dBs:l.tipo==='D'?Number(l.montoBs||0):0, hBs:l.tipo==='H'?Number(l.montoBs||0):0,
+          dUSD:l.tipo==='D'?Number(l.montoUSD||0):0, hUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
+        })),
+      });
+    });
     return lineas;
   };
 
@@ -13868,6 +13899,20 @@ ${valoresHtml}
                     </select>
                   </div>
                 ))}
+                <div className="pt-3 border-t border-gray-100">
+                  <p className="text-[10px] font-black text-gray-500 uppercase mb-2">Arranque manual (solo para la primera quincena, sin cierre previo en este sistema)</p>
+                  <p className="text-[10px] text-gray-400 mb-2">Escribe aquí el saldo que ya traías de tu última declaración real ante el SENIAT (Casilla 33/20), antes de empezar a usar este módulo. Se usa únicamente cuando no hay un cierre anterior guardado — después, el sistema sigue el arrastre solo.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Retenciones Acumuladas (Bs.)</label>
+                      <input type="number" step="0.01" value={cuentasIvaCfgC.arranqueRetencionesAcumuladas||''} onChange={e=>setCuentasIvaCfgC(x=>({...x,arranqueRetencionesAcumuladas:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Excedente Crédito Fiscal (Bs.)</label>
+                      <input type="number" step="0.01" value={cuentasIvaCfgC.arranqueExcedenteCredito||''} onChange={e=>setCuentasIvaCfgC(x=>({...x,arranqueExcedenteCredito:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                    </div>
+                  </div>
+                </div>
                 <div className="flex gap-2 pt-2">
                   <button onClick={()=>setShowCuentasIvaModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
                   <button onClick={guardarCuentasIva} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
@@ -14839,7 +14884,9 @@ function App() {
       const tipo = r.tipoExtra ? (r.tipoLabel||r.tipo||'Otra') : (r.tipoRetencion||'IVA');
       const ctaRet = r.tipoExtra
         ? (r.cuentaContableNombre ? {codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim()} : {codigo:'2.1.03.99.001', nombre:`${tipo} por enterar`})
-        : (r.cuentaContableRetNombre ? {codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim()} : {codigo: tipo==='IVA'?'2.1.03.01.001':'2.1.03.02.001', nombre:`Retenciones ${tipo} por enterar`});
+        : (r.cuentaContableRetNombre ? {codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim()}
+            : tipo==='IVA' && cuentasIvaCfgApp.retClienteNombre ? {codigo:cuentasIvaCfgApp.retClienteNombre.split('—')[0].trim(), nombre:cuentasIvaCfgApp.retClienteNombre.split('—').slice(1).join('—').trim()}
+            : {codigo: tipo==='IVA'?'2.1.03.01.001':'2.1.03.02.001', nombre:`Retenciones ${tipo} por enterar`});
       const montoBs=Number(r.montoRetenido||0);
       const montoUSD=montoBs/Math.max(Number(r.tasa||1),1);
       const cliente = (clients||[]).find(c=>c.rif && r.clientRif && c.rif.replace(/\W/g,'')===String(r.clientRif).replace(/\W/g,''));
@@ -15002,6 +15049,17 @@ function App() {
           ]});
       });
     }
+    // 10) Cierre de Compensación de IVA — cada quincena cerrada ya generó su asiento completo
+    // (Débito/Crédito Fiscal, retenciones aplicadas, IVA por pagar o excedente); se incluyen
+    // esas mismas líneas guardadas tal cual, sin recalcular nada aquí.
+    (cierresIvaApp||[]).forEach(c=>{
+      out.push({fecha:c.fecha||'', comprobante:c.nroComprobante||c.id, modulo:'Impuestos', concepto:c.concepto||`Compensación de IVA — ${c.quincena||c.mes||''}`,
+        lineas:(c.lineas||[]).map(l=>({
+          codigo:l.codigo, cuenta:l.cuenta,
+          debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0,
+          debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
+        }))});
+    });
     return out;
   };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
@@ -17930,6 +17988,18 @@ function App() {
     try{ await setDoc(doc(db,'settings','cuentasRetencionProveedor'), upd, {merge:true}); }
     catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
+  // Config de cuentas de IVA (mismo documento que usa Cierre IVA) — se necesita aquí también
+  // para que "Retenciones a Clientes" use la cuenta real configurada en vez de un código fijo.
+  const [cuentasIvaCfgApp, setCuentasIvaCfgApp] = useState({});
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','cuentasIva'), d=>d.exists() && setCuentasIvaCfgApp(d.data()));
+    return()=>u();
+  },[]);
+  const [cierresIvaApp, setCierresIvaApp] = useState([]);
+  useEffect(()=>{
+    const u=onSnapshot(getColRef('comprobantes_cierre_iva'), s=>setCierresIvaApp(s.docs.map(d=>({id:d.id, ...d.data()}))));
+    return()=>u();
+  },[]);
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
 
   const handleCreateInvoice = async (e) => {
