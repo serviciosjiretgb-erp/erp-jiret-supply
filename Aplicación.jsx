@@ -181,6 +181,19 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     const u=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     return()=>u();
   },[]);
+  // ── Cuentas de Retención IVA/ISLR a Proveedores — las usa el comprobante de Procura
+  // (generarAsientoFC) para saber a qué cuenta acreditar cada retención practicada.
+  const [cuentasRetProvCfgImp,setCuentasRetProvCfgImp]=useState({ivaId:'',ivaNombre:'',islrId:'',islrNombre:''});
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','cuentasRetencionProveedor'),d=>d.exists()&&setCuentasRetProvCfgImp(x=>({...x,...d.data()})));
+    return()=>u();
+  },[]);
+  const guardarCuentaRetProvImp = async (campo, cuentaId) => {
+    const cta = (planDeCuentas||[]).find(p=>p.id===cuentaId);
+    const upd = {[`${campo}Id`]:cta?.id||'', [`${campo}Nombre`]:cta?`${cta.codigo} — ${cta.nombre}`:''};
+    try{ await setDoc(doc(db,'settings','cuentasRetencionProveedor'), upd, {merge:true}); }
+    catch(e){ alert('Error: '+e.message); }
+  };
   const [ppSaving,setPpSaving]=useState(false);
 
   // ── Resumen Tributario (Tesoro Nacional + Alcaldía, por quincena) ──
@@ -1129,6 +1142,15 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           <button onClick={()=>exportarRetPDF(tipoR)} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all shadow-sm"><FileText size={11}/>PDF</button>
           <button onClick={()=>exportarRetExcel(tipoR)} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all shadow-sm"><Download size={11}/>Excel</button>
         </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap pt-2.5 mt-2.5 border-t border-slate-100">
+        <span className="text-[8px] text-slate-400 font-black uppercase whitespace-nowrap">⚙️ Cuenta contable de Retención {tipoR} (comprobante de Procura)</span>
+        <select value={cuentasRetProvCfgImp[`${tipoR==='IVA'?'iva':'islr'}Id`]||''}
+          onChange={e=>guardarCuentaRetProvImp(tipoR==='IVA'?'iva':'islr', e.target.value)}
+          className="flex-1 min-w-[220px] border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500">
+          <option value="">— Sin configurar (busca por nombre automático) —</option>
+          {(planDeCuentas||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+        </select>
       </div>
     </div>
   );
@@ -2996,7 +3018,7 @@ const resolverCuentaManualFC=(f,planDeCuentasArg)=>{
   if(ctaP.codigo) return`${ctaP.codigo} — ${ctaP.nombre}`;
   return`⚠️ Sin cuenta asignada (${cat||'Producto'})`;
 };
-const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasArg,proveedoresArg)=>{
+const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasArg,proveedoresArg,cuentasRetCfg)=>{
   const tasa=pNum(f.tasa||0);
   const lineas=[];
   const items=f.itemsOC||[];
@@ -3022,13 +3044,13 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
     concepto:`${f.proveedor||'—'} · Fact. ${f.nroFactura||'—'}`,
     montoUSD:neto.monto,montoBs:neto.montoBs});
   if(retIVA.monto>0){
-    lineas.push({tipo:'CREDITO',cuenta:'2.1.04.02.002 — RETENCIÓN IVA (100-75%)',
+    lineas.push({tipo:'CREDITO',cuenta:cuentasRetCfg?.ivaNombre||'2.1.04.02.002 — RETENCIÓN IVA (100-75%)',
       concepto:`Ret. IVA ${f.pctRetIVA||75}% · ${f.proveedor||'—'}`,
       montoUSD:retIVA.monto,montoBs:retIVA.montoBs});
   }
   retISLRLista.forEach(r=>{
     if(r.monto>0){
-      lineas.push({tipo:'CREDITO',cuenta:'2.1.04.01.001 — RETENCIONES I.S.L.R. POR PAGAR',
+      lineas.push({tipo:'CREDITO',cuenta:cuentasRetCfg?.islrNombre||'2.1.04.01.001 — RETENCIONES I.S.L.R. POR PAGAR',
         concepto:`Ret. ISLR ${r.pct}% · ${r.concepto||r.codigo} · ${f.proveedor||'—'}`,
         montoUSD:r.monto,montoBs:r.montoBs});
     }
@@ -5414,7 +5436,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   // calcTotalesFC/calcRetIVA/calcRetISLRLista/calcNeto/generarAsientoFC arriba del archivo,
   // usadas también por Comprobantes Contables en Contabilidad).
   const generarAsiento=(f,tot,retIVA,retISLRLista,neto)=>
-    generarAsientoFC(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentas,proveedores);
+    generarAsientoFC(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentas,proveedores,cuentasRetProvCfg);
 
 
   const initForm=()=>({
@@ -6090,14 +6112,25 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Ítems de la factura — editables si hay diferencias con la OC</p>
                         <span className="text-[9px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-black uppercase flex items-center gap-1">✏️ Editable</span>
-                        {form.moneda==='Bs'&&(form.itemsOC||[]).some(it=>it._totalBsOriginal!=null&&Math.abs(pNum(it.total||0)-pNum(it._totalBsOriginal))<0.01&&pNum(it._totalBsOriginal)>pNum(form.tasa||1))&&(
-                          <button type="button" title="Corrige ítems donde el total en USD quedó igual al de Bs. por un bug ya corregido — recalcula usando el valor en Bs. que sí está bien guardado"
+                        {form.moneda==='Bs'&&(form.itemsOC||[]).some(it=>{
+                          const bruto=pNum(it.cantidad||0)*pNum(it.precioUnit||0);
+                          const yaMarcado=it._totalBsOriginal!=null&&Math.abs(pNum(it.total||0)-pNum(it._totalBsOriginal))<0.01;
+                          const porPatron=bruto>0&&Math.abs(pNum(it.total||0)-bruto)<0.01&&pNum(it.total||0)>pNum(form.tasa||1);
+                          return yaMarcado||porPatron;
+                        })&&(
+                          <button type="button" title="Corrige ítems donde el total quedó en Bs. en vez de USD (bug ya corregido) — recalcula dividiendo entre la tasa"
                             onClick={()=>{
                               const tasaFix=pNum(form.tasa||0);
                               if(!tasaFix){setDialog({title:'Falta la tasa',text:'Ingresa la tasa Bs./$ antes de recalcular.',type:'alert'});return;}
                               const corregidos=(form.itemsOC||[]).map(it=>{
-                                if(it._totalBsOriginal!=null&&Math.abs(pNum(it.total||0)-pNum(it._totalBsOriginal))<0.01&&pNum(it._totalBsOriginal)>tasaFix){
+                                const bruto=pNum(it.cantidad||0)*pNum(it.precioUnit||0);
+                                const yaMarcado=it._totalBsOriginal!=null&&Math.abs(pNum(it.total||0)-pNum(it._totalBsOriginal))<0.01&&pNum(it._totalBsOriginal)>tasaFix;
+                                const porPatron=bruto>0&&Math.abs(pNum(it.total||0)-bruto)<0.01&&pNum(it.total||0)>tasaFix;
+                                if(yaMarcado){
                                   return{...it,total:parseFloat((pNum(it._totalBsOriginal)/tasaFix).toFixed(2))};
+                                }
+                                if(porPatron){
+                                  return{...it,total:parseFloat((bruto/tasaFix).toFixed(2))};
                                 }
                                 return it;
                               });
@@ -11590,8 +11623,11 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [tasasManualesProdC, setTasasManualesProdC] = useState({});
   const [cierresIvaC, setCierresIvaC] = useState([]);
   const [cuentasIvaCfgC, setCuentasIvaCfgC] = useState({});
+  const [cuentasRetProvCfgC, setCuentasRetProvCfgC] = useState({ivaId:'',ivaNombre:'',islrId:'',islrNombre:''});
   const [showCuentasIvaModal, setShowCuentasIvaModal] = useState(false);
   const [ivaMesSel, setIvaMesSel] = useState(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;});
+  const [ivaQuincenaSel, setIvaQuincenaSel] = useState(()=>new Date().getDate()<=15?1:2);
+  const [tasasManualesIvaC, setTasasManualesIvaC] = useState({});
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
@@ -11620,6 +11656,11 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     try{ await setDoc(doc(db,'produccion_tasas_manuales',id),{tasa,ts:Date.now()},{merge:true}); }
     catch(e){ alert('No se pudo guardar la tasa: '+e.message); }
   };
+  const guardarTasaIva = async (claveQ, tasa) => {
+    setTasasManualesIvaC(x=>({...x,[claveQ]:tasa})); // optimista
+    try{ await setDoc(doc(db,'iva_tasas_manuales',claveQ),{tasa,ts:Date.now()},{merge:true}); }
+    catch(e){ alert('No se pudo guardar la tasa: '+e.message); }
+  };
   // ── Cierre de Compensación de IVA ─────────────────────────────────────────────
   // Cuentas por defecto según el Plan de Cuentas estándar de esta app — el modal de
   // configuración las puede cambiar si el usuario usa otros códigos.
@@ -11631,13 +11672,28 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     try{ await setDoc(doc(db,'settings','cuentasIva'), cuentasIvaCfgC, {merge:true}); setShowCuentasIvaModal(false); alert('Cuentas de IVA guardadas.'); }
     catch(e){ alert('Error: '+e.message); }
   };
-  const calcularTotalesIva = (mesSel) => {
-    const desde = `${mesSel}-01`;
-    const [y,m] = mesSel.split('-').map(Number);
-    const hasta = `${mesSel}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+  const claveQuincena = (mesSel, q) => `${mesSel}-Q${q}`;
+  const rangoQuincena = (claveQ) => {
+    const [y,m,qStr] = claveQ.split('-');
+    const q = parseInt(qStr.replace('Q',''),10);
+    if (q===1) return {desde:`${y}-${m}-01`, hasta:`${y}-${m}-15`};
+    const ultimoDia = new Date(parseInt(y,10), parseInt(m,10), 0).getDate();
+    return {desde:`${y}-${m}-16`, hasta:`${y}-${m}-${String(ultimoDia).padStart(2,'0')}`};
+  };
+  const quincenaAnteriorDe = (claveQ) => {
+    const [y,m,qStr] = claveQ.split('-');
+    const q = parseInt(qStr.replace('Q',''),10);
+    if (q===2) return `${y}-${m}-Q1`;
+    const d = new Date(parseInt(y,10), parseInt(m,10)-2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-Q2`;
+  };
+  const calcularTotalesIva = (claveQ) => {
+    const {desde, hasta} = rangoQuincena(claveQ);
     const debCod = cuentasIvaCfgC.debitoCod || CUENTAS_IVA_DEFAULT.debitoCod;
     const credCod = cuentasIvaCfgC.creditoCod || CUENTAS_IVA_DEFAULT.creditoCod;
-    let totalDebito=0, totalCredito=0;
+    const retCliCod = cuentasIvaCfgC.retClienteCod || '';
+    const tasaQ = tasasManualesIvaC[claveQ] || Number(settingsCC?.tasaBCV||0) || 1;
+    let totalDebito=0, totalCredito=0, retencionesPeriodo=0;
     if (getAsientosRealesFn) {
       getAsientosRealesFn().forEach(a=>{
         const f = a.fecha||'';
@@ -11645,36 +11701,66 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         (a.lineas||[]).forEach(l=>{
           if (l.codigo===debCod) totalDebito += Number(l.haberBs||0)-Number(l.debeBs||0); // el débito fiscal se acumula en el Haber
           if (l.codigo===credCod) totalCredito += Number(l.debeBs||0)-Number(l.haberBs||0); // el crédito fiscal se acumula en el Debe
+          if (retCliCod && l.codigo===retCliCod) retencionesPeriodo += Number(l.debeBs||0)-Number(l.haberBs||0); // retención que nos hicieron esta quincena
         });
       });
     }
-    return {desde, hasta, totalDebito, totalCredito, diferencia: totalDebito-totalCredito};
+    // Arrastre de la quincena anterior: lo que no se pudo aplicar de retenciones, y el excedente
+    // de crédito fiscal que quedó a favor, ambos siguen disponibles esta quincena.
+    const cierreAnterior = (cierresIvaC||[]).find(c=>c.id===`IVA-${quincenaAnteriorDe(claveQ)}`);
+    const retencionesAcumuladasAnteriores = Number(cierreAnterior?.retencionesAcumuladasSiguiente||0);
+    const excedenteCreditoAnterior = Number(cierreAnterior?.excedenteCreditoSiguiente||0);
+    // Cuota tributaria: lo que se debería enterar ANTES de aplicar retenciones — el excedente de
+    // crédito de la quincena anterior también resta, como un crédito fiscal más.
+    const cuotaTributaria = totalDebito - totalCredito - excedenteCreditoAnterior;
+    const retencionesDisponibles = retencionesPeriodo + retencionesAcumuladasAnteriores;
+    let ivaPorPagarEfectivo=0, retencionesAcumuladasSiguiente=0, excedenteCreditoSiguiente=0, montoAplicado=0;
+    if (cuotaTributaria>0.005) {
+      montoAplicado = Math.min(cuotaTributaria, retencionesDisponibles);
+      ivaPorPagarEfectivo = cuotaTributaria - montoAplicado;
+      retencionesAcumuladasSiguiente = retencionesDisponibles - montoAplicado;
+    } else {
+      excedenteCreditoSiguiente = -cuotaTributaria; // Crédito superó a Débito: ese excedente pasa a la quincena que viene
+      retencionesAcumuladasSiguiente = retencionesDisponibles; // no había cuota contra la cual aplicarlas, se arrastran completas
+    }
+    return {desde, hasta, tasaQ, totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
+      cuotaTributaria, montoAplicado, ivaPorPagarEfectivo, retencionesAcumuladasSiguiente, excedenteCreditoSiguiente,
+      diferencia: ivaPorPagarEfectivo>0?ivaPorPagarEfectivo:-excedenteCreditoSiguiente};
   };
-  const generarCierreIva = async (mesSel) => {
-    const {desde, hasta, totalDebito, totalCredito, diferencia} = calcularTotalesIva(mesSel);
-    if (totalDebito<=0.005 && totalCredito<=0.005) { alert('No hay movimiento de IVA en ese mes.'); return; }
+  const generarCierreIva = async (claveQ) => {
+    const {desde, hasta, tasaQ, totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
+      cuotaTributaria, montoAplicado, ivaPorPagarEfectivo, retencionesAcumuladasSiguiente, excedenteCreditoSiguiente} = calcularTotalesIva(claveQ);
+    if (totalDebito<=0.005 && totalCredito<=0.005) { alert('No hay movimiento de IVA en esa quincena.'); return; }
     const debCod = cuentasIvaCfgC.debitoCod || CUENTAS_IVA_DEFAULT.debitoCod;
     const debNom = cuentasIvaCfgC.debitoNom || CUENTAS_IVA_DEFAULT.debitoNom;
     const credCod = cuentasIvaCfgC.creditoCod || CUENTAS_IVA_DEFAULT.creditoCod;
     const credNom = cuentasIvaCfgC.creditoNom || CUENTAS_IVA_DEFAULT.creditoNom;
+    const usd = (bs) => tasaQ>0 ? parseFloat((bs/tasaQ).toFixed(2)) : 0;
     const lineas = [
-      {codigo:debCod, cuenta:debNom, tipo:'D', montoBs:totalDebito},
-      {codigo:credCod, cuenta:credNom, tipo:'H', montoBs:totalCredito},
+      {codigo:debCod, cuenta:debNom, tipo:'D', montoBs:totalDebito, montoUSD:usd(totalDebito)},
+      {codigo:credCod, cuenta:credNom, tipo:'H', montoBs:totalCredito, montoUSD:usd(totalCredito)},
     ];
-    if (diferencia>0.005) {
+    if (montoAplicado>0.005) {
+      if (!cuentasIvaCfgC.retClienteCod) { alert('Falta configurar la cuenta "Retención IVA Clientes" — usa el botón de Configurar Cuentas.'); return; }
+      lineas.push({codigo:cuentasIvaCfgC.retClienteCod, cuenta:cuentasIvaCfgC.retClienteNom, tipo:'H', montoBs:montoAplicado, montoUSD:usd(montoAplicado), detalle:'Retención aplicada esta quincena'});
+    }
+    if (ivaPorPagarEfectivo>0.005) {
       if (!cuentasIvaCfgC.porPagarCod) { alert('Falta configurar la cuenta "IVA por Pagar" — usa el botón de Configurar Cuentas.'); return; }
-      lineas.push({codigo:cuentasIvaCfgC.porPagarCod, cuenta:cuentasIvaCfgC.porPagarNom, tipo:'H', montoBs:diferencia});
-    } else if (diferencia<-0.005) {
+      lineas.push({codigo:cuentasIvaCfgC.porPagarCod, cuenta:cuentasIvaCfgC.porPagarNom, tipo:'H', montoBs:ivaPorPagarEfectivo, montoUSD:usd(ivaPorPagarEfectivo)});
+    } else if (excedenteCreditoSiguiente>0.005) {
       if (!cuentasIvaCfgC.favorCod) { alert('Falta configurar la cuenta "Crédito Fiscal a Favor" — usa el botón de Configurar Cuentas.'); return; }
-      lineas.push({codigo:cuentasIvaCfgC.favorCod, cuenta:cuentasIvaCfgC.favorNom, tipo:'D', montoBs:Math.abs(diferencia)});
+      lineas.push({codigo:cuentasIvaCfgC.favorCod, cuenta:cuentasIvaCfgC.favorNom, tipo:'D', montoBs:excedenteCreditoSiguiente, montoUSD:usd(excedenteCreditoSiguiente)});
     }
     try{
-      const id = `IVA-${mesSel}`;
+      const id = `IVA-${claveQ}`;
+      const etiqueta = `${claveQ.endsWith('Q1')?'1ra':'2da'} Quincena ${claveQ.slice(0,7)}`;
       await setDoc(doc(db,'comprobantes_cierre_iva',id), {
-        id, mes:mesSel, fecha:hasta, nroComprobante:`CIERRE IVA ${mesSel}`, concepto:`Compensación de IVA — ${mesSel}`,
-        totalDebito, totalCredito, diferencia, lineas, createdAt:Date.now(),
+        id, quincena:claveQ, fecha:hasta, tasa:tasaQ, nroComprobante:`CIERRE IVA ${etiqueta}`, concepto:`Compensación de IVA — ${etiqueta}`,
+        totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
+        cuotaTributaria, montoAplicado, ivaPorPagarEfectivo, retencionesAcumuladasSiguiente, excedenteCreditoSiguiente,
+        lineas, createdAt:Date.now(),
       });
-      alert(`Cierre de IVA generado para ${mesSel}.\n\nDébito Fiscal: Bs.${contFmt(totalDebito)}\nCrédito Fiscal: Bs.${contFmt(totalCredito)}\n${diferencia>0?'IVA por Pagar':'Crédito Fiscal a Favor'}: Bs.${contFmt(Math.abs(diferencia))}`);
+      alert(`Cierre de IVA generado para ${etiqueta}.\n\nDébito Fiscal: Bs.${contFmt(totalDebito)}\nCrédito Fiscal: Bs.${contFmt(totalCredito)}\nRetenciones de la quincena: Bs.${contFmt(retencionesPeriodo)}\nRetenciones acumuladas (venían de antes): Bs.${contFmt(retencionesAcumuladasAnteriores)}\nAplicado esta quincena: Bs.${contFmt(montoAplicado)}\n\n${ivaPorPagarEfectivo>0.005?`IVA por Pagar (efectivo): Bs.${contFmt(ivaPorPagarEfectivo)}`:'No hay IVA por pagar en efectivo esta quincena.'}\nRetenciones por descontar la próxima quincena: Bs.${contFmt(retencionesAcumuladasSiguiente)}\nExcedente de Crédito Fiscal para la próxima quincena: Bs.${contFmt(excedenteCreditoSiguiente)}`);
     }catch(e){ alert('Error al generar: '+e.message); }
   };
   const eliminarCierreIva = async (id) => {
@@ -11735,7 +11821,9 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       onSnapshot(getColRef('invRequisitions'), s => setInvRequisitionsC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('produccion_tasas_manuales'), s => setTasasManualesProdC(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa])))),
       onSnapshot(getColRef('comprobantes_cierre_iva'), s => setCierresIvaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('iva_tasas_manuales'), s => setTasasManualesIvaC(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa])))),
       onSnapshot(doc(db,'settings','cuentasIva'), d => d.exists() && setCuentasIvaCfgC(d.data())),
+      onSnapshot(doc(db,'settings','cuentasRetencionProveedor'), d => d.exists() && setCuentasRetProvCfgC(x=>({...x,...d.data()}))),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificacionesC(Object.fromEntries(s.docs.map(d => [d.id, d.data()])))),
       onSnapshot(doc(db,'settings','general'), d => { if(d.exists()) setSettingsCC(d.data()); }),
       onSnapshot(getDocRef('settings','actividadEconomica'), d => { if(d.exists()) setAeCfgCC(d.data()); }),
@@ -11776,7 +11864,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       const retIVA = calcRetIVA(f, tot);
       const retISLRLista = calcRetISLRLista(f, tot);
       const neto = calcNeto(tot, retIVA, retISLRLista, f.tasa);
-      const asiento = generarAsientoFC(f, tot, retIVA, retISLRLista, neto, serviciosC, planCuentasC, provsC);
+      const asiento = generarAsientoFC(f, tot, retIVA, retISLRLista, neto, serviciosC, planCuentasC, provsC, cuentasRetProvCfgC);
       const lineas = asiento.lineas.map(l => ({
         codigo: (l.cuenta||'').split('—')[0].trim(),
         cuenta: (l.cuenta||'').split('—').slice(1).join('—').trim() || l.cuenta,
@@ -12019,8 +12107,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       const [codProv, nomProv] = prov?.cuentaContableNombre
         ? prov.cuentaContableNombre.split('—').map(x=>x.trim()) : ['',''];
       const ctaRet = r._tipo==='IVA'
-        ? cuentaPlanC(/(retenc\w*\s+iva|iva\s+retenid)/i, '2.1.03.01.001', 'Retenciones IVA por enterar')
-        : cuentaPlanC(/(retenc\w*\s+(islr|s\/r|renta)|(islr|renta)\s+retenid)/i, '2.1.03.02.001', 'Retenciones ISLR por enterar');
+        ? (cuentasRetProvCfgC.ivaNombre ? {codigo:cuentasRetProvCfgC.ivaNombre.split('—')[0].trim(), nombre:cuentasRetProvCfgC.ivaNombre.split('—').slice(1).join('—').trim()} : cuentaPlanC(/(retenc\w*\s+iva|iva\s+retenid)/i, '2.1.03.01.001', 'Retenciones IVA por enterar'))
+        : (cuentasRetProvCfgC.islrNombre ? {codigo:cuentasRetProvCfgC.islrNombre.split('—')[0].trim(), nombre:cuentasRetProvCfgC.islrNombre.split('—').slice(1).join('—').trim()} : cuentaPlanC(/(retenc\w*\s+(islr|s\/r|renta)|(islr|renta)\s+retenid)/i, '2.1.03.02.001', 'Retenciones ISLR por enterar'));
       const tasa = Number(r.tasa||0);
       const montoUSD = Number(r.monto||0);
       const montoBs = Number(r.montoBs || (tasa?montoUSD*tasa:0));
@@ -13655,36 +13743,75 @@ ${valoresHtml}
       );
     }
     if (activo === 'cierre_iva') {
-      const {totalDebito, totalCredito, diferencia} = calcularTotalesIva(ivaMesSel);
-      const yaExiste = (cierresIvaC||[]).some(c=>c.mes===ivaMesSel);
-      const cierresOrdenados = [...(cierresIvaC||[])].sort((a,b)=>(b.mes||'').localeCompare(a.mes||''));
+      const claveQ = claveQuincena(ivaMesSel, ivaQuincenaSel);
+      const {tasaQ, totalDebito, totalCredito, retencionesPeriodo, retencionesAcumuladasAnteriores, excedenteCreditoAnterior,
+        cuotaTributaria, montoAplicado, ivaPorPagarEfectivo, retencionesAcumuladasSiguiente, excedenteCreditoSiguiente} = calcularTotalesIva(claveQ);
+      const yaExiste = (cierresIvaC||[]).some(c=>c.id===`IVA-${claveQ}`);
+      const cierresOrdenados = [...(cierresIvaC||[])].sort((a,b)=>(b.id||'').localeCompare(a.id||''));
+      const usdQ = (bs) => tasaQ>0?bs/tasaQ:0;
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-end gap-4">
             <div>
-              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes a compensar</label>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
               <input type="month" value={ivaMesSel} onChange={e=>setIvaMesSel(e.target.value)} className="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-orange-400"/>
+            </div>
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+              <button onClick={()=>setIvaQuincenaSel(1)} className={`px-3 py-2 rounded text-[10px] font-black uppercase transition-colors ${ivaQuincenaSel===1?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>1ra Quincena (1-15)</button>
+              <button onClick={()=>setIvaQuincenaSel(2)} className={`px-3 py-2 rounded text-[10px] font-black uppercase transition-colors ${ivaQuincenaSel===2?'bg-orange-500 text-white':'text-gray-500 hover:bg-white'}`}>2da Quincena (16-fin)</button>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs./$</label>
+              <div className="flex items-center gap-1">
+                <input key={tasaQ} type="number" step="0.0001" defaultValue={tasaQ} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0) guardarTasaIva(claveQ,v);}}
+                  className="w-24 border-2 border-gray-200 rounded-lg px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+                <button disabled={fetchingBCV} title="Aplicar tasa BCV del día" onClick={async()=>{const t=await fetchTasaBCV(rangoQuincena(claveQ).hasta); if(t) guardarTasaIva(claveQ,t);}}
+                  className="px-2 py-2 bg-orange-50 text-orange-600 border-2 border-orange-200 rounded-lg hover:bg-orange-500 hover:text-white disabled:opacity-50">{fetchingBCV?'⏳':'🔄'}</button>
+              </div>
             </div>
             <button onClick={()=>setShowCuentasIvaModal(true)} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5"><Settings2 size={13}/> Configurar Cuentas</button>
             <div className="ml-auto flex gap-2">
-              {yaExiste && <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-3 py-2.5 rounded-lg self-center">⚠ Ya existe un cierre para este mes — generar de nuevo lo reemplaza</span>}
-              <button onClick={()=>generarCierreIva(ivaMesSel)} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5"><RefreshCw size={13}/> {yaExiste?'Regenerar':'Generar'} Cierre</button>
+              {yaExiste && <span className="text-[10px] font-black text-amber-600 bg-amber-50 px-3 py-2.5 rounded-lg self-center">⚠ Ya existe un cierre para esta quincena — generar de nuevo lo reemplaza</span>}
+              <button onClick={()=>generarCierreIva(claveQ)} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5"><RefreshCw size={13}/> {yaExiste?'Regenerar':'Generar'} Cierre</button>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-              <p className="text-[9px] font-black text-red-500 uppercase">IVA Débito Fiscal (Ventas)</p>
-              <p className="text-xl font-black text-red-700 font-mono mt-1">Bs.{contFmt(totalDebito)}</p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-[9px] font-black text-red-500 uppercase">IVA Débito Fiscal</p>
+              <p className="text-lg font-black text-red-700 font-mono mt-1">Bs.{contFmt(totalDebito)}</p>
+              <p className="text-[10px] text-red-400 font-mono">${contFmt(usdQ(totalDebito))}</p>
             </div>
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-              <p className="text-[9px] font-black text-emerald-600 uppercase">IVA Crédito Fiscal (Compras)</p>
-              <p className="text-xl font-black text-emerald-700 font-mono mt-1">Bs.{contFmt(totalCredito)}</p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <p className="text-[9px] font-black text-emerald-600 uppercase">IVA Crédito Fiscal</p>
+              <p className="text-lg font-black text-emerald-700 font-mono mt-1">Bs.{contFmt(totalCredito)}</p>
+              <p className="text-[10px] text-emerald-500 font-mono">${contFmt(usdQ(totalCredito))}</p>
             </div>
-            <div className={`rounded-xl p-4 ${diferencia>0?'bg-gray-900':'bg-blue-50 border border-blue-200'}`}>
-              <p className={`text-[9px] font-black uppercase ${diferencia>0?'text-gray-400':'text-blue-600'}`}>{diferencia>0?'IVA por Pagar':'Crédito Fiscal a Favor'}</p>
-              <p className={`text-xl font-black font-mono mt-1 ${diferencia>0?'text-white':'text-blue-700'}`}>Bs.{contFmt(Math.abs(diferencia))}</p>
+            <div className="bg-gray-100 border border-gray-200 rounded-xl p-3">
+              <p className="text-[9px] font-black text-gray-500 uppercase">Cuota Tributaria</p>
+              <p className="text-lg font-black text-gray-700 font-mono mt-1">Bs.{contFmt(cuotaTributaria)}</p>
+              <p className="text-[8px] text-gray-400 mt-0.5">Débito − Crédito − excedente anterior</p>
+            </div>
+            <div className={`rounded-xl p-3 ${ivaPorPagarEfectivo>0.005?'bg-gray-900':'bg-blue-50 border border-blue-200'}`}>
+              <p className={`text-[9px] font-black uppercase ${ivaPorPagarEfectivo>0.005?'text-gray-400':'text-blue-600'}`}>IVA por Pagar (efectivo)</p>
+              <p className={`text-lg font-black font-mono mt-1 ${ivaPorPagarEfectivo>0.005?'text-white':'text-blue-700'}`}>Bs.{contFmt(ivaPorPagarEfectivo)}</p>
+              <p className={`text-[10px] font-mono ${ivaPorPagarEfectivo>0.005?'text-gray-400':'text-blue-500'}`}>${contFmt(usdQ(ivaPorPagarEfectivo))}</p>
             </div>
           </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-[10px] font-black text-gray-500 uppercase mb-3">Retenciones de IVA — Clientes</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-center">
+              <div><p className="text-[8px] font-black text-gray-400 uppercase">Acumuladas (venían de antes)</p><p className="text-sm font-black font-mono text-gray-700 mt-1">Bs.{contFmt(retencionesAcumuladasAnteriores)}</p></div>
+              <div><p className="text-[8px] font-black text-gray-400 uppercase">De esta quincena</p><p className="text-sm font-black font-mono text-gray-700 mt-1">Bs.{contFmt(retencionesPeriodo)}</p></div>
+              <div><p className="text-[8px] font-black text-emerald-500 uppercase">Aplicadas esta quincena</p><p className="text-sm font-black font-mono text-emerald-600 mt-1">Bs.{contFmt(montoAplicado)}</p></div>
+              <div><p className="text-[8px] font-black text-amber-500 uppercase">Por descontar la próxima</p><p className="text-sm font-black font-mono text-amber-600 mt-1">Bs.{contFmt(retencionesAcumuladasSiguiente)}</p></div>
+            </div>
+          </div>
+          {excedenteCreditoSiguiente>0.005 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between">
+              <p className="text-[10px] font-black text-blue-600 uppercase">Excedente de Crédito Fiscal para la quincena siguiente</p>
+              <p className="text-lg font-black text-blue-700 font-mono">Bs.{contFmt(excedenteCreditoSiguiente)}</p>
+            </div>
+          )}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100"><p className="text-xs font-black text-gray-700 uppercase">Cierres generados</p></div>
             {cierresOrdenados.length===0 ? (
@@ -13692,22 +13819,30 @@ ${valoresHtml}
             ):(
               <table className="w-full text-xs">
                 <thead><tr style={{background:'#0f172a'}}>
-                  <th className="px-3 py-2 text-left text-[9px] font-black uppercase text-gray-300">Mes</th>
+                  <th className="px-3 py-2 text-left text-[9px] font-black uppercase text-gray-300">Quincena</th>
+                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Tasa</th>
                   <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Débito Fiscal</th>
                   <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Crédito Fiscal</th>
-                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Diferencia</th>
+                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Por Pagar / A Favor</th>
+                  <th className="px-3 py-2 text-right text-[9px] font-black uppercase text-gray-300">Ret. por Descontar Sig.</th>
                   <th className="px-3 py-2 text-center text-[9px] font-black uppercase text-gray-300">Acción</th>
                 </tr></thead>
                 <tbody>
-                  {cierresOrdenados.map(c=>(
+                  {cierresOrdenados.map(c=>{
+                    const porPagar = Number(c.ivaPorPagarEfectivo??0);
+                    const aFavor = Number(c.excedenteCreditoSiguiente??0);
+                    return (
                     <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-3 py-2 font-black text-gray-700">{c.mes}</td>
+                      <td className="px-3 py-2 font-black text-gray-700">{c.quincena||c.mes}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{contFmt(c.tasa||0)}</td>
                       <td className="px-3 py-2 text-right font-mono">Bs.{contFmt(c.totalDebito)}</td>
                       <td className="px-3 py-2 text-right font-mono">Bs.{contFmt(c.totalCredito)}</td>
-                      <td className={`px-3 py-2 text-right font-mono font-black ${c.diferencia>0?'text-red-600':'text-blue-600'}`}>{c.diferencia>0?'Por Pagar':'A Favor'} Bs.{contFmt(Math.abs(c.diferencia))}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-black ${porPagar>0.005?'text-red-600':'text-blue-600'}`}>{porPagar>0.005?`Por Pagar Bs.${contFmt(porPagar)}`:`A Favor Bs.${contFmt(aFavor)}`}</td>
+                      <td className="px-3 py-2 text-right font-mono text-amber-600">Bs.{contFmt(c.retencionesAcumuladasSiguiente||0)}</td>
                       <td className="px-3 py-2 text-center"><button onClick={()=>eliminarCierreIva(c.id)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -13722,11 +13857,12 @@ ${valoresHtml}
                 <p className="text-[11px] text-gray-500">Débito y Crédito Fiscal ya traen el código estándar por defecto — solo hace falta configurar a dónde va la diferencia.</p>
                 {[['debito','IVA Débito Fiscal (Ventas)',CUENTAS_IVA_DEFAULT.debitoCod+' — '+CUENTAS_IVA_DEFAULT.debitoNom],
                   ['credito','IVA Crédito Fiscal (Compras)',CUENTAS_IVA_DEFAULT.creditoCod+' — '+CUENTAS_IVA_DEFAULT.creditoNom],
+                  ['retCliente','Retención IVA Clientes (recibida)',null],
                   ['porPagar','IVA por Pagar (si Débito > Crédito)',null],
                   ['favor','Crédito Fiscal a Favor (si Crédito > Débito)',null]].map(([campo,label,defecto])=>(
                   <div key={campo}>
                     <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">{label}</label>
-                    <select value={cuentasIvaCfgC[`${campo}Cod`]||''} onChange={e=>{const cta=(planCuentasC||[]).find(p=>p.id===e.target.value);setCuentasIvaCfgC(x=>({...x,[`${campo}Cod`]:cta?.codigo||'',[`${campo}Nom`]:cta?.nombre||''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                    <select value={cuentasIvaCfgC[`${campo}Id`]||''} onChange={e=>{const cta=(planCuentasC||[]).find(p=>p.id===e.target.value);setCuentasIvaCfgC(x=>({...x,[`${campo}Id`]:e.target.value,[`${campo}Cod`]:cta?.codigo||'',[`${campo}Nom`]:cta?.nombre||''}));}} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
                       <option value="">{defecto ? `— Usar por defecto: ${defecto} —` : '— Seleccionar cuenta —'}</option>
                       {(planCuentasC||[]).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
                     </select>
@@ -14681,7 +14817,7 @@ function App() {
         const retIVA=calcRetIVA(f,tot);
         const retISLRLista=calcRetISLRLista(f,tot);
         const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
-        const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp);
+        const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp,cuentasRetProvCfg);
         out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas,'procura',f.id)});
       }catch(e){}
     });
@@ -17766,6 +17902,34 @@ function App() {
     const u=onSnapshot(getColRef('produccion_tasas_manuales'), s=>setTasasManualesProdApp(Object.fromEntries(s.docs.map(d=>[d.id, d.data().tasa]))));
     return()=>u();
   },[]);
+  // ── Cuenta de Resultado del Ejercicio ─────────────────────────────────────────
+  // Determina con qué cuenta del Plan de Cuentas (grupo 3, Patrimonio) se identifica la
+  // Utilidad/Pérdida del Ejercicio en el Balance General, en vez de una etiqueta genérica.
+  const [cuentaResultadoCfg, setCuentaResultadoCfg] = useState({id:'', codigo:'', nombre:''});
+  const [showCuentaResultadoModal, setShowCuentaResultadoModal] = useState(false);
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','cuentaResultadoEjercicio'), d=>d.exists() && setCuentaResultadoCfg(d.data()));
+    return()=>u();
+  },[]);
+  const guardarCuentaResultado = async (cuentaId) => {
+    const cta = (planDeCuentas||[]).find(p=>p.id===cuentaId);
+    const nueva = cta ? {id:cta.id, codigo:cta.codigo, nombre:cta.nombre} : {id:'', codigo:'', nombre:''};
+    try{ await setDoc(doc(db,'settings','cuentaResultadoEjercicio'), nueva); setCuentaResultadoCfg(nueva); setShowCuentaResultadoModal(false); }
+    catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
+  // Cuentas de Retención IVA/ISLR a Proveedores — usadas por generarAsientoFC (Procura). Se
+  // configuran desde Módulo de Impuestos → Retenciones IVA / Retenciones ISLR.
+  const [cuentasRetProvCfg, setCuentasRetProvCfg] = useState({ivaId:'',ivaNombre:'',islrId:'',islrNombre:''});
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','cuentasRetencionProveedor'), d=>d.exists() && setCuentasRetProvCfg(x=>({...x,...d.data()})));
+    return()=>u();
+  },[]);
+  const guardarCuentaRetProv = async (campo, cuentaId) => {
+    const cta = (planDeCuentas||[]).find(p=>p.id===cuentaId);
+    const upd = {[`${campo}Id`]:cta?.id||'', [`${campo}Nombre`]:cta?`${cta.codigo} — ${cta.nombre}`:''};
+    try{ await setDoc(doc(db,'settings','cuentasRetencionProveedor'), upd, {merge:true}); }
+    catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
 
   const handleCreateInvoice = async (e) => {
@@ -29048,10 +29212,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </div>
                     )}
                     
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-
-                      </div>
-                      <div className="md:col-span-2">
+                    <div className="md:col-span-2">
                         <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block tracking-widest">Cliente</label>
                         <div className="relative">
                           <div className="flex gap-2">
@@ -44632,7 +44793,8 @@ ${resumenHtml}
 
     const filaUtilidadHTML = (moneda) => {
       const v = moneda==='bs'?utilEjBs:utilEjUSD;
-      return `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">Utilidad del Ejercicio (acumulada)</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(v)}</td></tr>`;
+      const etiqueta = cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (acumulada)';
+      return `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${etiqueta}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(v)}</td></tr>`;
     };
     const exportarExcel = () => {
       const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
@@ -44669,6 +44831,7 @@ ${resumenHtml}
                 <button onClick={()=>{setContBGExpandAll(false);setContBGExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Contraer Todos</button>
               </div>
               <span className={`text-[10px] font-black uppercase px-3 py-2 rounded-lg ${cuadrado?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>{cuadrado?'✓ Cuadrado':'⚠ Descuadrado'}</span>
+              <button onClick={()=>setShowCuentaResultadoModal(true)} className="flex items-center gap-1.5 bg-white border-2 border-gray-200 hover:border-orange-400 text-gray-600 hover:text-orange-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase"><Settings2 size={13}/> {cuentaResultadoCfg.codigo ? `Cta. Resultado: ${cuentaResultadoCfg.codigo}` : 'Configurar Cta. Resultado'}</button>
               <div className="flex gap-2 ml-auto">
                 <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
                 <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
@@ -44701,7 +44864,7 @@ ${resumenHtml}
                   </tr>
                   {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
                   <tr className="border-b border-gray-100">
-                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">Utilidad del Ejercicio (acumulada)</td>
+                    <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{cuentaResultadoCfg.codigo ? `${cuentaResultadoCfg.codigo} - ${cuentaResultadoCfg.nombre}` : 'Utilidad del Ejercicio (acumulada) — sin cuenta configurada'}</td>
                     {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjUSD)}</td>}
                     {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjBs)}</td>}
                     <td/>
@@ -44723,6 +44886,21 @@ ${resumenHtml}
             </div>
           </div>
         </div>
+        {showCuentaResultadoModal && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentaResultadoModal(false)}>
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-3" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-lg text-gray-800">⚙️ Cuenta de Resultado del Ejercicio</h3>
+                <button onClick={()=>setShowCuentaResultadoModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+              </div>
+              <p className="text-[11px] text-gray-500">Elige con qué cuenta del Plan de Cuentas (normalmente en Patrimonio, grupo 3) se identifica la Utilidad/Pérdida del Ejercicio en el Balance General. Se calcula sola cada período — esto solo define su código y nombre.</p>
+              <select defaultValue={cuentaResultadoCfg.id||''} onChange={e=>guardarCuentaResultado(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                <option value="">— Sin configurar (usa etiqueta genérica) —</option>
+                {(planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('3')).map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
