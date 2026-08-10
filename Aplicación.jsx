@@ -12246,6 +12246,7 @@ function ComprobantesContablesApp({ onBack, initialSub }) {
     const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (invMovementsC||[]).filter(m=>{
       if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return false;
+      if (/^MOV-\d+-/.test(m.docRef||'')) return false; // generado por transformación/carga masiva, no es autoconsumo real
       if (filtDesde && m.date < filtDesde) return false;
       if (filtHasta && m.date > filtHasta) return false;
       return true;
@@ -12907,15 +12908,15 @@ ${valoresHtml}
   const TABS_CC = [
     { id:'banco', label:'Banco', icon:'🏦', activo:true },
     { id:'caja', label:'Caja', icon:'💵', activo:true },
-    { id:'procura', label:'Procura (Ctas x Pagar)', icon:'📋', activo:true },
-    { id:'ventas', label:'Ventas (Ctas x Cobrar)', icon:'🧾', activo:true },
-    { id:'ret_cli', label:'Retenciones a Clientes', icon:'📋', activo:true },
-    { id:'ret_prov', label:'Retenciones a Proveedores', icon:'📤', activo:true },
+    { id:'procura', label:'Procura', icon:'📋', activo:true },
+    { id:'ventas', label:'Ventas', icon:'🧾', activo:true },
+    { id:'ret_cli', label:'Ret Clientes', icon:'📋', activo:true },
+    { id:'ret_prov', label:'Rete Proveedores', icon:'📤', activo:true },
     { id:'deprec', label:'Depreciaciones', icon:'📉', activo:true },
-    { id:'imp_enterar', label:'Impuestos por Enterar', icon:'🏛️', activo:true },
+    { id:'imp_enterar', label:'Impuestos', icon:'🏛️', activo:true },
     { id:'ajustes', label:'Ajustes', icon:'🛠️', activo:true },
     { id:'nomina', label:'Nómina', icon:'💰', activo:true },
-    { id:'costos_produccion', label:'Costos de Producción', icon:'🏭', activo:true },
+    { id:'costos_produccion', label:'Costos OP', icon:'🏭', activo:true },
     { id:'consumos_internos', label:'Consumos Internos', icon:'📦', activo:true },
     { id:'relacionadas', label:'Ctas x Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
@@ -13621,7 +13622,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
                       <td className="px-3 py-2 text-center">{li===0 && (
                         <div className="flex items-center gap-1 justify-center">
-                          <input type="number" step="0.0001" defaultValue={r.tasa} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0) guardarTasaManualProd(r.id, v);}}
+                          <input key={r.tasa} type="number" step="0.0001" defaultValue={r.tasa} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0) guardarTasaManualProd(r.id, v);}}
                             className="w-16 border border-gray-200 rounded px-1 py-1 text-[10px] font-bold text-center outline-none focus:border-orange-400" title="Tasa manual para este comprobante"/>
                           <button disabled={fetchingBCV} title="Aplicar tasa BCV del día" onClick={async()=>{const t=await fetchTasaBCV(r.fecha); if(t) guardarTasaManualProd(r.id, t);}}
                             className="px-1.5 py-1 bg-orange-50 text-orange-600 border border-orange-200 rounded hover:bg-orange-500 hover:text-white disabled:opacity-50">{fetchingBCV?'⏳':'🔄'}</button>
@@ -14674,6 +14675,7 @@ function App() {
       const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
       (invMovements||[]).forEach(m=>{
         if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return;
+        if (/^MOV-\d+-/.test(m.docRef||'')) return; // generado por transformación/carga masiva, no es autoconsumo real
         const item = itemPorId[m.itemId];
         const balde = CATEGORIA_A_BALDE[item?.category] || 'MATERIA_PRIMA';
         const claveInv = CUENTA_INVENTARIO_POR_BALDE[balde];
