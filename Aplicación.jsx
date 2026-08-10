@@ -14842,7 +14842,7 @@ function App() {
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
   // ── Activo Fijo (Contabilidad) — vive en Contabilidad con 3 submódulos (mismo patrón de
   // header + sub-nav de pestañas que Procura & Compras): Configuración, Registro de Activo
-  // Fijo y Relación de Activos. Cada Centro de Costo (sede) se despliega en sus 8 rubros de
+  // Fijo y Relación de Activos. Cada Centro de Costo (sede) se despliega en sus 6 rubros de
   // activo, y cada rubro tiene su propia Cuenta del Activo + Cuenta Dep. Acumulada + Cuenta
   // de Costo/Gasto — no se generaliza en una sola cuenta global, porque según el rubro
   // corresponde a Costos (5.x) o a Gastos (6.x) distintos. Con eso, Registro solo pide
@@ -14866,8 +14866,9 @@ function App() {
   const [afcNuevoCC, setAfcNuevoCC] = useState({codigo:'',nombre:''});
   const [afcEditandoCC, setAfcEditandoCC] = useState(null); // código del centro de costo en edición, o null
   const [afcExpandidoCC, setAfcExpandidoCC] = useState({}); // {[codigo]: true/false}
-  const afRegFormVacioC = () => ({id:null, nombre:'', centroCosto:'', rubro:'', fechaAdquisicion:getTodayDate(), valorCosto:'', valorResidual:'0', vidaUtilAnios:'5', ubicacion:''});
+  const afRegFormVacioC = () => ({id:null, nombre:'', centroCosto:'', rubro:'', fechaAdquisicion:getTodayDate(), valorCosto:'', valorResidual:'0', vidaUtilAnios:'5', ubicacion:'', tasaCambio:''});
   const [afRegForm, setAfRegForm] = useState(afRegFormVacioC());
+  const [afImportando, setAfImportando] = useState(false); // Importar activos desde Excel (formato ACTIVO_FIJO_FORMATO_ERP)
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
@@ -45538,7 +45539,7 @@ ${resumenHtml}
   // propio header + sub-nav de 3 pestañas, mismo patrón visual que "Procura & Compras"
   // (top bar oscuro + fila de tabs con ícono/label/badge, borde inferior naranja en la
   // activa): Configuración, Registro de Activo Fijo, Relación de Activos.
-  // Cada Centro de Costo (sede) se despliega en sus 8 rubros de activo (mismas categorías
+  // Cada Centro de Costo (sede) se despliega en sus 6 rubros de activo (mismas categorías
   // que usa el registro de Activos Fijos en Finanzas, renderActivosFijosModule) y cada
   // rubro tiene su propia Cuenta del Activo + Cuenta Dep. Acumulada + Cuenta de Costo/Gasto
   // — no se generaliza en una sola cuenta global, porque según el rubro corresponde a
@@ -45549,7 +45550,9 @@ ${resumenHtml}
   // No modifica renderActivosFijosModule, CATEGORIAS_ACTIVO_FIJO ni construirLineasDepreciacion.
   // ============================================================================
   const renderActivosFijosCModule = () => {
-    const RUBROS_ACTIVO_FIJO_CC = ['Inmueble','Maquinarias y Equipos','Equipos de Computación','Vehículos','Servidores y Plataformas','Mobiliario y Equipo','Maquinarias Revaluados','Planta Eléctrica'];
+    // Rubros reales — tomados de ACTIVO_FIJO_FORMATO_ERP.xlsx (coinciden con los que dictaste).
+    // OJO: reemplazan la lista de 8 "prestada" de Finanzas que se usó antes de tener el Excel.
+    const RUBROS_ACTIVO_FIJO_CC = ['Mobiliario y Equipo de Oficina','Equipos de Computación y Telecomunicaciones','Maquinaria y Equipos','Planta Eléctrica','Galpón e Inmuebles','Vehículos'];
     const rubrosVaciosCC = () => Object.fromEntries(RUBROS_ACTIVO_FIJO_CC.map(r=>[r,{activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:'',costoGastoId:'',costoGastoNombre:''}]));
     const cuentasAF = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.06'));
     const cuentasCostoGasto = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('5')||String(c.codigo).startsWith('6'));
@@ -45589,19 +45592,31 @@ ${resumenHtml}
 
     const iniciarNuevoActivo = () => setAfRegForm(afRegFormVacioC());
     const iniciarEditarActivo = (a) => {
-      setAfRegForm({id:a.id, nombre:a.nombre||'', centroCosto:a.centroCosto||'', rubro:a.categoria||'', fechaAdquisicion:a.fechaAdquisicion||getTodayDate(), valorCosto:String(a.valorCosto??''), valorResidual:String(a.valorResidual??'0'), vidaUtilAnios:String(a.vidaUtilAnios??'5'), ubicacion:a.ubicacion||''});
+      setAfRegForm({id:a.id, nombre:a.nombre||'', centroCosto:a.centroCosto||'', rubro:a.categoria||'', fechaAdquisicion:a.fechaAdquisicion||getTodayDate(), valorCosto:String(a.valorCosto??''), valorResidual:String(a.valorResidual??'0'), vidaUtilAnios:String(a.vidaUtilAnios??'5'), ubicacion:a.ubicacion||'', tasaCambio:a.tasaCambio?String(a.tasaCambio):''});
       setAfSubTabC('registro');
     };
+
+    // Tasa BCV para la fecha de adquisición del activo — reusa fetchTasaBCV, que ya está
+    // integrado en toda la app (Nómina, Cierre IVA, Procura, etc.) y consulta ve.dolarapi.com
+    // (oficial del día, o histórico si la fecha es anterior a hoy).
+    const buscarTasaParaActivo = async () => {
+      const t = await fetchTasaBCV(afRegForm.fechaAdquisicion || getTodayDate());
+      if(t) setAfRegForm(f=>({...f, tasaCambio:String(t)}));
+    };
+
     const guardarRegistroActivoC = async () => {
       if(!afRegForm.nombre.trim()||!afRegForm.centroCosto||!afRegForm.rubro||!afRegForm.valorCosto||!afRegForm.fechaAdquisicion){
         setDialog({title:'Faltan datos',text:'Nombre, Centro de Costo, Rubro, Costo y Fecha de Adquisición son obligatorios.',type:'alert'}); return;
       }
       const ccSel = (activoFijoCfgC.centrosCosto||[]).find(c=>c.codigo===afRegForm.centroCosto);
       const cfgSel = ccSel?.rubros?.[afRegForm.rubro] || {};
+      const tasa = parseFloat(afRegForm.tasaCambio)||0;
+      const costoUSD = parseFloat(afRegForm.valorCosto)||0;
       const payload = {
         nombre: afRegForm.nombre.trim(), categoria: afRegForm.rubro, centroCosto: afRegForm.centroCosto,
         cuentaActivoNombre: cfgSel.activoNombre||'', cuentaDeprAcumNombre: cfgSel.deprAcumNombre||'', cuentaCostoGastoNombre: cfgSel.costoGastoNombre||'',
-        fechaAdquisicion: afRegForm.fechaAdquisicion, valorCosto: parseFloat(afRegForm.valorCosto)||0,
+        fechaAdquisicion: afRegForm.fechaAdquisicion, valorCosto: costoUSD,
+        tasaCambio: tasa, valorCostoBs: Number((costoUSD*tasa).toFixed(2)),
         valorResidual: parseFloat(afRegForm.valorResidual)||0, vidaUtilAnios: parseFloat(afRegForm.vidaUtilAnios)||0,
         ubicacion: afRegForm.ubicacion||'', status: 'ACTIVO', updatedAt: Date.now(),
       };
@@ -45611,6 +45626,117 @@ ${resumenHtml}
         setDialog({title:'✅ Guardado',text:`Activo ${afRegForm.id?'actualizado':'registrado'} correctamente.`,type:'alert'});
         setAfRegForm(afRegFormVacioC());
       }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    };
+
+    // ── Importar desde Excel, formato ACTIVO_FIJO_FORMATO_ERP.xlsx: Nombre / Descripción,
+    // CANTIDAD, Rubro, Centro de Costo, Fecha Adquisición, Vida Útil (años), Costo ($).
+    // Detecta encabezados por nombre (no importa el orden de columnas), igual que el import
+    // de Nómina en Comprobantes Contables. Notas del formato real:
+    // - "Vida Útil (años)" en el archivo real viene en MESES (60=5 años, 120=10 años, etc.),
+    //   se divide entre 12 al importar.
+    // - CANTIDAD > 1 genera esa cantidad de activos individuales (misma ficha, repetida).
+    // - Centro de Costo que no exista todavía se crea automático (solo con el código) —
+    //   hay que completarle nombre y las 3 cuentas por rubro en Configuración después.
+    // - El Excel no trae tasa de cambio por fila (son adquisiciones históricas), así que los
+    //   activos importados quedan sin tasaCambio/valorCostoBs — eso solo aplica a los que se
+    //   registren de aquí en adelante con el botón de Tasa BCV.
+    const importarActivosExcelC = async (file) => {
+      if(!file) return;
+      setAfImportando(true);
+      try{
+        const arrayBuffer = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=ev=>res(ev.target.result); r.onerror=rej; r.readAsArrayBuffer(file); });
+        let XLSX; try{XLSX=window.XLSX;}catch(_){}
+        if(!XLSX){
+          await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+          XLSX=window.XLSX;
+        }
+        const wb = XLSX.read(arrayBuffer,{type:'array', cellDates:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const filas = XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
+        if(!filas.length){ setDialog({title:'Archivo vacío',text:'El archivo no tiene filas.',type:'alert'}); setAfImportando(false); return; }
+
+        const normEnc=(s)=>String(s||'').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+        let headerIdx=-1, colMap={};
+        for(let i=0;i<Math.min(5,filas.length);i++){
+          const fila=filas[i]||[]; const map={};
+          fila.forEach((c,ci)=>{
+            const n=normEnc(c);
+            if(n.startsWith('NOMBRE')) map.nombre=ci;
+            else if(n==='CANTIDAD') map.cantidad=ci;
+            else if(n==='RUBRO') map.rubro=ci;
+            else if(n.startsWith('CENTRO')) map.centroCosto=ci;
+            else if(n.startsWith('FECHA')) map.fecha=ci;
+            else if(n.startsWith('VIDA')) map.vidaUtil=ci;
+            else if(n.startsWith('COSTO')) map.costo=ci;
+          });
+          if(map.nombre!=null && map.costo!=null){ headerIdx=i; colMap=map; break; }
+        }
+        if(headerIdx<0){
+          setDialog({title:'Formato no reconocido',text:'No se encontró la fila de encabezados. Verifica que el archivo tenga: Nombre / Descripción, CANTIDAD, Rubro, Centro de Costo, Fecha Adquisición, Vida Útil (años), Costo ($).',type:'alert'});
+          setAfImportando(false); return;
+        }
+
+        const fmtFecha=(v)=>{
+          if(v==null||v==='') return getTodayDate();
+          if(v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+          const s=String(v).trim();
+          const m1=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m1) return `${m1[1]}-${m1[2]}-${m1[3]}`;
+          const m2=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m2) return `${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`;
+          return getTodayDate();
+        };
+
+        const dataRows = filas.slice(headerIdx+1);
+        const nuevosCentros = new Set();
+        const docsAImportar = [];
+        dataRows.forEach(fila=>{
+          if(!fila) return;
+          const nombre = String(fila[colMap.nombre]||'').trim();
+          const costo = parseFloat(fila[colMap.costo]);
+          if(!nombre || !(costo>0)) return; // salta filas vacías / fila de totales al final
+          const cantidad = Math.max(1, parseInt(fila[colMap.cantidad])||1);
+          const rubro = String(fila[colMap.rubro]||'').trim();
+          const centroCosto = String(fila[colMap.centroCosto]||'').trim().toUpperCase();
+          const fechaAdquisicion = fmtFecha(fila[colMap.fecha]);
+          const vidaUtilMeses = parseFloat(fila[colMap.vidaUtil])||0;
+          const vidaUtilAnios = vidaUtilMeses>0 ? Math.round((vidaUtilMeses/12)*100)/100 : 0;
+          if(centroCosto) nuevosCentros.add(centroCosto);
+          const ccCfg = (activoFijoCfgC.centrosCosto||[]).find(c=>c.codigo===centroCosto);
+          const rCfg = ccCfg?.rubros?.[rubro]||{};
+          for(let i=0;i<cantidad;i++){
+            docsAImportar.push({
+              nombre, categoria:rubro, centroCosto,
+              cuentaActivoNombre:rCfg.activoNombre||'', cuentaDeprAcumNombre:rCfg.deprAcumNombre||'', cuentaCostoGastoNombre:rCfg.costoGastoNombre||'',
+              fechaAdquisicion, valorCosto:costo, valorResidual:0, vidaUtilAnios,
+              ubicacion:'', status:'ACTIVO', origen:'import_excel', createdAt:Date.now(), updatedAt:Date.now(),
+            });
+          }
+        });
+
+        if(!docsAImportar.length){ setDialog({title:'Nada para importar',text:'No se encontraron filas válidas (con Nombre y Costo).',type:'alert'}); setAfImportando(false); return; }
+
+        const centrosExistentes = new Set((activoFijoCfgC.centrosCosto||[]).map(c=>c.codigo));
+        const centrosCreados = [...nuevosCentros].filter(cod=>cod && !centrosExistentes.has(cod));
+        let cfgFinal = activoFijoCfgC;
+        if(centrosCreados.length){
+          cfgFinal = {...activoFijoCfgC, centrosCosto:[...(activoFijoCfgC.centrosCosto||[]), ...centrosCreados.map(cod=>({codigo:cod, nombre:cod, rubros:rubrosVaciosCC()}))]};
+          setActivoFijoCfgC(cfgFinal);
+          await setDoc(doc(db,'settings','activoFijoContabilidadCfg'),cfgFinal,{merge:true});
+        }
+
+        let batch=writeBatch(db); let enBatch=0; let totalGuardados=0;
+        for(const d of docsAImportar){
+          batch.set(doc(getColRef('activos_fijos')), d);
+          enBatch++; totalGuardados++;
+          if(enBatch>=400){ await batch.commit(); batch=writeBatch(db); enBatch=0; }
+        }
+        if(enBatch>0) await batch.commit();
+
+        setDialog({title:'✅ Importación completa', text:`${totalGuardados} activo(s) importado(s).${centrosCreados.length?` Se crearon ${centrosCreados.length} centro(s) de costo nuevo(s) (${centrosCreados.join(', ')}) — ve a Configuración para ponerles nombre y las 3 cuentas por rubro.`:''}`, type:'alert'});
+      }catch(e){
+        setDialog({title:'Error al importar', text:e.message, type:'alert'});
+      }finally{
+        setAfImportando(false);
+      }
     };
 
     const TABS_AF_CC = [
@@ -45653,7 +45779,7 @@ ${resumenHtml}
           <div className="p-6 space-y-6">
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Centros de Costo</h3>
-              <p className="text-[10px] text-gray-400 font-bold mb-4">Cada centro de costo (sede) se despliega en sus 8 rubros de activo — asigna las 3 cuentas de cada rubro una sola vez, y al registrar un activo con su Centro de Costo + Rubro, las cuentas ya quedan parametrizadas.</p>
+              <p className="text-[10px] text-gray-400 font-bold mb-4">Cada centro de costo (sede) se despliega en sus {RUBROS_ACTIVO_FIJO_CC.length} rubros de activo — asigna las 3 cuentas de cada rubro una sola vez, y al registrar un activo con su Centro de Costo + Rubro, las cuentas ya quedan parametrizadas.</p>
 
               <div className="space-y-3 mb-5">
                 {(activoFijoCfgC.centrosCosto||[]).length===0 && <p className="text-[11px] text-gray-400 font-bold">Sin centros de costo registrados todavía.</p>}
@@ -45734,7 +45860,14 @@ ${resumenHtml}
           {afSubTabC==='registro' && (
           <div className="p-6">
             <div className="bg-white rounded-2xl border border-gray-200 p-6 max-w-2xl space-y-4">
-              <h3 className="text-xs font-black uppercase text-gray-700">{afRegForm.id?'Editar Activo':'Nuevo Activo'}</h3>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <h3 className="text-xs font-black uppercase text-gray-700">{afRegForm.id?'Editar Activo':'Nuevo Activo'}</h3>
+                <label className={`cursor-pointer px-3 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5 ${afImportando?'bg-gray-300 text-gray-500':'bg-gray-800 hover:bg-black text-white'}`}>
+                  {afImportando?<RefreshCw size={12} className="animate-spin"/>:<Upload size={12}/>} {afImportando?'Importando...':'Importar'}
+                  <input type="file" accept=".xlsx,.xls" disabled={afImportando} className="hidden" onChange={e=>{ if(e.target.files[0]) importarActivosExcelC(e.target.files[0]); e.target.value=''; }}/>
+                </label>
+              </div>
+              <p className="text-[9px] text-gray-400 font-bold -mt-2">Importa desde un Excel con el formato ACTIVO_FIJO_FORMATO_ERP: Nombre / Descripción, CANTIDAD, Rubro, Centro de Costo, Fecha Adquisición, Vida Útil (años), Costo ($).</p>
               <div>
                 <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Nombre / Descripción</label>
                 <input value={afRegForm.nombre} onChange={e=>setAfRegForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Laptop Dell Latitude" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-orange-500"/>
@@ -45778,12 +45911,29 @@ ${resumenHtml}
                   <input type="date" value={afRegForm.fechaAdquisicion} onChange={e=>setAfRegForm(f=>({...f,fechaAdquisicion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Costo ($)</label>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Costo en Dólares ($)</label>
                   <input type="number" step="0.01" value={afRegForm.valorCosto} onChange={e=>setAfRegForm(f=>({...f,valorCosto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Valor Residual ($)</label>
                   <input type="number" step="0.01" value={afRegForm.valorResidual} onChange={e=>setAfRegForm(f=>({...f,valorResidual:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Tasa de Cambio (Bs/$)</label>
+                  <div className="flex gap-1.5">
+                    <input type="number" step="0.0001" value={afRegForm.tasaCambio} onChange={e=>setAfRegForm(f=>({...f,tasaCambio:e.target.value}))} placeholder="0,00" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                    <button type="button" disabled={fetchingBCV} onClick={buscarTasaParaActivo} title="Traer tasa BCV de la fecha de adquisición" className={`px-3 rounded-xl flex-shrink-0 flex items-center justify-center ${fetchingBCV?'bg-gray-200 text-gray-400':'bg-blue-50 text-blue-600 hover:bg-blue-500 hover:text-white'}`}>
+                      <RefreshCw size={13} className={fetchingBCV?'animate-spin':''}/>
+                    </button>
+                  </div>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Costo en Bolívares (Bs)</label>
+                  <div className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl px-3 py-2 text-xs font-black text-gray-600">
+                    Bs {contFmt((parseFloat(afRegForm.valorCosto)||0)*(parseFloat(afRegForm.tasaCambio)||0))}
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -45816,8 +45966,8 @@ ${resumenHtml}
                   ) : (
                     <div className="overflow-x-auto"><table className="w-full text-xs">
                       <thead><tr style={{background:'#0f172a'}}>
-                        {['Activo','Rubro','Centro de Costo','Adquisición','Costo','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
-                          <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=4&&i<=6?'text-right':i===8?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                        {['Activo','Rubro','Centro de Costo','Adquisición','Costo $','Costo Bs','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
+                          <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=4&&i<=7?'text-right':i===9?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                         ))}
                       </tr></thead>
                       <tbody>
@@ -45831,6 +45981,7 @@ ${resumenHtml}
                               <td className="px-3 py-2 text-gray-500 font-mono">{a.centroCosto||'—'}</td>
                               <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
                               <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
+                              <td className="px-3 py-2 text-right font-mono text-gray-500">{a.valorCostoBs?`Bs ${contFmt(a.valorCostoBs)}`:'—'}</td>
                               <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
                               <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
                               <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
