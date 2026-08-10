@@ -14840,23 +14840,16 @@ function App() {
   const [contBuscar, setContBuscar] = useState('');
   const [mayorCuentaSelApp, setMayorCuentaSelApp] = useState('');
   const [mayorBusqCuentaApp, setMayorBusqCuentaApp] = useState('');
-  // ── Activo Fijo (Contabilidad) — submódulo Configuración: cuentas por categoría (mismas
-  // 8 que usa el registro de Activos Fijos en Finanzas) + cuenta global de gasto + centros de
-  // costo. afSubTabC queda listo para un futuro submódulo "Registro", hoy solo hay uno. ──
+  // ── Activo Fijo (Contabilidad) — submódulo Configuración: cada Centro de Costo (sede)
+  // se despliega en sus 8 rubros de activo, y cada rubro tiene su propia Cuenta del Activo +
+  // Cuenta Dep. Acumulada. Así, al registrar un activo con su Centro de Costo + Rubro, las
+  // cuentas contables ya quedan parametrizadas — no hay que elegirlas cada vez. La cuenta de
+  // Depreciación (gasto) sigue única/global, igual que ya la usa Comprobantes Contables.
+  // afSubTabC queda listo para un futuro submódulo "Registro", hoy solo hay uno. ──
   const [afSubTabC, setAfSubTabC] = useState('configuracion');
   const [activoFijoCfgC, setActivoFijoCfgC] = useState({
-    categorias: {
-      'Inmueble': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Maquinarias y Equipos': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Equipos de Computación': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Vehículos': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Servidores y Plataformas': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Mobiliario y Equipo': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Maquinarias Revaluados': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-      'Planta Eléctrica': {activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''},
-    },
+    centrosCosto: [], // [{codigo, nombre, rubros:{<rubro>:{activoId,activoNombre,deprAcumId,deprAcumNombre}}}]
     gastoDeprecId:'', gastoDeprecNombre:'',
-    centrosCosto: [],
   });
   useEffect(()=>{
     const u=onSnapshot(doc(db,'settings','activoFijoContabilidadCfg'),d=>d.exists()&&setActivoFijoCfgC(x=>({...x,...d.data()})));
@@ -14869,6 +14862,8 @@ function App() {
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
   const [afcNuevoCC, setAfcNuevoCC] = useState({codigo:'',nombre:''});
+  const [afcEditandoCC, setAfcEditandoCC] = useState(null); // código del centro de costo en edición, o null
+  const [afcExpandidoCC, setAfcExpandidoCC] = useState({}); // {[codigo]: true/false}
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Contables (Procura + Ventas + Retenciones a Clientes + Banco + Caja), EXCLUYENDO
@@ -45534,29 +45529,55 @@ ${resumenHtml}
 
   // ============================================================================
   // ACTIVO FIJO (CONTABILIDAD) — vive en el portal Contabilidad, junto a los demás
-  // reportes "_cc". Por ahora solo el submódulo Configuración: cuentas contables por
-  // categoría (mismas 8 categorías que usa el registro de Activos Fijos en Finanzas,
-  // renderActivosFijosModule) + cuenta global de gasto de depreciación (igual a como ya
-  // la usa Comprobantes Contables, construirLineasDepreciacion) + centros de costo.
+  // reportes "_cc". Por ahora solo el submódulo Configuración: cada Centro de Costo
+  // (sede) se despliega en sus 8 rubros de activo (mismas categorías que usa el registro
+  // de Activos Fijos en Finanzas, renderActivosFijosModule) y cada rubro tiene su propia
+  // Cuenta del Activo + Cuenta Dep. Acumulada — así, al registrar un activo con su Centro
+  // de Costo + Rubro, las cuentas ya quedan parametrizadas, sin elegirlas cada vez.
+  // La cuenta de Depreciación (gasto) sigue única/global, igual a como ya la usa
+  // Comprobantes Contables (construirLineasDepreciacion).
   // El submódulo Registro/Listado (espejo del de Finanzas) queda para una sesión futura —
   // afSubTabC ya está listo para eso, solo falta agregar la pestaña cuando se pida.
   // No modifica renderActivosFijosModule, CATEGORIAS_ACTIVO_FIJO ni construirLineasDepreciacion.
   // ============================================================================
   const renderActivosFijosCModule = () => {
-    const CATEGORIAS_AF_CC = Object.keys(activoFijoCfgC.categorias||{});
+    const RUBROS_ACTIVO_FIJO_CC = ['Inmueble','Maquinarias y Equipos','Equipos de Computación','Vehículos','Servidores y Plataformas','Mobiliario y Equipo','Maquinarias Revaluados','Planta Eléctrica'];
+    const rubrosVaciosCC = () => Object.fromEntries(RUBROS_ACTIVO_FIJO_CC.map(r=>[r,{activoId:'',activoNombre:'',deprAcumId:'',deprAcumNombre:''}]));
     const cuentasAF = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('1.1.06'));
     const cuentasGasto = (planDeCuentas||[]).filter(c=>String(c.codigo).startsWith('5'));
-    const setCatCampo = (cat, campo, id) => {
+
+    const toggleExpandCC = (codigo) => setAfcExpandidoCC(x=>({...x,[codigo]:!x[codigo]}));
+
+    const setRubroCampo = (codigoCC, rubro, campo, id) => {
       const cta = cuentasAF.find(c=>c.id===id);
-      setActivoFijoCfgC(x=>({...x, categorias:{...x.categorias, [cat]:{...(x.categorias?.[cat]||{}), [`${campo}Id`]:id, [`${campo}Nombre`]: cta?`${cta.codigo} — ${cta.nombre}`:''}}}));
+      setActivoFijoCfgC(x=>({...x, centrosCosto:(x.centrosCosto||[]).map(cc=>cc.codigo!==codigoCC?cc:{
+        ...cc, rubros:{...cc.rubros, [rubro]:{...(cc.rubros?.[rubro]||{}), [`${campo}Id`]:id, [`${campo}Nombre`]: cta?`${cta.codigo} — ${cta.nombre}`:''}}
+      })}));
     };
-    const agregarCentroCosto = () => {
+
+    const iniciarNuevoCC = () => { setAfcEditandoCC(null); setAfcNuevoCC({codigo:'',nombre:''}); };
+    const iniciarEditarCC = (cc) => { setAfcEditandoCC(cc.codigo); setAfcNuevoCC({codigo:cc.codigo, nombre:cc.nombre}); };
+
+    const guardarCentroCosto = () => {
       if(!afcNuevoCC.codigo.trim()||!afcNuevoCC.nombre.trim()){ setDialog({title:'Faltan datos',text:'Código y nombre del centro de costo son obligatorios.',type:'alert'}); return; }
-      if((activoFijoCfgC.centrosCosto||[]).some(cc=>cc.codigo.toUpperCase()===afcNuevoCC.codigo.trim().toUpperCase())){ setDialog({title:'Ya existe',text:'Ese código de centro de costo ya está registrado.',type:'alert'}); return; }
-      setActivoFijoCfgC(x=>({...x, centrosCosto:[...(x.centrosCosto||[]), {codigo:afcNuevoCC.codigo.trim().toUpperCase(), nombre:afcNuevoCC.nombre.trim()}]}));
-      setAfcNuevoCC({codigo:'',nombre:''});
+      const codigoNuevo = afcNuevoCC.codigo.trim().toUpperCase();
+      const yaExiste = (activoFijoCfgC.centrosCosto||[]).some(cc=>cc.codigo===codigoNuevo && cc.codigo!==afcEditandoCC);
+      if(yaExiste){ setDialog({title:'Ya existe',text:'Ese código de centro de costo ya está registrado.',type:'alert'}); return; }
+      if(afcEditandoCC){
+        setActivoFijoCfgC(x=>({...x, centrosCosto:(x.centrosCosto||[]).map(cc=>cc.codigo!==afcEditandoCC?cc:{...cc, codigo:codigoNuevo, nombre:afcNuevoCC.nombre.trim()})}));
+        if(afcEditandoCC!==codigoNuevo) setAfcExpandidoCC(x=>{const {[afcEditandoCC]:v, ...resto}=x; return {...resto, [codigoNuevo]:v};});
+      } else {
+        setActivoFijoCfgC(x=>({...x, centrosCosto:[...(x.centrosCosto||[]), {codigo:codigoNuevo, nombre:afcNuevoCC.nombre.trim(), rubros:rubrosVaciosCC()}]}));
+        setAfcExpandidoCC(x=>({...x,[codigoNuevo]:true}));
+      }
+      setAfcNuevoCC({codigo:'',nombre:''}); setAfcEditandoCC(null);
     };
-    const quitarCentroCosto = (codigo) => setActivoFijoCfgC(x=>({...x, centrosCosto:(x.centrosCosto||[]).filter(cc=>cc.codigo!==codigo)}));
+
+    const eliminarCentroCosto = (codigo) => {
+      setDialog({title:'¿Eliminar centro de costo?', text:`Se eliminará "${codigo}" y todas sus cuentas configuradas por rubro. Esta acción no se puede deshacer.`, type:'confirm', onConfirm: async()=>{
+        setActivoFijoCfgC(x=>({...x, centrosCosto:(x.centrosCosto||[]).filter(cc=>cc.codigo!==codigo)}));
+      }});
+    };
 
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
@@ -45567,34 +45588,67 @@ ${resumenHtml}
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Configuración de cuentas contables y centros de costo</p>
           </div>
           <div className="p-6 space-y-6">
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 bg-gray-50 border-b border-gray-200">
-                <h3 className="text-xs font-black uppercase text-gray-700">Cuentas por Categoría</h3>
-                <p className="text-[10px] text-gray-400 font-bold mt-0.5">Mismas 8 categorías que usa el registro de Activos Fijos en Finanzas</p>
-              </div>
-              <div className="divide-y divide-gray-100">
-                {CATEGORIAS_AF_CC.map(cat=>{
-                  const cfg = activoFijoCfgC.categorias?.[cat]||{};
+            <div className="bg-white rounded-2xl border border-gray-200 p-5">
+              <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Centros de Costo</h3>
+              <p className="text-[10px] text-gray-400 font-bold mb-4">Cada centro de costo (sede) se despliega en sus 8 rubros de activo — asigna la cuenta del activo y de depreciación acumulada de cada rubro una sola vez, y al registrar un activo con su Centro de Costo + Rubro, las cuentas ya quedan parametrizadas.</p>
+
+              <div className="space-y-3 mb-5">
+                {(activoFijoCfgC.centrosCosto||[]).length===0 && <p className="text-[11px] text-gray-400 font-bold">Sin centros de costo registrados todavía.</p>}
+                {(activoFijoCfgC.centrosCosto||[]).map(cc=>{
+                  const abierto = !!afcExpandidoCC[cc.codigo];
+                  const configurados = RUBROS_ACTIVO_FIJO_CC.filter(r=>cc.rubros?.[r]?.activoId).length;
                   return (
-                    <div key={cat} className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                      <p className="text-xs font-black text-gray-700">{cat}</p>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta del Activo</label>
-                        <select value={cfg.activoId||''} onChange={e=>setCatCampo(cat,'activo',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
-                          <option value="">— Seleccionar —</option>
-                          {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                        </select>
+                    <div key={cc.codigo} className="border-2 border-gray-200 rounded-2xl overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer" onClick={()=>toggleExpandCC(cc.codigo)}>
+                        <div className="flex items-center gap-3">
+                          <ChevronDown size={16} className={`text-gray-400 transition-transform ${abierto?'rotate-180':''}`}/>
+                          <p className="text-xs font-black text-gray-800"><span className="font-mono text-gray-500 mr-2">{cc.codigo}</span>{cc.nombre}</p>
+                          <span className="text-[9px] font-bold text-gray-400 uppercase">{configurados}/{RUBROS_ACTIVO_FIJO_CC.length} rubros con cuenta</span>
+                        </div>
+                        <div className="flex items-center gap-1" onClick={e=>e.stopPropagation()}>
+                          <button onClick={()=>iniciarEditarCC(cc)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>
+                          <button onClick={()=>eliminarCentroCosto(cc.codigo)} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar"><Trash2 size={12}/></button>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta Dep. Acumulada</label>
-                        <select value={cfg.deprAcumId||''} onChange={e=>setCatCampo(cat,'deprAcum',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
-                          <option value="">— Seleccionar —</option>
-                          {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
-                        </select>
-                      </div>
+                      {abierto && (
+                        <div className="divide-y divide-gray-100">
+                          {RUBROS_ACTIVO_FIJO_CC.map(rubro=>{
+                            const cfg = cc.rubros?.[rubro]||{};
+                            return (
+                              <div key={rubro} className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                                <p className="text-xs font-black text-gray-700">{rubro}</p>
+                                <div>
+                                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta del Activo</label>
+                                  <select value={cfg.activoId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'activo',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                                    <option value="">— Seleccionar —</option>
+                                    {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Cuenta Dep. Acumulada</label>
+                                  <select value={cfg.deprAcumId||''} onChange={e=>setRubroCampo(cc.codigo,rubro,'deprAcum',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-[11px] font-bold outline-none focus:border-orange-500">
+                                    <option value="">— Seleccionar —</option>
+                                    {cuentasAF.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
+                                  </select>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <p className="text-[10px] font-black text-gray-500 uppercase mb-2">{afcEditandoCC?'Editar Centro de Costo':'Agregar Centro de Costo'}</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input value={afcNuevoCC.codigo} onChange={e=>setAfcNuevoCC(f=>({...f,codigo:e.target.value}))} placeholder="Código (ej: C2)" className="sm:w-32 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                  <input value={afcNuevoCC.nombre} onChange={e=>setAfcNuevoCC(f=>({...f,nombre:e.target.value}))} placeholder="Nombre de la sede" className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                  <button onClick={guardarCentroCosto} className="bg-gray-800 hover:bg-black text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center justify-center gap-1.5"><Plus size={14}/> {afcEditandoCC?'Guardar Cambios':'Agregar'}</button>
+                  {afcEditandoCC && <button onClick={iniciarNuevoCC} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase">Cancelar</button>}
+                </div>
               </div>
             </div>
 
@@ -45605,25 +45659,6 @@ ${resumenHtml}
                 <option value="">— Seleccionar —</option>
                 {cuentasGasto.map(c=><option key={c.id} value={c.id}>{c.codigo} — {c.nombre}</option>)}
               </select>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Centros de Costo</h3>
-              <p className="text-[10px] text-gray-400 font-bold mb-3">Sede donde está habilitado o funcionando el activo</p>
-              <div className="space-y-2 mb-4">
-                {(activoFijoCfgC.centrosCosto||[]).length===0 && <p className="text-[11px] text-gray-400 font-bold">Sin centros de costo registrados todavía.</p>}
-                {(activoFijoCfgC.centrosCosto||[]).map(cc=>(
-                  <div key={cc.codigo} className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
-                    <p className="text-xs font-bold text-gray-700"><span className="font-mono font-black text-gray-500 mr-2">{cc.codigo}</span>{cc.nombre}</p>
-                    <button onClick={()=>quitarCentroCosto(cc.codigo)} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input value={afcNuevoCC.codigo} onChange={e=>setAfcNuevoCC(f=>({...f,codigo:e.target.value}))} placeholder="Código (ej: ZI)" className="sm:w-32 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
-                <input value={afcNuevoCC.nombre} onChange={e=>setAfcNuevoCC(f=>({...f,nombre:e.target.value}))} placeholder="Nombre de la sede" className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
-                <button onClick={agregarCentroCosto} className="bg-gray-800 hover:bg-black text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center justify-center gap-1.5"><Plus size={14}/> Agregar</button>
-              </div>
             </div>
 
             <div className="flex justify-end">
