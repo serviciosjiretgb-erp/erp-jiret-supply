@@ -14936,18 +14936,6 @@ function App() {
   },[]);
   const [contFiltDesde, setContFiltDesde] = useState('');
   const [contFiltHasta, setContFiltHasta] = useState('');
-  // Fecha de Inicio de Contabilidad Real (settings.fechaInicioContabilidad): para cuando se
-  // empezó a usar Contabilidad después de que Procura/Ventas/Banco/etc. ya venían operando —
-  // deja que un comprobante de Ajuste (ej. "Saldos Junio") sea el único que represente todo lo
-  // anterior, sin que además se sumen los movimientos operativos reales de esos meses previos.
-  const [fechaInicioContForm, setFechaInicioContForm] = useState('');
-  useEffect(()=>{ if(settings?.fechaInicioContabilidad) setFechaInicioContForm(settings.fechaInicioContabilidad); }, [settings?.fechaInicioContabilidad]);
-  const guardarFechaInicioContabilidad = async () => {
-    try{
-      await setDoc(getDocRef('settings','general'),{fechaInicioContabilidad:fechaInicioContForm||''},{merge:true});
-      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora, todos los reportes de Contabilidad ignoran movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. Los Ajustes manuales nunca se ignoran.`:'Fecha de inicio quitada — los reportes vuelven a incluir todo el historial.',type:'alert'});
-    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
-  };
   const [contERCurrency, setContERCurrency] = useState('both');
   const [contERExpandAll, setContERExpandAll] = useState(true);
   const [contERVistaPlanta, setContERVistaPlanta] = useState(false);
@@ -15289,6 +15277,18 @@ function App() {
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
+  // Fecha de Inicio de Contabilidad Real (settings.fechaInicioContabilidad): para cuando se
+  // empezó a usar Contabilidad después de que Procura/Ventas/Banco/etc. ya venían operando —
+  // deja que un comprobante de Ajuste (ej. "Saldos Junio") sea el único que represente todo lo
+  // anterior, sin que además se sumen los movimientos operativos reales de esos meses previos.
+  const [fechaInicioContForm, setFechaInicioContForm] = useState('');
+  useEffect(()=>{ if(settings?.fechaInicioContabilidad) setFechaInicioContForm(settings.fechaInicioContabilidad); }, [settings?.fechaInicioContabilidad]);
+  const guardarFechaInicioContabilidad = async () => {
+    try{
+      await setDoc(getDocRef('settings','general'),{fechaInicioContabilidad:fechaInicioContForm||''},{merge:true});
+      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora, todos los reportes de Contabilidad ignoran movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. Los Ajustes manuales nunca se ignoran.`:'Fecha de inicio quitada — los reportes vuelven a incluir todo el historial.',type:'alert'});
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+  };
   const [finanzasPDFs, setFinanzasPDFs] = useState({});
   const [finanzasSubiendo, setFinanzasSubiendo] = useState({});
   const subirFinanzasPDF = async (file, campo, label) => {
