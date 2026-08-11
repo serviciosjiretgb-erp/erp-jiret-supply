@@ -4714,13 +4714,31 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       // recalculan bien desde la propia pantalla de Factura (botón Actualizar). Si esta
       // factura tiene retenciones aplicadas, ábrela y dale Actualizar una vez después de
       // editar la OC para que esos montos también queden al día.
-      // Solo se sincroniza si la cantidad de ítems sigue coincidiendo 1 a 1 con la OC (mismo
-      // orden, sin ítems agregados/quitados en la factura después de creada).
+      // Solo la sincronización POSICIONAL (cantidad/precio/desc/etc.) exige que la cantidad de
+      // ítems coincida 1 a 1 — cuando NO coincide (ej. la factura llegó consolidada en menos
+      // líneas de las que tiene la OC, caso real y frecuente), igual se sincroniza la
+      // categoría/cuenta SI Y SOLO SI todos los ítems de la OC comparten una única
+      // categoría — ahí no hay ambigüedad posible de a cuál línea de la factura corresponde.
+      // Si la OC tiene categorías distintas entre sí Y la cantidad no coincide, no se adivina
+      // (se arriesgaría mezclar cuentas de ítems distintos en una sola línea) — en ese caso se
+      // avisa en el mensaje final para que se revise a mano, en vez de fallar en silencio.
       const CAMPOS_SYNC_OC_FACTURA=['desc','categoria','unidad','iva','cuentaContableId','cuentaContableNombre','cantidad','precioUnit'];
       const facturasVinc=(facturasCompra||[]).filter(f=>f.ocId===form.nroOC);
+      const facturasRequierenRevision=[];
       facturasVinc.forEach(f=>{
         const itsF=f.itemsOC||[];
-        if(itsF.length!==items.length) return;
+        if(itsF.length!==items.length){
+          const categoriasOC=[...new Set(items.map(it=>it.categoria||''))].filter(Boolean);
+          if(categoriasOC.length!==1){ if(categoriasOC.length>1) facturasRequierenRevision.push(f.nroFactura||f.id); return; }
+          const itUnico=items.find(it=>it.categoria===categoriasOC[0]);
+          const itsNuevos=itsF.map(itF=>itF.cuentaContableNombre===itUnico.cuentaContableNombre?itF:{...itF,categoria:itUnico.categoria||'',cuentaContableId:itUnico.cuentaContableId||'',cuentaContableNombre:itUnico.cuentaContableNombre||''});
+          const cambioAlgo=itsNuevos.some((it,i)=>it.cuentaContableNombre!==itsF[i].cuentaContableNombre);
+          if(cambioAlgo){
+            const asientoNuevo=(f.asiento||[]).map((l,idx)=>(idx<itsF.length && l.tipo==='DEBITO')?{...l,cuenta:itUnico.cuentaContableNombre||l.cuenta}:l);
+            batch.update(getDocRef('procura_facturas_compra',f.id),{itemsOC:itsNuevos, asiento:asientoNuevo, updatedAt:Date.now()});
+          }
+          return;
+        }
         let cambioAlgo=false;
         const esBsF=String(f.moneda||'USD').toUpperCase()==='BS';
         const tasaF=pNum(f.tasa||0);
@@ -4764,7 +4782,9 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       });
       await batch.commit();
       setModal(null);
-      setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
+      setDialog(facturasRequierenRevision.length>0
+        ? {title:'✅ OC guardada — revisar factura', text:`Orden ${form.nroOC} guardada. La factura ${facturasRequierenRevision.join(', ')} tiene una cantidad de ítems distinta a la OC y varias categorías entre sí, así que no se pudo sincronizar la categoría automáticamente sin arriesgar mezclar ítems. Revísala manualmente.`, type:'alert'}
+        : {title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
