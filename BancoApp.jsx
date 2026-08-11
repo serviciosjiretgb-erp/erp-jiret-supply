@@ -3919,6 +3919,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 {(()=>{
                   // Buscar el asiento contable vinculado (con lineas reales)
                   const asientoLinked = asientosBanco.find(a=>a.id===movDetalle.asientoContableId);
+                  // Buscar el movimiento del OTRO LADO del traslado — no queda un ID directo
+                  // guardado entre los dos (cada lado se crea como documento independiente), así
+                  // que se empareja por misma referencia + misma fecha + tipo complementario:
+                  // el lado que sale es 'Traslado de Fondo'/'Transferencia'; el que entra es
+                  // 'Ingreso' con origenIngreso:'Transferencia'. Se busca en Banco y Caja, porque
+                  // un traslado puede ir de un banco a una caja o viceversa.
+                  const esLadoQueSale = movDetalle.tipo==='Traslado de Fondo'||movDetalle.tipo==='Transferencia';
+                  const esLadoQueEntra = movDetalle.tipo==='Ingreso' && movDetalle.origenIngreso==='Transferencia';
+                  const todosLosMovs = [...(movBanco||[]),...(movCaja||[])];
+                  const movOtroLado = esLadoQueSale
+                    ? todosLosMovs.find(m=>m.id!==movDetalle.id && m.referencia && m.referencia===movDetalle.referencia && m.fecha===movDetalle.fecha && m.tipo==='Ingreso' && m.origenIngreso==='Transferencia')
+                    : esLadoQueEntra
+                      ? todosLosMovs.find(m=>m.id!==movDetalle.id && m.referencia && m.referencia===movDetalle.referencia && m.fecha===movDetalle.fecha && (m.tipo==='Traslado de Fondo'||m.tipo==='Transferencia'))
+                      : null;
+                  const asientoOtroLado = movOtroLado ? asientosBanco.find(a=>a.id===movOtroLado.asientoContableId) : null;
                   // Reconstruir lineas dinámicamente desde datos del banco si no hay asiento guardado
                   const ctaOrig = cuentas.find(c=>c.id===movDetalle.cuentaId);
                   const ctaDest = cuentas.find(c=>c.id===movDetalle.cuentaDestinoId);
@@ -3926,10 +3941,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     cod:(c?.cuentaContableCod||c?.cuentaContable?.split('·')[0]||'').trim(),
                     nom:(c?.cuentaContableNom||c?.cuentaContable?.split('·')[1]||c?.banco||'').trim()
                   });
-                  // Líneas a mostrar: prioridad → lineas del asiento guardado → reconstruidas
+                  // Líneas a mostrar: prioridad → lineas del asiento guardado (+ el del otro lado
+                  // del traslado, si se encontró) → reconstruidas
                   let lineasMostrar = [];
                   if(asientoLinked?.lineas?.length > 0) {
-                    lineasMostrar = asientoLinked.lineas;
+                    lineasMostrar = [...asientoLinked.lineas, ...(asientoOtroLado?.lineas||[])];
                   } else if(movDetalle.tipo==='Traslado de Fondo' && ctaOrig && ctaDest) {
                     const orig=splitCta(ctaOrig); const dest=splitCta(ctaDest);
                     lineasMostrar=[
