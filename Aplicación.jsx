@@ -14869,6 +14869,7 @@ function App() {
   const afRegFormVacioC = () => ({id:null, nombre:'', centroCosto:'', rubro:'', fechaAdquisicion:getTodayDate(), valorCosto:'', valorResidual:'0', vidaUtilAnios:'5', ubicacion:'', tasaCambio:''});
   const [afRegForm, setAfRegForm] = useState(afRegFormVacioC());
   const [afImportando, setAfImportando] = useState(false); // Importar activos desde Excel (formato ACTIVO_FIJO_FORMATO_ERP)
+  const [afRelFiltros, setAfRelFiltros] = useState({rubro:'', centroCosto:'', mes:''}); // filtros de Relación de Activos
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
@@ -45596,7 +45597,17 @@ ${resumenHtml}
       setAfSubTabC('registro');
     };
 
-    // Tasa BCV para la fecha de adquisición del activo — reusa fetchTasaBCV, que ya está
+    // Actualizar tasa BCV de un activo YA registrado (típicamente uno que vino de la
+    // importación Excel, que no trae tasa) — misma fetchTasaBCV, aplicada a su fecha de
+    // adquisición, y guarda directo en Firestore sin pasar por el formulario de Registro.
+    const actualizarTasaActivo = async (a) => {
+      const t = await fetchTasaBCV(a.fechaAdquisicion || getTodayDate());
+      if(!t) return;
+      const nuevoBs = Number((Number(a.valorCosto||0)*t).toFixed(2));
+      try{
+        await updateDoc(getDocRef('activos_fijos', a.id), {tasaCambio:t, valorCostoBs:nuevoBs, updatedAt:Date.now()});
+      }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    };
     // integrado en toda la app (Nómina, Cierre IVA, Procura, etc.) y consulta ve.dolarapi.com
     // (oficial del día, o histórico si la fecha es anterior a hoy).
     const buscarTasaParaActivo = async () => {
@@ -45957,47 +45968,102 @@ ${resumenHtml}
           {/* ── RELACIÓN DE ACTIVOS ── */}
           {afSubTabC==='relacion' && (() => {
             const hoy = getTodayDate();
-            const lista = [...(activosFijos||[])].sort((a,b)=>(a.fechaAdquisicion||'').localeCompare(b.fechaAdquisicion||''));
+            let lista = [...(activosFijos||[])];
+            if(afRelFiltros.rubro) lista = lista.filter(a=>a.categoria===afRelFiltros.rubro);
+            if(afRelFiltros.centroCosto) lista = lista.filter(a=>a.centroCosto===afRelFiltros.centroCosto);
+            if(afRelFiltros.mes) lista = lista.filter(a=>String(a.fechaAdquisicion||'').startsWith(afRelFiltros.mes));
+            lista.sort((a,b)=>(a.fechaAdquisicion||'').localeCompare(b.fechaAdquisicion||''));
+
+            // Agrupado por rubro (orden fijo de RUBROS_ACTIVO_FIJO_CC); lo que no calce con
+            // ninguno de los 6 (dato viejo, o rubro escrito distinto) cae en "Otros / Sin Rubro".
+            const rubrosConocidos = new Set(RUBROS_ACTIVO_FIJO_CC);
+            const grupos = RUBROS_ACTIVO_FIJO_CC.map(rubro=>({rubro, items:lista.filter(a=>a.categoria===rubro)})).filter(g=>g.items.length>0);
+            const otros = lista.filter(a=>!rubrosConocidos.has(a.categoria));
+            if(otros.length) grupos.push({rubro:'Otros / Sin Rubro', items:otros});
+
+            const hayFiltros = afRelFiltros.rubro||afRelFiltros.centroCosto||afRelFiltros.mes;
+
+            const TablaGrupo = ({items}) => (
+              <div className="overflow-x-auto"><table className="w-full text-xs">
+                <thead><tr style={{background:'#0f172a'}}>
+                  {['Activo','Centro de Costo','Adquisición','Costo $','Costo Bs','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
+                    <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=3&&i<=6?'text-right':i===8?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {items.map(a=>{
+                    const {deprAcumulada,valorLibros} = calcDepreciacionActivo(a,hoy);
+                    const deBaja = a.status==='VENDIDO'||a.status==='DE_BAJA';
+                    return (
+                      <tr key={a.id} className={`border-b border-gray-50 hover:bg-gray-50 ${deBaja?'opacity-50':''}`}>
+                        <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
+                        <td className="px-3 py-2 text-gray-500 font-mono">{a.centroCosto||'—'}</td>
+                        <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
+                        <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {a.valorCostoBs?`Bs ${contFmt(a.valorCostoBs)}`:<span className="text-gray-300">—</span>}
+                            <button disabled={fetchingBCV} onClick={()=>actualizarTasaActivo(a)} title="Traer/actualizar tasa BCV de la fecha de adquisición" className={`p-1 rounded ${fetchingBCV?'text-gray-300':'text-blue-400 hover:text-blue-600'}`}>
+                              <RefreshCw size={11} className={fetchingBCV?'animate-spin':''}/>
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
+                        <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
+                        <td className="px-3 py-2 text-center">
+                          {!deBaja && <button onClick={()=>iniciarEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table></div>
+            );
+
             return (
-              <div className="p-6">
-                <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                  {lista.length===0 ? (
-                    <div className="p-12 text-center text-gray-400"><ClipboardList size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">Sin activos registrados</p><p className="text-xs mt-1">Usa la pestaña "Registro de Activo Fijo" para empezar.</p></div>
-                  ) : (
-                    <div className="overflow-x-auto"><table className="w-full text-xs">
-                      <thead><tr style={{background:'#0f172a'}}>
-                        {['Activo','Rubro','Centro de Costo','Adquisición','Costo $','Costo Bs','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
-                          <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=4&&i<=7?'text-right':i===9?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
-                        ))}
-                      </tr></thead>
-                      <tbody>
-                        {lista.map(a=>{
-                          const {deprAcumulada,valorLibros} = calcDepreciacionActivo(a,hoy);
-                          const deBaja = a.status==='VENDIDO'||a.status==='DE_BAJA';
-                          return (
-                            <tr key={a.id} className={`border-b border-gray-50 hover:bg-gray-50 ${deBaja?'opacity-50':''}`}>
-                              <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
-                              <td className="px-3 py-2 text-gray-500">{a.categoria||'—'}</td>
-                              <td className="px-3 py-2 text-gray-500 font-mono">{a.centroCosto||'—'}</td>
-                              <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
-                              <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
-                              <td className="px-3 py-2 text-right font-mono text-gray-500">{a.valorCostoBs?`Bs ${contFmt(a.valorCostoBs)}`:'—'}</td>
-                              <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
-                              <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
-                              <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
-                              <td className="px-3 py-2 text-center">
-                                {!deBaja && <button onClick={()=>iniciarEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table></div>
-                  )}
+              <div className="p-6 space-y-5">
+                <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Rubro</label>
+                    <select value={afRelFiltros.rubro} onChange={e=>setAfRelFiltros(f=>({...f,rubro:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                      <option value="">Todos los rubros</option>
+                      {RUBROS_ACTIVO_FIJO_CC.map(r=><option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Centro de Costo</label>
+                    <select value={afRelFiltros.centroCosto} onChange={e=>setAfRelFiltros(f=>({...f,centroCosto:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                      <option value="">Todos</option>
+                      {(activoFijoCfgC.centrosCosto||[]).map(cc=><option key={cc.codigo} value={cc.codigo}>{cc.codigo} — {cc.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Mes de Adquisición</label>
+                    <input type="month" value={afRelFiltros.mes} onChange={e=>setAfRelFiltros(f=>({...f,mes:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                  </div>
+                  {hayFiltros && <button onClick={()=>setAfRelFiltros({rubro:'',centroCosto:'',mes:''})} className="text-[10px] font-black uppercase text-gray-400 hover:text-red-500 px-2 py-2">✕ Limpiar filtros</button>}
+                  <div className="ml-auto text-[10px] text-gray-400 font-bold">{lista.length} activo(s){hayFiltros?' (filtrado)':''}</div>
                 </div>
+
+                {lista.length===0 ? (
+                  <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-400"><ClipboardList size={48} className="mx-auto mb-4 opacity-20"/><p className="font-black text-sm uppercase">{hayFiltros?'Ningún activo con esos filtros':'Sin activos registrados'}</p><p className="text-xs mt-1">{hayFiltros?'Prueba a limpiar los filtros.':'Usa la pestaña "Registro de Activo Fijo" para empezar.'}</p></div>
+                ) : grupos.map(g=>{
+                  const totCosto = g.items.reduce((s,a)=>s+Number(a.valorCosto||0),0);
+                  return (
+                    <div key={g.rubro} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+                        <p className="text-xs font-black uppercase text-gray-700">{g.rubro}</p>
+                        <span className="text-[9px] font-bold text-gray-400 uppercase">{g.items.length} activo(s) · ${contFmt(totCosto)}</span>
+                      </div>
+                      <TablaGrupo items={g.items}/>
+                    </div>
+                  );
+                })}
               </div>
             );
           })()}
+
 
         </div>
       </div>
