@@ -4694,9 +4694,13 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       batch.set(getDocRef('procura_ordenes_compra',id),{
         ...form,id,items,total:t.totalUSD,totales:t,updatedAt:Date.now(),creadoEn:form.creadoEn||Date.now()
       });
-      // Actualiza el precio de referencia de cada categoría de servicio usada, con el último precio escrito en esta OC
+      // Actualiza el precio de referencia de cada categoría de servicio usada, con el último
+      // precio escrito en esta OC. set(...,{merge:true}) en vez de update(): si catSrvId quedó
+      // apuntando a un documento que ya no existe (categoría borrada, o cambiada desde el
+      // nuevo dropdown de Cat.), update() tumba TODO el batch con "No document to update" —
+      // set con merge no requiere que exista, así nunca vuelve a romper el guardado de la OC.
       items.filter(it=>it.tipo==='SERVICIO'&&it.catSrvId&&pNum(it.precioUnit)>0).forEach(it=>{
-        batch.update(getDocRef('procura_categorias_servicio',it.catSrvId),{precioRef:pNum(it.precioUnit),updatedAt:Date.now()});
+        batch.set(getDocRef('procura_categorias_servicio',it.catSrvId),{precioRef:pNum(it.precioUnit),updatedAt:Date.now()},{merge:true});
       });
       // Si esta OC ya tiene factura(s) generada(s), propaga TODOS los cambios de cada ítem
       // hacia esa factura: descripción, categoría, unidad, IVA, cuenta contable, cantidad y
@@ -5188,7 +5192,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
                                 value={it.categoria||''}
                                 onChange={e=>{
                                   const cat=(categoriasSrv||[]).find(c=>c.nombre===e.target.value);
-                                  setItems(items.map((x,j)=>j!==i?x:{...x, categoria:e.target.value, cuentaContableId:cat?.cuentaContableId||'', cuentaContableNombre:cat?.cuentaContableNombre||''}));
+                                  setItems(items.map((x,j)=>j!==i?x:{...x, categoria:e.target.value, catSrvId:cat?.id||'', cuentaContableId:cat?.cuentaContableId||'', cuentaContableNombre:cat?.cuentaContableNombre||''}));
                                 }}>
                                 {!(categoriasSrv||[]).some(c=>c.nombre===it.categoria) && <option value={it.categoria||''}>{it.categoria||'— Sin categoría —'}</option>}
                                 {(categoriasSrv||[]).filter(c=>c.nombre).map(c=><option key={c.id} value={c.nombre}>{c.nombre}</option>)}
