@@ -15112,7 +15112,6 @@ function App() {
      {movs:movCajaApp, cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
         const cta=(cuentas||[]).find(c=>c.id===m[idField]);
-        if(!cta) return;
         const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
         if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
           out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:(asientoLigado.lineas||[]).map((l,li)=>{
@@ -15121,13 +15120,21 @@ function App() {
           })});
           return;
         }
+        // Si no hay asiento vinculado NI se encuentra la cuenta bancaria/caja propia (cuentaId
+        // roto, cuenta borrada, o mal configurada), antes ese movimiento se perdía en silencio
+        // (if(!cta) return) — desaparecía del todo de Mayor Analítico y del resto de reportes,
+        // sin dejar rastro. Ahora se incluye igual, con la cuenta marcada como "Sin cuenta
+        // configurada" (usando el nombre que trae el propio movimiento como referencia), para
+        // que quede visible en vez de invisible — y se pueda ir a corregir esa cuenta en Banco/Caja.
         const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
         const montoBs=Number(m.montoBs||0), montoUSD=Number(m.montoUSD||0);
         const g = isIng
           ? (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+cobrar|cxc|client)/i.test(p.nombre||''))
           : (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+pagar|cxp|proveedor)/i.test(p.nombre||''));
         const contra = g ? {codigo:String(g.codigo||g.id||''), cuenta:g.nombre||''} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
-        const propiaR = aplicarReclasLinea(tabId, m.id, 0, cta.cuentaContableCod||'—', nombreCta(cta)||mod);
+        const codPropia = cta ? (cta.cuentaContableCod||'') : '9.9.99.99.999';
+        const nombrePropia = cta ? (nombreCta(cta)||mod) : `⚠️ Sin cuenta configurada — ${m.cuentaNombre||m[idField]||mod}`;
+        const propiaR = aplicarReclasLinea(tabId, m.id, 0, codPropia, nombrePropia);
         const contraR = aplicarReclasLinea(tabId, m.id, 1, contra.codigo, contra.cuenta);
         const lineaPropia={codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
         const lineaContra={codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
