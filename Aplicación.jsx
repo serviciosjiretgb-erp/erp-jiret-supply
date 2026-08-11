@@ -14870,6 +14870,11 @@ function App() {
   const [afRegForm, setAfRegForm] = useState(afRegFormVacioC());
   const [afImportando, setAfImportando] = useState(false); // Importar activos desde Excel (formato ACTIVO_FIJO_FORMATO_ERP)
   const [afRelFiltros, setAfRelFiltros] = useState({rubro:'', centroCosto:'', mes:''}); // filtros de Relación de Activos
+  // Período de cálculo para Relación de Activos: la vida transcurrida / depreciación se
+  // recalculan al cierre de este mes+año (no siempre "hoy") — con su propia tasa BCV para
+  // convertir la depreciación mensual a Bs (independiente de la tasa de adquisición de cada activo).
+  const [afPeriodo, setAfPeriodo] = useState({mes:String(new Date().getMonth()+1).padStart(2,'0'), anio:String(new Date().getFullYear())});
+  const [afPeriodoTasa, setAfPeriodoTasa] = useState('');
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
@@ -45967,7 +45972,12 @@ ${resumenHtml}
 
           {/* ── RELACIÓN DE ACTIVOS ── */}
           {afSubTabC==='relacion' && (() => {
-            const hoy = getTodayDate();
+            const MESES_AF=[{v:'01',l:'Enero'},{v:'02',l:'Febrero'},{v:'03',l:'Marzo'},{v:'04',l:'Abril'},{v:'05',l:'Mayo'},{v:'06',l:'Junio'},{v:'07',l:'Julio'},{v:'08',l:'Agosto'},{v:'09',l:'Septiembre'},{v:'10',l:'Octubre'},{v:'11',l:'Noviembre'},{v:'12',l:'Diciembre'}];
+            const ultimoDiaMes=(anio,mes)=>new Date(Number(anio),Number(mes),0).getDate();
+            const fechaCortePeriodo = `${afPeriodo.anio}-${afPeriodo.mes}-${String(ultimoDiaMes(afPeriodo.anio,afPeriodo.mes)).padStart(2,'0')}`;
+            const tasaPeriodo = parseFloat(afPeriodoTasa)||0;
+            const buscarTasaPeriodo = async () => { const t=await fetchTasaBCV(fechaCortePeriodo); if(t) setAfPeriodoTasa(String(t)); };
+
             let lista = [...(activosFijos||[])];
             if(afRelFiltros.rubro) lista = lista.filter(a=>a.categoria===afRelFiltros.rubro);
             if(afRelFiltros.centroCosto) lista = lista.filter(a=>a.centroCosto===afRelFiltros.centroCosto);
@@ -45986,19 +45996,22 @@ ${resumenHtml}
             const TablaGrupo = ({items}) => (
               <div className="overflow-x-auto"><table className="w-full text-xs">
                 <thead><tr style={{background:'#0f172a'}}>
-                  {['Activo','Centro de Costo','Adquisición','Costo $','Costo Bs','Depr. Acum.','Valor Libros','Estado','Acción'].map((h,i)=>(
-                    <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${i>=3&&i<=6?'text-right':i===8?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                  {['Activo','Centro de Costo','Adquisición','Vida Útil (años)','Vida Transcurrida','Costo $','Costo Bs','Dep. Acum. USD','Val. Neto USD','Dep. Mensual USD','Dep. Mensual Bs','Estado','Acción'].map((h,i)=>(
+                    <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${(i>=3&&i<=10)?'text-right':i===11?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
                   {items.map(a=>{
-                    const {deprAcumulada,valorLibros} = calcDepreciacionActivo(a,hoy);
+                    const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual} = calcDepreciacionActivo(a,fechaCortePeriodo);
+                    const vidaMesesTotal = Math.round(Number(a.vidaUtilAnios||0)*12);
                     const deBaja = a.status==='VENDIDO'||a.status==='DE_BAJA';
                     return (
                       <tr key={a.id} className={`border-b border-gray-50 hover:bg-gray-50 ${deBaja?'opacity-50':''}`}>
                         <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
                         <td className="px-3 py-2 text-gray-500 font-mono">{a.centroCosto||'—'}</td>
                         <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">{a.vidaUtilAnios||0} años</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">{mesesTranscurridos} / {vidaMesesTotal} m.</td>
                         <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500">
                           <div className="flex items-center justify-end gap-1.5">
@@ -46010,6 +46023,8 @@ ${resumenHtml}
                         </td>
                         <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
                         <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">${contFmt(deprMensual)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-gray-500">{tasaPeriodo>0?`Bs ${contFmt(deprMensual*tasaPeriodo)}`:<span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
                         <td className="px-3 py-2 text-center">
                           {!deBaja && <button onClick={()=>iniciarEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
@@ -46023,6 +46038,31 @@ ${resumenHtml}
 
             return (
               <div className="p-6 space-y-5">
+                {/* ── Período de cálculo: todas las columnas de depreciación se recalculan al
+                    cierre de este mes+año, con su propia tasa BCV para Dep. Mensual Bs ── */}
+                <div className="bg-slate-900 rounded-2xl p-4 flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="text-[9px] font-black text-orange-400 uppercase block mb-1">Calcular al cierre de — Período</label>
+                    <select value={afPeriodo.mes} onChange={e=>setAfPeriodo(p=>({...p,mes:e.target.value}))} className="border-2 border-slate-700 bg-slate-800 text-white rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
+                      {MESES_AF.map(m=><option key={m.v} value={m.v}>{m.l}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-orange-400 uppercase block mb-1">Año</label>
+                    <input type="number" value={afPeriodo.anio} onChange={e=>setAfPeriodo(p=>({...p,anio:e.target.value}))} className="w-24 border-2 border-slate-700 bg-slate-800 text-white rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-orange-400 uppercase block mb-1">Tasa del período (Bs/$)</label>
+                    <div className="flex gap-1.5">
+                      <input type="number" step="0.0001" value={afPeriodoTasa} onChange={e=>setAfPeriodoTasa(e.target.value)} placeholder="0,00" className="w-28 border-2 border-slate-700 bg-slate-800 text-white rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                      <button type="button" disabled={fetchingBCV} onClick={buscarTasaPeriodo} title="Traer tasa BCV al cierre del período" className={`px-3 rounded-xl flex-shrink-0 flex items-center justify-center ${fetchingBCV?'bg-slate-700 text-slate-500':'bg-orange-500 hover:bg-orange-600 text-white'}`}>
+                        <RefreshCw size={13} className={fetchingBCV?'animate-spin':''}/>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="ml-auto text-[10px] text-slate-400 font-bold">Cierre: {contDd(fechaCortePeriodo)}</div>
+                </div>
+
                 <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap items-end gap-3">
                   <div>
                     <label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Rubro</label>
@@ -46058,6 +46098,7 @@ ${resumenHtml}
                       </div>
                       <TablaGrupo items={g.items}/>
                     </div>
+
                   );
                 })}
               </div>
