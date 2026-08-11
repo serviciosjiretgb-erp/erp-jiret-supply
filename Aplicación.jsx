@@ -5183,7 +5183,17 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
                             <td className="px-2 py-1.5 text-slate-500">{i+1}</td>
                             <td className="px-2 py-1.5"><PBadge v={it.tipo==='SERVICIO'?'blue':'green'}>{it.tipo==='SERVICIO'?'SERV.':'PROD.'}</PBadge></td>
                             <td className="px-2 py-1.5 font-black text-slate-800">{it.desc}</td>
-                            <td className="px-2 py-1.5 text-slate-500 text-[10px]">{it.categoria||'—'}</td>
+                            <td className="px-2 py-1.5">
+                              <select className="text-[9px] font-black px-1 py-1 rounded border border-slate-200 outline-none focus:border-orange-400 bg-white max-w-28"
+                                value={it.categoria||''}
+                                onChange={e=>{
+                                  const cat=(categoriasSrv||[]).find(c=>c.nombre===e.target.value);
+                                  setItems(items.map((x,j)=>j!==i?x:{...x, categoria:e.target.value, cuentaContableId:cat?.cuentaContableId||'', cuentaContableNombre:cat?.cuentaContableNombre||''}));
+                                }}>
+                                {!(categoriasSrv||[]).some(c=>c.nombre===it.categoria) && <option value={it.categoria||''}>{it.categoria||'— Sin categoría —'}</option>}
+                                {(categoriasSrv||[]).filter(c=>c.nombre).map(c=><option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+                              </select>
+                            </td>
                             <td className="px-2 py-1.5"><span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${ivaColor(it.iva)}`}>{it.iva||'GRAV.'}</span></td>
                             <td className="px-2 py-1.5 text-right font-mono">{pFmt(it.cantidad)}</td>
                             <td className="px-2 py-1.5 text-slate-500">{it.unidad||'Und'}</td>
@@ -5434,6 +5444,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const [planDeCuentas,setPlanDeCuentas]=useState([]);
   const [cuentasRetProvCfg,setCuentasRetProvCfg]=useState({});
   const [servicios,setServicios]=useState([]);
+  const [categoriasSrv,setCategoriasSrv]=useState([]); // procura_categorias_servicio — el mismo catálogo que usa "Agregar ítem" en la OC
   const [cuentaServicioSearch,setCuentaServicioSearch]=useState('');
   const [pendingDeleteFact,setPendingDeleteFact]=useState(null);
   const [factDelPwd,setFactDelPwd]=useState('');
@@ -5483,7 +5494,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     const u1=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
     const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(doc(db,'settings','cuentasRetencionProveedor'),d=>d.exists()&&setCuentasRetProvCfg(x=>({...x,...d.data()})));
-    return()=>{u1();u2();u3();};
+    const u4=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
+    return()=>{u1();u2();u3();u4();};
 
   },[]);
 
@@ -6259,11 +6271,11 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                   <select className="text-[9px] font-black px-1 py-0.5 rounded border border-slate-200 outline-none focus:border-orange-400 bg-white max-w-28"
                                     value={it.categoria||''}
                                     onChange={e=>{
-                                      const srv=(servicios||[]).find(s=>s.nombre===e.target.value);
-                                      updateItem({categoria:e.target.value, cuentaContableId:srv?.cuentaContableId||'', cuentaContableNombre:srv?.cuentaContableNombre||''});
+                                      const cat=(categoriasSrv||[]).find(c=>c.nombre===e.target.value);
+                                      updateItem({categoria:e.target.value, cuentaContableId:cat?.cuentaContableId||'', cuentaContableNombre:cat?.cuentaContableNombre||''});
                                     }}>
-                                    {!(servicios||[]).some(s=>s.nombre===it.categoria) && <option value={it.categoria||''}>{it.categoria||'— Sin categoría —'}</option>}
-                                    {(servicios||[]).filter(s=>s.nombre).map(s=><option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+                                    {!(categoriasSrv||[]).some(c=>c.nombre===it.categoria) && <option value={it.categoria||''}>{it.categoria||'— Sin categoría —'}</option>}
+                                    {(categoriasSrv||[]).filter(c=>c.nombre).map(c=><option key={c.id} value={c.nombre}>{c.nombre}</option>)}
                                   </select>
                                 </td>
                                 <td className="px-2 py-1 text-center">
