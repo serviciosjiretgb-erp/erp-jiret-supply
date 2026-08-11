@@ -4568,12 +4568,19 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
   const [categoriasSrv,setCategoriasSrv]=useState([]);
   const [provSearch,setProvSearch]=useState('');
   const [ordenesPagina,setOrdenesPagina]=useState(0);
+  // Solo para poder recalcular correctamente el asiento de una factura vinculada cuando se
+  // sincronizan cantidad/precio/total desde la OC (ver guardar() más abajo) — mismas fuentes
+  // que usa FacturasCompraView, no se usan para nada más aquí.
+  const [planDeCuentasOC,setPlanDeCuentasOC]=useState([]);
+  const [cuentasRetProvCfgOC,setCuentasRetProvCfgOC]=useState({});
 
   useEffect(()=>{
     const u1=onSnapshot(getColRef('inventory'),s=>setInventory(s.docs.map(d=>{const dt=d.data();return{id:d.id,...dt,category:normCatVal(dt.category),subcategory:normCatVal(dt.subcategory)};})));
     const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.activo!==false).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
-    return()=>{u1();u2();u3();};
+    const u4=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentasOC(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
+    const u5=onSnapshot(doc(db,'settings','cuentasRetencionProveedor'),d=>d.exists()&&setCuentasRetProvCfgOC(x=>({...x,...d.data()})));
+    return()=>{u1();u2();u3();u4();u5();};
   },[]);
 
   const invCats=['TODOS','Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Materia Prima','Químicos','Pigmentos','Tintas','Otros Terminados'];
@@ -4690,6 +4697,66 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       // Actualiza el precio de referencia de cada categoría de servicio usada, con el último precio escrito en esta OC
       items.filter(it=>it.tipo==='SERVICIO'&&it.catSrvId&&pNum(it.precioUnit)>0).forEach(it=>{
         batch.update(getDocRef('procura_categorias_servicio',it.catSrvId),{precioRef:pNum(it.precioUnit),updatedAt:Date.now()});
+      });
+      // Si esta OC ya tiene factura(s) generada(s), propaga TODOS los cambios de cada ítem
+      // hacia esa factura: descripción, categoría, unidad, IVA, cuenta contable, cantidad y
+      // precio. Cantidad/precio recalculan el total del ítem con la misma fórmula que usa la
+      // propia edición de la factura (respeta Bs/USD según la moneda de la factura), y eso a
+      // su vez recalcula subtotal/IVA/total de la factura y las líneas de ítems + IVA del
+      // asiento (mismas funciones que usa FacturasCompraView: calcTotalesFC/generarAsientoFC).
+      // A PROPÓSITO se dejan intactas: retIVA, retISLRLista, saldoPendiente y netoPagar, y las
+      // líneas de proveedor/retención del asiento — esas están ligadas a comprobantes de
+      // retención con su propio correlativo (procura_ret_iva/procura_ret_islr) y solo se
+      // recalculan bien desde la propia pantalla de Factura (botón Actualizar). Si esta
+      // factura tiene retenciones aplicadas, ábrela y dale Actualizar una vez después de
+      // editar la OC para que esos montos también queden al día.
+      // Solo se sincroniza si la cantidad de ítems sigue coincidiendo 1 a 1 con la OC (mismo
+      // orden, sin ítems agregados/quitados en la factura después de creada).
+      const CAMPOS_SYNC_OC_FACTURA=['desc','categoria','unidad','iva','cuentaContableId','cuentaContableNombre','cantidad','precioUnit'];
+      const facturasVinc=(facturasCompra||[]).filter(f=>f.ocId===form.nroOC);
+      facturasVinc.forEach(f=>{
+        const itsF=f.itemsOC||[];
+        if(itsF.length!==items.length) return;
+        let cambioAlgo=false;
+        const esBsF=String(f.moneda||'USD').toUpperCase()==='BS';
+        const tasaF=pNum(f.tasa||0);
+        const itsNuevos=itsF.map((itF,i)=>{
+          const itOC=items[i];
+          if(!itOC) return itF;
+          const cambios={};
+          CAMPOS_SYNC_OC_FACTURA.forEach(campo=>{ if(itOC[campo]!==itF[campo]) cambios[campo]=itOC[campo]??''; });
+          if(Object.keys(cambios).length===0) return itF;
+          cambioAlgo=true;
+          const itMerged={...itF,...cambios};
+          if('cantidad' in cambios || 'precioUnit' in cambios){
+            // Misma fórmula que updateItem() en la edición manual de la factura.
+            const totalCampo=parseFloat((pNum(itMerged.cantidad)*pNum(itMerged.precioUnit)).toFixed(2));
+            if(esBsF){
+              itMerged.total=tasaF>0?parseFloat((totalCampo/tasaF).toFixed(2)):totalCampo;
+              itMerged._totalBsOriginal=totalCampo;
+              itMerged._precioBsOriginal=pNum(itMerged.precioUnit);
+            } else {
+              itMerged.total=totalCampo;
+              delete itMerged._totalBsOriginal; delete itMerged._precioBsOriginal;
+            }
+          }
+          return itMerged;
+        });
+        if(cambioAlgo){
+          const fRecalc={...f,itemsOC:itsNuevos};
+          const tot=calcTotalesFC(fRecalc);
+          const asientoCompleto=generarAsientoFC(fRecalc,tot,{monto:0,montoBs:0},[],{monto:tot.totalUSD,montoBs:tot.totalBs},servicios,planDeCuentasOC,proveedores,cuentasRetProvCfgOC);
+          // De ese asiento "limpio" (sin retenciones) solo se toman las líneas de ítems y la de
+          // IVA — el resto del asiento ORIGINAL (proveedor, retenciones) se conserva tal cual.
+          const lineasItemsEIva=asientoCompleto.lineas.filter(l=>l.tipo==='DEBITO'||l.cuenta.startsWith('1.1.04.01.001'));
+          const restoOriginal=(f.asiento||[]).filter((l,i)=>!(i<itsNuevos.length && l.tipo==='DEBITO') && !l.cuenta.startsWith('1.1.04.01.001'));
+          const asientoNuevo=[...lineasItemsEIva,...restoOriginal];
+          batch.update(getDocRef('procura_facturas_compra',f.id),{
+            itemsOC:itsNuevos, asiento:asientoNuevo,
+            montoBase:tot.sub||0, iva:tot.ivaTotal||0, total:tot.totalUSD||0, totalBs:tot.totalBs||0,
+            totales:tot, updatedAt:Date.now(),
+          });
+        }
       });
       await batch.commit();
       setModal(null);
@@ -6188,7 +6255,17 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                                 <td className="px-2 py-1 text-slate-400 text-[10px]">{i+1}</td>
                                 <td className="px-2 py-1 font-mono text-[10px] text-orange-600 whitespace-nowrap">{codigo}</td>
                                 <td className="px-2 py-1 font-black text-slate-800 max-w-40"><div className="truncate" title={it.desc||'—'}>{it.desc||'—'}</div></td>
-                                <td className="px-2 py-1 text-[10px] text-slate-500">{it.categoria||'—'}</td>
+                                <td className="px-2 py-1">
+                                  <select className="text-[9px] font-black px-1 py-0.5 rounded border border-slate-200 outline-none focus:border-orange-400 bg-white max-w-28"
+                                    value={it.categoria||''}
+                                    onChange={e=>{
+                                      const srv=(servicios||[]).find(s=>s.nombre===e.target.value);
+                                      updateItem({categoria:e.target.value, cuentaContableId:srv?.cuentaContableId||'', cuentaContableNombre:srv?.cuentaContableNombre||''});
+                                    }}>
+                                    {!(servicios||[]).some(s=>s.nombre===it.categoria) && <option value={it.categoria||''}>{it.categoria||'— Sin categoría —'}</option>}
+                                    {(servicios||[]).filter(s=>s.nombre).map(s=><option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+                                  </select>
+                                </td>
                                 <td className="px-2 py-1 text-center">
                                   <select className="text-[9px] font-black px-1 py-0.5 rounded border border-slate-200 outline-none focus:border-orange-400 bg-white"
                                     value={it.iva||'GRAVADO'} onChange={e=>updateItem({iva:e.target.value})}>
@@ -14866,16 +14943,16 @@ function App() {
   const [afcNuevoCC, setAfcNuevoCC] = useState({codigo:'',nombre:''});
   const [afcEditandoCC, setAfcEditandoCC] = useState(null); // código del centro de costo en edición, o null
   const [afcExpandidoCC, setAfcExpandidoCC] = useState({}); // {[codigo]: true/false}
-  const afRegFormVacioC = () => ({id:null, nombre:'', centroCosto:'', rubro:'', fechaAdquisicion:getTodayDate(), valorCosto:'', valorResidual:'0', vidaUtilAnios:'5', ubicacion:'', tasaCambio:''});
+  const afRegFormVacioC = () => ({id:null, nombre:'', centroCosto:'', rubro:'', fechaAdquisicion:getTodayDate(), valorCosto:'', valorResidual:'0', vidaUtilAnios:'5', ubicacion:'', tasaCambio:'', origenProcuraKey:null, _cuentaActivoOverride:''});
   const [afRegForm, setAfRegForm] = useState(afRegFormVacioC());
   const [afImportando, setAfImportando] = useState(false); // Importar activos desde Excel (formato ACTIVO_FIJO_FORMATO_ERP)
   const [afRelFiltros, setAfRelFiltros] = useState({rubro:'', centroCosto:'', mes:''}); // filtros de Relación de Activos
   // Traer de Procura: candidatos = líneas DEBITO de facturasCompraApp cuyo asiento ya
   // registrado pega a una cuenta de Activo Fijo (1.1.06.x) — existen en la contabilidad
-  // pero nunca se registraron como ficha de activo. afProcuraForms guarda, por candidato
-  // (facturaId__índice de línea), lo que falta para completarlo (Centro de Costo/Rubro/Vida Útil).
+  // pero nunca se registraron como ficha de activo. "Usar" en un candidato carga sus datos
+  // en afRegForm (el formulario Nuevo Activo de arriba), donde se completan Centro de
+  // Costo/Rubro/Vida Útil junto con lo demás, en vez de en la fila angosta de la tabla.
   const [afMostrarProcura, setAfMostrarProcura] = useState(false);
-  const [afProcuraForms, setAfProcuraForms] = useState({});
   // Período de cálculo para Relación de Activos: la vida transcurrida / depreciación se
   // recalculan al cierre de este mes+año (no siempre "hoy") — con su propia tasa BCV para
   // convertir la depreciación mensual a Bs (independiente de la tasa de adquisición de cada activo).
@@ -45611,7 +45688,7 @@ ${resumenHtml}
 
     const iniciarNuevoActivo = () => setAfRegForm(afRegFormVacioC());
     const iniciarEditarActivo = (a) => {
-      setAfRegForm({id:a.id, nombre:a.nombre||'', centroCosto:a.centroCosto||'', rubro:a.categoria||'', fechaAdquisicion:a.fechaAdquisicion||getTodayDate(), valorCosto:String(a.valorCosto??''), valorResidual:String(a.valorResidual??'0'), vidaUtilAnios:String(a.vidaUtilAnios??'5'), ubicacion:a.ubicacion||'', tasaCambio:a.tasaCambio?String(a.tasaCambio):''});
+      setAfRegForm({id:a.id, nombre:a.nombre||'', centroCosto:a.centroCosto||'', rubro:a.categoria||'', fechaAdquisicion:a.fechaAdquisicion||getTodayDate(), valorCosto:String(a.valorCosto??''), valorResidual:String(a.valorResidual??'0'), vidaUtilAnios:String(a.vidaUtilAnios??'5'), ubicacion:a.ubicacion||'', tasaCambio:a.tasaCambio?String(a.tasaCambio):'', origenProcuraKey:a.origenProcuraKey||null, _cuentaActivoOverride:a.origenProcuraKey?(a.cuentaActivoNombre||''):''});
       setAfSubTabC('registro');
     };
 
@@ -45643,11 +45720,16 @@ ${resumenHtml}
       const costoUSD = parseFloat(afRegForm.valorCosto)||0;
       const payload = {
         nombre: afRegForm.nombre.trim(), categoria: afRegForm.rubro, centroCosto: afRegForm.centroCosto,
-        cuentaActivoNombre: cfgSel.activoNombre||'', cuentaDeprAcumNombre: cfgSel.deprAcumNombre||'', cuentaCostoGastoNombre: cfgSel.costoGastoNombre||'',
+        // Si viene de "Traer de Procura", se respeta la cuenta con la que YA se contabilizó
+        // la compra, en vez de recalcularla desde Centro de Costo + Rubro.
+        cuentaActivoNombre: afRegForm._cuentaActivoOverride || cfgSel.activoNombre||'',
+        cuentaDeprAcumNombre: cfgSel.deprAcumNombre||'', cuentaCostoGastoNombre: cfgSel.costoGastoNombre||'',
         fechaAdquisicion: afRegForm.fechaAdquisicion, valorCosto: costoUSD,
         tasaCambio: tasa, valorCostoBs: Number((costoUSD*tasa).toFixed(2)),
         valorResidual: parseFloat(afRegForm.valorResidual)||0, vidaUtilAnios: parseFloat(afRegForm.vidaUtilAnios)||0,
         ubicacion: afRegForm.ubicacion||'', status: 'ACTIVO', updatedAt: Date.now(),
+        origen: afRegForm.origenProcuraKey?'procura':(afRegForm.origen||'manual'),
+        origenProcuraKey: afRegForm.origenProcuraKey||null,
       };
       try{
         if(afRegForm.id) await updateDoc(getDocRef('activos_fijos', afRegForm.id), payload);
@@ -45690,28 +45772,21 @@ ${resumenHtml}
     });
     candidatosProcura.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
-    const traerCandidatoProcura = async (c) => {
-      const datos = afProcuraForms[c.key]||{};
-      if(!datos.centroCosto||!datos.rubro||!datos.vidaUtilAnios){
-        setDialog({title:'Faltan datos',text:'Centro de Costo, Rubro y Vida Útil son obligatorios para completar este activo.',type:'alert'}); return;
-      }
-      const ccSel = (activoFijoCfgC.centrosCosto||[]).find(cc=>cc.codigo===datos.centroCosto);
-      const cfgSel = ccSel?.rubros?.[datos.rubro]||{};
-      const payload = {
-        nombre: c.concepto||`Activo Fijo Fact. ${c.nroFactura}`, categoria: datos.rubro, centroCosto: datos.centroCosto,
-        cuentaActivoNombre: c.cuenta, // la cuenta con la que YA quedó contabilizada la compra — no se recalcula
-        cuentaDeprAcumNombre: cfgSel.deprAcumNombre||'', cuentaCostoGastoNombre: cfgSel.costoGastoNombre||'',
-        fechaAdquisicion: c.fecha||getTodayDate(), valorCosto: c.montoUSD,
-        tasaCambio: c.montoUSD>0?Number((c.montoBs/c.montoUSD).toFixed(4)):0, valorCostoBs: c.montoBs,
-        valorResidual: 0, vidaUtilAnios: parseFloat(datos.vidaUtilAnios)||0,
-        ubicacion:'', status:'ACTIVO', origen:'procura', origenProcuraKey:c.key,
-        createdAt: Date.now(), updatedAt: Date.now(),
-      };
-      try{
-        await addDoc(getColRef('activos_fijos'), payload);
-        setAfProcuraForms(x=>{const {[c.key]:_,...resto}=x; return resto;});
-        setDialog({title:'✅ Activo traído',text:`"${payload.nombre}" ya está en Relación de Activos.`,type:'alert'});
-      }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    // Antes guardaba directo desde la fila (pedía Centro de Costo/Rubro/Vida Útil ahí mismo,
+    // en una celda angosta) — ahora carga los datos de la compra en el formulario "Nuevo
+    // Activo" de arriba, para que Centro de Costo/Rubro/Vida Útil se completen en la pantalla
+    // grande normal, junto con lo demás. cuentaActivoNombre queda fijado a la cuenta con la
+    // que YA se contabilizó la compra (_cuentaActivoOverride) — guardarRegistroActivoC la usa
+    // en vez de recalcularla desde Centro de Costo + Rubro.
+    const usarCandidatoProcura = (c) => {
+      setAfRegForm({
+        id:null, nombre:c.concepto||`Activo Fijo Fact. ${c.nroFactura}`,
+        centroCosto:'', rubro:'', fechaAdquisicion:c.fecha||getTodayDate(),
+        valorCosto:String(c.montoUSD||''), valorResidual:'0', vidaUtilAnios:'5', ubicacion:'',
+        tasaCambio: c.montoUSD>0?String(Number((c.montoBs/c.montoUSD).toFixed(4))):'',
+        origenProcuraKey:c.key, _cuentaActivoOverride:c.cuenta||'',
+      });
+      setAfMostrarProcura(false);
     };
 
     const importarActivosExcelC = async (file) => {
@@ -46034,48 +46109,29 @@ ${resumenHtml}
             {afMostrarProcura && (
               <div className="bg-white rounded-2xl border border-gray-200 p-5">
                 <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Activos detectados en Facturas de Compra</h3>
-                <p className="text-[10px] text-gray-400 font-bold mb-4">Compras que ya se contabilizaron contra una cuenta de Activo Fijo (1.1.06.x) en Procura, pero todavía no existen como ficha en Relación de Activos. La cuenta del activo se conserva tal cual quedó contabilizada — solo falta Centro de Costo, Rubro y Vida Útil para completarla.</p>
+                <p className="text-[10px] text-gray-400 font-bold mb-4">Compras que ya se contabilizaron contra una cuenta de Activo Fijo (1.1.06.x) en Procura, pero todavía no existen como ficha en Relación de Activos. "Usar" carga estos datos en el formulario de arriba — ahí completas Centro de Costo, Rubro y Vida Útil y le das Registrar Activo. La cuenta del activo se conserva tal cual quedó contabilizada.</p>
                 {candidatosProcura.length===0 ? (
                   <p className="text-[11px] text-gray-400 font-bold">No hay compras pendientes por traer — todo lo que pegó a una cuenta de Activo Fijo ya está en Relación de Activos.</p>
                 ) : (
                   <div className="overflow-x-auto"><table className="w-full text-xs">
                     <thead><tr style={{background:'#0f172a'}}>
-                      {['Fecha','Factura','Proveedor','Descripción / Cuenta','Monto $','Centro de Costo','Rubro','Vida Útil (años)','Acción'].map((h,i)=>(
+                      {['Fecha','Factura','Proveedor','Descripción / Cuenta','Monto $','Acción'].map((h,i)=>(
                         <th key={i} className="px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap text-left" style={{fontSize:'9px'}}>{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
-                      {candidatosProcura.map(c=>{
-                        const datos = afProcuraForms[c.key]||{centroCosto:'',rubro:'',vidaUtilAnios:''};
-                        const setDato=(campo,val)=>setAfProcuraForms(x=>({...x,[c.key]:{...datos,[campo]:val}}));
-                        return (
-                          <tr key={c.key} className="border-b border-gray-50 hover:bg-gray-50">
-                            <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(c.fecha)}</td>
-                            <td className="px-3 py-2 text-gray-500 font-mono">{c.nroFactura}</td>
-                            <td className="px-3 py-2 text-gray-600">{c.proveedor}</td>
-                            <td className="px-3 py-2 text-gray-800 font-bold">{c.concepto}<div className="text-[9px] text-gray-400 font-normal">{c.cuenta}</div></td>
-                            <td className="px-3 py-2 font-mono">${contFmt(c.montoUSD)}</td>
-                            <td className="px-3 py-2">
-                              <select value={datos.centroCosto} onChange={e=>setDato('centroCosto',e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500">
-                                <option value="">—</option>
-                                {(activoFijoCfgC.centrosCosto||[]).map(cc=><option key={cc.codigo} value={cc.codigo}>{cc.codigo}</option>)}
-                              </select>
-                            </td>
-                            <td className="px-3 py-2">
-                              <select value={datos.rubro} onChange={e=>setDato('rubro',e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500">
-                                <option value="">—</option>
-                                {RUBROS_ACTIVO_FIJO_CC.map(r=><option key={r} value={r}>{r}</option>)}
-                              </select>
-                            </td>
-                            <td className="px-3 py-2">
-                              <input type="number" step="0.5" value={datos.vidaUtilAnios} onChange={e=>setDato('vidaUtilAnios',e.target.value)} placeholder="5" className="w-16 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500"/>
-                            </td>
-                            <td className="px-3 py-2">
-                              <button onClick={()=>traerCandidatoProcura(c)} className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">Traer</button>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {candidatosProcura.map(c=>(
+                        <tr key={c.key} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(c.fecha)}</td>
+                          <td className="px-3 py-2 text-gray-500 font-mono">{c.nroFactura}</td>
+                          <td className="px-3 py-2 text-gray-600">{c.proveedor}</td>
+                          <td className="px-3 py-2 text-gray-800 font-bold">{c.concepto}<div className="text-[9px] text-gray-400 font-normal">{c.cuenta}</div></td>
+                          <td className="px-3 py-2 font-mono">${contFmt(c.montoUSD)}</td>
+                          <td className="px-3 py-2">
+                            <button onClick={()=>usarCandidatoProcura(c)} className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">↑ Usar</button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table></div>
                 )}
