@@ -14875,6 +14875,13 @@ function App() {
   // convertir la depreciación mensual a Bs (independiente de la tasa de adquisición de cada activo).
   const [afPeriodo, setAfPeriodo] = useState({mes:String(new Date().getMonth()+1).padStart(2,'0'), anio:String(new Date().getFullYear())});
   const [afPeriodoTasa, setAfPeriodoTasa] = useState('');
+  // Snapshots mensuales de depreciación ya guardados (para el badge "Guardado" y como
+  // registro auditable — el cálculo en pantalla es en vivo, esto es la foto fija del cierre).
+  const [depreciacionesMensualesGuardadas, setDepreciacionesMensualesGuardadas] = useState([]);
+  useEffect(()=>{
+    const u=onSnapshot(getColRef('activos_fijos_depreciaciones_mensuales'), s=>setDepreciacionesMensualesGuardadas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>u();
+  },[]);
   // Fuentes reales de la contabilidad, para Mayor Analítico / Balance de Comprobación /
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
   // Estado de Resultados / Balance General — se reconstruyen igual que en Comprobantes
@@ -45993,11 +46000,90 @@ ${resumenHtml}
 
             const hayFiltros = afRelFiltros.rubro||afRelFiltros.centroCosto||afRelFiltros.mes;
 
+            // Totales de las tarjetas — SÍ respetan los filtros de pantalla (rubro/centro/mes).
+            const totalesFiltrados = lista.reduce((acc,a)=>{
+              const {deprAcumulada,valorLibros,deprMensual} = calcDepreciacionActivo(a,fechaCortePeriodo);
+              acc.costoUSD += Number(a.valorCosto||0); acc.costoBs += Number(a.valorCostoBs||0);
+              acc.deprAcumUSD += deprAcumulada; acc.valorNetoUSD += valorLibros; acc.deprMensualUSD += deprMensual;
+              return acc;
+            }, {costoUSD:0,costoBs:0,deprAcumUSD:0,valorNetoUSD:0,deprMensualUSD:0});
+
+            const nombreMesC = MESES_AF.find(m=>m.v===afPeriodo.mes)?.l||afPeriodo.mes;
+            const periodoIdC = `${afPeriodo.anio}-${afPeriodo.mes}`;
+            const periodoYaGuardado = depreciacionesMensualesGuardadas.find(d=>d.id===periodoIdC);
+
+            // Guardar SIEMPRE toma TODOS los activos (no la lista filtrada en pantalla) — es
+            // la foto fija del cierre del mes, los filtros son solo para ver/exportar un corte.
+            const guardarDepreciacionPeriodo = async () => {
+              try{
+                const detalle = (activosFijos||[]).map(a=>{
+                  const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual} = calcDepreciacionActivo(a,fechaCortePeriodo);
+                  return {id:a.id, nombre:a.nombre||'', categoria:a.categoria||'', centroCosto:a.centroCosto||'', valorCosto:Number(a.valorCosto||0), mesesTranscurridos, deprAcumuladaUSD:Number(deprAcumulada.toFixed(2)), valorNetoUSD:Number(valorLibros.toFixed(2)), deprMensualUSD:Number(deprMensual.toFixed(2)), deprMensualBs: tasaPeriodo>0?Number((deprMensual*tasaPeriodo).toFixed(2)):0};
+                });
+                const totG = detalle.reduce((acc,d)=>{acc.costoUSD+=d.valorCosto;acc.deprAcumUSD+=d.deprAcumuladaUSD;acc.valorNetoUSD+=d.valorNetoUSD;acc.deprMensualUSD+=d.deprMensualUSD;acc.deprMensualBs+=d.deprMensualBs;return acc;},{costoUSD:0,deprAcumUSD:0,valorNetoUSD:0,deprMensualUSD:0,deprMensualBs:0});
+                await setDoc(getDocRef('activos_fijos_depreciaciones_mensuales', periodoIdC), {
+                  anio:afPeriodo.anio, mes:afPeriodo.mes, fechaCorte:fechaCortePeriodo, tasa:tasaPeriodo,
+                  totales:totG, detalle, cantidadActivos:detalle.length,
+                  guardadoEn:Date.now(), guardadoPor:appUser?.name||'—',
+                });
+                setDialog({title:'✅ Depreciación guardada', text:`Se guardó el detalle de ${detalle.length} activo(s) para ${nombreMesC} ${afPeriodo.anio} (todos los activos, sin importar los filtros de pantalla).`, type:'alert'});
+              }catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); }
+            };
+
+            // Excel — mismo patrón que el resto de la app (SheetJS vía CDN, aoa_to_sheet).
+            const exportarActivosExcel = async () => {
+              if(!window.XLSX){
+                await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+              }
+              const XL=window.XLSX;
+              const aoa=[];
+              aoa.push(['SERVICIOS JIRET G&B, C.A.']);
+              aoa.push(['RIF: J-412309374']);
+              aoa.push([`RELACIÓN DE ACTIVOS FIJOS — Cierre ${contDd(fechaCortePeriodo)}`]);
+              aoa.push([`Generado: ${new Date().toLocaleDateString('es-VE')}${hayFiltros?' · Filtrado':''}`]);
+              aoa.push([]);
+              aoa.push(['Costo Adq. USD',totalesFiltrados.costoUSD,'Costo Histórico Bs',totalesFiltrados.costoBs,`Dep. Acum USD (${nombreMesC})`,totalesFiltrados.deprAcumUSD,'Valor Neto USD',totalesFiltrados.valorNetoUSD,'Dep. Mensual USD',totalesFiltrados.deprMensualUSD]);
+              aoa.push([]);
+              grupos.forEach(g=>{
+                aoa.push([g.rubro.toUpperCase(), `${g.items.length} activo(s)`]);
+                aoa.push(['Activo','Centro de Costo','Adquisición','Vida Útil (años)','Vida Transcurrida (m.)','Costo $','Costo Bs','Dep. Acum. USD','Dep. Acum. Bs','Val. Neto USD','Val. Neto Bs','Dep. Mensual USD','Dep. Mensual Bs','Estado']);
+                g.items.forEach(a=>{
+                  const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual}=calcDepreciacionActivo(a,fechaCortePeriodo);
+                  aoa.push([a.nombre||'',a.centroCosto||'',a.fechaAdquisicion||'',a.vidaUtilAnios||0,mesesTranscurridos,a.valorCosto||0,a.valorCostoBs||0,Number(deprAcumulada.toFixed(2)),tasaPeriodo>0?Number((deprAcumulada*tasaPeriodo).toFixed(2)):0,Number(valorLibros.toFixed(2)),tasaPeriodo>0?Number((valorLibros*tasaPeriodo).toFixed(2)):0,Number(deprMensual.toFixed(2)),tasaPeriodo>0?Number((deprMensual*tasaPeriodo).toFixed(2)):0,a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo']);
+                });
+                aoa.push([]);
+              });
+              const ws=XL.utils.aoa_to_sheet(aoa);
+              ws['!cols']=[{wch:32},{wch:14},{wch:12},{wch:10},{wch:10},{wch:12},{wch:16},{wch:12},{wch:16},{wch:12},{wch:16},{wch:12},{wch:16},{wch:10}];
+              const wb=XL.utils.book_new();
+              XL.utils.book_append_sheet(wb,ws,'Activo Fijo');
+              XL.writeFile(wb,`activo_fijo_${fechaCortePeriodo}.xlsx`);
+            };
+
+            // PDF — mismo letterhead (pdfOpen/pdfClose/pdfPrint) que usa el resto de la app.
+            const exportarActivosPDF = () => {
+              let body = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+                ${[['Costo Adq. USD',totalesFiltrados.costoUSD,'#2563eb'],['Costo Histórico Bs',totalesFiltrados.costoBs,'#334155'],[`Dep. Acum USD (${nombreMesC})`,totalesFiltrados.deprAcumUSD,'#dc2626'],['Valor Neto USD',totalesFiltrados.valorNetoUSD,'#ea580c'],['Dep. Mensual USD',totalesFiltrados.deprMensualUSD,'#16a34a']]
+                  .map(([label,val,color])=>`<div style="flex:1;min-width:140px;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px"><div style="font-size:8px;color:#94a3b8;text-transform:uppercase;font-weight:900">${label}</div><div style="font-size:13px;font-weight:900;color:${color};margin-top:2px">${contFmt(val)}</div></div>`).join('')}
+              </div>`;
+              grupos.forEach(g=>{
+                body += `<h3 style="font-size:11px;text-transform:uppercase;margin:14px 0 4px;color:#1e293b">${g.rubro} <span style="color:#94a3b8;font-weight:400">(${g.items.length})</span></h3>`;
+                body += `<table><thead><tr><th>Activo</th><th>C. Costo</th><th>Adquisición</th><th>Vida Útil</th><th>Transc.</th><th>Costo $</th><th>Dep. Acum $</th><th>Dep. Acum Bs</th><th>Val. Neto $</th><th>Val. Neto Bs</th><th>Dep. Mens $</th></tr></thead><tbody>`;
+                g.items.forEach(a=>{
+                  const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual}=calcDepreciacionActivo(a,fechaCortePeriodo);
+                  body += `<tr><td>${a.nombre||''}</td><td>${a.centroCosto||'—'}</td><td>${contDd(a.fechaAdquisicion)}</td><td>${a.vidaUtilAnios||0} a.</td><td>${mesesTranscurridos} m.</td><td>$${contFmt(a.valorCosto)}</td><td>$${contFmt(deprAcumulada)}</td><td>${tasaPeriodo>0?'Bs '+contFmt(deprAcumulada*tasaPeriodo):'—'}</td><td>$${contFmt(valorLibros)}</td><td>${tasaPeriodo>0?'Bs '+contFmt(valorLibros*tasaPeriodo):'—'}</td><td>$${contFmt(deprMensual)}</td></tr>`;
+                });
+                body += `</tbody></table>`;
+              });
+              const html = pdfOpen('Relación de Activos Fijos', `Cierre ${contDd(fechaCortePeriodo)}${hayFiltros?' · Filtrado':''}`) + body + pdfClose(`${lista.length} activo(s)`);
+              pdfPrint(html);
+            };
+
             const TablaGrupo = ({items}) => (
               <div className="overflow-x-auto"><table className="w-full text-xs">
                 <thead><tr style={{background:'#0f172a'}}>
-                  {['Activo','Centro de Costo','Adquisición','Vida Útil (años)','Vida Transcurrida','Costo $','Costo Bs','Dep. Acum. USD','Val. Neto USD','Dep. Mensual USD','Dep. Mensual Bs','Estado','Acción'].map((h,i)=>(
-                    <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${(i>=3&&i<=10)?'text-right':i===11?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                  {['Activo','Centro de Costo','Adquisición','Vida Útil (años)','Vida Transcurrida','Costo $','Costo Bs','Dep. Acum. USD','Dep. Acum. Bs','Val. Neto USD','Val. Neto Bs','Dep. Mensual USD','Dep. Mensual Bs','Estado','Acción'].map((h,i)=>(
+                    <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${(i>=3&&i<=12)?'text-right':i===13?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
@@ -46022,7 +46108,9 @@ ${resumenHtml}
                           </div>
                         </td>
                         <td className="px-3 py-2 text-right font-mono text-amber-600 font-black">${contFmt(deprAcumulada)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-amber-600">{tasaPeriodo>0?`Bs ${contFmt(deprAcumulada*tasaPeriodo)}`:<span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-2 text-right font-mono text-emerald-600 font-black">${contFmt(valorLibros)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-emerald-600">{tasaPeriodo>0?`Bs ${contFmt(valorLibros*tasaPeriodo)}`:<span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500">${contFmt(deprMensual)}</td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500">{tasaPeriodo>0?`Bs ${contFmt(deprMensual*tasaPeriodo)}`:<span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
@@ -46060,7 +46148,13 @@ ${resumenHtml}
                       </button>
                     </div>
                   </div>
-                  <div className="ml-auto text-[10px] text-slate-400 font-bold">Cierre: {contDd(fechaCortePeriodo)}</div>
+                  <div className="ml-auto flex items-center gap-2 flex-wrap">
+                    <div className="text-[10px] text-slate-400 font-bold mr-1">Cierre: {contDd(fechaCortePeriodo)}</div>
+                    {periodoYaGuardado && <span className="text-[9px] font-black text-emerald-400 uppercase flex items-center gap-1 bg-emerald-500/10 px-2 py-1.5 rounded-lg"><CheckCircle2 size={11}/> Guardado {new Date(periodoYaGuardado.guardadoEn).toLocaleDateString('es-VE')}</span>}
+                    <button onClick={guardarDepreciacionPeriodo} className="px-3 py-2 rounded-xl text-[9px] font-black uppercase bg-slate-700 hover:bg-slate-600 text-white flex items-center gap-1.5"><Save size={12}/> Guardar Depreciación</button>
+                    <button onClick={exportarActivosPDF} className="px-3 py-2 rounded-xl text-[9px] font-black uppercase bg-red-600 hover:bg-red-700 text-white flex items-center gap-1.5"><FileText size={12}/> PDF</button>
+                    <button onClick={exportarActivosExcel} className="px-3 py-2 rounded-xl text-[9px] font-black uppercase bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1.5"><Download size={12}/> Excel</button>
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap items-end gap-3">
@@ -46084,6 +46178,31 @@ ${resumenHtml}
                   </div>
                   {hayFiltros && <button onClick={()=>setAfRelFiltros({rubro:'',centroCosto:'',mes:''})} className="text-[10px] font-black uppercase text-gray-400 hover:text-red-500 px-2 py-2">✕ Limpiar filtros</button>}
                   <div className="ml-auto text-[10px] text-gray-400 font-bold">{lista.length} activo(s){hayFiltros?' (filtrado)':''}</div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div className="bg-blue-50 rounded-2xl p-4 border-t-2 border-dashed border-blue-200">
+                    <p className="text-[9px] font-black uppercase text-blue-400 tracking-wide">Costo Adq. USD</p>
+                    <p className="text-base font-black text-blue-600 mt-1">USD {contFmt(totalesFiltrados.costoUSD)}</p>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 border border-gray-200 border-t-2 border-dashed border-t-gray-300">
+                    <p className="text-[9px] font-black uppercase text-gray-400 tracking-wide">Costo Histórico Bs.</p>
+                    <p className="text-base font-black text-gray-800 mt-1">Bs {contFmt(totalesFiltrados.costoBs)}</p>
+                  </div>
+                  <div className="bg-red-50 rounded-2xl p-4 border-t-2 border-dashed border-red-200">
+                    <p className="text-[9px] font-black uppercase text-red-400 tracking-wide">Dep. Acum USD ({nombreMesC})</p>
+                    <p className="text-base font-black text-red-600 mt-1">USD {contFmt(totalesFiltrados.deprAcumUSD)}</p>
+                    <p className="text-[10px] font-bold text-red-400 mt-0.5">{tasaPeriodo>0?`Bs ${contFmt(totalesFiltrados.deprAcumUSD*tasaPeriodo)}`:'Bs —'}</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-2xl p-4 border-t-2 border-dashed border-orange-200">
+                    <p className="text-[9px] font-black uppercase text-orange-400 tracking-wide">Valor Neto USD</p>
+                    <p className="text-base font-black text-orange-600 mt-1">USD {contFmt(totalesFiltrados.valorNetoUSD)}</p>
+                    <p className="text-[10px] font-bold text-orange-400 mt-0.5">{tasaPeriodo>0?`Bs ${contFmt(totalesFiltrados.valorNetoUSD*tasaPeriodo)}`:'Bs —'}</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-2xl p-4 border-t-2 border-dashed border-emerald-200">
+                    <p className="text-[9px] font-black uppercase text-emerald-400 tracking-wide">Dep. Mensual USD</p>
+                    <p className="text-base font-black text-emerald-600 mt-1">USD {contFmt(totalesFiltrados.deprMensualUSD)}</p>
+                  </div>
                 </div>
 
                 {lista.length===0 ? (
