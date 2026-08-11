@@ -14936,6 +14936,18 @@ function App() {
   },[]);
   const [contFiltDesde, setContFiltDesde] = useState('');
   const [contFiltHasta, setContFiltHasta] = useState('');
+  // Fecha de Inicio de Contabilidad Real (settings.fechaInicioContabilidad): para cuando se
+  // empezó a usar Contabilidad después de que Procura/Ventas/Banco/etc. ya venían operando —
+  // deja que un comprobante de Ajuste (ej. "Saldos Junio") sea el único que represente todo lo
+  // anterior, sin que además se sumen los movimientos operativos reales de esos meses previos.
+  const [fechaInicioContForm, setFechaInicioContForm] = useState('');
+  useEffect(()=>{ if(settings?.fechaInicioContabilidad) setFechaInicioContForm(settings.fechaInicioContabilidad); }, [settings?.fechaInicioContabilidad]);
+  const guardarFechaInicioContabilidad = async () => {
+    try{
+      await setDoc(getDocRef('settings','general'),{fechaInicioContabilidad:fechaInicioContForm||''},{merge:true});
+      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora, todos los reportes de Contabilidad ignoran movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. Los Ajustes manuales nunca se ignoran.`:'Fecha de inicio quitada — los reportes vuelven a incluir todo el historial.',type:'alert'});
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+  };
   const [contERCurrency, setContERCurrency] = useState('both');
   const [contERExpandAll, setContERExpandAll] = useState(true);
   const [contERVistaPlanta, setContERVistaPlanta] = useState(false);
@@ -15266,7 +15278,13 @@ function App() {
           debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
         }))});
     });
-    return out;
+    // Fecha de Inicio de Contabilidad Real (opcional, ver settings.fechaInicioContabilidad):
+    // descarta todo lo que venga de un módulo OPERATIVO (todo menos 'Ajustes') fechado ANTES
+    // de esa fecha — se asume que ya quedó representado por el comprobante de Ajuste de saldos
+    // iniciales (ej. "Saldos Junio"), que nunca se filtra. Sin fecha configurada, no cambia nada.
+    const fechaInicioCont = settings?.fechaInicioContabilidad || '';
+    if (!fechaInicioCont) return out;
+    return out.filter(a => a.modulo==='Ajustes' || (a.fecha||'') >= fechaInicioCont);
   };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
@@ -44996,6 +45014,14 @@ ${resumenHtml}
               </div>
               <input value={mayorBusqCuentaApp} onChange={e=>setMayorBusqCuentaApp(e.target.value)} placeholder="Buscar cuenta..." className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
               <p className="text-[9px] text-gray-400 font-bold">{Object.keys(cuentasConMov).length} cuenta(s) con movimiento{(!contFiltDesde&&!contFiltHasta)?' (todo el historial)':''}</p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-1">
+                <label className="text-[8px] font-black text-amber-700 uppercase block">⚙️ Inicio de Contabilidad Real</label>
+                <div className="flex gap-1">
+                  <input type="date" className="flex-1 border-2 border-amber-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none bg-white" value={fechaInicioContForm} onChange={e=>setFechaInicioContForm(e.target.value)}/>
+                  <button onClick={guardarFechaInicioContabilidad} title="Guardar" className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[9px] font-black">✓</button>
+                </div>
+                <p className="text-[8px] text-amber-700 leading-tight">Ignora en TODOS los reportes de Contabilidad los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran.{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
+              </div>
               <div className="max-h-[55vh] overflow-y-auto space-y-0.5">
                 {treeMayor.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el rango elegido.</p>}
                 {treeMayor.map((n,i)=><MayorPickerRow key={i} node={n} level={0} seleccionada={mayorCuentaSelApp} onSeleccionar={setMayorCuentaSelApp}/>)}
@@ -45379,11 +45405,31 @@ ${resumenHtml}
     const acumuladaInyectada = inyectarEnPorCuenta(cuentaUtilAcumCfg.codigo, cuentaUtilAcumCfg.nombre, utilAcumUSD, utilAcumBs);
     const cuentasAgg = Object.values(porCuenta);
 
-    const getDetalleCuenta = (codigo) => asientosHastaCorte
-      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
-        fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
-      })))
-      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    // Si hay "Desde", el detalle expandido de cada cuenta NO debe mostrar todo el historial:
+    // todo lo previo a Desde se colapsa en una sola fila "Saldo Anterior" (mismo criterio que
+    // ya usa Mayor Analítico), y de ahí para adelante se listan los movimientos uno a uno.
+    // El TOTAL de la cuenta en el árbol/balance en sí NO cambia — sigue siendo el acumulado
+    // completo a la fecha de corte, correcto para un Balance General; esto solo reorganiza
+    // cómo se ve el desglose al expandir.
+    const getDetalleCuenta = (codigo) => {
+      const detalleCompleto = asientosHastaCorte
+        .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+          fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
+        })))
+        .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      if (!contFiltDesde) return detalleCompleto;
+      const antes = detalleCompleto.filter(d=>(d.fecha||'')<contFiltDesde);
+      const dentro = detalleCompleto.filter(d=>(d.fecha||'')>=contFiltDesde);
+      if (antes.length===0) return dentro;
+      const netoUSD = antes.reduce((s,d)=>s+parseNum(d.debeUSD||0)-parseNum(d.haberUSD||0),0);
+      const netoBs = antes.reduce((s,d)=>s+parseNum(d.debeBs||0)-parseNum(d.haberBs||0),0);
+      const saldoAnteriorRow = {
+        fecha:null, comprobante:'—', modulo:'', concepto:`▸ Saldo Anterior (${antes.length} mov. antes de ${contDd(contFiltDesde)})`,
+        debeUSD: netoUSD>=0?netoUSD:0, haberUSD: netoUSD<0?-netoUSD:0,
+        debeBs: netoBs>=0?netoBs:0, haberBs: netoBs<0?-netoBs:0,
+      };
+      return [saldoAnteriorRow, ...dentro];
+    };
 
     const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
