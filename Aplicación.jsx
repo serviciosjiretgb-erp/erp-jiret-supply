@@ -45338,14 +45338,14 @@ ${resumenHtml}
         porCuenta[cod].haberUSD += parseNum(l.haberUSD||0);
       });
     });
-    // Utilidad del Ejercicio = SOLO el mes de la fecha de corte (el resultado del mes en curso,
-    // el que "viaja" del Estado de Resultados). Utilidad Acumulada = todo lo de meses ANTERIORES
-    // a ese — así, al empezar un mes nuevo, lo del mes pasado ya está en la Acumulada, no se
-    // vuelve a contar dentro del Ejercicio del mes nuevo. Se calculan e INYECTAN dentro de
-    // porCuenta ANTES de construir el árbol, bajo el código configurado — así se fusionan con
-    // cualquier movimiento real que ya exista en esa cuenta (ej. una capitalización manual),
-    // en vez de aparecer como una fila aparte y duplicada.
-    const inicioMesCorte = `${corte.slice(0,7)}-01`;
+    // Utilidad del Ejercicio = el rango Desde–Hasta que el usuario elija (por defecto, si no
+    // especifica Desde, el mes de la fecha de corte — mismo comportamiento de antes). Utilidad
+    // Acumulada = todo lo ANTERIOR a ese inicio. Se calculan e INYECTAN dentro de porCuenta
+    // ANTES de construir el árbol, bajo el código configurado — así se fusionan con cualquier
+    // movimiento real que ya exista en esa cuenta (ej. una capitalización manual), en vez de
+    // aparecer como una fila aparte y duplicada.
+    const inicioMesCorte = contFiltDesde || `${corte.slice(0,7)}-01`;
+    const rangoPersonalizado = !!contFiltDesde;
     const calcResultado = (asientos) => {
       const porC = {};
       asientos.forEach(a=>(a.lineas||[]).forEach(l=>{
@@ -45404,9 +45404,11 @@ ${resumenHtml}
     const filaUtilidadHTML = (moneda) => {
       const vEj = moneda==='bs'?utilEjBs:utilEjUSD;
       const vAc = moneda==='bs'?utilAcumBs:utilAcumUSD;
+      const labelEj = rangoPersonalizado ? `Utilidad del Ejercicio (${contDd(inicioMesCorte)} – ${contDd(corte)})` : 'Utilidad del Ejercicio (mes en curso)';
+      const labelAc = rangoPersonalizado ? `Utilidad Acumulada (antes de ${contDd(inicioMesCorte)})` : 'Utilidad Acumulada (meses anteriores)';
       let html = '';
-      if (!ejercicioInyectado) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">Utilidad del Ejercicio (mes en curso)</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vEj)}</td></tr>`;
-      if (!acumuladaInyectada) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">Utilidad Acumulada (meses anteriores)</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vAc)}</td></tr>`;
+      if (!ejercicioInyectado) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${labelEj}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vEj)}</td></tr>`;
+      if (!acumuladaInyectada) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${labelAc}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vAc)}</td></tr>`;
       return html;
     };
     const exportarExcel = () => {
@@ -45433,6 +45435,7 @@ ${resumenHtml}
           </div>
           <div className="p-6 space-y-4">
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
+              <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde <span className="normal-case font-bold text-gray-400">(opcional)</span></label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de corte</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
               <div className="flex gap-1 bg-white p-1 rounded-lg border border-gray-200">
                 {[['both','USD + Bs'],['usd','Solo USD'],['bs','Solo Bs']].map(([v,lbl])=>(
@@ -45478,7 +45481,7 @@ ${resumenHtml}
                   {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
                   {!ejercicioInyectado && (
                     <tr className="border-b border-gray-100">
-                      <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">Utilidad del Ejercicio (mes en curso) — sin cuenta configurada</td>
+                      <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{rangoPersonalizado?`Utilidad del Ejercicio (${contDd(inicioMesCorte)} – ${contDd(corte)})`:'Utilidad del Ejercicio (mes en curso)'} — sin cuenta configurada</td>
                       {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjUSD)}</td>}
                       {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilEjBs)}</td>}
                       <td/>
@@ -45486,7 +45489,7 @@ ${resumenHtml}
                   )}
                   {!acumuladaInyectada && (
                     <tr className="border-b border-gray-100">
-                      <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">Utilidad Acumulada (meses anteriores) — sin cuenta configurada</td>
+                      <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{rangoPersonalizado?`Utilidad Acumulada (antes de ${contDd(inicioMesCorte)})`:'Utilidad Acumulada (meses anteriores)'} — sin cuenta configurada</td>
                       {showUSD && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumUSD)}</td>}
                       {showBS  && <td className="px-3 py-1.5 text-right font-mono text-[10px]">{ccFmtR(utilAcumBs)}</td>}
                       <td/>
