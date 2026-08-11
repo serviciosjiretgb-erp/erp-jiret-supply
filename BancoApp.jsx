@@ -3817,7 +3817,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 {cuentaSel&&<div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
                   <div className="grid grid-cols-3 gap-4">
                     <BFG label={`Monto (${cuentaSel.moneda})`}><input type="number" step="0.01" min="0.01" className={`${inp} font-black text-lg`} value={form.montoNativo} onChange={e=>setForm({...form,montoNativo:e.target.value})} placeholder="0.00"/></BFG>
-                    <BFG label="Tasa Bs/$"><input type="number" step="0.01" className={inp} value={form.tasa} onChange={e=>setForm({...form,tasa:e.target.value})}/></BFG>
+                    <BFG label="Tasa Bs/$">
+                      <div className="flex gap-1.5">
+                        <input type="number" step="0.01" className={inp} value={form.tasa} onChange={e=>setForm({...form,tasa:e.target.value})}/>
+                        <button type="button" disabled={fetchingBCV} title="Consultar tasa BCV" onClick={async(ev)=>{
+                          ev.preventDefault(); ev.stopPropagation();
+                          const t=await fetchTasaBCV(form.fecha);
+                          if(t) setForm(f=>({...f,tasa:String(t)}));
+                        }} className="shrink-0 w-10 flex items-center justify-center border-2 border-slate-200 rounded-xl bg-white hover:bg-blue-50 disabled:cursor-not-allowed transition-colors">
+                          <RefreshCw size={14} className={`text-blue-500 ${fetchingBCV?'animate-spin':''}`}/>
+                        </button>
+                      </div>
+                    </BFG>
                     <div className="flex flex-col justify-end pb-0.5">
                       <div className="rounded-xl p-3 text-center" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}>
                         <p className="text-emerald-400 font-mono font-black text-lg leading-none">{'$'+bancoFmt(montoUSD)}</p>
@@ -3834,20 +3845,27 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       <BookOpen size={14} className="text-blue-200"/><p className="text-[10px] font-black uppercase text-white tracking-widest">Asiento Contable — {bs?'Bs. (c/equiv. USD)':'USD (c/equiv. Bs.)'}</p>
                     </div>
                     <div className="p-4 bg-blue-50 space-y-3">
+                      {!form.ctaContraId && (
+                        <div className="bg-amber-50 border-2 border-amber-300 rounded-xl px-3 py-2 flex items-center gap-2">
+                          <span className="text-amber-500">⚠</span>
+                          <p className="text-[10px] font-bold text-amber-700 flex-1">Este movimiento no tiene cuenta contable de contrapartida asignada — elige una abajo antes de guardar.</p>
+                          {sugs.length>0 && <button onClick={()=>setForm({...form,ctaContraId:sugs[0].id,ctaContraNombre:`${sugs[0].codigo} · ${sugs[0].nombre}`})} className="flex-shrink-0 text-[9px] font-black uppercase bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1 rounded-lg">✓ Usar sugerida</button>}
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-3">
                         <div className="bg-white rounded-xl p-3 border-l-4 border-emerald-500 border border-slate-100">
                           <p className="text-[8px] font-black uppercase text-emerald-600 tracking-widest mb-1">DÉBITO +</p>
-                          <p className="text-[11px] font-black text-slate-800">{form.tipo==='Ingreso'?(cuentaSel.cuentaContable||`Banco ${cuentaSel.banco}`):(form.ctaContraNombre||'[Cuenta Gasto/Proveedor]')}</p>
+                          <p className={`text-[11px] font-black ${form.tipo==='Ingreso'||form.ctaContraNombre?'text-slate-800':'text-amber-600'}`}>{form.tipo==='Ingreso'?(cuentaSel.cuentaContable||`Banco ${cuentaSel.banco}`):(form.ctaContraNombre||'⚠ Sin cuenta seleccionada')}</p>
                           {mNat>0&&<div className="mt-1"><p className="font-mono font-black text-emerald-600 text-xs">{bs?`Bs. ${bancoFmt(montoBs)}`:`$${bancoFmt(montoUSD)}`}</p><p className="font-mono text-slate-400 text-[10px]">{bs?`≈ $${bancoFmt(montoUSD)}`:`≈ Bs. ${bancoFmt(montoBs)}`}</p></div>}
                         </div>
                         <div className="bg-white rounded-xl p-3 border-l-4 border-red-500 border border-slate-100">
                           <p className="text-[8px] font-black uppercase text-red-600 tracking-widest mb-1">CRÉDITO −</p>
-                          <p className="text-[11px] font-black text-slate-800">{form.tipo==='Egreso'?(cuentaSel.cuentaContable||`Banco ${cuentaSel.banco}`):(form.ctaContraNombre||'[CxC / Ingreso]')}</p>
+                          <p className={`text-[11px] font-black ${form.tipo==='Egreso'||form.ctaContraNombre?'text-slate-800':'text-amber-600'}`}>{form.tipo==='Egreso'?(cuentaSel.cuentaContable||`Banco ${cuentaSel.banco}`):(form.ctaContraNombre||'⚠ Sin cuenta seleccionada')}</p>
                           {mNat>0&&<div className="mt-1"><p className="font-mono font-black text-red-600 text-xs">{bs?`Bs. ${bancoFmt(montoBs)}`:`$${bancoFmt(montoUSD)}`}</p><p className="font-mono text-slate-400 text-[10px]">{bs?`≈ $${bancoFmt(montoUSD)}`:`≈ Bs. ${bancoFmt(montoBs)}`}</p></div>}
                         </div>
                       </div>
                       <BFG label="Cuenta Contrapartida (PUC)">
-                        <select className={sel} value={form.ctaContraId} onChange={e=>{const c=contCuentas.find(x=>x.id===e.target.value);setForm({...form,ctaContraId:e.target.value,ctaContraNombre:c?`${c.codigo} · ${c.nombre}`:''})}}>
+                        <select className={form.ctaContraId?sel:`${sel} border-amber-300`} value={form.ctaContraId} onChange={e=>{const c=contCuentas.find(x=>x.id===e.target.value);setForm({...form,ctaContraId:e.target.value,ctaContraNombre:c?`${c.codigo} · ${c.nombre}`:''})}}>
                           <option value="">— Seleccionar del Plan de Cuentas —</option>
                           {sugs.length>0&&<optgroup label="✨ Sugeridas">{sugs.slice(0,8).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}</optgroup>}
                           <optgroup label="Todas">{[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}</optgroup>
@@ -3921,15 +3939,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   const asientoLinked = asientosBanco.find(a=>a.id===movDetalle.asientoContableId);
                   // Buscar el movimiento del OTRO LADO del traslado — no queda un ID directo
                   // guardado entre los dos (cada lado se crea como documento independiente), así
-                  // que se empareja por misma referencia + misma fecha + tipo complementario:
-                  // el lado que sale es 'Traslado de Fondo'/'Transferencia'; el que entra es
-                  // 'Ingreso' con origenIngreso:'Transferencia'. Se busca en Banco y Caja, porque
-                  // un traslado puede ir de un banco a una caja o viceversa.
+                  // que se empareja por misma referencia + misma fecha + tipo complementario.
+                  // OJO: el campo origenIngreso:'Transferencia' solo se guarda cuando el destino
+                  // es un BANCO — cuando el destino es una CAJA ese campo no se setea (asimetría
+                  // real del guardado), así que emparejar por origenIngreso fallaba justo en
+                  // traslados banco→caja. Se usa en su lugar el patrón del concepto ("Traslado
+                  // recibido desde..."), que sí queda igual en los dos casos. Se busca en Banco y
+                  // Caja juntos, porque un traslado puede cruzar entre los dos.
                   const esLadoQueSale = movDetalle.tipo==='Traslado de Fondo'||movDetalle.tipo==='Transferencia';
-                  const esLadoQueEntra = movDetalle.tipo==='Ingreso' && movDetalle.origenIngreso==='Transferencia';
+                  const esLadoQueEntra = movDetalle.tipo==='Ingreso' && /traslado recibido/i.test(movDetalle.concepto||'');
                   const todosLosMovs = [...(movBanco||[]),...(movCaja||[])];
                   const movOtroLado = esLadoQueSale
-                    ? todosLosMovs.find(m=>m.id!==movDetalle.id && m.referencia && m.referencia===movDetalle.referencia && m.fecha===movDetalle.fecha && m.tipo==='Ingreso' && m.origenIngreso==='Transferencia')
+                    ? todosLosMovs.find(m=>m.id!==movDetalle.id && m.referencia && m.referencia===movDetalle.referencia && m.fecha===movDetalle.fecha && m.tipo==='Ingreso' && /traslado recibido/i.test(m.concepto||''))
                     : esLadoQueEntra
                       ? todosLosMovs.find(m=>m.id!==movDetalle.id && m.referencia && m.referencia===movDetalle.referencia && m.fecha===movDetalle.fecha && (m.tipo==='Traslado de Fondo'||m.tipo==='Transferencia'))
                       : null;
