@@ -14870,6 +14870,12 @@ function App() {
   const [afRegForm, setAfRegForm] = useState(afRegFormVacioC());
   const [afImportando, setAfImportando] = useState(false); // Importar activos desde Excel (formato ACTIVO_FIJO_FORMATO_ERP)
   const [afRelFiltros, setAfRelFiltros] = useState({rubro:'', centroCosto:'', mes:''}); // filtros de Relación de Activos
+  // Traer de Procura: candidatos = líneas DEBITO de facturasCompraApp cuyo asiento ya
+  // registrado pega a una cuenta de Activo Fijo (1.1.06.x) — existen en la contabilidad
+  // pero nunca se registraron como ficha de activo. afProcuraForms guarda, por candidato
+  // (facturaId__índice de línea), lo que falta para completarlo (Centro de Costo/Rubro/Vida Útil).
+  const [afMostrarProcura, setAfMostrarProcura] = useState(false);
+  const [afProcuraForms, setAfProcuraForms] = useState({});
   // Período de cálculo para Relación de Activos: la vida transcurrida / depreciación se
   // recalculan al cierre de este mes+año (no siempre "hoy") — con su propia tasa BCV para
   // convertir la depreciación mensual a Bs (independiente de la tasa de adquisición de cada activo).
@@ -45663,6 +45669,51 @@ ${resumenHtml}
     // - El Excel no trae tasa de cambio por fila (son adquisiciones históricas), así que los
     //   activos importados quedan sin tasaCambio/valorCostoBs — eso solo aplica a los que se
     //   registren de aquí en adelante con el botón de Tasa BCV.
+    // ── Traer de Procura: candidatos son líneas DEBITO del asiento YA guardado de cada
+    // factura de compra (facturasCompraApp, colección procura_facturas_compra) que pegan a
+    // una cuenta de Activo Fijo (1.1.06.x). No se recalcula nada — se lee el asiento tal
+    // como quedó contabilizado, así que cuentaActivoNombre y el monto en Bs coinciden con lo
+    // que ya está en libros. Lo único que falta para volverlo ficha de activo es Centro de
+    // Costo + Rubro + Vida Útil (Procura no maneja esos 3 datos). Ya traído, se marca con
+    // origenProcuraKey para no ofrecerlo de nuevo la próxima vez que se abra el panel.
+    const clavesYaTraidas = new Set((activosFijos||[]).map(a=>a.origenProcuraKey).filter(Boolean));
+    const candidatosProcura = [];
+    (facturasCompraApp||[]).forEach(f=>{
+      (f.asiento||[]).forEach((l,idx)=>{
+        if(l.tipo==='DEBITO' && String(l.cuenta||'').startsWith('1.1.06')){
+          const key = `${f.id}__${idx}`;
+          if(!clavesYaTraidas.has(key)){
+            candidatosProcura.push({key, facturaId:f.id, fecha:f.fecha||'', nroFactura:f.nroFactura||'—', proveedor:f.proveedor||'—', concepto:(l.concepto||'').replace(/\s*\([^)]*×[^)]*\)\s*$/,''), cuenta:l.cuenta||'', montoUSD:Number(l.montoUSD||0), montoBs:Number(l.montoBs||0)});
+          }
+        }
+      });
+    });
+    candidatosProcura.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+    const traerCandidatoProcura = async (c) => {
+      const datos = afProcuraForms[c.key]||{};
+      if(!datos.centroCosto||!datos.rubro||!datos.vidaUtilAnios){
+        setDialog({title:'Faltan datos',text:'Centro de Costo, Rubro y Vida Útil son obligatorios para completar este activo.',type:'alert'}); return;
+      }
+      const ccSel = (activoFijoCfgC.centrosCosto||[]).find(cc=>cc.codigo===datos.centroCosto);
+      const cfgSel = ccSel?.rubros?.[datos.rubro]||{};
+      const payload = {
+        nombre: c.concepto||`Activo Fijo Fact. ${c.nroFactura}`, categoria: datos.rubro, centroCosto: datos.centroCosto,
+        cuentaActivoNombre: c.cuenta, // la cuenta con la que YA quedó contabilizada la compra — no se recalcula
+        cuentaDeprAcumNombre: cfgSel.deprAcumNombre||'', cuentaCostoGastoNombre: cfgSel.costoGastoNombre||'',
+        fechaAdquisicion: c.fecha||getTodayDate(), valorCosto: c.montoUSD,
+        tasaCambio: c.montoUSD>0?Number((c.montoBs/c.montoUSD).toFixed(4)):0, valorCostoBs: c.montoBs,
+        valorResidual: 0, vidaUtilAnios: parseFloat(datos.vidaUtilAnios)||0,
+        ubicacion:'', status:'ACTIVO', origen:'procura', origenProcuraKey:c.key,
+        createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      try{
+        await addDoc(getColRef('activos_fijos'), payload);
+        setAfProcuraForms(x=>{const {[c.key]:_,...resto}=x; return resto;});
+        setDialog({title:'✅ Activo traído',text:`"${payload.nombre}" ya está en Relación de Activos.`,type:'alert'});
+      }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    };
+
     const importarActivosExcelC = async (file) => {
       if(!file) return;
       setAfImportando(true);
@@ -45881,14 +45932,19 @@ ${resumenHtml}
 
           {/* ── REGISTRO DE ACTIVO FIJO ── */}
           {afSubTabC==='registro' && (
-          <div className="p-6">
+          <div className="p-6 space-y-4">
             <div className="bg-white rounded-2xl border border-gray-200 p-6 max-w-2xl space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <h3 className="text-xs font-black uppercase text-gray-700">{afRegForm.id?'Editar Activo':'Nuevo Activo'}</h3>
-                <label className={`cursor-pointer px-3 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5 ${afImportando?'bg-gray-300 text-gray-500':'bg-gray-800 hover:bg-black text-white'}`}>
-                  {afImportando?<RefreshCw size={12} className="animate-spin"/>:<Upload size={12}/>} {afImportando?'Importando...':'Importar'}
-                  <input type="file" accept=".xlsx,.xls" disabled={afImportando} className="hidden" onChange={e=>{ if(e.target.files[0]) importarActivosExcelC(e.target.files[0]); e.target.value=''; }}/>
-                </label>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=>setAfMostrarProcura(v=>!v)} className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5 ${afMostrarProcura?'bg-blue-600 text-white':'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}>
+                    <ShoppingCart size={12}/> Traer de Procura{candidatosProcura.length>0?` (${candidatosProcura.length})`:''}
+                  </button>
+                  <label className={`cursor-pointer px-3 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5 ${afImportando?'bg-gray-300 text-gray-500':'bg-gray-800 hover:bg-black text-white'}`}>
+                    {afImportando?<RefreshCw size={12} className="animate-spin"/>:<Upload size={12}/>} {afImportando?'Importando...':'Importar'}
+                    <input type="file" accept=".xlsx,.xls" disabled={afImportando} className="hidden" onChange={e=>{ if(e.target.files[0]) importarActivosExcelC(e.target.files[0]); e.target.value=''; }}/>
+                  </label>
+                </div>
               </div>
               <p className="text-[9px] text-gray-400 font-bold -mt-2">Importa desde un Excel con el formato ACTIVO_FIJO_FORMATO_ERP: Nombre / Descripción, CANTIDAD, Rubro, Centro de Costo, Fecha Adquisición, Vida Útil (años), Costo ($).</p>
               <div>
@@ -45974,6 +46030,57 @@ ${resumenHtml}
                 {afRegForm.id && <button onClick={iniciarNuevoActivo} className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-5 py-3 rounded-2xl text-xs font-black uppercase">Cancelar Edición</button>}
               </div>
             </div>
+
+            {afMostrarProcura && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-5">
+                <h3 className="text-xs font-black uppercase text-gray-700 mb-1">Activos detectados en Facturas de Compra</h3>
+                <p className="text-[10px] text-gray-400 font-bold mb-4">Compras que ya se contabilizaron contra una cuenta de Activo Fijo (1.1.06.x) en Procura, pero todavía no existen como ficha en Relación de Activos. La cuenta del activo se conserva tal cual quedó contabilizada — solo falta Centro de Costo, Rubro y Vida Útil para completarla.</p>
+                {candidatosProcura.length===0 ? (
+                  <p className="text-[11px] text-gray-400 font-bold">No hay compras pendientes por traer — todo lo que pegó a una cuenta de Activo Fijo ya está en Relación de Activos.</p>
+                ) : (
+                  <div className="overflow-x-auto"><table className="w-full text-xs">
+                    <thead><tr style={{background:'#0f172a'}}>
+                      {['Fecha','Factura','Proveedor','Descripción / Cuenta','Monto $','Centro de Costo','Rubro','Vida Útil (años)','Acción'].map((h,i)=>(
+                        <th key={i} className="px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap text-left" style={{fontSize:'9px'}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {candidatosProcura.map(c=>{
+                        const datos = afProcuraForms[c.key]||{centroCosto:'',rubro:'',vidaUtilAnios:''};
+                        const setDato=(campo,val)=>setAfProcuraForms(x=>({...x,[c.key]:{...datos,[campo]:val}}));
+                        return (
+                          <tr key={c.key} className="border-b border-gray-50 hover:bg-gray-50">
+                            <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(c.fecha)}</td>
+                            <td className="px-3 py-2 text-gray-500 font-mono">{c.nroFactura}</td>
+                            <td className="px-3 py-2 text-gray-600">{c.proveedor}</td>
+                            <td className="px-3 py-2 text-gray-800 font-bold">{c.concepto}<div className="text-[9px] text-gray-400 font-normal">{c.cuenta}</div></td>
+                            <td className="px-3 py-2 font-mono">${contFmt(c.montoUSD)}</td>
+                            <td className="px-3 py-2">
+                              <select value={datos.centroCosto} onChange={e=>setDato('centroCosto',e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500">
+                                <option value="">—</option>
+                                {(activoFijoCfgC.centrosCosto||[]).map(cc=><option key={cc.codigo} value={cc.codigo}>{cc.codigo}</option>)}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <select value={datos.rubro} onChange={e=>setDato('rubro',e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500">
+                                <option value="">—</option>
+                                {RUBROS_ACTIVO_FIJO_CC.map(r=><option key={r} value={r}>{r}</option>)}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <input type="number" step="0.5" value={datos.vidaUtilAnios} onChange={e=>setDato('vidaUtilAnios',e.target.value)} placeholder="5" className="w-16 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-orange-500"/>
+                            </td>
+                            <td className="px-3 py-2">
+                              <button onClick={()=>traerCandidatoProcura(c)} className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">Traer</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table></div>
+                )}
+              </div>
+            )}
           </div>
           )}
 
