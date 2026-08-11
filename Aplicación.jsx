@@ -4714,64 +4714,56 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       // recalculan bien desde la propia pantalla de Factura (botón Actualizar). Si esta
       // factura tiene retenciones aplicadas, ábrela y dale Actualizar una vez después de
       // editar la OC para que esos montos también queden al día.
-      // Solo la sincronización POSICIONAL (cantidad/precio/desc/etc.) exige que la cantidad de
-      // ítems coincida 1 a 1 — cuando NO coincide (ej. la factura llegó consolidada en menos
-      // líneas de las que tiene la OC, caso real y frecuente), igual se sincroniza la
-      // categoría/cuenta SI Y SOLO SI todos los ítems de la OC comparten una única
-      // categoría — ahí no hay ambigüedad posible de a cuál línea de la factura corresponde.
-      // Si la OC tiene categorías distintas entre sí Y la cantidad no coincide, no se adivina
-      // (se arriesgaría mezclar cuentas de ítems distintos en una sola línea) — en ese caso se
-      // avisa en el mensaje final para que se revise a mano, en vez de fallar en silencio.
+      // La factura debe reflejar SIEMPRE las mismas líneas que su OC. Si la cantidad de
+      // ítems ya coincide, se sincroniza campo por campo (como antes). Si NO coincide (ej.
+      // quedó consolidada en menos líneas que la OC), se reconstruye itemsOC completo a
+      // partir de los ítems de la OC — misma fórmula de conversión Bs/USD que usa la propia
+      // edición manual de la factura (updateItem) para cantidad/precio.
       const CAMPOS_SYNC_OC_FACTURA=['desc','categoria','unidad','iva','cuentaContableId','cuentaContableNombre','cantidad','precioUnit'];
       const facturasVinc=(facturasCompra||[]).filter(f=>f.ocId===form.nroOC);
-      const facturasRequierenRevision=[];
       facturasVinc.forEach(f=>{
         const itsF=f.itemsOC||[];
-        if(itsF.length!==items.length){
-          const categoriasOC=[...new Set(items.map(it=>it.categoria||''))].filter(Boolean);
-          if(categoriasOC.length!==1){ if(categoriasOC.length>1) facturasRequierenRevision.push(f.nroFactura||f.id); return; }
-          const itUnico=items.find(it=>it.categoria===categoriasOC[0]);
-          const itsNuevos=itsF.map(itF=>itF.cuentaContableNombre===itUnico.cuentaContableNombre?itF:{...itF,categoria:itUnico.categoria||'',cuentaContableId:itUnico.cuentaContableId||'',cuentaContableNombre:itUnico.cuentaContableNombre||''});
-          const cambioAlgo=itsNuevos.some((it,i)=>it.cuentaContableNombre!==itsF[i].cuentaContableNombre);
-          if(cambioAlgo){
-            const asientoNuevo=(f.asiento||[]).map((l,idx)=>(idx<itsF.length && l.tipo==='DEBITO')?{...l,cuenta:itUnico.cuentaContableNombre||l.cuenta}:l);
-            batch.update(getDocRef('procura_facturas_compra',f.id),{itemsOC:itsNuevos, asiento:asientoNuevo, updatedAt:Date.now()});
-          }
-          return;
-        }
-        let cambioAlgo=false;
         const esBsF=String(f.moneda||'USD').toUpperCase()==='BS';
         const tasaF=pNum(f.tasa||0);
-        const itsNuevos=itsF.map((itF,i)=>{
-          const itOC=items[i];
-          if(!itOC) return itF;
-          const cambios={};
-          CAMPOS_SYNC_OC_FACTURA.forEach(campo=>{ if(itOC[campo]!==itF[campo]) cambios[campo]=itOC[campo]??''; });
-          if(Object.keys(cambios).length===0) return itF;
+        const calcTotalItemF=(cantidad,precioUnit)=>{
+          const totalCampo=parseFloat((pNum(cantidad)*pNum(precioUnit)).toFixed(2));
+          if(esBsF) return {total:tasaF>0?parseFloat((totalCampo/tasaF).toFixed(2)):totalCampo, _totalBsOriginal:totalCampo, _precioBsOriginal:pNum(precioUnit)};
+          return {total:totalCampo};
+        };
+        let cambioAlgo=false, itsNuevos;
+        if(itsF.length!==items.length){
           cambioAlgo=true;
-          const itMerged={...itF,...cambios};
-          if('cantidad' in cambios || 'precioUnit' in cambios){
-            // Misma fórmula que updateItem() en la edición manual de la factura.
-            const totalCampo=parseFloat((pNum(itMerged.cantidad)*pNum(itMerged.precioUnit)).toFixed(2));
-            if(esBsF){
-              itMerged.total=tasaF>0?parseFloat((totalCampo/tasaF).toFixed(2)):totalCampo;
-              itMerged._totalBsOriginal=totalCampo;
-              itMerged._precioBsOriginal=pNum(itMerged.precioUnit);
-            } else {
-              itMerged.total=totalCampo;
-              delete itMerged._totalBsOriginal; delete itMerged._precioBsOriginal;
+          itsNuevos=items.map(itOC=>({
+            desc:itOC.desc||'', categoria:itOC.categoria||'', unidad:itOC.unidad||'Und', iva:itOC.iva||'GRAVADO',
+            cuentaContableId:itOC.cuentaContableId||'', cuentaContableNombre:itOC.cuentaContableNombre||'',
+            cantidad:itOC.cantidad, precioUnit:itOC.precioUnit,
+            ...calcTotalItemF(itOC.cantidad,itOC.precioUnit),
+          }));
+        } else {
+          itsNuevos=itsF.map((itF,i)=>{
+            const itOC=items[i];
+            if(!itOC) return itF;
+            const cambios={};
+            CAMPOS_SYNC_OC_FACTURA.forEach(campo=>{ if(itOC[campo]!==itF[campo]) cambios[campo]=itOC[campo]??''; });
+            if(Object.keys(cambios).length===0) return itF;
+            cambioAlgo=true;
+            const itMerged={...itF,...cambios};
+            if('cantidad' in cambios || 'precioUnit' in cambios){
+              Object.assign(itMerged, calcTotalItemF(itMerged.cantidad,itMerged.precioUnit));
+              if(!esBsF){ delete itMerged._totalBsOriginal; delete itMerged._precioBsOriginal; }
             }
-          }
-          return itMerged;
-        });
+            return itMerged;
+          });
+        }
         if(cambioAlgo){
           const fRecalc={...f,itemsOC:itsNuevos};
           const tot=calcTotalesFC(fRecalc);
           const asientoCompleto=generarAsientoFC(fRecalc,tot,{monto:0,montoBs:0},[],{monto:tot.totalUSD,montoBs:tot.totalBs},servicios,planDeCuentasOC,proveedores,cuentasRetProvCfgOC);
           // De ese asiento "limpio" (sin retenciones) solo se toman las líneas de ítems y la de
-          // IVA — el resto del asiento ORIGINAL (proveedor, retenciones) se conserva tal cual.
-          const lineasItemsEIva=asientoCompleto.lineas.filter(l=>l.tipo==='DEBITO'||l.cuenta.startsWith('1.1.04.01.001'));
-          const restoOriginal=(f.asiento||[]).filter((l,i)=>!(i<itsNuevos.length && l.tipo==='DEBITO') && !l.cuenta.startsWith('1.1.04.01.001'));
+          // IVA (ambas tipo DEBITO) — el resto del asiento ORIGINAL (proveedor, retenciones)
+          // se conserva tal cual, sin importar cuántas líneas de ítems había antes.
+          const lineasItemsEIva=asientoCompleto.lineas.filter(l=>l.tipo==='DEBITO');
+          const restoOriginal=(f.asiento||[]).filter(l=>l.tipo!=='DEBITO');
           const asientoNuevo=[...lineasItemsEIva,...restoOriginal];
           batch.update(getDocRef('procura_facturas_compra',f.id),{
             itemsOC:itsNuevos, asiento:asientoNuevo,
@@ -4782,9 +4774,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
       });
       await batch.commit();
       setModal(null);
-      setDialog(facturasRequierenRevision.length>0
-        ? {title:'✅ OC guardada — revisar factura', text:`Orden ${form.nroOC} guardada. La factura ${facturasRequierenRevision.join(', ')} tiene una cantidad de ítems distinta a la OC y varias categorías entre sí, así que no se pudo sincronizar la categoría automáticamente sin arriesgar mezclar ítems. Revísala manualmente.`, type:'alert'}
-        : {title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
+      setDialog({title:'✅ OC guardada',text:`Orden ${form.nroOC} guardada.`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
@@ -13590,7 +13580,13 @@ ${valoresHtml}
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
-            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa del día (Bs./$)</label><input type="number" step="0.01" placeholder="Opcional" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-[130px]" value={tasaDeprec} onChange={e=>setTasaDeprec(e.target.value)}/></div>
+            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa del día (Bs./$)</label>
+              <div className="flex gap-1.5">
+                <input type="number" step="0.01" placeholder="Opcional" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none w-[110px]" value={tasaDeprec} onChange={e=>setTasaDeprec(e.target.value)}/>
+                <button disabled={fetchingBCV} title="Traer tasa BCV del cierre del período (Hasta)" onClick={async()=>{const t=await fetchTasaBCV(filtHasta||getTodayDate()); if(t) setTasaDeprec(String(t));}}
+                  className="px-2 py-2 bg-orange-50 text-orange-600 border-2 border-orange-200 rounded-lg hover:bg-orange-500 hover:text-white disabled:opacity-50">{fetchingBCV?'⏳':'🔄'}</button>
+              </div>
+            </div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasDep.length} mes(es) · Total ${contFmt(totalDepUSD)}</p>
