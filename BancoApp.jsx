@@ -83,6 +83,227 @@ const bancoLetterheadClose = (extra='') => `
 `;
 const bancoPrintWindow = (html) => { const w=window.open('','_blank'); if(w){w.document.write(html); w.document.close();} };
 
+// ════════════════════════════════════════════════════════════════════════
+// MOTOR DE ÁRBOL CONTABLE (Balance General / Estado de Resultados)
+// Portado del módulo de Reportes Financieros — la fuente de datos es la
+// que YA existe y funciona (saldoCuenta() leyendo cont_asientos en vivo);
+// esto solo agrega jerarquía expandible, multimoneda y exportación.
+// ════════════════════════════════════════════════════════════════════════
+const loadSheetJSStyled = () => new Promise((resolve, reject) => {
+  if (window.XLSXStyle) { resolve(window.XLSXStyle); return; }
+  if (window.XLSX && window.XLSX.utils && window.XLSX.writeFile) { resolve(window.XLSX); return; }
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
+  s.onload  = () => resolve(window.XLSXStyle || window.XLSX);
+  s.onerror = () => {
+    const s2 = document.createElement('script');
+    s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s2.onload = () => resolve(window.XLSX);
+    s2.onerror = () => reject(new Error('No se pudo cargar SheetJS'));
+    document.head.appendChild(s2);
+  };
+  document.head.appendChild(s);
+});
+
+const CXS = {
+  BLACK:'111111', ORANGE:'E05A00', WHITE:'FFFFFF',
+  HDR_BG:'111827', SECT1:'1F2937', GREY:'6B7280',
+  SECT2:'E5E7EB', SECT3:'F3F4F6',
+  TOT1:'D1D5DB', TOT2:'E5E7EB', TOT3:'F3F4F6',
+  RED:'DC2626', AMBER:'F59E0B',
+  NUM:'#,##0.00',
+  cell:(fillRgb,fontRgb,bold=false,h='left',sz=9,numFmt=null,topStyle=null,topColor=null,botStyle=null,botColor=null,italic=false)=>({
+    fill:{patternType:'solid',fgColor:{rgb:fillRgb||'FFFFFF'}},
+    font:{name:'Arial',bold,color:{rgb:fontRgb||'111111'},sz,italic},
+    alignment:{horizontal:h,vertical:'center'},
+    border:{top:topStyle?{style:topStyle,color:{rgb:topColor||'D1D5DB'}}:{},bottom:botStyle?{style:botStyle,color:{rgb:botColor||'D1D5DB'}}:{}},
+    ...(numFmt?{numFmt}:{}),
+  }),
+};
+const cxsMkCell = (v,s) => ({ v: v ?? '', t: typeof v==='number'?'n':(v==null||v===''?'z':'s'), s });
+const cxsApplyLetterhead = (ws, title, subtitle, nCols) => {
+  for (let c=0;c<nCols;c++){ const addr=String.fromCharCode(65+c)+'1'; if(!ws[addr]) ws[addr]=cxsMkCell('',{}); ws[addr].s={...ws[addr].s,border:{top:{style:'thick',color:{rgb:CXS.ORANGE}}}}; }
+  ws['A1']={v:'Supply G&B',t:'s',s:CXS.cell(CXS.WHITE,CXS.ORANGE,true,'left',16,null,'thick',CXS.ORANGE)};
+  const lastCol=String.fromCharCode(65+nCols-1);
+  [['SERVICIOS JIRET G&B, C.A.',CXS.cell(CXS.WHITE,CXS.BLACK,true,'right',10,null,'thick',CXS.ORANGE)],
+   ['RIF: J-412309374',CXS.cell(CXS.WHITE,CXS.GREY,false,'right',8)],
+   ['AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB',CXS.cell(CXS.WHITE,CXS.GREY,false,'right',7)],
+   ['SECTOR EL TREBOL MARACAIBO-ZULIA',CXS.cell(CXS.WHITE,CXS.GREY,false,'right',7)]].forEach(([txt,st],i)=>{ ws[lastCol+(1+i)]={v:txt,t:'s',s:st}; });
+  ws['A6']={v:title,t:'s',s:CXS.cell(CXS.WHITE,CXS.BLACK,true,'center',13)};
+  if(subtitle) ws['A7']={v:subtitle,t:'s',s:CXS.cell(CXS.WHITE,CXS.GREY,false,'center',9,null,null,null,null,null,true)};
+};
+const cxsApplyHeaderRow = (ws, rowIdx, labels, borderColor=CXS.ORANGE) => {
+  labels.forEach((lbl,ci)=>{ ws[String.fromCharCode(65+ci)+rowIdx]={v:lbl,t:'s',s:{
+    fill:{patternType:'solid',fgColor:{rgb:CXS.HDR_BG}}, font:{name:'Arial',bold:true,color:{rgb:CXS.WHITE},sz:9},
+    alignment:{horizontal:ci===0?'left':'right',vertical:'center'}, border:{bottom:{style:'medium',color:{rgb:borderColor}}},
+  }}; });
+};
+const cxsRowStyle = (row, colIdx, isLabelCol) => {
+  const lvl=row.level||0; const isRoot=lvl===0&&row.isSection; const isTotalRoot=lvl===0&&row.isTotal; const isSubtotal=row.isTotal&&lvl>0;
+  if (isRoot) return CXS.cell(CXS.SECT1,CXS.ORANGE,true,isLabelCol?'left':'right',10,colIdx>0?CXS.NUM:null,'medium',CXS.ORANGE,'thin','374151');
+  if (isTotalRoot) return CXS.cell(CXS.BLACK,CXS.AMBER,true,isLabelCol?'left':'right',10,colIdx>0?CXS.NUM:null,'medium',CXS.ORANGE,'thin','374151');
+  if (isSubtotal) { const bgs=[CXS.TOT1,CXS.TOT2,CXS.TOT3,'F9FAFB']; return CXS.cell(bgs[Math.min(lvl-1,3)],CXS.BLACK,true,isLabelCol?'left':'right',9,colIdx>0?CXS.NUM:null,'thin','9CA3AF','thin','9CA3AF'); }
+  if (row.isSection) { const bgs=[CXS.SECT1,CXS.SECT2,CXS.SECT3,'F9FAFB','FFFFFF']; const fgs=[CXS.ORANGE,CXS.BLACK,CXS.BLACK,CXS.BLACK,CXS.BLACK]; const idx=Math.min(lvl,4); return CXS.cell(bgs[idx],fgs[idx],true,isLabelCol?'left':'right',9,colIdx>0?CXS.NUM:null); }
+  return CXS.cell('FFFFFF',(row.u<0&&!isLabelCol)?CXS.RED:CXS.BLACK,false,isLabelCol?'left':'right',9,colIdx>0?CXS.NUM:null,null,null,'hair','E5E7EB');
+};
+const cxsBuildStyledSheet = (flatRows, colHeaders, nCols, extraFooterRows=[]) => {
+  const ws={}; const HEADER_ROW=9; const DATA_START=10; let maxRow=DATA_START;
+  for(let r=1;r<=8;r++) for(let c=0;c<nCols;c++) ws[String.fromCharCode(65+c)+r]=cxsMkCell('',{});
+  cxsApplyHeaderRow(ws,HEADER_ROW,colHeaders);
+  flatRows.forEach((row,i)=>{ const rowIdx=DATA_START+i; row._vals.forEach((v,ci)=>{ ws[String.fromCharCode(65+ci)+rowIdx]={v:v??'',t:typeof v==='number'?'n':'s',s:cxsRowStyle(row,ci,ci===0)}; }); maxRow=rowIdx; });
+  extraFooterRows.forEach((frow,i)=>{ const rowIdx=maxRow+2+i; frow.forEach((cell,ci)=>{ ws[String.fromCharCode(65+ci)+rowIdx]=cell; }); maxRow=rowIdx; });
+  ws['!ref']=`A1:${String.fromCharCode(65+nCols-1)}${maxRow}`;
+  ws['!rows']=[]; for(let r=1;r<=8;r++) ws['!rows'][r-1]={hpx:r===1?28:14}; ws['!rows'][HEADER_ROW-1]={hpx:18};
+  flatRows.forEach((row,i)=>{ const isRoot=row.level===0; const isTot0=row.isTotal&&row.level===0; ws['!rows'][DATA_START+i-1]={hpx:isRoot||isTot0?20:(row.isTotal?16:14)}; });
+  return ws;
+};
+const cxsFooterCell = (v, colorRgb, isNum=false, h='left') => ({ v:v??'', t:typeof v==='number'?'n':'s', s:{
+  fill:{patternType:'solid',fgColor:{rgb:CXS.BLACK}}, font:{name:'Arial',bold:true,color:{rgb:colorRgb},sz:10},
+  alignment:{horizontal:h,vertical:'center'}, border:{top:{style:'medium',color:{rgb:CXS.ORANGE}},bottom:{style:'thin',color:{rgb:'374151'}}}, ...(isNum?{numFmt:CXS.NUM}:{}),
+}});
+const cxsCompareCodeArrays = (pa,pb) => { for(let i=0;i<Math.max(pa.length,pb.length);i++){ const d=(pa[i]||0)-(pb[i]||0); if(d!==0) return d; } return 0; };
+const cxsGetEffectiveCode = (node) => {
+  const own = node.n.match(/^(\d[\d.]*)/)?.[1];
+  if (own) return own.split('.').map(Number);
+  if (node.c && node.c.length) { let best=null; node.c.forEach(child=>{ const code=cxsGetEffectiveCode(child); if(code&&(!best||cxsCompareCodeArrays(code,best)<0)) best=code; }); return best; }
+  return null;
+};
+const cxsSortTreeNodes = (nodes) => {
+  nodes.forEach(n=>{ if(n.c&&n.c.length) cxsSortTreeNodes(n.c); });
+  nodes.sort((a,b)=>{ const ca=cxsGetEffectiveCode(a), cb=cxsGetEffectiveCode(b); if(ca&&cb) return cxsCompareCodeArrays(ca,cb); if(ca&&!cb) return -1; if(!ca&&cb) return 1; return a.n.localeCompare(b.n); });
+  return nodes;
+};
+const cxsFlattenTreeForExcel = (nodes, openStates, level=0, rows=[]) => {
+  nodes.forEach(n=>{
+    const isAccountNode = /^\d\./.test(n.n) || (!n.c || n.c.length===0);
+    if (!n.isLeaf && n.c?.length) {
+      if (!isAccountNode) { rows.push({label:n.n,level,isSection:true,u:null,b:null}); cxsFlattenTreeForExcel(n.c,openStates,level+1,rows); rows.push({label:'TOTAL '+n.n,level,isTotal:true,u:n.u,b:n.b}); }
+      else { rows.push({label:n.n,level,isLeaf:true,u:n.u,b:n.b}); const isOpen=!openStates||openStates.has(n.n.trim().toUpperCase()); if(isOpen){ cxsFlattenTreeForExcel(n.c,openStates,level+1,rows); rows.push({label:'TOTAL '+n.n,level,isTotal:true,u:n.u,b:n.b}); } }
+    } else rows.push({label:n.n,level,isLeaf:true,u:n.u,b:n.b});
+  });
+  return rows;
+};
+// Construye el árbol jerárquico (grupo>subGrupo>cuenta) a partir del Plan de Cuentas real y
+// saldoCuenta() — la MISMA fuente en vivo que ya usan Balance/Resultado, sin tocarla.
+const buildArbolContable = (cuentasArr, saldoCuentaFn, hastaFecha, gruposIncluir) => {
+  const grupoMap={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5':'COSTOS','6':'GASTOS'};
+  const root = [];
+  const normKey = s => (s||'').trim().replace(/\s+/g,' ').toUpperCase();
+  (cuentasArr||[]).filter(c=>gruposIncluir.includes(String(c.codigo).charAt(0))).forEach(c=>{
+    const {saldoBs,saldoUSD} = saldoCuentaFn(c.codigo, hastaFecha);
+    if (Math.abs(saldoBs)<0.005 && Math.abs(saldoUSD)<0.005) return;
+    const grNum = String(c.codigo).charAt(0);
+    const grNom = grupoMap[grNum] || c.grupo || grNum;
+    const subGrupo = c.subGrupo||c.subgrupo||'';
+    const cuentaPath = c.cuenta||'';
+    const pathArray = [grNom, subGrupo, cuentaPath].filter(Boolean);
+    let cur = root;
+    pathArray.forEach(folderName=>{
+      const key = normKey(folderName);
+      let folder = cur.find(n=>normKey(n.n)===key);
+      if (!folder) { folder = {n:folderName.trim(), c:[], u:0, b:0}; cur.push(folder); }
+      cur = folder.c;
+    });
+    // Signo: en Estado de Resultado los Ingresos se guardan en Haber (negativos aquí) — se
+    // invierten para que se vean positivos, igual que hace la vista actual.
+    const isIngreso = grNum==='4';
+    const signo = isIngreso ? -1 : 1;
+    cur.push({ n:`${c.codigo}-${c.nombre}`, u:saldoUSD*signo, b:saldoBs*signo, isLeaf:true });
+  });
+  const compute = (nodes) => { let u=0,b=0; nodes.forEach(n=>{ if(!n.isLeaf){ const t=compute(n.c); n.u=t.u; n.b=t.b; } u+=n.u; b+=n.b; }); return {u,b}; };
+  compute(root);
+  root.forEach(cat=>{ if(cat.c&&cat.c.length) cxsSortTreeNodes(cat.c); });
+  return root;
+};
+const cxsFmtR = (v) => new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(v||0));
+
+// Fila de árbol expandible — igual patrón visual que el resto de BancoApp (BTh/BTd/etc.)
+const ArbolContableRow = ({ node, level=0, totalBase, currency='both' }) => {
+  const [isOpen, setIsOpen] = useState(level < 1);
+  const isAccountNode = /^\d\./.test(node.n) || (!node.c || node.c.length===0);
+  const isLeaf = !node.c || node.c.length===0;
+  const showUSD = currency!=='bs'; const showBS = currency!=='usd';
+  const pct = totalBase && node.u!==0 ? `${((Math.abs(node.u)/totalBase)*100).toFixed(2)}%` : '';
+  const indent = { paddingLeft: `${level*18+12}px` };
+
+  if (!isLeaf && !isAccountNode) {
+    const isRoot = level===0;
+    return (
+      <>
+        <tr className={isRoot?'bg-[#111827]':'bg-white border-b border-slate-100'}>
+          <td style={indent} className={isRoot?'py-2.5 px-3 text-orange-400 font-black text-xs uppercase tracking-widest':'py-2 px-3 font-black text-[11px] text-slate-800 uppercase'}>{node.n}</td>
+          <td colSpan={3}/>
+        </tr>
+        {node.c.map((child,i)=><ArbolContableRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency}/>)}
+        <tr className={isRoot?'bg-slate-900 text-white border-t-2 border-orange-500':'bg-slate-100 text-slate-800 border-t border-slate-300'}>
+          <td style={{paddingLeft:level*18+28}} className="py-2 px-3 font-black text-[10px] uppercase tracking-wider">TOTAL {node.n}</td>
+          {showUSD && <td className="py-2 px-3 text-right font-mono text-[11px] font-black">{cxsFmtR(node.u)}</td>}
+          {showBS  && <td className="py-2 px-3 text-right font-mono text-[11px] font-black">{cxsFmtR(node.b)}</td>}
+          <td className="py-2 px-3 text-right font-mono text-[11px] font-black">{pct}</td>
+        </tr>
+      </>
+    );
+  }
+  return (
+    <>
+      <tr onClick={()=>!isLeaf&&setIsOpen(!isOpen)} className="bg-white hover:bg-slate-50 border-b border-slate-100 border-l-4 border-slate-300 cursor-pointer">
+        <td style={indent} className="py-2 px-3 font-bold text-[11px] text-slate-800 uppercase flex items-center gap-2">
+          {!isLeaf && <span onClick={e=>{e.stopPropagation();setIsOpen(!isOpen);}} className={`inline-flex items-center justify-center w-4 h-4 border rounded-sm text-[11px] leading-none ${isOpen?'border-slate-500 text-slate-600 bg-slate-100':'border-slate-300 text-slate-400 bg-white'}`}>{isOpen?'−':'+'}</span>}
+          <span className="truncate">{node.n}</span>
+        </td>
+        {showUSD && <td className="py-2 px-3 text-right font-mono text-[11px] font-bold text-slate-800">{cxsFmtR(node.u)}</td>}
+        {showBS  && <td className="py-2 px-3 text-right font-mono text-[11px] font-bold text-slate-800">{cxsFmtR(node.b)}</td>}
+        <td className="py-2 px-3 text-right font-mono text-[11px] font-bold text-slate-500">{pct}</td>
+      </tr>
+      {isOpen && node.c && node.c.map((child,i)=><ArbolContableRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency}/>)}
+      {!isLeaf && isOpen && (
+        <tr className="bg-slate-100/70 font-black text-[10px] border-t border-slate-200">
+          <td style={{paddingLeft:level*18+24}} className="py-1.5 px-3 uppercase text-slate-500 tracking-wider">TOTAL {node.n}</td>
+          {showUSD && <td className="py-1.5 px-3 text-right font-mono text-slate-700">{cxsFmtR(node.u)}</td>}
+          {showBS  && <td className="py-1.5 px-3 text-right font-mono text-slate-700">{cxsFmtR(node.b)}</td>}
+          <td className="py-1.5 px-3 text-right font-mono text-slate-500"></td>
+        </tr>
+      )}
+    </>
+  );
+};
+
+const printReporteContable = (titleHtml, contentHtml) => {
+  const win = window.open('', '_blank', 'width=1000,height=700');
+  if (!win) { alert('Permite las ventanas emergentes para imprimir/PDF.'); return; }
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Reporte</title>
+<style>
+  @page { size: A4; margin: 18mm 14mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 9pt; color: #111; background: #fff; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 3px solid #E05A00; }
+  .logo { font-size: 18pt; font-weight: 900; color: #E05A00; line-height: 1; }
+  .company { text-align: right; }
+  .company .name { font-weight: 900; font-size: 11pt; }
+  .company .sub { font-size: 7.5pt; color: #555; line-height: 1.4; }
+  .title-block { text-align: center; margin-bottom: 10px; }
+  .title-block h1 { font-size: 13pt; font-weight: 900; text-transform: uppercase; }
+  .title-block h2 { font-size: 9pt; color: #666; margin-top: 3px; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  th { background: #111; color: #fff; padding: 5px 6px; text-align: right; font-size: 7.5pt; text-transform: uppercase; }
+  th:first-child { text-align: left; }
+  td { padding: 3.5px 6px; border-bottom: 1px solid #eee; }
+  td:first-child { text-align: left; }
+  td:not(:first-child) { text-align: right; font-family: 'Courier New', monospace; }
+  tr.section td { font-weight: 900; text-transform: uppercase; background: #F3F3F3; color: #E05A00; }
+  tr.total td { font-weight: 900; background: #f7f7f7; border-top: 1.5px solid #ccc; }
+  tr.grand-total td { font-weight: 900; background: #111; color: #fff; font-size: 9pt; }
+  @media print { button { display: none; } }
+</style></head><body>
+<div class="header"><div><div class="logo">Supply<br><span style="color:#111">G</span>&amp;<span style="color:#111">B</span></div></div>
+<div class="company"><div class="name">SERVICIOS JIRET G&amp;B, C.A.</div><div class="sub">RIF: J-412309374<br>AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB<br>SECTOR EL TREBOL MARACAIBO-ZULIA</div></div></div>
+<div class="title-block">${titleHtml}</div>
+${contentHtml}
+<br><button onclick="window.print()" style="padding:8px 20px;background:#E05A00;color:#fff;border:none;border-radius:4px;font-weight:900;cursor:pointer;font-size:10pt;">🖨 IMPRIMIR / GUARDAR PDF</button>
+</body></html>`);
+  win.document.close();
+};
+
 
 const BBankLogo = ({ banco, logoUrl, className = "w-8 h-8 rounded-md" }) => {
   const [err, setErr] = React.useState(false);
@@ -3084,6 +3305,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           estatus:'No Conciliado',ts:serverTimestamp()
         });
         batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:nuevoSaldo});
+        // Líneas del lado DESTINO, para agregarlas también al comprobante imprimible de abajo —
+        // así el comprobante de un Traslado muestra el asiento COMPLETO (los 2 bancos), no solo
+        // el lado origen. Se llena dentro del bloque de traslado, si aplica.
+        let lineasDestinoParaComprobante = [];
         if((form.tipo==='Transferencia'||form.tipo==='Traslado de Fondo')&&cuentaDest) {
           const comisionNativo=esMonedaLocal?comisionBs:comisionUSD;
           const netoNativo=mNat-comisionNativo;
@@ -3114,6 +3339,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             totalDebeBs:netoBs, totalHaberBs:netoBs, totalDebeUSD:netoUSD, totalHaberUSD:netoUSD,
             ts:serverTimestamp(),
           });
+          lineasDestinoParaComprobante=[
+            {codigo:codCtaDestPropia,cuenta:nomCtaDestPropia,tipoLinea:'D',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:netoBs,haberBs:0,debeUSD:netoUSD,haberUSD:0},
+            {codigo:codTrasladosDest,cuenta:nomTrasladosDest,tipoLinea:'H',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:0,haberBs:netoBs,debeUSD:0,haberUSD:netoUSD},
+          ];
           if(destinoEsCaja){
             batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativo});
             batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
@@ -3136,16 +3365,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           });
         }
         await batch.commit();
-        // Armar datos del comprobante imprimible
+        // Armar datos del comprobante imprimible — si es Traslado/Transferencia, se agregan
+        // también las líneas del lado DESTINO (ya armadas arriba), así el comprobante muestra
+        // el asiento completo de los dos bancos/cajas involucrados, no solo el de origen.
         const comp={
           id,numComp,fecha:form.fecha,concepto:form.concepto,referencia:form.referencia,
           tipo:form.tipo,banco:cuentaSel?.banco||'',moneda:cuentaSel?.moneda||'',
           montoBs,montoUSD,tasa,
-          lineas:todasLineas,
-          totDebeBs:todasLineas.reduce((a,l)=>a+l.debeBs,0),
-          totHaberBs:todasLineas.reduce((a,l)=>a+l.haberBs,0),
-          totDebeUSD:todasLineas.reduce((a,l)=>a+l.debeUSD,0),
-          totHaberUSD:todasLineas.reduce((a,l)=>a+l.haberUSD,0),
+          lineas:[...todasLineas,...lineasDestinoParaComprobante],
+          totDebeBs:todasLineas.reduce((a,l)=>a+l.debeBs,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.debeBs,0),
+          totHaberBs:todasLineas.reduce((a,l)=>a+l.haberBs,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.haberBs,0),
+          totDebeUSD:todasLineas.reduce((a,l)=>a+l.debeUSD,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.debeUSD,0),
+          totHaberUSD:todasLineas.reduce((a,l)=>a+l.haberUSD,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.haberUSD,0),
           terceroNombre:tercero?.nombre||'',
         };
         bdbg('🔒 CIERRE via: BANCO: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
@@ -9506,45 +9737,111 @@ function BalancesApp({ fbUser, onBack }) {
   // ── BALANCE GENERAL ──────────────────────────────────────────────────────
   const BalanceGeneralView = () => {
     const [hasta, setHasta] = useState(getTodayDate());
-    const activos   = cuentas.filter(c=>String(c.codigo).startsWith('1')).map(c=>({...c,...saldoCuenta(c.codigo,hasta)}));
-    const pasivos   = cuentas.filter(c=>String(c.codigo).startsWith('2')).map(c=>({...c,...saldoCuenta(c.codigo,hasta)}));
-    const patrimonio= cuentas.filter(c=>String(c.codigo).startsWith('3')).map(c=>({...c,...saldoCuenta(c.codigo,hasta)}));
+    const [currency, setCurrency] = useState('both');
+    const showUSD = currency!=='bs'; const showBS = currency!=='usd';
 
-    const totActBs  = activos.reduce((a,c)=>a+c.saldoBs,0);
-    const totPasBs  = pasivos.reduce((a,c)=>a+Math.abs(c.saldoBs),0);
-    const totPatBs  = patrimonio.reduce((a,c)=>a+Math.abs(c.saldoBs),0);
-    const totActUSD = activos.reduce((a,c)=>a+c.saldoUSD,0);
+    const tree = useMemo(() => {
+      const raw = buildArbolContable(cuentas, saldoCuenta, hasta, ['1','2','3']);
+      const orden = { 'ACTIVOS':1, 'PASIVOS':2, 'PATRIMONIO':3 };
+      return [...raw].sort((a,b)=>(orden[a.n]||9)-(orden[b.n]||9));
+    }, [cuentas, asientos, hasta]);
 
-    const SeccionBG = ({titulo, items, colorBorder, totalBs, totalUSD})=>(
-      <div className="mb-5">
-        <div className="flex items-center justify-between px-5 py-3 rounded-xl mb-2" style={{background:`${colorBorder}15`,border:`1.5px solid ${colorBorder}40`}}>
-          <p className="font-black text-sm uppercase tracking-wide" style={{color:colorBorder}}>{titulo}</p>
-          <div className="text-right"><p className="font-mono font-black" style={{color:colorBorder}}>Bs. {bancoFmt(Math.abs(totalBs))}</p><p className="text-[10px] text-slate-400">{'$'+bancoFmt(Math.abs(totalUSD))}</p></div>
-        </div>
-        {items.filter(c=>Math.abs(c.saldoBs)>0.001).map(c=>(
-          <div key={c.id} className="flex justify-between py-1.5 px-5 text-xs hover:bg-slate-50 rounded">
-            <div className="flex items-center gap-2"><span className="font-mono text-blue-500 text-[10px]">{c.codigo}</span><span className="text-slate-700">{c.nombre}</span></div>
-            <div className="text-right"><span className="font-mono font-black text-slate-900">Bs. {bancoFmt(Math.abs(c.saldoBs))}</span><span className="text-slate-400 ml-3">{'$'+bancoFmt(Math.abs(c.saldoUSD))}</span></div>
-          </div>
-        ))}
-      </div>
-    );
+    const activosNode = tree.find(n=>n.n==='ACTIVOS') || {u:0,b:0,c:[]};
+    const pasivosNode = tree.find(n=>n.n==='PASIVOS') || {u:0,b:0,c:[]};
+    const patrimonioNode = tree.find(n=>n.n==='PATRIMONIO') || {u:0,b:0,c:[]};
+    const totActUSD = activosNode.u, totActBs = activosNode.b;
+    const totPasPatUSD = Math.abs(pasivosNode.u)+Math.abs(patrimonioNode.u);
+    const totPasPatBs  = Math.abs(pasivosNode.b)+Math.abs(patrimonioNode.b);
+    const diffUSD = totActUSD - totPasPatUSD;
+    const cuadrado = Math.abs(diffUSD) < 0.05;
+
+    const exportExcel = async () => {
+      try {
+        const XL = await loadSheetJSStyled();
+        const n = v => v!=null&&!isNaN(v)?parseFloat(Math.abs(v).toFixed(2)):null;
+        const colHeaders=['CUENTA / DESCRIPCIÓN',...(showUSD?['USD']:[]),...(showBS?['Bs.']:[])];
+        const nCols=colHeaders.length;
+        const flatRows=cxsFlattenTreeForExcel(tree,null);
+        flatRows.forEach(r=>{ r._vals=[r.label,...(showUSD?[r.u!=null?n(r.u):null]:[]),...(showBS?[r.b!=null?n(r.b):null]:[])]; });
+        const footerRows=[
+          [cxsFooterCell('TOTAL PASIVO Y PATRIMONIO',CXS.AMBER,false,'left'),...(showUSD?[cxsFooterCell(n(totPasPatUSD),'F59E0B',true,'right')]:[]),...(showBS?[cxsFooterCell('','F59E0B',false,'right')]:[])],
+          [cxsFooterCell('TOTAL ACTIVOS','F97316',false,'left'),...(showUSD?[cxsFooterCell(n(totActUSD),'F97316',true,'right')]:[]),...(showBS?[cxsFooterCell('','F97316',false,'right')]:[])],
+          [cxsFooterCell('ACTIVO − (PASIVO+PATRIMONIO)',cuadrado?'10B981':CXS.RED,false,'left'),...(showUSD?[cxsFooterCell(n(diffUSD),cuadrado?'10B981':CXS.RED,true,'right')]:[]),...(showBS?[cxsFooterCell(cuadrado?'✓ CUADRADO':'','10B981',false,'right')]:[])],
+        ];
+        const ws=cxsBuildStyledSheet(flatRows,colHeaders,nCols,footerRows);
+        cxsApplyLetterhead(ws,'BALANCE DE SITUACIÓN FINANCIERA',`Corte: ${bancoDd(hasta)}`,nCols);
+        ws['!cols']=[{wch:60},...(showUSD?[{wch:20}]:[]),...(showBS?[{wch:22}]:[])];
+        const wb=XL.utils.book_new(); XL.utils.book_append_sheet(wb,ws,'Balance General');
+        XL.writeFile(wb,`Balance_${hasta}.xlsx`);
+      } catch(e){ alert('Error exportar Excel: '+e.message); }
+    };
+
+    const exportPDF = () => {
+      const fmtP=v=>cxsFmtR(v);
+      const fmtPct=v=>totActUSD?((Math.abs(v||0)/totActUSD)*100).toFixed(2)+'%':'';
+      const cols=['Cuenta',...(showUSD?['USD']:[]),...(showBS?['Bs.']:[]),'%'].map(c=>`<th>${c}</th>`).join('');
+      const buildRows=(nodes,lvl=0)=>nodes.map(nd=>{
+        const indent='&nbsp;'.repeat(lvl*4);
+        const isAccountNode=/^\d\./.test(nd.n)||(!nd.c||nd.c.length===0);
+        if(!nd.isLeaf&&nd.c?.length){
+          if(!isAccountNode){ const childRows=buildRows(nd.c,lvl+1); return `<tr class="section"><td>${indent}${nd.n}</td>${showUSD?'<td></td>':''}${showBS?'<td></td>':''}<td></td></tr>${childRows}<tr class="total"><td>${indent}TOTAL ${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td>${fmtPct(nd.u)}</td></tr>`; }
+          const childRows=buildRows(nd.c,lvl+1);
+          return `<tr><td>${indent}${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td>${fmtPct(nd.u)}</td></tr>${childRows}<tr class="total"><td>${indent}TOTAL ${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td></td></tr>`;
+        }
+        return `<tr><td>${indent}${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td>${fmtPct(nd.u)}</td></tr>`;
+      }).join('');
+      const content=`<table><thead><tr>${cols}</tr></thead><tbody>${buildRows(tree)}<tr class="grand-total"><td>TOTAL PASIVO Y PATRIMONIO</td>${showUSD?`<td>${fmtP(totPasPatUSD)}</td>`:''}${showBS?'<td></td>':''}<td></td></tr><tr class="grand-total"><td>TOTAL ACTIVOS</td>${showUSD?`<td>${fmtP(totActUSD)}</td>`:''}${showBS?'<td></td>':''}<td></td></tr><tr class="grand-total" style="background:${cuadrado?'#006622':'#990000'}"><td>ACTIVO − (PASIVO+PATRIMONIO)</td>${showUSD?`<td>${fmtP(diffUSD)}</td>`:''}${showBS?'<td></td>':''}<td>${cuadrado?'✓ CUADRADO':''}</td></tr></tbody></table>`;
+      printReporteContable(`<h1>Balance de Situación Financiera</h1><h2>Corte: ${bancoDd(hasta)}</h2>`, content);
+    };
 
     return (
-      <BCard title="Balance General" subtitle={`Al ${bancoDd(hasta)}`} action={<input type="date" className={inp} value={hasta} onChange={e=>setHasta(e.target.value)} style={{width:'140px'}}/>}>
-        <div className="grid lg:grid-cols-2 gap-8">
-          <div>
-            <SeccionBG titulo="ACTIVOS" items={activos} colorBorder="#10b981" totalBs={totActBs} totalUSD={totActUSD}/>
+      <BCard title="Balance General" subtitle={`Al ${bancoDd(hasta)}`} action={
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+            {[['both','USD + Bs'],['usd','Solo USD'],['bs','Solo Bs']].map(([v,lbl])=>(
+              <button key={v} onClick={()=>setCurrency(v)} className={`px-2.5 py-1 rounded text-[9px] font-black uppercase transition-colors ${currency===v?'bg-orange-500 text-white':'text-slate-500 hover:bg-slate-200'}`}>{lbl}</button>
+            ))}
           </div>
-          <div>
-            <SeccionBG titulo="PASIVOS" items={pasivos} colorBorder="#ef4444" totalBs={totPasBs} totalUSD={pasivos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0)}/>
-            <SeccionBG titulo="PATRIMONIO" items={patrimonio} colorBorder="#8b5cf6" totalBs={totPatBs} totalUSD={patrimonio.reduce((a,c)=>a+Math.abs(c.saldoUSD),0)}/>
-            <div className="flex items-center justify-between px-5 py-4 rounded-xl mt-3" style={{background:'#0f172a'}}>
-              <p className="font-black text-white uppercase tracking-wide">PASIVO + PATRIMONIO</p>
-              <div className="text-right"><p className="font-mono font-black text-orange-400">Bs. {bancoFmt(totPasBs+totPatBs)}</p><p className="text-[10px] text-slate-400">{'$'+bancoFmt(pasivos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0)+patrimonio.reduce((a,c)=>a+Math.abs(c.saldoUSD),0))}</p></div>
-            </div>
-          </div>
+          <input type="date" className={inp} value={hasta} onChange={e=>setHasta(e.target.value)} style={{width:'140px'}}/>
+          <button onClick={exportExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
+          <button onClick={exportPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
         </div>
+      }>
+        {tree.length===0 ? <BEmptyState icon={Scale} title="Sin movimientos" desc="No hay asientos contables hasta esta fecha"/> : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[#111111] text-[9px] uppercase font-black text-slate-300">
+              <tr>
+                <th className="px-3 py-3">Estructura</th>
+                {showUSD && <th className="px-3 py-3 text-right text-orange-300">USD</th>}
+                {showBS  && <th className="px-3 py-3 text-right text-amber-300">Bs.</th>}
+                <th className="px-3 py-3 text-right text-slate-400">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tree.map((node,i)=><ArbolContableRow key={i} node={node} totalBase={totActUSD} currency={currency}/>)}
+              <tr className="bg-slate-100 border-t-2 border-slate-300">
+                <td className="px-3 py-2.5 font-black text-xs uppercase text-slate-700 pl-6">TOTAL PASIVO Y PATRIMONIO</td>
+                {showUSD && <td className="px-3 py-2.5 text-right font-mono font-black text-sm">{cxsFmtR(totPasPatUSD)}</td>}
+                {showBS  && <td className="px-3 py-2.5 text-right font-mono font-black text-sm text-amber-700">{cxsFmtR(totPasPatBs)}</td>}
+                <td/>
+              </tr>
+              <tr className="bg-[#111111] text-white font-black border-t-4 border-orange-500">
+                <td colSpan={currency==='both'?4:3} className="p-4">
+                  <div className="flex flex-wrap justify-between items-center px-2 gap-4">
+                    <div className="flex items-center gap-2"><Scale size={22} className="text-orange-400"/><p className="text-[10px] font-black tracking-widest">ACTIVOS = PASIVOS + PATRIMONIO</p></div>
+                    <div className="flex gap-5 text-right flex-wrap">
+                      <div><p className="text-[9px] text-slate-400 font-black uppercase mb-1">Diferencia</p>
+                        <p className={`text-lg font-mono font-black ${cuadrado?'text-emerald-400':'text-red-400'}`}>{showUSD?`USD ${cxsFmtR(diffUSD)}`:`Bs. ${cxsFmtR(totActBs-totPasPatBs)}`}{cuadrado&&<span className="ml-2 text-[10px]">✓ CUADRADO</span>}</p>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        )}
       </BCard>
     );
   };
@@ -9553,45 +9850,125 @@ function BalancesApp({ fbUser, onBack }) {
   const EstadoResultadosView = () => {
     const [desde, setDesde] = useState(bancoMesActual()+'-01');
     const [hasta, setHasta] = useState(getTodayDate());
-    const ingresos = cuentas.filter(c=>String(c.codigo).startsWith('4')).map(c=>({...c,...saldoCuenta(c.codigo,hasta)})).filter(c=>Math.abs(c.saldoBs)>0.001);
-    const costos   = cuentas.filter(c=>String(c.codigo).startsWith('5')).map(c=>({...c,...saldoCuenta(c.codigo,hasta)})).filter(c=>Math.abs(c.saldoBs)>0.001);
-    const gastos   = cuentas.filter(c=>String(c.codigo).startsWith('6')).map(c=>({...c,...saldoCuenta(c.codigo,hasta)})).filter(c=>Math.abs(c.saldoBs)>0.001);
-    const totIngBs = ingresos.reduce((a,c)=>a+Math.abs(c.saldoBs),0);
-    const totCosBs = costos.reduce((a,c)=>a+Math.abs(c.saldoBs),0);
-    const totGasBs = gastos.reduce((a,c)=>a+Math.abs(c.saldoBs),0);
-    const utilBrBs = totIngBs - totCosBs;
-    const utilNeBs = totIngBs - totCosBs - totGasBs;
-    const totIngUSD= ingresos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0);
-    const utilNeUSD= totIngUSD - costos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0) - gastos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0);
+    const [currency, setCurrency] = useState('both');
+    const showUSD = currency!=='bs'; const showBS = currency!=='usd';
 
-    const SecER=({titulo,items,totalBs,totalUSD,color})=>(
-      <div className="mb-4">
-        <div className="flex justify-between px-4 py-2 rounded-lg mb-1" style={{background:color+'15'}}>
-          <p className="font-black text-xs uppercase tracking-wide" style={{color}}>{titulo}</p>
-          <div className="text-right"><span className="font-mono font-black text-xs" style={{color}}>Bs.{bancoFmt(Math.abs(totalBs))}</span><span className="text-slate-400 text-[10px] ml-2">{'$'+bancoFmt(Math.abs(totalUSD))}</span></div>
-        </div>
-        {items.map(c=><div key={c.id} className="flex justify-between py-1 px-6 text-xs hover:bg-slate-50 rounded">
-          <span className="text-slate-600">{c.nombre}</span>
-          <div><span className="font-mono text-slate-800">Bs.{bancoFmt(Math.abs(c.saldoBs))}</span><span className="text-slate-400 ml-2">{'$'+bancoFmt(Math.abs(c.saldoUSD))}</span></div>
-        </div>)}
-      </div>
-    );
+    // Saldo del PERÍODO desde→hasta (antes solo se usaba "hasta", acumulando desde el
+    // inicio de los tiempos e ignorando el filtro Desde). Se resta el saldo justo antes
+    // de "desde" — mismo truco que un balance de comprobación por rango, sin tocar
+    // saldoCuenta() ni el resto de vistas que sí la usan como "hasta esta fecha".
+    const diaAntesDesde = useMemo(() => {
+      if (!desde) return null;
+      const d = new Date(desde+'T00:00:00'); d.setDate(d.getDate()-1);
+      return d.toISOString().slice(0,10);
+    }, [desde]);
+    const saldoPeriodo = (codigo, hastaFecha) => {
+      const fin = saldoCuenta(codigo, hastaFecha);
+      if (!diaAntesDesde) return fin;
+      const inicio = saldoCuenta(codigo, diaAntesDesde);
+      return { dBs:fin.dBs-inicio.dBs, hBs:fin.hBs-inicio.hBs, saldoBs:fin.saldoBs-inicio.saldoBs, dUSD:fin.dUSD-inicio.dUSD, hUSD:fin.hUSD-inicio.hUSD, saldoUSD:fin.saldoUSD-inicio.saldoUSD };
+    };
+
+    const tree = useMemo(() => buildArbolContable(cuentas, saldoPeriodo, hasta, ['4','5','6']), [cuentas, asientos, hasta, desde]);
+
+    const ingresosNode = tree.find(n=>n.n==='INGRESOS') || {u:0,b:0,c:[]};
+    const costosNode   = tree.find(n=>n.n==='COSTOS')   || {u:0,b:0,c:[]};
+    const gastosNode    = tree.find(n=>n.n==='GASTOS')   || {u:0,b:0,c:[]};
+    const totIngUSD=ingresosNode.u, totIngBs=ingresosNode.b;
+    const totCosUSD=Math.abs(costosNode.u), totCosBs=Math.abs(costosNode.b);
+    const totGasUSD=Math.abs(gastosNode.u), totGasBs=Math.abs(gastosNode.b);
+    const utilBrUSD=totIngUSD-totCosUSD, utilBrBs=totIngBs-totCosBs;
+    const utilNeUSD=utilBrUSD-totGasUSD, utilNeBs=utilBrBs-totGasBs;
+    const baseVentas = totIngUSD||1;
+
+    const treeOrdenado = [...tree].sort((a,b)=>({'INGRESOS':1,'COSTOS':2,'GASTOS':3}[a.n]||9)-({'INGRESOS':1,'COSTOS':2,'GASTOS':3}[b.n]||9));
+
+    const exportExcel = async () => {
+      try {
+        const XL = await loadSheetJSStyled();
+        const n = v => v!=null&&!isNaN(v)?parseFloat(Math.abs(v).toFixed(2)):null;
+        const fmtPct = u => u!=null?parseFloat((Math.abs(u)/baseVentas*100).toFixed(2)):null;
+        const colHeaders=['CUENTA / DESCRIPCIÓN',...(showUSD?['USD']:[]),...(showBS?['Bs.']:[]),'%'];
+        const nCols=colHeaders.length;
+        const flatRows=cxsFlattenTreeForExcel(treeOrdenado,null);
+        flatRows.forEach(r=>{ r._vals=[r.label,...(showUSD?[r.u!=null?n(r.u):null]:[]),...(showBS?[r.b!=null?n(r.b):null]:[]),r.u!=null?fmtPct(r.u):null]; });
+        const isLoss=utilNeUSD<0; const resultColor=isLoss?CXS.RED:'10B981';
+        const footerRows=[[cxsFooterCell('RESULTADO DEL EJERCICIO',resultColor,false,'left'),...(showUSD?[cxsFooterCell(n(utilNeUSD),resultColor,true,'right')]:[]),...(showBS?[cxsFooterCell('',resultColor,false,'right')]:[]),cxsFooterCell(fmtPct(utilNeUSD)!=null?`${fmtPct(utilNeUSD)}%`:'',resultColor,false,'right')]];
+        const ws=cxsBuildStyledSheet(flatRows,colHeaders,nCols,footerRows);
+        cxsApplyLetterhead(ws,'ESTADO DE RESULTADO',`Período: ${bancoDd(desde)} al ${bancoDd(hasta)}`,nCols);
+        ws['!cols']=[{wch:60},...(showUSD?[{wch:18}]:[]),...(showBS?[{wch:22}]:[]),{wch:10}];
+        const wb=XL.utils.book_new(); XL.utils.book_append_sheet(wb,ws,'Estado de Resultado');
+        XL.writeFile(wb,`EstadoResultado_${desde}_a_${hasta}.xlsx`);
+      } catch(e){ alert('Error exportar Excel: '+e.message); }
+    };
+
+    const exportPDF = () => {
+      const fmtP=v=>cxsFmtR(v);
+      const fmtPct=v=>baseVentas?((Math.abs(v||0)/baseVentas)*100).toFixed(2)+'%':'';
+      const cols=['Cuenta',...(showUSD?['USD']:[]),...(showBS?['Bs.']:[]),'%'].map(c=>`<th>${c}</th>`).join('');
+      const buildRows=(nodes,lvl=0)=>nodes.map(nd=>{
+        const indent='&nbsp;'.repeat(lvl*4);
+        const isAccountNode=/^\d\./.test(nd.n)||(!nd.c||nd.c.length===0);
+        if(!nd.isLeaf&&nd.c?.length){
+          if(!isAccountNode){ const childRows=buildRows(nd.c,lvl+1); return `<tr class="section"><td>${indent}${nd.n}</td>${showUSD?'<td></td>':''}${showBS?'<td></td>':''}<td></td></tr>${childRows}<tr class="total"><td>${indent}TOTAL ${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td></td></tr>`; }
+          const childRows=buildRows(nd.c,lvl+1);
+          return `<tr><td>${indent}${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td>${fmtPct(nd.u)}</td></tr>${childRows}<tr class="total"><td>${indent}TOTAL ${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td></td></tr>`;
+        }
+        return `<tr><td>${indent}${nd.n}</td>${showUSD?`<td>${fmtP(nd.u)}</td>`:''}${showBS?`<td>${fmtP(nd.b)}</td>`:''}<td>${fmtPct(nd.u)}</td></tr>`;
+      }).join('');
+      const content=`<table><thead><tr>${cols}</tr></thead><tbody>${buildRows(treeOrdenado)}<tr class="grand-total"><td>RESULTADO DEL EJERCICIO</td>${showUSD?`<td>${fmtP(utilNeUSD)}</td>`:''}${showBS?'<td></td>':''}<td>${fmtPct(utilNeUSD)}</td></tr></tbody></table>`;
+      printReporteContable(`<h1>Estado de Resultado</h1><h2>Período: ${bancoDd(desde)} al ${bancoDd(hasta)}</h2>`, content);
+    };
 
     return (
-      <BCard title="Estado de Resultados (Ganancias y Pérdidas)" action={<div className="flex gap-2"><input type="date" className={inp} style={{width:'130px'}} value={desde} onChange={e=>setDesde(e.target.value)}/><input type="date" className={inp} style={{width:'130px'}} value={hasta} onChange={e=>setHasta(e.target.value)}/></div>}>
-        <div className="max-w-2xl mx-auto space-y-2">
-          <SecER titulo="INGRESOS" items={ingresos} totalBs={totIngBs} totalUSD={totIngUSD} color="#10b981"/>
-          <SecER titulo="COSTOS DE VENTAS" items={costos} totalBs={totCosBs} totalUSD={costos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0)} color="#f59e0b"/>
-          <div className="flex justify-between px-4 py-3 rounded-xl border-2 border-blue-200 bg-blue-50">
-            <p className="font-black text-blue-800 uppercase text-xs">UTILIDAD BRUTA</p>
-            <div><span className={`font-mono font-black ${utilBrBs>=0?'text-emerald-700':'text-red-600'}`}>Bs.{bancoFmt(utilBrBs)}</span></div>
+      <BCard title="Estado de Resultados (Ganancias y Pérdidas)" action={
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+            {[['both','USD + Bs'],['usd','Solo USD'],['bs','Solo Bs']].map(([v,lbl])=>(
+              <button key={v} onClick={()=>setCurrency(v)} className={`px-2.5 py-1 rounded text-[9px] font-black uppercase transition-colors ${currency===v?'bg-orange-500 text-white':'text-slate-500 hover:bg-slate-200'}`}>{lbl}</button>
+            ))}
           </div>
-          <SecER titulo="GASTOS OPERATIVOS" items={gastos} totalBs={totGasBs} totalUSD={gastos.reduce((a,c)=>a+Math.abs(c.saldoUSD),0)} color="#ef4444"/>
-          <div className="flex justify-between px-4 py-4 rounded-xl" style={{background:'#0f172a'}}>
-            <p className="font-black text-white uppercase tracking-wide">UTILIDAD / PÉRDIDA NETA</p>
-            <div className="text-right"><p className={`font-mono font-black text-xl ${utilNeBs>=0?'text-emerald-400':'text-red-400'}`}>Bs.{bancoFmt(utilNeBs)}</p><p className="text-slate-400 text-[10px]">{'$'+bancoFmt(utilNeUSD)}</p></div>
-          </div>
+          <input type="date" className={inp} style={{width:'130px'}} value={desde} onChange={e=>setDesde(e.target.value)}/>
+          <input type="date" className={inp} style={{width:'130px'}} value={hasta} onChange={e=>setHasta(e.target.value)}/>
+          <button onClick={exportExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
+          <button onClick={exportPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
         </div>
+      }>
+        {tree.length===0 ? <BEmptyState icon={TrendingUp} title="Sin movimientos" desc="No hay asientos contables en este período"/> : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[#111111] text-[9px] uppercase font-black text-slate-300">
+              <tr>
+                <th className="px-3 py-3">Cuentas</th>
+                {showUSD && <th className="px-3 py-3 text-right text-orange-300">USD</th>}
+                {showBS  && <th className="px-3 py-3 text-right text-amber-300">Bs.</th>}
+                <th className="px-3 py-3 text-right text-slate-400">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {treeOrdenado.map((node,i)=>(
+                <React.Fragment key={i}>
+                  <ArbolContableRow node={node} totalBase={baseVentas} currency={currency}/>
+                  {node.n==='COSTOS' && (
+                    <tr className="border-t-2 border-emerald-400 bg-emerald-50">
+                      <td className="px-4 py-2.5 font-black text-[11px] uppercase tracking-widest text-emerald-800 pl-6">UTILIDAD BRUTA</td>
+                      {showUSD && <td className={`px-3 py-2.5 text-right font-mono font-black text-sm ${utilBrUSD>=0?'text-emerald-700':'text-red-600'}`}>{cxsFmtR(utilBrUSD)}</td>}
+                      {showBS  && <td className={`px-3 py-2.5 text-right font-mono font-black text-sm ${utilBrBs>=0?'text-emerald-600':'text-red-500'}`}>{cxsFmtR(utilBrBs)}</td>}
+                      <td className="px-3 py-2.5 text-right font-mono font-black text-[11px] text-emerald-600">{(Math.abs(utilBrUSD)/baseVentas*100).toFixed(2)}%</td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+              <tr className="bg-[#111111] text-white font-black border-t-4 border-orange-600">
+                <td className="px-4 py-5 text-sm uppercase tracking-widest" style={{paddingLeft:24}}>RESULTADO DEL EJERCICIO</td>
+                {showUSD && <td className={`px-3 py-5 text-right text-lg font-mono ${utilNeUSD<0?'text-red-400':'text-emerald-400'}`}>{cxsFmtR(utilNeUSD)}</td>}
+                {showBS  && <td className={`px-3 py-5 text-right text-base font-mono ${utilNeBs<0?'text-red-300':'text-amber-300'}`}>{cxsFmtR(utilNeBs)}</td>}
+                <td className="px-3 py-5 text-right text-lg font-mono">{(Math.abs(utilNeUSD)/baseVentas*100).toFixed(2)}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        )}
       </BCard>
     );
   };
