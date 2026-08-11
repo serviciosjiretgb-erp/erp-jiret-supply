@@ -45005,13 +45005,87 @@ ${resumenHtml}
     const entradasBs = movsCuenta.reduce((s,l)=>s+parseNum(l.debeBs||0),0), salidasBs = movsCuenta.reduce((s,l)=>s+parseNum(l.haberBs||0),0);
     const entradasUSD = movsCuenta.reduce((s,l)=>s+parseNum(l.debeUSD||0),0), salidasUSD = movsCuenta.reduce((s,l)=>s+parseNum(l.haberUSD||0),0);
     const cuentaInfo = cuentasConMov[mayorCuentaSelApp];
+
+    // ── Export Excel/PDF: TODAS las cuentas con saldo o movimiento, cada una en su propia
+    // sección (no mezcladas) — mismo criterio de Saldo Anterior/Entradas/Salidas/Saldo Actual
+    // que ya se ve en pantalla para la cuenta seleccionada, pero repetido para cada cuenta.
+    const construirDetalleTodasLasCuentas = () => {
+      const codigos = new Set(Object.keys(cuentasConMov));
+      asientosAntes.forEach(a=>(a.lineas||[]).forEach(l=>{ if(l.codigo) codigos.add(l.codigo); }));
+      return [...codigos].sort().map(codigo=>{
+        let saldoAnt=0, saldoAntUSD=0;
+        asientosAntes.forEach(a=>(a.lineas||[]).forEach(l=>{
+          if(l.codigo!==codigo) return;
+          saldoAnt += parseNum(l.debeBs||0)-parseNum(l.haberBs||0);
+          saldoAntUSD += parseNum(l.debeUSD||0)-parseNum(l.haberUSD||0);
+        }));
+        let acum=saldoAnt, acumUSD=saldoAntUSD;
+        const movs = asientosPeriodo.flatMap(a=>(a.lineas||[]).filter(l=>l.codigo===codigo).map(l=>{
+          acum += parseNum(l.debeBs||0)-parseNum(l.haberBs||0);
+          acumUSD += parseNum(l.debeUSD||0)-parseNum(l.haberUSD||0);
+          return {...l, fecha:a.fecha, referencia:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum:acum, saldoAcumUSD:acumUSD};
+        }));
+        const nombreCuenta = cuentasConMov[codigo]?.cuenta || (planDeCuentas||[]).find(p=>p.codigo===codigo)?.nombre || '';
+        if(movs.length===0 && Math.abs(saldoAnt)<0.005 && Math.abs(saldoAntUSD)<0.005) return null;
+        return {codigo, nombre:nombreCuenta, saldoAnt, saldoAntUSD, movs, saldoFinalBs:acum, saldoFinalUSD:acumUSD};
+      }).filter(Boolean);
+    };
+    const rangoTexto = contFiltDesde||contFiltHasta ? `${contFiltDesde?contDd(contFiltDesde):'inicio'} — ${contFiltHasta?contDd(contFiltHasta):'hoy'}` : 'Todo el historial';
+    const exportarMayorExcel = async () => {
+      if(!window.XLSX){
+        await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+      }
+      const XL=window.XLSX;
+      const cuentas = construirDetalleTodasLasCuentas();
+      const aoa=[];
+      aoa.push(['SERVICIOS JIRET G&B, C.A.']); aoa.push(['RIF: J-412309374']);
+      aoa.push([`MAYOR ANALÍTICO — ${rangoTexto}`]);
+      aoa.push([`Generado: ${new Date().toLocaleDateString('es-VE')} · ${cuentas.length} cuenta(s)`]);
+      cuentas.forEach(c=>{
+        aoa.push([]);
+        aoa.push([`${c.codigo} — ${c.nombre}`]);
+        aoa.push(['Saldo Anterior','','','',c.saldoAnt,'',c.saldoAnt,c.saldoAntUSD,'',c.saldoAntUSD]);
+        aoa.push(['Fecha','Módulo','Comprobante','Concepto','Debe Bs.','Haber Bs.','Saldo Bs.','Debe $','Haber $','Saldo $']);
+        c.movs.forEach(l=>{
+          aoa.push([l.fecha||'', l.modulo||'', l.referencia||'', l.concepto||'', l.debeBs||0, l.haberBs||0, l.saldoAcum, l.debeUSD||0, l.haberUSD||0, l.saldoAcumUSD]);
+        });
+        aoa.push(['Saldo Actual','','','','','',c.saldoFinalBs,'','',c.saldoFinalUSD]);
+      });
+      const ws=XL.utils.aoa_to_sheet(aoa);
+      ws['!cols']=[{wch:12},{wch:16},{wch:14},{wch:40},{wch:14},{wch:14},{wch:14},{wch:12},{wch:12},{wch:12}];
+      const wb=XL.utils.book_new();
+      XL.utils.book_append_sheet(wb,ws,'Mayor Analítico');
+      XL.writeFile(wb,`MayorAnalitico_${getTodayDate()}.xlsx`);
+    };
+    const exportarMayorPDF = () => {
+      const cuentas = construirDetalleTodasLasCuentas();
+      let body = '';
+      cuentas.forEach(c=>{
+        body += `<h3 style="font-size:11px;text-transform:uppercase;margin:16px 0 4px;padding-top:10px;border-top:1px solid #e2e8f0;color:#1e293b">${c.codigo} — ${c.nombre}</h3>`;
+        body += `<table><thead><tr><th>Fecha</th><th>Módulo</th><th>Comprobante</th><th>Concepto</th><th>Debe Bs.</th><th>Haber Bs.</th><th>Saldo Bs.</th><th>Debe $</th><th>Haber $</th><th>Saldo $</th></tr></thead><tbody>`;
+        body += `<tr style="background:#f8fafc;font-style:italic"><td colspan="6">Saldo Anterior</td><td>${ccFmtR(c.saldoAnt)}</td><td colspan="2"></td><td>${ccFmtR(c.saldoAntUSD)}</td></tr>`;
+        c.movs.forEach(l=>{
+          body += `<tr><td>${contDd(l.fecha)}</td><td>${l.modulo||''}</td><td>${l.referencia||''}</td><td>${l.concepto||''}</td><td>${l.debeBs?ccFmtR(l.debeBs):''}</td><td>${l.haberBs?ccFmtR(l.haberBs):''}</td><td>${ccFmtR(l.saldoAcum)}</td><td>${l.debeUSD?ccFmtR(l.debeUSD):''}</td><td>${l.haberUSD?ccFmtR(l.haberUSD):''}</td><td>${ccFmtR(l.saldoAcumUSD)}</td></tr>`;
+        });
+        body += `<tr class="total-row"><td colspan="6">Saldo Actual</td><td>${ccFmtR(c.saldoFinalBs)}</td><td colspan="2"></td><td>${ccFmtR(c.saldoFinalUSD)}</td></tr>`;
+        body += `</tbody></table>`;
+      });
+      const html = pdfOpen('Mayor Analítico', rangoTexto) + body + pdfClose(`${cuentas.length} cuenta(s)`);
+      pdfPrint(html);
+    };
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           <ContNavBar active="mayor_analitico_cc"/>
-          <div className="px-8 py-6 border-b-2 border-black">
-            <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><BookOpen size={28} className="text-purple-500"/> Mayor Analítico</h1>
-            <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Detalle cronológico y saldo acumulado de cada cuenta contable — todas las cuentas de los Libros Diarios</p>
+          <div className="px-8 py-6 border-b-2 border-black flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-black uppercase flex items-center gap-3 tracking-wider"><BookOpen size={28} className="text-purple-500"/> Mayor Analítico</h1>
+              <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Detalle cronológico y saldo acumulado de cada cuenta contable — todas las cuentas de los Libros Diarios</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportarMayorExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
+              <button onClick={exportarMayorPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
+            </div>
           </div>
           <div className="p-6 flex flex-col md:flex-row gap-4">
             <div className="w-full md:w-72 flex-shrink-0 bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-2">
