@@ -2765,9 +2765,38 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`cuentas_bancarias_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
     };
 
+    // Dos cuentas bancarias distintas usando el MISMO código contable hacen que el Mayor
+    // Analítico las trate como una sola cuenta (lo que entra a una y sale de la otra se netea
+    // ahí, en vez de verse el movimiento real de cada una). Se agrupan aquí por código para
+    // que sea fácil detectarlas y corregirlas — no se tocan solas, cada Editar requiere elegir
+    // a cuál banco le corresponde qué código.
+    const duplicadosCuentaContable = (() => {
+      const porCodigo = {};
+      cuentas.forEach(c=>{
+        const cod=(c.cuentaContableCod||'').trim();
+        if(!cod) return;
+        (porCodigo[cod]=porCodigo[cod]||[]).push(c);
+      });
+      return Object.entries(porCodigo).filter(([,lista])=>lista.length>1);
+    })();
+
     return (
       <div className="space-y-5">
         <style>{PRINT_STYLE}</style>
+        {duplicadosCuentaContable.length>0 && (
+          <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4">
+            <p className="text-xs font-black uppercase text-red-700 flex items-center gap-2 mb-2"><AlertTriangle size={14}/> {duplicadosCuentaContable.length} código(s) contable(s) usado(s) por más de una cuenta bancaria</p>
+            <div className="space-y-1.5">
+              {duplicadosCuentaContable.map(([cod,lista])=>(
+                <p key={cod} className="text-[11px] text-red-600">
+                  <span className="font-mono font-black">{cod}</span> — {lista.map(c=>c.banco).join(' · ')}
+                  <button onClick={()=>openEdit(lista[0])} className="ml-2 text-[9px] font-black uppercase underline hover:text-red-800">Editar {lista[0].banco}</button>
+                </p>
+              ))}
+            </div>
+            <p className="text-[9px] text-red-500 mt-2">Cada cuenta bancaria debe tener su propia cuenta contable — edítalas y asígnales códigos distintos en "Cuenta Contable Asociada (PUC)".</p>
+          </div>
+        )}
         {/* Botones de acción */}
         <div className="flex gap-3 justify-end">
           <button onClick={()=>exportarCuentas('pdf')} className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><FileText size={12}/> PDF</button>
@@ -5013,13 +5042,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const movs = movCaja.filter(m=>m.cajaId===cajaId);
       const bs  = movs.filter(m=>esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
       const usd = movs.filter(m=>!esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
-      // Cobros CxC / Pagos CxP registrados a través de esta caja — se excluyen los que ya tienen su
-      // propio movimiento directo en caja_movimientos (mismo grupoCobroId/grupoPagoId) para no contar dos veces:
-      // Aplicación.jsx crea AMBOS registros (cobros_cxc/procura_pagos_cxp Y caja_movimientos) para la misma entrada de caja.
-      const cobrosCaja = cobrosCajaCxc.filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId&&!c.grupoCobroId);
+      // Cobros CxC / Pagos CxP registrados a través de esta caja — se excluyen SOLO los que
+      // realmente ya tienen su propio movimiento directo en caja_movimientos (mismo
+      // grupoCobroId/grupoPagoId encontrado ahí). Antes se excluía cualquiera que simplemente
+      // TUVIERA el campo grupoCobroId, asumiendo que eso significaba que ya existía el
+      // duplicado — pero Aplicación.jsx nunca crea ese duplicado para pagos en efectivo
+      // (CAJA::), así que ese filtro excluía TODOS los cobros de caja hechos por "Registrar
+      // Cobranza", sin importar si de verdad estaban duplicados o no.
+      const cobrosCaja = cobrosCajaCxc.filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId && !(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId)));
       const bsCobros  = cobrosCaja.filter(c=>esBs(c.moneda)).reduce((a,c)=>{const tasa=Number(c.tasa||tasaActiva)||tasaActiva;return a+(Number(c.montoBs||0)||(Number(c.monto||0)*tasa));},0);
       const usdCobros = cobrosCaja.filter(c=>!esBs(c.moneda)).reduce((a,c)=>a+Number(c.monto||0),0);
-      const pagosCaja = pagosCajaCxP.filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId&&!p.grupoPagoId);
+      const pagosCaja = pagosCajaCxP.filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId && !(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId)));
       const bsPagos  = pagosCaja.filter(p=>esBs(p.moneda)).reduce((a,p)=>{const tasa=Number(p.tasa||tasaActiva)||tasaActiva;return a+(Number(p.montoBs||0)||(Number(p.monto||0)*tasa));},0);
       const usdPagos = pagosCaja.filter(p=>!esBs(p.moneda)).reduce((a,p)=>a+Number(p.monto||0),0);
       return {bs: bs+bsCobros-bsPagos, usd: usd+usdCobros-usdPagos};
@@ -5765,11 +5798,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       : (c.nombre?.toUpperCase().includes('PAGAR')||c.nombre?.toUpperCase().includes('GASTO')));
     // Movimientos de caja manuales + movimientos del banco_movimientos (cobros CxC y pagos CxP del ERP)
     // ── Cobros CxC / Pagos CxP registrados a través de cajas (con CAJA::) ──
-    // Aplicación.jsx siempre crea un movimiento DIRECTO en caja_movimientos (con grupoCobroId/grupoPagoId)
-    // por cada línea de cobro/pago que pasó por caja — si además re-derivamos desde cobros_cxc/procura_pagos_cxp,
-    // el mismo dinero aparece dos veces. Cualquier registro con ese grupo YA tiene su movimiento directo,
-    // así que se excluye siempre (no solo cuando el grupo ya cargó en pantalla).
-    const movDesdeCobrosCaja = cobrosCajaCxc.filter(c=>!c.grupoCobroId).map(c=>{
+    // Aplicación.jsx NO crea un caja_movimientos aparte para pagos en efectivo (CAJA::) — solo
+    // para banco. Antes se excluía cualquier cobro con grupoCobroId asumiendo que YA tenía su
+    // movimiento directo, pero eso solo es cierto si ESE grupoCobroId de verdad aparece en
+    // caja_movimientos — si no, el cobro simplemente desaparecía sin haberse contado nunca.
+    const movDesdeCobrosCaja = cobrosCajaCxc.filter(c=>!(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId))).map(c=>{
       const cajaId = (c.cuentaBancariaId||'').replace('CAJA::','');
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(c.tasa||tasaActiva)||tasaActiva;
@@ -5793,7 +5826,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     });
 
     // ── Pagos CxP registrados a través de cajas (procura_pagos_cxp con CAJA::) ──
-    const movDesdePagosCaja = pagosCajaCxP.filter(p=>!p.grupoPagoId).map(p=>{
+    // Mismo criterio que arriba: excluir solo si el grupoPagoId de verdad aparece en caja_movimientos.
+    const movDesdePagosCaja = pagosCajaCxP.filter(p=>!(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId))).map(p=>{
       const cajaId = (p.cuentaId||'').replace('CAJA::','');
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(p.tasa||tasaActiva)||tasaActiva;
@@ -6376,6 +6410,50 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       finally{ setBusy(false); }
     };
 
+    // ── Posibles Duplicados Manuales ────────────────────────────────────
+    // Antes de este arreglo, los cobros/pagos de caja no se veían aquí — es probable que en su
+    // momento se hayan tecleado a mano como parche. Ahora que sí se derivan solos desde
+    // cobros_cxc/procura_pagos_cxp, esos parches manuales quedarían contados DOS veces. Se
+    // detectan comparando cada movimiento de caja SIN grupoCobroId/grupoPagoId (o sea, no viene
+    // del flujo automático) contra los cobros/pagos reales — misma caja, misma fecha, mismo
+    // monto USD (±0.02), y la referencia coincide o el concepto menciona el documento/cliente
+    // del cobro real. Es una coincidencia por similitud, no un ID exacto — por eso cada uno se
+    // revisa y se borra de uno en uno, nunca en bloque.
+    const [duplicadosManualesCaja, setDuplicadosManualesCaja] = useState(null);
+    const detectarDuplicadosManualesCaja = () => {
+      const candidatos = (movCaja||[]).filter(m=>!m.grupoCobroId && !m.grupoPagoId);
+      const problemas = [];
+      candidatos.forEach(m=>{
+        const esIngreso = m.tipo==='Ingreso';
+        const fuente = esIngreso ? (cobrosCajaCxc||[]) : (pagosCajaCxP||[]);
+        const match = fuente.find(c=>{
+          const cajaIdC = (c.cuentaBancariaId||c.cuentaId||'').replace('CAJA::','');
+          if(cajaIdC!==m.cajaId) return false;
+          if((c.fecha||'')!==(m.fecha||'')) return false;
+          if(Math.abs(Number(c.monto||0)-Number(m.montoUSD||0))>0.02) return false;
+          const refCoincide = c.referencia && m.referencia && c.referencia===m.referencia;
+          const nombreClave = c.neDocumento||c.clientName||c.proveedor||'';
+          const conceptoMenciona = nombreClave && (m.concepto||'').toUpperCase().includes(String(nombreClave).toUpperCase());
+          return refCoincide || conceptoMenciona;
+        });
+        if(match) problemas.push({movManual:m, real:match, esIngreso});
+      });
+      return problemas;
+    };
+    const revisarDuplicadosManualesCaja = () => setDuplicadosManualesCaja(detectarDuplicadosManualesCaja());
+    const eliminarDuplicadoManual = async (item) => {
+      if(!window.confirm(`¿Eliminar el movimiento manual "${item.movManual.concepto}" (${bancoDd(item.movManual.fecha)}, $${bancoFmt(item.movManual.montoUSD)})? El cobro/pago real (que ya cuenta solo) se queda intacto — esto NO afecta el saldo real, solo quita el duplicado.`)) return;
+      setBusy(true);
+      try{
+        // El saldo de caja se calcula en vivo sumando todos los movimientos (getSaldoCaja) — no
+        // es un total guardado que haya que ajustar a mano. Al borrar el duplicado, el saldo ya
+        // correcto sale solo, en el siguiente cálculo.
+        await deleteDoc(getDocRef('caja_movimientos', item.movManual._docId||item.movManual.id));
+        setDuplicadosManualesCaja(prev=>(prev||[]).filter(x=>x!==item));
+      }catch(e){ alert('❌ No se pudo eliminar: '+(e?.message||e)); }
+      finally{ setBusy(false); }
+    };
+
     return (
       <div className="space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -6441,6 +6519,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               {ultimaCorreccionTrasladosCaja && (
                 <BBp onClick={reversarCorreccionTrasladosCaja} sm title={`Deshace la corrección aplicada el ${ultimaCorreccionTrasladosCaja.fecha}`}><RefreshCw size={12}/> ↩ Reversar</BBp>
               )}
+              <BBp onClick={revisarDuplicadosManualesCaja} sm title="Busca movimientos de caja escritos a mano que coincidan con un cobro/pago real de Ventas o Procura"><Search size={12}/> Posibles Duplicados</BBp>
               <BBg onClick={()=>{setForm(initF());setModal(true);}} sm><Plus size={12}/> Nuevo</BBg>
             </div>
           </div>
@@ -6476,6 +6555,37 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+            </BModal>
+          )}
+
+          {duplicadosManualesCaja!==null && (
+            <BModal open={true} onClose={()=>setDuplicadosManualesCaja(null)} title="🔍 Posibles Duplicados Manuales" wide footer={<BBo onClick={()=>setDuplicadosManualesCaja(null)}>Cerrar</BBo>}>
+              {duplicadosManualesCaja.length===0 ? (
+                <div className="text-center py-8 text-slate-400 font-bold text-sm">✓ No se encontró ningún movimiento manual que coincida con un cobro/pago real.</div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-700 font-bold">
+                    {duplicadosManualesCaja.length} movimiento(s) escrito(s) a mano coinciden en fecha, monto y cliente/referencia con un cobro o pago real. Revisa cada par antes de decidir — la coincidencia es por parecido, no un ID exacto. Elimina solo el de la izquierda (el manual); el de la derecha (el real, que ya cuenta solo) no se toca.
+                  </div>
+                  <div className="space-y-2">
+                    {duplicadosManualesCaja.map((item,i)=>(
+                      <div key={i} className="grid grid-cols-2 gap-3 border border-slate-200 rounded-xl p-3">
+                        <div className="bg-red-50 rounded-lg p-2">
+                          <p className="text-[8px] font-black uppercase text-red-500 mb-1">Manual (candidato a borrar)</p>
+                          <p className="text-[11px] font-bold text-slate-700">{item.movManual.concepto}</p>
+                          <p className="text-[10px] text-slate-500">{bancoDd(item.movManual.fecha)} · ${bancoFmt(item.movManual.montoUSD)} · Ref: {item.movManual.referencia||'—'}</p>
+                          <button onClick={()=>eliminarDuplicadoManual(item)} disabled={busy} className="mt-2 text-[9px] font-black uppercase bg-red-500 hover:bg-red-600 text-white px-2.5 py-1 rounded-lg">🗑 Eliminar este</button>
+                        </div>
+                        <div className="bg-emerald-50 rounded-lg p-2">
+                          <p className="text-[8px] font-black uppercase text-emerald-600 mb-1">{item.esIngreso?'Cobro real (Ventas)':'Pago real (Procura)'}</p>
+                          <p className="text-[11px] font-bold text-slate-700">{item.real.neDocumento||item.real.clientName||item.real.proveedor||'—'}</p>
+                          <p className="text-[10px] text-slate-500">{bancoDd(item.real.fecha)} · ${bancoFmt(item.real.monto)} · Ref: {item.real.referencia||'—'}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -7643,10 +7753,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const movs = movCaja.filter(m=>m.cajaId===cajaId);
       const bs  = movs.filter(m=>esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
       const usd = movs.filter(m=>!esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
-      const cobrosCaja = (cobrosCajaCxc||[]).filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId&&!c.grupoCobroId);
+      const cobrosCaja = (cobrosCajaCxc||[]).filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId && !(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId)));
       const bsCobros  = cobrosCaja.filter(c=>esBs(c.moneda)).reduce((a,c)=>{const t=Number(c.tasa||tasaActiva)||tasaActiva;return a+(Number(c.montoBs||0)||(Number(c.monto||0)*t));},0);
       const usdCobros = cobrosCaja.filter(c=>!esBs(c.moneda)).reduce((a,c)=>a+Number(c.monto||0),0);
-      const pagosCaja = (pagosCajaCxP||[]).filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId&&!p.grupoPagoId);
+      const pagosCaja = (pagosCajaCxP||[]).filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId && !(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId)));
       const bsPagos  = pagosCaja.filter(p=>esBs(p.moneda)).reduce((a,p)=>{const t=Number(p.tasa||tasaActiva)||tasaActiva;return a+(Number(p.montoBs||0)||(Number(p.monto||0)*t));},0);
       const usdPagos = pagosCaja.filter(p=>!esBs(p.moneda)).reduce((a,p)=>a+Number(p.monto||0),0);
       return {bs: bs+bsCobros-bsPagos, usd: usd+usdCobros-usdPagos};
