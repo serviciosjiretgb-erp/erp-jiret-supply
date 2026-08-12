@@ -15918,7 +15918,20 @@ function App() {
   const [comVendedor, setComVendedor] = useState('');
   const [comMes, setComMes] = useState(new Date().getMonth()+1);
   const [comAnio, setComAnio] = useState(new Date().getFullYear());
+  // comCobranza guarda, por Nota de Entrega, lo que se edita a mano en "Comisión por Cobranza":
+  // Fecha Pago, si está Cobrado, y si se quitó de la relación (excluido). Antes esto SOLO vivía
+  // en memoria (useState sin persistencia) — por eso la Fecha Pago se perdía al recargar. Ahora
+  // se carga y guarda en settings/comisionesCobranzaOverrides, como un mapa {neId: {...}}.
   const [comCobranza, setComCobranza] = useState([]);
+  useEffect(()=>{
+    const u = onSnapshot(getDocRef('settings','comisionesCobranzaOverrides'), d=>{
+      if(d.exists()){
+        const data=d.data()||{};
+        setComCobranza(Object.entries(data).filter(([k])=>k!=='updatedAt').map(([neId,v])=>({neId,...v})));
+      }
+    });
+    return ()=>u();
+  },[]);
   const [cobFiltro, setCobFiltro] = useState('pendiente'); // tabla manual de cobranza (estado de edición)
   const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
   const [comReportes, setComReportes] = useState([]); // historial de reportes guardados
@@ -26754,12 +26767,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
 
-                // ── COSTO: usar el MISMO código ya resuelto arriba (robusto) en vez de solo el invCode crudo ──
-                // 1) costoUnit guardado en la factura (si existe, se respeta — es el costo histórico real de ese momento)
-                // 2) costo actual en Inventario, buscando por el código YA resuelto (mismo que usa el reporte para mostrar el producto)
-                // 3) costo actual en Inventario, buscando por el invCode crudo (por si acaso el código resuelto no aplicara)
-                // 4) costo desde finishedGoodsInventory por fgId
-                let costo=parseNum(it.costoUnit||0);
+                // ── COSTO: primero el MISMO dato que ya usa Estado de Resultados/Mayor Analítico
+                // (getAsientosReales, sección "Costo de Producción/Venta"): it.costoTotal, el
+                // costo congelado al facturar. Antes este reporte partía de costoUnit y cuando
+                // ese venía en 0 caía a buscar el costo ACTUAL en Inventario — que no es el
+                // mismo dato histórico, y por eso este reporte y Estado de Resultados daban
+                // números de costo distintos para las mismas facturas. Ahora:
+                // 1) it.costoTotal (costo histórico real, mismo que usa el asiento contable)
+                // 2) it.costoUnit × cantidad (si no hay costoTotal guardado)
+                // 3) costo actual en Inventario, por el código YA resuelto arriba
+                // 4) costo actual en Inventario, por el invCode crudo
+                // 5) costo desde finishedGoodsInventory por fgId
+                let costoTotal = parseNum(it.costoTotal||0);
+                let costo = costoTotal>0 ? costoTotal/qty : parseNum(it.costoUnit||0);
                 if(!costo && codigo && codigo!=='—') {
                   const invDocByCodigo=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===codigo);
                   if(invDocByCodigo) costo=parseNum(invDocByCodigo.cost||0);
@@ -26772,7 +26792,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const fgDoc=(finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
                   if(fgDoc) costo=it.esTermo?parseNum(fgDoc.costoUnitario||0):parseNum(fgDoc.costoUnitarioMillar||0);
                 }
-                const costoTotal=costo*qty;
+                if(!costoTotal) costoTotal=costo*qty;
                 rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{
                   if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
                   const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
@@ -26787,6 +26807,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
             if(nc.naturaleza!=='FISCAL') return false;
+            // Anulación Fiscal genera su propia NC obligatoria (para que SENIAT no vea un hueco
+            // en la numeración de la factura dañada), pero no representa una venta ni un
+            // movimiento real de inventario — no debe entrar aquí, que es el reporte de ventas
+            // y costos REALES. El Libro de Ventas es aparte y sí debe seguir incluyéndolas.
+            if(nc.esAnulacionFiscal) return false;
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
             // Fecha efectiva para filtrar por período: la propia de la nota, o si no coincide con nada,
             // la de la factura vinculada (una NC debe caer en el período de la operación que corrige,
@@ -27732,7 +27757,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               rango, pct, montoPagar: monto*(pct/100), cobrado
             };
           });
-          const cobranzaCalc = cobranzaCalcAll.filter(r => {
+          const cobranzaVisible = cobranzaCalcAll.filter(r => !(comCobranza||[]).find(c=>c.neId===r.neId)?.excluido);
+          const cobranzaCalc = cobranzaVisible.filter(r => {
             // Cobradas: solo las pagadas en el mes/año filtrado. Pendientes: todas las abiertas (histórico).
             if(cobFiltro==='cobrado') return r.cobrado && (r.fechaPago||'').startsWith(ym);
             if(cobFiltro==='pendiente') return !r.cobrado;
@@ -27743,11 +27769,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const neId = cobranzaCalc[i]?.neId;
             if(!neId) return;
             const existing = (comCobranza||[]).findIndex(c=>c.neId===neId);
-            if(existing>=0) {
-              setComCobranza((comCobranza||[]).map((c,idx)=>idx===existing?{...c,[campo]:val}:c));
-            } else {
-              setComCobranza([...(comCobranza||[]),{neId,[campo]:val}]);
-            }
+            const nuevo = existing>=0 ? {...comCobranza[existing],[campo]:val} : {neId,[campo]:val};
+            if(existing>=0) setComCobranza((comCobranza||[]).map((c,idx)=>idx===existing?nuevo:c));
+            else setComCobranza([...(comCobranza||[]),nuevo]);
+            const {neId:_omit, ...datos} = nuevo;
+            setDoc(getDocRef('settings','comisionesCobranzaOverrides'),{[neId]:{...datos,updatedAt:Date.now()}},{merge:true}).catch(e=>console.error('Error guardando override de cobranza:',e));
+          };
+          // Quitar de la relación: no borra la Nota de Entrega ni afecta nada más del sistema —
+          // solo la excluye de este listado de comisiones (marca excluido:true, persistido).
+          const quitarDeRelacionCobranza = (i) => {
+            const r = cobranzaCalc[i];
+            if(!r) return;
+            setDialog({title:'¿Quitar de la relación?', text:`"${r.cliente}" (NE ${r.neId}) se quitará de este listado de comisiones. No se borra la Nota de Entrega ni nada más del sistema — solo deja de contar aquí.`, type:'confirm', onConfirm: async()=>{
+              updCobranza(i,'excluido',true);
+            }});
           };
 
           // ── Detección automática: clientes nuevos y recuperados ──
@@ -28068,7 +28103,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 flex-wrap">
                      <span className="text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,ei)=>`R${ei+1}: ${e.dMin}-${e.dMax}d → ${e.pct}%`).join(' | ')||'No configurada'}</span>
-                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaCalcAll.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaCalcAll.filter(r=>r.cobrado&&(r.fechaPago||'').startsWith(ym)).length})`:'📋 Todos'}</button>))}</div>
+                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaVisible.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaVisible.filter(r=>r.cobrado&&(r.fechaPago||'').startsWith(ym)).length})`:'📋 Todos'}</button>))}</div>
                    </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
@@ -28084,11 +28119,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <th className="px-2 py-2 text-center">Días Retraso</th>
                         <th className="px-2 py-2 text-center">Rango</th>
                         <th className="px-2 py-2 text-center">%</th>
-                        <th className="px-2 py-2 text-center">Estado</th><th className="px-2 py-2 text-right">A Pagar</th>
+                        <th className="px-2 py-2 text-center">Estado</th><th className="px-2 py-2 text-right">A Pagar</th><th className="px-2 py-2 text-center">Relación</th>
                       </tr></thead>
                       <tbody className="divide-y divide-gray-50">
                         {cobranzaCalc.length===0 ? (
-                          <tr><td colSpan="13" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">
+                          <tr><td colSpan="14" className="py-6 text-center text-gray-400 font-bold uppercase text-[10px]">
                             No hay Notas de Entrega para {comVendedor||'este vendedor'} en {mesLabel} {comAnio}
                           </td></tr>
                         ) : cobranzaCalc.map((r,i)=>(
@@ -28116,6 +28151,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                </button>
                              </td>
                              <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
+                             <td className="px-2 py-1.5 text-center">
+                               <button onClick={()=>quitarDeRelacionCobranza(i)} title="Quitar esta NE de la relación de cobranza (no la borra del sistema)" className="p-1 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors">
+                                 <Trash2 size={12}/>
+                               </button>
+                             </td>
                           </tr>
                         ))}
                       </tbody>
@@ -28124,6 +28164,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td>
                         <td colSpan="7"></td>
                         <td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td>
+                        <td></td>
                       </tr></tfoot>}
                     </table>
                   </div>
@@ -45329,7 +45370,14 @@ ${resumenHtml}
     // Operacional: personal de producción) — este último vive dentro de "Gastos Operativos" en
     // el plan normal, pero es costo de planta, no gasto administrativo, así que aquí sí cuenta.
     const gruposCostoPlanta = contERVistaPlanta ? ['5.1','5.2'] : ['5.1'];
-    let treeCostos    = ccBuildArbol(cuentasAggUsar, planDeCuentas, gruposCostoPlanta, c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    // En Resultado Planta, Costo de Venta (Mercancía) NO debe contar — es reventa de mercancía
+    // comprada, no algo que produjo la planta. Se excluye por su código configurado (no por
+    // prefijo), así el resto de lo que vive bajo 5.1 (que sí es costo de planta) queda intacto.
+    const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
+    const cuentasParaCostos = (contERVistaPlanta && codCostoMercancia)
+      ? cuentasAggUsar.filter(c=>c.codigo!==codCostoMercancia)
+      : cuentasAggUsar;
+    let treeCostos    = ccBuildArbol(cuentasParaCostos, planDeCuentas, gruposCostoPlanta, c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     if (contERVistaPlanta && treeCostos.length) {
       const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
       treeCostos = [{ n:'COSTO DE PRODUCCIÓN', c: treeCostos, u, b }];
