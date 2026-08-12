@@ -6471,6 +6471,56 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   ))}
                 </div>
                 {cajaDet._facturaInfo&&<div className="bg-orange-50 border border-orange-200 rounded-xl p-3"><p className="text-[9px] font-black uppercase text-orange-700 mb-1">Factura(s) Afectada(s)</p><p className="text-xs font-black text-orange-900">📄 {cajaDet._facturaInfo}</p></div>}
+                {(()=>{
+                  // Mismo criterio que en Banco: buscar el asiento propio y, si es un traslado, el
+                  // asiento del OTRO LADO (banco o caja) por referencia+fecha+concepto, para
+                  // mostrar el asiento COMPLETO en vez de solo la mitad.
+                  const asientoLinked = asientosBanco.find(a=>a.id===cajaDet.asientoContableId);
+                  const esLadoQueSale = /traslado de fondo/i.test(cajaDet.concepto||'') && cajaDet.tipo!=='Ingreso';
+                  const esLadoQueEntra = cajaDet.tipo==='Ingreso' && /traslado recibido/i.test(cajaDet.concepto||'');
+                  if(!asientoLinked?.lineas?.length) return null;
+                  const todosLosMovs = [...(movBanco||[]),...(movCaja||[])];
+                  const movOtroLado = esLadoQueSale
+                    ? todosLosMovs.find(m=>m.id!==cajaDet.id && m.referencia && m.referencia===cajaDet.referencia && m.fecha===cajaDet.fecha && m.tipo==='Ingreso' && /traslado recibido/i.test(m.concepto||''))
+                    : esLadoQueEntra
+                      ? todosLosMovs.find(m=>m.id!==cajaDet.id && m.referencia && m.referencia===cajaDet.referencia && m.fecha===cajaDet.fecha && /traslado de fondo/i.test(m.concepto||'') && m.tipo!=='Ingreso')
+                      : null;
+                  const asientoOtroLado = movOtroLado ? asientosBanco.find(a=>a.id===movOtroLado.asientoContableId) : null;
+                  const lineasMostrar = [...asientoLinked.lineas, ...(asientoOtroLado?.lineas||[])];
+                  return (
+                    <div className="rounded-2xl overflow-hidden border border-blue-100">
+                      <div className="px-5 py-3 bg-blue-600 flex items-center gap-2">
+                        <BookOpen size={14} className="text-blue-200"/><p className="text-[10px] font-black uppercase text-white tracking-widest">Asiento Contable — {asientoLinked.comprobante||asientoLinked.numero||''}</p>
+                      </div>
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="bg-blue-50 text-[8px] font-black uppercase text-slate-500">
+                          <th className="px-3 py-1.5 text-left">Cuenta Contable</th><th className="px-3 py-1.5 text-center">T</th>
+                          <th className="px-3 py-1.5 text-right">Debe Bs.</th><th className="px-3 py-1.5 text-right">Haber Bs.</th>
+                          <th className="px-3 py-1.5 text-right">Debe $</th><th className="px-3 py-1.5 text-right">Haber $</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {lineasMostrar.map((l,i)=>(
+                            <tr key={i}>
+                              <td className="px-3 py-1.5 font-semibold text-slate-800"><span className="text-blue-500 font-mono text-[10px] mr-1">{l.codigo}</span>{l.cuenta}</td>
+                              <td className="px-3 py-1.5 text-center"><span className={`font-black ${l.tipoLinea==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipoLinea}</span></td>
+                              <td className="px-3 py-1.5 text-right font-mono font-black text-emerald-700">{l.debeBs>0?'Bs.'+bancoFmt(l.debeBs):''}</td>
+                              <td className="px-3 py-1.5 text-right font-mono font-black text-red-500">{l.haberBs>0?'Bs.'+bancoFmt(l.haberBs):''}</td>
+                              <td className="px-3 py-1.5 text-right font-mono font-black text-emerald-600">{l.debeUSD>0?'$'+bancoFmt(l.debeUSD):''}</td>
+                              <td className="px-3 py-1.5 text-right font-mono font-black text-red-400">{l.haberUSD>0?'$'+bancoFmt(l.haberUSD):''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot><tr className="bg-slate-50 font-black">
+                          <td colSpan={2} className="px-3 py-1.5 text-[9px] uppercase text-slate-500">Sumas Iguales</td>
+                          <td className="px-3 py-1.5 text-right font-mono">Bs.{bancoFmt(lineasMostrar.reduce((a,l)=>a+Number(l.debeBs||0),0))}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">Bs.{bancoFmt(lineasMostrar.reduce((a,l)=>a+Number(l.haberBs||0),0))}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">${bancoFmt(lineasMostrar.reduce((a,l)=>a+Number(l.debeUSD||0),0))}</td>
+                          <td className="px-3 py-1.5 text-right font-mono">${bancoFmt(lineasMostrar.reduce((a,l)=>a+Number(l.haberUSD||0),0))}</td>
+                        </tr></tfoot>
+                      </table>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </BModal>
