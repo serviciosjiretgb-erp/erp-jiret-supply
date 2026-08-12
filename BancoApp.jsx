@@ -7717,6 +7717,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const u = onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')), s=>setValesRes(s.docs.map(d=>d.data())));
       return ()=>u();
     },[]);
+    // ── Histórico del Resumen: guardar el consolidado de HOY, y poder buscarlo por rango de
+    // fecha más adelante — igual que un "cierre" del día que se puede volver a consultar. ──
+    const [historialResumen, setHistorialResumen] = useState(null); // null=cerrado, []=vacío, [...]=resultados
+    const [histDesde, setHistDesde] = useState(getTodayDate());
+    const [histHasta, setHistHasta] = useState(getTodayDate());
+    const [histVer, setHistVer] = useState(null); // snapshot puntual que se está viendo
 
     const tasa = Number(tasaManual)||0;
     const tBin = Number(tasaBinance)||0;
@@ -7817,6 +7823,45 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const imprimirPDF = () => bancoPrintWindow(buildHTML());
     const imprimirXLS = () => { const h=buildHTML(); const b=new Blob([h],{type:'application/vnd.ms-excel;charset=utf-8'}); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=`resumen_banco_caja_${getTodayDate()}.xls`; a.click(); URL.revokeObjectURL(u); };
 
+    // Guarda el consolidado de HOY tal cual se ve ahora mismo — un doc por fecha, se sobreescribe
+    // si ya se guardó hoy (para no llenar el historial de duplicados si se guarda varias veces).
+    const guardarHistoricoResumen = async () => {
+      try{
+        const snapshot = {
+          fecha: getTodayDate(), tasa, tasaBinance:tBin, tasaIntervencion:tInt,
+          bancosPorGrupo: bancosPorGrupo.map(g=>({label:g.label, subBs:g.subBs, subUsd:g.subUsd, cuentas:g.lista.map(c=>({banco:c.banco,numeroCuenta:c.numeroCuenta,moneda:c.moneda,saldo:c.saldo,sBs:c.sBs,sUsd:c.sUsd}))})),
+          cajasLista: cajasLista.map(c=>({nombre:c.nombre,moneda:c.moneda,saldoTotalNativo:c.saldoTotalNativo,sBs:c.sBs,sUsd:c.sUsd})),
+          totalBancosBs, totalBancosUsd, totalCajasBs, totalCajasUsd, granTotalBs, granTotalUsd,
+          valesPendientes: valesPendientes.map(v=>({fecha:v.fecha,titular:v.titular,concepto:v.concepto,moneda:v.moneda,monto:v.monto})),
+          totalValesUsd, guardadoEn: Date.now(),
+        };
+        await setDoc(getDocRef('resumen_banco_caja_historico', getTodayDate()), snapshot);
+        alert(`✅ Guardado el cierre de hoy (${bancoDd(getTodayDate())}) — total consolidado Bs.${bancoFmt(granTotalBs)} / $${bancoFmt(granTotalUsd)}.`);
+      }catch(e){ alert('❌ No se pudo guardar: '+(e?.message||e)); }
+    };
+    const buscarHistoricoResumen = async () => {
+      try{
+        const q = query(getColRef('resumen_banco_caja_historico'), orderBy('fecha','desc'));
+        const s = await getDocs(q);
+        const todos = s.docs.map(d=>d.data());
+        setHistorialResumen(todos.filter(h=>(!histDesde||h.fecha>=histDesde) && (!histHasta||h.fecha<=histHasta)));
+      }catch(e){ alert('❌ No se pudo buscar el historial: '+(e?.message||e)); }
+    };
+    const imprimirHistoricoSnapshot = (h) => {
+      const filasBancos = (h.bancosPorGrupo||[]).map(g=>`
+        <tr><td colspan="6" style="background:#f1f5f9;font-weight:900;font-size:9px;text-transform:uppercase;padding:6px 10px">${g.label}</td></tr>
+        ${(g.cuentas||[]).map(c=>`<tr><td>${c.banco||'—'}</td><td>${c.numeroCuenta||'—'}</td><td style="text-align:center">${c.moneda}</td><td style="text-align:right">${c.moneda==='BS'?'Bs.':'$'}${bancoFmt(c.saldo)}</td><td style="text-align:right;color:#16a34a">Bs.${bancoFmt(c.sBs)}</td><td style="text-align:right;color:#16a34a;font-weight:900">$${bancoFmt(c.sUsd)}</td></tr>`).join('')}
+        <tr style="background:#f8fafc"><td colspan="4" style="font-weight:900;text-align:right;padding:6px 10px">Subtotal ${g.label}</td><td style="text-align:right;font-weight:900">Bs.${bancoFmt(g.subBs)}</td><td style="text-align:right;font-weight:900">$${bancoFmt(g.subUsd)}</td></tr>
+      `).join('');
+      const filasCajas = (h.cajasLista||[]).map(c=>`<tr><td>${c.nombre||'—'}</td><td style="text-align:center">${c.moneda}</td><td style="text-align:right">${c.moneda==='BS'?'Bs.':'$'}${bancoFmt(c.saldoTotalNativo)}</td><td style="text-align:right;color:#16a34a">Bs.${bancoFmt(c.sBs)}</td><td style="text-align:right;color:#16a34a;font-weight:900">$${bancoFmt(c.sUsd)}</td></tr>`).join('');
+      const html = bancoLetterheadOpen('Resumen de Operaciones Banco-Caja (Histórico)',`Cierre del ${bancoDd(h.fecha)} · Tasa BCV: ${bancoFmt(h.tasa)} Bs/$ · Guardado ${new Date(h.guardadoEn).toLocaleString('es-VE')}`)+
+        `<h3>Bancos</h3><table><thead><tr><th>Banco</th><th>N° Cuenta</th><th>Moneda</th><th>Saldo</th><th>Bs.</th><th>$</th></tr></thead><tbody>${filasBancos}</tbody></table>`+
+        `<h3>Cajas</h3><table><thead><tr><th>Caja</th><th>Moneda</th><th>Saldo</th><th>Bs.</th><th>$</th></tr></thead><tbody>${filasCajas}</tbody></table>`+
+        `<h3>Gran Total</h3><table><tbody><tr><td style="font-weight:900">TOTAL CONSOLIDADO</td><td style="text-align:right;font-weight:900">Bs.${bancoFmt(h.granTotalBs)}</td><td style="text-align:right;font-weight:900">$${bancoFmt(h.granTotalUsd)}</td></tr></tbody></table>`+
+        bancoLetterheadClose();
+      const win = window.open('', '_blank'); win.document.write(html); win.document.close(); setTimeout(()=>win.print(),400);
+    };
+
     return (
       <div className="space-y-5">
         <div className="flex flex-wrap items-end justify-between gap-4 mb-2">
@@ -7827,7 +7872,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <div className="flex items-end gap-3 flex-wrap">
             <div>
               <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV / Día (Bs/$)</label>
-              <input type="number" step="0.01" value={tasaManual} onChange={e=>setTasaManual(e.target.value)} placeholder="Ej. 40.00" className={`${inp} w-32 font-black text-center`}/>
+              <div className="flex gap-1.5">
+                <input type="number" step="0.01" value={tasaManual} onChange={e=>setTasaManual(e.target.value)} placeholder="Ej. 40.00" className={`${inp} w-28 font-black text-center`}/>
+                <button onClick={async()=>{ const t=await fetchTasaBCV(getTodayDate()); if(t) setTasaManual(String(t)); }} disabled={fetchingBCV} title="Consultar tasa BCV de hoy" className="shrink-0 w-9 flex items-center justify-center border-2 border-slate-200 rounded-xl bg-white hover:bg-blue-50 disabled:cursor-not-allowed">
+                  <RefreshCw size={13} className={`text-blue-500 ${fetchingBCV?'animate-spin':''}`}/>
+                </button>
+              </div>
             </div>
             <div>
               <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa Binance (Bs/$)</label>
@@ -7842,8 +7892,43 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </button>
             <button onClick={imprimirPDF} className="flex items-center gap-1.5 px-3 py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700"><Download size={12}/> PDF</button>
             <button onClick={imprimirXLS} className="flex items-center gap-1.5 px-3 py-2.5 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
+            <button onClick={guardarHistoricoResumen} title="Guarda el consolidado de hoy para poder buscarlo después" className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase hover:bg-slate-900"><Save size={12}/> Guardar Histórico</button>
+            <button onClick={()=>{setHistorialResumen(null); buscarHistoricoResumen();}} className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase hover:bg-slate-200"><Search size={12}/> Ver Histórico</button>
           </div>
         </div>
+
+        {historialResumen!==null && (
+          <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden">
+            <div className="px-4 py-3 bg-slate-900 flex flex-wrap items-end gap-3">
+              <p className="text-white font-black text-[10px] uppercase tracking-widest mr-auto">📅 Histórico de Cierres</p>
+              <div><label className="text-[8px] font-black text-slate-400 uppercase block mb-0.5">Desde</label><input type="date" value={histDesde} onChange={e=>setHistDesde(e.target.value)} className="rounded-lg px-2 py-1 text-[10px] font-bold"/></div>
+              <div><label className="text-[8px] font-black text-slate-400 uppercase block mb-0.5">Hasta</label><input type="date" value={histHasta} onChange={e=>setHistHasta(e.target.value)} className="rounded-lg px-2 py-1 text-[10px] font-bold"/></div>
+              <button onClick={buscarHistoricoResumen} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-[9px] font-black uppercase">Buscar</button>
+              <button onClick={()=>setHistorialResumen(null)} className="px-3 py-1.5 text-slate-400 hover:text-white text-[9px] font-black uppercase">✕ Cerrar</button>
+            </div>
+            {historialResumen.length===0 ? (
+              <div className="text-center py-8 text-slate-400 font-bold text-sm">Sin cierres guardados en ese rango.</div>
+            ) : (
+              <table className="w-full text-xs">
+                <thead><tr className="bg-slate-50 text-[9px] font-black uppercase text-slate-500">
+                  <th className="px-3 py-2 text-left">Fecha</th><th className="px-3 py-2 text-right">Tasa BCV</th><th className="px-3 py-2 text-right">Total Bs.</th><th className="px-3 py-2 text-right">Total $</th><th className="px-3 py-2 text-center">Guardado</th><th className="px-3 py-2"></th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {historialResumen.map((h,i)=>(
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-black">{bancoDd(h.fecha)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{bancoFmt(h.tasa)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-blue-700">Bs.{bancoFmt(h.granTotalBs)}</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">${bancoFmt(h.granTotalUsd)}</td>
+                      <td className="px-3 py-2 text-center text-slate-400 text-[10px]">{new Date(h.guardadoEn).toLocaleTimeString('es-VE')}</td>
+                      <td className="px-3 py-2 text-right"><button onClick={()=>imprimirHistoricoSnapshot(h)} className="text-[9px] font-black uppercase text-red-500 hover:text-red-700">🖨 PDF</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
 
         {(tasa>0||tBin>0) && (
           <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden max-w-xs">
