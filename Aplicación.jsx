@@ -11726,6 +11726,14 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [retIvaProvC, setRetIvaProvC] = useState([]);
   const [retIslrProvC, setRetIslrProvC] = useState([]);
   const [activosFijosC, setActivosFijosC] = useState([]);
+  // Config de cuentas de Depreciación por Centro de Costo + Rubro (la misma que se arma en
+  // Contabilidad → Activo Fijo → ⚙️ Configuración) — este componente es independiente de App(),
+  // así que necesita su propia suscripción para poder usar la misma configuración.
+  const [activoFijoCfgC, setActivoFijoCfgC] = useState({});
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','activoFijoContabilidadCfg'), d=>{ if(d.exists()) setActivoFijoCfgC(d.data()); });
+    return ()=>u();
+  },[]);
   const [notasVentaC, setNotasVentaC] = useState([]);
   // ── Ajustes: asientos manuales multimoneda, no derivados de ningún otro módulo ──
   const [ajustesC, setAjustesC] = useState([]);
@@ -12290,10 +12298,22 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const meses=[]; let cur=desdeYM;
     while(ymDiff(cur,hastaYM)>=0 && meses.length<240){ meses.push(cur); cur=ymAdd(cur,1); }
     const tasa=Number(tasaDeprec)||0;
-    const ctaGasto=cuentaPlanC(/(gasto|depreciaci).*depreciaci|depreciaci.*gasto/i,'5.1.02.05.001','Gasto de Depreciación');
-    const ctaAcum=cuentaPlanC(/depreciaci\w*\s+acumulad/i,'1.2.02.01.001','Depreciación Acumulada');
+    // Cuenta de Gasto/Costo y de Depreciación Acumulada por CENTRO DE COSTO + RUBRO (configuradas
+    // en Activo Fijo → ⚙️ Configuración) — antes esta pantalla usaba una sola cuenta genérica para
+    // TODAS las categorías, ignorando que un mismo rubro (ej. Maquinaria y Equipos) puede ir a una
+    // cuenta de Costo (5.x) en un Centro de Costo y a una de Gasto (6.x) en otro.
+    const resolverCuentasDeprec = (cc, rubro) => {
+      const ccCfg=(activoFijoCfgC?.centrosCosto||[]).find(c=>c.codigo===cc||c.nombre===cc);
+      const rubroCfg=ccCfg?.rubros?.[rubro];
+      const ctaGastoCfg=rubroCfg?.costoGastoId?(planCuentasC||[]).find(p=>p.id===rubroCfg.costoGastoId):null;
+      const ctaAcumCfg=rubroCfg?.deprAcumId?(planCuentasC||[]).find(p=>p.id===rubroCfg.deprAcumId):null;
+      return {
+        gasto: {codigo:ctaGastoCfg?.codigo||'', nombre:ctaGastoCfg?.nombre||rubroCfg?.costoGastoNombre||'⚠️ Sin cuenta configurada'},
+        acum:  {codigo:ctaAcumCfg?.codigo||'',  nombre:ctaAcumCfg?.nombre||rubroCfg?.deprAcumNombre||'⚠️ Sin cuenta configurada'},
+      };
+    };
     return meses.map(ym=>{
-      const porCat=new Map();
+      const porCCRubro=new Map(); // clave: centroCosto|rubro — cada combinación puede tener cuentas distintas
       (activosFijosC||[]).forEach(a=>{
         const adq=(a.fechaAdquisicion||'').substring(0,7); if(!adq) return;
         const vidaMeses=Number(a.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
@@ -12301,21 +12321,25 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         if(transcurridos<0||transcurridos>=vidaMeses) return;
         const depMensual=(Number(a.valorCosto||0)-Number(a.valorResidual||0))/vidaMeses;
         if(!(depMensual>0)) return;
-        const cat=a.categoria||'Otros';
-        const acc=porCat.get(cat)||{monto:0,n:0};
-        acc.monto+=depMensual; acc.n+=1; porCat.set(cat,acc);
+        const rubro=a.rubro||a.categoria||'Otros';
+        const cc=a.centroCosto||'';
+        const key=`${cc}|${rubro}`;
+        const acc=porCCRubro.get(key)||{monto:0,n:0,cc,rubro};
+        acc.monto+=depMensual; acc.n+=1; porCCRubro.set(key,acc);
       });
-      if(porCat.size===0) return null;
-      const cats=[...porCat.entries()].sort((x,y)=>x[0].localeCompare(y[0]));
+      if(porCCRubro.size===0) return null;
+      const grupos=[...porCCRubro.values()].sort((x,y)=>(x.cc+x.rubro).localeCompare(y.cc+y.rubro));
       const lineas=[]; let totalUSD=0, nAct=0;
-      cats.forEach(([cat,v])=>{
-        const usd=Number(v.monto.toFixed(2)); const bs=tasa?usd*tasa:0;
-        totalUSD+=usd; nAct+=v.n;
-        lineas.push({codigo:ctaGasto.codigo, cuenta:`${ctaGasto.nombre} — ${cat}`, tipo:'D', dBs:bs, hBs:0, dUSD:usd, hUSD:0});
+      grupos.forEach(({monto,n,cc,rubro})=>{
+        const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
+        totalUSD+=usd; nAct+=n;
+        const {gasto}=resolverCuentasDeprec(cc,rubro);
+        lineas.push({codigo:gasto.codigo, cuenta:`${gasto.nombre} — ${rubro}${cc?' ('+cc+')':''}`, tipo:'D', dBs:bs, hBs:0, dUSD:usd, hUSD:0});
       });
-      cats.forEach(([cat,v])=>{
-        const usd=Number(v.monto.toFixed(2)); const bs=tasa?usd*tasa:0;
-        lineas.push({codigo:ctaAcum.codigo, cuenta:`${ctaAcum.nombre} — ${cat}`, tipo:'H', dBs:0, hBs:bs, dUSD:0, hUSD:usd});
+      grupos.forEach(({monto,cc,rubro})=>{
+        const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
+        const {acum}=resolverCuentasDeprec(cc,rubro);
+        lineas.push({codigo:acum.codigo, cuenta:`${acum.nombre} — ${rubro}${cc?' ('+cc+')':''}`, tipo:'H', dBs:0, hBs:bs, dUSD:0, hUSD:usd});
       });
       const [yy,mm]=ym.split('-');
       const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
@@ -15111,6 +15135,12 @@ function App() {
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
      {movs:movCajaApp, cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
+        // Si este movimiento YA está vinculado a un registro de "Cuentas por Pagar Relacionadas"
+        // (sección 6, más abajo), se omite aquí — si no, se cuenta dos veces: una vez como
+        // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
+        // con su propia cuenta puente hacia el mismo banco. Relacionadas ya genera el asiento
+        // completo y balanceado para este movimiento, incluyendo el lado del banco/caja.
+        if((pagosRelApp||[]).some(p=>p.movimientoId===m.id)) return;
         const cta=(cuentas||[]).find(c=>c.id===m[idField]);
         const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
         if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
@@ -15299,11 +15329,11 @@ function App() {
           const depMensualUSD=(Number(act.valorCosto||0)-Number(act.valorResidual||0))/vidaMeses;
           if(!(depMensualUSD>0)) return;
           const tasaAct=Number(act.tasaCambio||0)||Number(settings?.tasaBCV||0);
-          const ultimoMesVida=ymAdd(adq,vidaMeses-1);
-          const ultimoMes=ymDiff(ultimoMesVida,hoyYM)<0?ultimoMesVida:hoyYM; // no depreciar más allá de hoy
+          const ultimoMesVida=ymAdd(adq,vidaMeses); // adquisición + vida útil completa (la depreciación empieza el mes siguiente, así que se necesitan exactamente vidaMeses entradas)
+          const ultimoMes=ymDiff(ultimoMesVida,hoyYM)<0?hoyYM:ultimoMesVida; // no depreciar más allá de hoy
           let cur=ymAdd(adq,1); // empieza el mes SIGUIENTE a la adquisición
           let n=0;
-          while(ymDiff(cur,ultimoMes)<=0 && n<600){
+          while(ymDiff(cur,ultimoMes)>=0 && n<600){
             const [yy,mm]=cur.split('-');
             const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
             const depBs=tasaAct?depMensualUSD*tasaAct:0;
