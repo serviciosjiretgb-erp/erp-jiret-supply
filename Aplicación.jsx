@@ -15320,6 +15320,74 @@ function App() {
         }catch(e){}
       });
     })();
+    // 12) Impuestos por Enterar (Actividad Económica + Protección de Pensiones + Anticipo ISLR)
+    // — un asiento por cada mes que ya se llenó en Comprobantes Contables → Impuestos (esa
+    // pantalla guarda la data de cada mes por separado; solo se contabilizan los meses que ya
+    // tienen algo guardado ahí). Misma fórmula exacta que usa esa pantalla.
+    (() => {
+      const mesesConDatos = new Set([...Object.keys(aeManualPorMesApp||{}), ...Object.keys(ppDataPorMesApp||{})]);
+      mesesConDatos.forEach(mesKey=>{
+        try{
+          const [anio,mes]=mesKey.split('-'); if(!anio||!mes) return;
+          const lastDay=new Date(parseInt(anio,10),parseInt(mes,10),0).getDate();
+          const rango=(q)=>({desde: q===2?`${anio}-${mes}-16`:`${anio}-${mes}-01`, hasta: q===1?`${anio}-${mes}-15`:`${anio}-${mes}-${String(lastDay).padStart(2,'0')}`});
+          const ventasBrutasQ=(q)=>{
+            const {desde,hasta}=rango(q);
+            const facts=(invoices||[]).filter(inv=>{
+              if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
+              if(inv.esAnulacionFiscal) return false;
+              const f=inv.fechaFactura||inv.fecha||'';
+              return f>=desde&&f<=hasta;
+            });
+            const ncnd=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&!n.esAnulacionFiscal&&n.fecha>=desde&&n.fecha<=hasta);
+            let tot=0;
+            facts.forEach(inv=>{ const tasa=Number(inv.tasa||0)||Number(settings?.tasaBCV||0)||1; const base=Number(inv.montoBase||0); tot+=Number(inv.baseGravableBs||0)||base*tasa; });
+            ncnd.forEach(n=>{ tot+=Number(n.monto||0)*(n.tipo==='NC'?-1:1); });
+            return tot;
+          };
+          const totalIngresos=ventasBrutasQ(1)+ventasBrutasQ(2);
+          const fechaMes=`${mesKey}-${String(lastDay).padStart(2,'0')}`;
+          const aeManual=(aeManualPorMesApp||{})[mesKey]||{};
+          const ppData=(ppDataPorMesApp||{})[mesKey]||{};
+          const partesCta=(n)=>n?n.split('—').map(s=>s.trim()):null;
+
+          const tasaUCD=Math.max(Number(aeManual.tasaBcvEuro||0),Number(aeManual.tasaBcvUsd||0))||1;
+          const mtBs=Number(aeCfgApp.mtUCD||0)*tasaUCD;
+          const impuestoAE=Math.max(totalIngresos*(Number(aeCfgApp.alicuotaAE||0)/100), mtBs);
+          const ctaAEg=partesCta(aeCfgApp.cuentaGastoNombre), ctaAEp=partesCta(aeCfgApp.cuentaPasivoNombre);
+          if(impuestoAE>0.005 && ctaAEg && ctaAEp){
+            out.push({fecha:fechaMes, comprobante:`AE-${mesKey}`, modulo:'Impuestos', concepto:`Impuesto Municipal (Actividad Económica) — ${mesKey}`,
+              lineas:[
+                {codigo:ctaAEg[0], cuenta:ctaAEg[1], debeBs:impuestoAE, haberBs:0, debeUSD:tasaUCD?impuestoAE/tasaUCD:0, haberUSD:0},
+                {codigo:ctaAEp[0], cuenta:ctaAEp[1], debeBs:0, haberBs:impuestoAE, debeUSD:0, haberUSD:tasaUCD?impuestoAE/tasaUCD:0},
+              ]});
+          }
+
+          const salarioMinTotal=Number(ppData.cantidadEmpleados||0)*Number(ppData.salarioMinimoOficial||0);
+          const montoPensiones=Number(ppData.minimoTributableUSD||0)*Number(ppData.tasaBcvCierre||0)*Number(ppData.cantidadEmpleados||0);
+          const impuestoPP=(montoPensiones+salarioMinTotal)*(Number(ppData.alicuotaTributable||0)/100);
+          const tasaPP=Number(ppData.tasaBcvCierre||0)||1;
+          const ctaPPg=partesCta(ppCuentasCfgApp.cuentaGastoNombre), ctaPPp=partesCta(ppCuentasCfgApp.cuentaPasivoNombre);
+          if(impuestoPP>0.005 && ctaPPg && ctaPPp){
+            out.push({fecha:fechaMes, comprobante:`PP-${mesKey}`, modulo:'Impuestos', concepto:`Protección de Pensiones — ${mesKey}`,
+              lineas:[
+                {codigo:ctaPPg[0], cuenta:ctaPPg[1], debeBs:impuestoPP, haberBs:0, debeUSD:tasaPP?impuestoPP/tasaPP:0, haberUSD:0},
+                {codigo:ctaPPp[0], cuenta:ctaPPp[1], debeBs:0, haberBs:impuestoPP, debeUSD:0, haberUSD:tasaPP?impuestoPP/tasaPP:0},
+              ]});
+          }
+
+          const anticipoISLR=parseFloat((totalIngresos*0.01).toFixed(2));
+          const ctaISLRa=partesCta(anticipoIslrCfgApp.cuentaActivoNombre), ctaISLRp=partesCta(anticipoIslrCfgApp.cuentaPasivoNombre);
+          if(anticipoISLR>0.005 && ctaISLRa && ctaISLRp){
+            out.push({fecha:fechaMes, comprobante:`ANT-ISLR-${mesKey}`, modulo:'Impuestos', concepto:`Anticipo ISLR (1%) — ${mesKey}`,
+              lineas:[
+                {codigo:ctaISLRa[0], cuenta:ctaISLRa[1], debeBs:anticipoISLR, haberBs:0, debeUSD:tasaUCD?anticipoISLR/tasaUCD:0, haberUSD:0},
+                {codigo:ctaISLRp[0], cuenta:ctaISLRp[1], debeBs:0, haberBs:anticipoISLR, debeUSD:0, haberUSD:tasaUCD?anticipoISLR/tasaUCD:0},
+              ]});
+          }
+        }catch(e){}
+      });
+    })();
     // Fecha de Inicio de Contabilidad Real (opcional, ver settings.fechaInicioContabilidad):
     // descarta todo lo que venga de un módulo OPERATIVO (todo menos 'Ajustes') fechado ANTES
     // de esa fecha — se asume que ya quedó representado por el comprobante de Ajuste de saldos
@@ -15331,6 +15399,32 @@ function App() {
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
+  // Impuestos por Enterar (Actividad Económica, Protección de Pensiones, Anticipo ISLR) — para
+  // que getAsientosReales() los pueda contabilizar igual que ya se ven en Comprobantes
+  // Contables → Impuestos. Las cuentas son config global; los datos de cada mes (tasas BCV,
+  // cantidad de empleados, etc.) se guardan por separado, uno por mesKey, así que se traen
+  // TODOS los que existan (uno por cada mes que ya se haya llenado en esa pantalla).
+  const [aeCfgApp, setAeCfgApp] = useState({});
+  const [ppCuentasCfgApp, setPpCuentasCfgApp] = useState({});
+  const [anticipoIslrCfgApp, setAnticipoIslrCfgApp] = useState({});
+  const [aeManualPorMesApp, setAeManualPorMesApp] = useState({});
+  const [ppDataPorMesApp, setPpDataPorMesApp] = useState({});
+  useEffect(()=>{
+    const unsubs = [
+      onSnapshot(getDocRef('settings','actividadEconomica'), d=>{ if(d.exists()) setAeCfgApp(d.data()); }),
+      onSnapshot(getDocRef('settings','protPensionesCuentas'), d=>{ if(d.exists()) setPpCuentasCfgApp(d.data()); }),
+      onSnapshot(getDocRef('settings','anticipoIslrCuentas'), d=>{ if(d.exists()) setAnticipoIslrCfgApp(d.data()); }),
+      onSnapshot(getColRef('settings'), s=>{
+        const ae={}, pp={};
+        s.docs.forEach(d=>{
+          if(d.id.startsWith('act-economica-')) ae[d.id.replace('act-economica-','')]=d.data();
+          else if(d.id.startsWith('prot-pensiones-')) pp[d.id.replace('prot-pensiones-','')]=d.data();
+        });
+        setAeManualPorMesApp(ae); setPpDataPorMesApp(pp);
+      }),
+    ];
+    return ()=>unsubs.forEach(u=>u());
+  },[]);
   // Fecha de Inicio de Contabilidad Real (settings.fechaInicioContabilidad): para cuando se
   // empezó a usar Contabilidad después de que Procura/Ventas/Banco/etc. ya venían operando —
   // deja que un comprobante de Ajuste (ej. "Saldos Junio") sea el único que represente todo lo
