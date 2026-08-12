@@ -2361,6 +2361,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const [provs,      setProvs]    = useState([]);
   const [contCuentas,setContC]    = useState([]);
   const [asientosBanco, setAsientosBanco] = useState([]);
+  // Panel "Corregir Traslados": null = no revisado, [] = revisado sin problemas, [...] = lista
+  // de movimientos destino de traslado cuya montoNativo/monto quedó en la escala equivocada
+  // (bug de traslados entre cuentas de monedas distintas, ya corregido para los NUEVOS traslados
+  // — esto es para reparar los que ya quedaron mal guardados de antes).
+  const [problemasTraslado, setProblemasTraslado] = useState(null);
   // systemUsers viene de Aplicación.jsx (que sí tiene acceso a la BD correcta)
   // Se mantiene el estado interno para el onSnapshot de respaldo
   const [systemUsersLocal, setSystemUsersLocal] = useState([]);
@@ -3232,9 +3237,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             alert('Error: El banco origen o destino no tiene cuenta contable asignada. Configúrela en Cuentas Bancarias.');
             setBusy(false); return;
           }
+          // La 'comisión por rebancarización' (diferencia entre tasa origen y tasa destino) solo
+          // tiene sentido cuando origen y destino son la MISMA moneda (ej. Bs→Bs con distinto
+          // spread bancario). Cuando son monedas DISTINTAS (ej. Bs→USD), bsOrigen y usdOrigen ya
+          // son la misma operación expresada en las dos monedas — no hay una "tasa destino"
+          // separada que comparar. Aplicarla ahí restaba casi todo el monto como si fuera
+          // comisión (bug real: quedaba mostrando una fracción del monto real, ej. $6,90 en vez
+          // de $4.975,00). Por eso solo se calcula si ambas cuentas comparten moneda.
+          const mismaMoneda = cuenta.moneda === cuentaDest.moneda;
           const tasaDestinoF=Number(form.tasaDestino)||tasa;
-          comisionBs=Math.abs(bsOrigen-(usdOrigen*tasaDestinoF));
-          comisionUSD=tasa>0?comisionBs/tasa:0;
+          if(mismaMoneda){
+            comisionBs=Math.abs(bsOrigen-(usdOrigen*tasaDestinoF));
+            comisionUSD=tasa>0?comisionBs/tasa:0;
+          }
           if(Math.abs(comisionUSD)>0.005&&!form.comisionCtaId){
             alert('Seleccione la cuenta contable de la rebancarización (la tasa destino es distinta de la tasa origen, así que hay una diferencia que registrar).');
             setBusy(false); return;
@@ -3343,12 +3358,18 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             {codigo:codCtaDestPropia,cuenta:nomCtaDestPropia,tipoLinea:'D',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:netoBs,haberBs:0,debeUSD:netoUSD,haberUSD:0},
             {codigo:codTrasladosDest,cuenta:nomTrasladosDest,tipoLinea:'H',nroDoc:form.referencia||'',concepto:conceptoDest,tasa,debeBs:0,haberBs:netoBs,debeUSD:0,haberUSD:netoUSD},
           ];
+          // El monto "nativo" debe expresarse en la moneda PROPIA del destino, no la del origen —
+          // netoNativo está en la moneda de la cuenta ORIGEN (mNat), que es distinta cuando el
+          // destino tiene otra moneda (ej. origen Bs → destino USD, como Bancaribe → Amerant).
+          // Antes se sumaba netoNativo (escala Bs) directo al saldo del destino en USD, inflando
+          // su saldo por el factor de la tasa. Con esto, el destino siempre usa SU propia moneda.
+          const netoNativoDest = cuentaDest.moneda==='BS' ? netoBs : netoUSD;
           if(destinoEsCaja){
-            batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativo});
-            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
+            batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativoDest});
+            batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativoDest,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           } else {
-            batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativo});
-            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Transferencia',concepto:conceptoDest,referencia:form.referencia,tasa,montoNativo:netoNativo,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativo,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
+            batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativoDest});
+            batch.set(getDocRef('banco_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cuentaId:cuentaDest.id,cuentaNombre:cuentaDest.banco,tipoBanco:cuentaDest.tipoBanco,moneda:cuentaDest.moneda,origenIngreso:'Transferencia',concepto:conceptoDest,referencia:form.referencia,tasa,montoNativo:netoNativoDest,montoBs:netoBs,montoUSD:netoUSD,saldoAnterior:Number(cuentaDest.saldo),saldoResultante:Number(cuentaDest.saldo)+netoNativoDest,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           }
         }
         if(factura&&form.cerrarCxC){
@@ -3479,17 +3500,21 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             const cuentaDestAnterior = cuentas.find(c=>c.id===destinoOriginal?.cuentaId);
             if (cuentaDestAnterior) batch.update(getDocRef('banco_cuentas',cuentaDestAnterior.id),{saldo:Number(cuentaDestAnterior.saldo)-Number(destinoOriginal?.montoNativo||0)});
             if (!esCajaDestino && bancoDestObj) {
+              // Igual que en save(): el monto nativo del DESTINO debe ir en SU propia moneda, no
+              // en la del origen (mNat) — si no, un traslado Bs→USD infla el saldo del destino.
+              const mNatDest = bancoDestObj.moneda==='BS' ? montoBs : montoUSD;
               const saldoDestBase = cuentaDestAnterior?.id===bancoDestObj.id ? Number(cuentaDestAnterior.saldo)-Number(destinoOriginal?.montoNativo||0) : Number(bancoDestObj.saldo||0);
-              batch.update(getDocRef('banco_cuentas',bancoDestObj.id),{saldo:saldoDestBase+mNat});
+              batch.update(getDocRef('banco_cuentas',bancoDestObj.id),{saldo:saldoDestBase+mNatDest});
               batch.update(getDocRef('banco_movimientos',form._destinoMovId),{
                 fecha:form.fecha, cuentaId:bancoDestObj.id, cuentaNombre:bancoDestObj.banco, tipoBanco:bancoDestObj.tipoBanco, moneda:bancoDestObj.moneda,
-                concepto:form.concepto, referencia:form.referencia, tasa, montoNativo:mNat, montoBs, montoUSD,
-                saldoResultante:saldoDestBase+mNat,
+                concepto:form.concepto, referencia:form.referencia, tasa, montoNativo:mNatDest, montoBs, montoUSD,
+                saldoResultante:saldoDestBase+mNatDest,
               });
             } else if (esCajaDestino && cajaDestObj) {
+              const mNatDest = cajaDestObj.moneda==='BS' ? montoBs : montoUSD;
               batch.update(getDocRef('caja_movimientos',form._destinoMovId),{
                 fecha:form.fecha, cajaId:cajaDestObj.id, cajaNombre:cajaDestObj.nombre, moneda:cajaDestObj.moneda,
-                concepto:form.concepto, referencia:form.referencia, tasa, monto:mNat, montoBs, montoUSD,
+                concepto:form.concepto, referencia:form.referencia, tasa, monto:mNatDest, montoBs, montoUSD,
               });
             }
             if (destinoOriginal?.asientoContableId) {
@@ -3513,6 +3538,97 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         alert('❌ No se pudo guardar: '+(e?.message||e));
         console.error('saveEdit error:', e);
       } finally { setBusy(false); }
+    };
+
+    // ── Corregir Traslados (reparación masiva) ─────────────────────────
+    // Encuentra movimientos "Ingreso" (lado que RECIBE un traslado) donde la cuenta destino
+    // tiene moneda distinta a la del origen, y su montoNativo/monto quedó en la escala
+    // equivocada (bug ya corregido en save()/saveEdit() para traslados NUEVOS — esto repara
+    // los que ya se guardaron mal antes de la corrección). No toca montoBs/montoUSD, que ya
+    // estaban bien — solo corrige montoNativo/monto del movimiento y el saldo de la cuenta.
+    const detectarTrasladosCrossCurrency = () => {
+      const todosLosMovs = [...(movBanco||[]), ...(movCaja||[])];
+      const problemas = [];
+      todosLosMovs.forEach(m => {
+        if(!(m.tipo==='Ingreso' && /traslado recibido/i.test(m.concepto||''))) return;
+        const esCaja = !!m.cajaId;
+        const cuentaDest = esCaja ? cajas.find(c=>c.id===m.cajaId) : cuentas.find(c=>c.id===m.cuentaId);
+        if(!cuentaDest) return;
+        const montoNativoActual = Number(m.monto ?? m.montoNativo ?? 0);
+        const montoNativoCorrecto = cuentaDest.moneda==='BS' ? Number(m.montoBs||0) : Number(m.montoUSD||0);
+        if(Math.abs(montoNativoActual - montoNativoCorrecto) <= 0.01) return;
+        // Encontrar el lado ORIGEN (mismo criterio de emparejamiento que en Ver Detalle)
+        const movOrigen = todosLosMovs.find(o=>o.id!==m.id && o.referencia && o.referencia===m.referencia && o.fecha===m.fecha && (o.tipo==='Traslado de Fondo'||o.tipo==='Transferencia'));
+        // Asientos vinculados de cada lado — si existen y tienen 2-3 líneas, se reconstruyen
+        // usando montoBs/montoUSD del MOVIMIENTO respectivo (ya confirmados correctos), en vez
+        // de los valores reducidos por la comisión de rebancarización aplicada indebidamente.
+        const asientoDest = asientosBanco.find(a=>a.id===m.asientoContableId);
+        const asientoOrig = movOrigen ? asientosBanco.find(a=>a.id===movOrigen.asientoContableId) : null;
+        const reconstruirLineas = (asiento, mov) => {
+          if(!asiento?.lineas || asiento.lineas.length<2) return null;
+          const b=Number(mov.montoBs||0), u=Number(mov.montoUSD||0);
+          // Se conservan código/cuenta/tipoLinea de las 2 primeras líneas (D y H) tal cual
+          // estaban — solo se corrigen los montos, y se descarta una 3ra línea de "Rebancarización"
+          // si existía (ya no aplica: no hay comisión real en un cruce de moneda).
+          return asiento.lineas.slice(0,2).map(l=>({
+            ...l,
+            debeBs: l.tipoLinea==='D'?b:0, haberBs: l.tipoLinea==='H'?b:0,
+            debeUSD: l.tipoLinea==='D'?u:0, haberUSD: l.tipoLinea==='H'?u:0,
+          }));
+        };
+        problemas.push({
+          mov:m, esCaja, cuenta:cuentaDest, montoNativoActual, montoNativoCorrecto, delta: montoNativoCorrecto - montoNativoActual,
+          asientoDestId: asientoDest?.id||null, lineasDestCorregidas: reconstruirLineas(asientoDest, m),
+          asientoOrigId: asientoOrig?.id||null, lineasOrigCorregidas: movOrigen ? reconstruirLineas(asientoOrig, movOrigen) : null,
+        });
+      });
+      return problemas;
+    };
+    const revisarTraslados = () => setProblemasTraslado(detectarTrasladosCrossCurrency());
+    const corregirTraslados = async () => {
+      if(!problemasTraslado || problemasTraslado.length===0) return;
+      setBusy(true);
+      try{
+        const batch = writeBatch(_bancoDB);
+        // Agrupar por cuenta: si una cuenta tiene más de un traslado con el bug, hay que sumar
+        // TODOS sus deltas antes de aplicar — si no, el batch solo dejaría el último.
+        const deltaPorCuenta = {};
+        problemasTraslado.forEach(p=>{
+          const key=(p.esCaja?'caja:':'banco:')+p.cuenta.id;
+          if(!deltaPorCuenta[key]) deltaPorCuenta[key]={esCaja:p.esCaja, cuenta:p.cuenta, delta:0};
+          deltaPorCuenta[key].delta += p.delta;
+        });
+        Object.values(deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
+          const nuevoSaldo = Number(cuenta.saldo||0) + delta;
+          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: nuevoSaldo});
+          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
+        });
+        let asientosCorregidos = 0;
+        problemasTraslado.forEach(p=>{
+          if(p.esCaja) batch.update(getDocRef('caja_movimientos', p.mov._docId||p.mov.id), {monto: p.montoNativoCorrecto});
+          else batch.update(getDocRef('banco_movimientos', p.mov._docId||p.mov.id), {montoNativo: p.montoNativoCorrecto});
+          if(p.asientoDestId && p.lineasDestCorregidas){
+            batch.update(getDocRef('cont_asientos', p.asientoDestId), {
+              lineas: p.lineasDestCorregidas,
+              totalDebeBs: p.lineasDestCorregidas.reduce((a,l)=>a+l.debeBs,0), totalHaberBs: p.lineasDestCorregidas.reduce((a,l)=>a+l.haberBs,0),
+              totalDebeUSD: p.lineasDestCorregidas.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD: p.lineasDestCorregidas.reduce((a,l)=>a+l.haberUSD,0),
+            });
+            asientosCorregidos++;
+          }
+          if(p.asientoOrigId && p.lineasOrigCorregidas){
+            batch.update(getDocRef('cont_asientos', p.asientoOrigId), {
+              lineas: p.lineasOrigCorregidas,
+              totalDebeBs: p.lineasOrigCorregidas.reduce((a,l)=>a+l.debeBs,0), totalHaberBs: p.lineasOrigCorregidas.reduce((a,l)=>a+l.haberBs,0),
+              totalDebeUSD: p.lineasOrigCorregidas.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD: p.lineasOrigCorregidas.reduce((a,l)=>a+l.haberUSD,0),
+            });
+            asientosCorregidos++;
+          }
+        });
+        await batch.commit();
+        alert(`✅ Se corrigió el monto de ${problemasTraslado.length} movimiento(s), ${asientosCorregidos} asiento(s) contable(s), y el saldo de ${Object.keys(deltaPorCuenta).length} cuenta(s).`);
+        setProblemasTraslado(null);
+      }catch(e){ alert('❌ No se pudo corregir: '+(e?.message||e)); }
+      finally{ setBusy(false); }
     };
 
     // ── Eliminar con clave de administrador ───────────────────────────
@@ -4094,8 +4210,45 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
           {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
+          <button onClick={revisarTraslados} title="Revisa traslados entre cuentas de distinta moneda y detecta si el monto quedó mal guardado" className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-600"><Settings size={12}/> Corregir Traslados</button>
           <BBg onClick={()=>{setForm(initF());setModal(true);}}><Plus size={13}/> Nuevo</BBg>
         </div>
+
+        {problemasTraslado!==null && (
+          <BModal open={true} onClose={()=>setProblemasTraslado(null)} title="🔧 Corregir Traslados entre Monedas Distintas" wide
+            footer={problemasTraslado.length>0
+              ? <><BBo onClick={()=>setProblemasTraslado(null)}>Cancelar</BBo><BBg onClick={corregirTraslados} disabled={busy}>{busy?'Corrigiendo...':`Corregir ${problemasTraslado.length} Movimiento(s)`}</BBg></>
+              : <BBo onClick={()=>setProblemasTraslado(null)}>Cerrar</BBo>}>
+            {problemasTraslado.length===0 ? (
+              <div className="text-center py-8 text-slate-400 font-bold text-sm">✓ No se encontraron traslados con el monto en la escala equivocada.</div>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-700 font-bold">
+                  Se encontraron {problemasTraslado.length} movimiento(s) recibido(s) por traslado, entre una cuenta y otra de moneda distinta, donde se aplicó una "comisión de rebancarización" que no correspondía (esa solo aplica cuando origen y destino comparten moneda). Esto afectó tanto el monto guardado como el asiento contable de ambos lados. Al corregir: se recalculan los asientos del origen y el destino (usando el monto ya correcto de cada movimiento), y se ajusta el saldo de la cuenta.
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-slate-50 text-[9px] font-black uppercase text-slate-500">
+                      <th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Cuenta Destino</th><th className="px-2 py-2 text-left">Referencia</th>
+                      <th className="px-2 py-2 text-right">Monto Actual (mal)</th><th className="px-2 py-2 text-right">Monto Correcto</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {problemasTraslado.map((p,i)=>(
+                        <tr key={i}>
+                          <td className="px-2 py-1.5">{bancoDd(p.mov.fecha)}</td>
+                          <td className="px-2 py-1.5 font-bold">{p.cuenta.moneda==='BS'?'Bs. ':'$'}{p.cuenta.banco||p.cuenta.nombre}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-400">{p.mov.referencia||'—'}</td>
+                          <td className="px-2 py-1.5 text-right font-mono text-red-500">{bancoFmt(p.montoNativoActual)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono text-emerald-600 font-black">{bancoFmt(p.montoNativoCorrecto)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </BModal>
+        )}
 
         {/* ── TABLA NACIONALES — Bs. ── */}
         {(()=>{const movRows=filtC?movFiltAll.filter(m=>m.cuentaId===filtC):movFiltBS; return(
@@ -5752,9 +5905,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             alert('Error: la caja o la cuenta destino no tiene cuenta contable asignada. Configúrela en Cuentas de Caja / Cuentas Bancarias.');
             setBusy(false); return;
           }
+          // Mismo criterio que en Banco: la comisión de rebancarización solo aplica si origen y
+          // destino comparten moneda — si son distintas (ej. Caja Bs → Banco USD), no hay una
+          // "tasa destino" separada que comparar, y calcularla igual restaba casi todo el monto.
+          const mismaMoneda = caja.moneda === cuentaDest.moneda;
           const tasaDestinoF=Number(form.tasaDestino)||tasa;
-          comisionBs=Math.abs(bsOrigen-(usdOrigen*tasaDestinoF));
-          comisionUSD=tasa>0?comisionBs/tasa:0;
+          if(mismaMoneda){
+            comisionBs=Math.abs(bsOrigen-(usdOrigen*tasaDestinoF));
+            comisionUSD=tasa>0?comisionBs/tasa:0;
+          }
           if(Math.abs(comisionUSD)>0.005&&!form.comisionCtaId){
             alert('Seleccione la cuenta contable de la rebancarización (la tasa destino es distinta a la de origen, así que hay una diferencia que registrar).');
             setBusy(false); return;
