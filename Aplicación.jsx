@@ -15273,6 +15273,53 @@ function App() {
           debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
         }))});
     });
+    // 11) Depreciación de Activos Fijos — mes a mes, por cada activo, desde el mes SIGUIENTE a
+    // su adquisición hasta que se cumple su vida útil (sin pasar de hoy). Usa la cuenta de
+    // Costo/Gasto y de Depreciación Acumulada configuradas por Centro de Costo + Rubro en
+    // Contabilidad → Activo Fijo → ⚙️ Configuración — un activo sin esa configuración simplemente
+    // no genera asiento (no hay a qué cuenta cargarlo). Antes esto se calculaba en vivo SOLO en
+    // la pestaña "Depreciaciones" de Comprobantes Contables, sin llegar nunca a Mayor Analítico,
+    // Estado de Resultados ni Balance General.
+    (() => {
+      const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
+      const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
+      const hoyYM = getTodayDate().substring(0,7);
+      (activosFijos||[]).forEach(act=>{
+        try{
+          const adq=(act.fechaAdquisicion||'').substring(0,7); if(!adq) return;
+          const vidaMeses=Number(act.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
+          const cc=(activoFijoCfgC?.centrosCosto||[]).find(c=>c.codigo===act.centroCosto||c.nombre===act.centroCosto);
+          const rubroCfg=cc?.rubros?.[act.rubro];
+          if(!rubroCfg?.deprAcumId||!rubroCfg?.costoGastoId) return; // sin cuentas configuradas para ese CC+Rubro
+          // deprAcumId/costoGastoId son el ID de documento de planDeCuentas (así se guardan desde
+          // el selector de ⚙️ Configuración), no el código — hay que resolverlos.
+          const ctaGasto=(planDeCuentas||[]).find(p=>p.id===rubroCfg.costoGastoId);
+          const ctaAcum=(planDeCuentas||[]).find(p=>p.id===rubroCfg.deprAcumId);
+          if(!ctaGasto?.codigo||!ctaAcum?.codigo) return; // la cuenta configurada ya no existe en el plan
+          const depMensualUSD=(Number(act.valorCosto||0)-Number(act.valorResidual||0))/vidaMeses;
+          if(!(depMensualUSD>0)) return;
+          const tasaAct=Number(act.tasaCambio||0)||Number(settings?.tasaBCV||0);
+          const ultimoMesVida=ymAdd(adq,vidaMeses-1);
+          const ultimoMes=ymDiff(ultimoMesVida,hoyYM)<0?ultimoMesVida:hoyYM; // no depreciar más allá de hoy
+          let cur=ymAdd(adq,1); // empieza el mes SIGUIENTE a la adquisición
+          let n=0;
+          while(ymDiff(cur,ultimoMes)<=0 && n<600){
+            const [yy,mm]=cur.split('-');
+            const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
+            const depBs=tasaAct?depMensualUSD*tasaAct:0;
+            out.push({
+              fecha:`${cur}-${String(ultimoDia).padStart(2,'0')}`, comprobante:`DEP-${cur}`, modulo:'Depreciación',
+              concepto:`Depreciación mensual — ${act.nombre||'Activo'} (${act.rubro||'—'})`,
+              lineas:[
+                {codigo:ctaGasto.codigo, cuenta:ctaGasto.nombre||rubroCfg.costoGastoNombre||'', debeBs:depBs, haberBs:0, debeUSD:depMensualUSD, haberUSD:0},
+                {codigo:ctaAcum.codigo, cuenta:ctaAcum.nombre||rubroCfg.deprAcumNombre||'', debeBs:0, haberBs:depBs, debeUSD:0, haberUSD:depMensualUSD},
+              ],
+            });
+            n++; cur=ymAdd(cur,1);
+          }
+        }catch(e){}
+      });
+    })();
     // Fecha de Inicio de Contabilidad Real (opcional, ver settings.fechaInicioContabilidad):
     // descarta todo lo que venga de un módulo OPERATIVO (todo menos 'Ajustes') fechado ANTES
     // de esa fecha — se asume que ya quedó representado por el comprobante de Ajuste de saldos
