@@ -2361,6 +2361,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const [provs,      setProvs]    = useState([]);
   const [contCuentas,setContC]    = useState([]);
   const [asientosBanco, setAsientosBanco] = useState([]);
+  // Panel "Corregir Traslados": null = no revisado, [] = revisado sin problemas, [...] = lista
+  const [problemasTraslado, setProblemasTraslado] = useState(null);
   // systemUsers viene de Aplicación.jsx (que sí tiene acceso a la BD correcta)
   // Se mantiene el estado interno para el onSnapshot de respaldo
   const [systemUsersLocal, setSystemUsersLocal] = useState([]);
@@ -3555,6 +3557,125 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       } finally { setBusy(false); }
     };
 
+    // ── Corregir Traslados (reparación masiva) ─────────────────────────
+    // Detecta traslados donde la "comisión de rebancarización" se comió una porción grande del
+    // monto (el bug real, ya tapado con el tope del 10% para traslados NUEVOS) — esto repara los
+    // que ya quedaron mal guardados de antes. Fuente de verdad: movimiento.montoBs/montoUSD de
+    // CADA lado (esos nunca se vieron afectados por la comisión — solo el monto nativo y las
+    // líneas del asiento sí). No depende de si origen y destino comparten moneda o no.
+    const detectarTrasladosRotos = () => {
+      const todosLosMovs = [...(movBanco||[]), ...(movCaja||[])];
+      const yaVistos = new Set();
+      const problemas = [];
+      todosLosMovs.forEach(m => {
+        const esOrigen = m.tipo==='Traslado de Fondo'||m.tipo==='Transferencia';
+        const esDestino = m.tipo==='Ingreso' && /traslado recibido/i.test(m.concepto||'');
+        if(!esOrigen && !esDestino) return;
+        if(!m.referencia || !m.fecha) return;
+        const key = m.referencia+'|'+m.fecha;
+        if(yaVistos.has(key+'|'+esOrigen)) return; // no procesar el mismo lado 2 veces
+        yaVistos.add(key+'|'+esOrigen);
+        const asiento = asientosBanco.find(a=>a.id===m.asientoContableId);
+        if(!asiento?.lineas || asiento.lineas.length<2) return;
+        const b = Number(m.montoBs||0), u = Number(m.montoUSD||0);
+        if(b<=0 && u<=0) return;
+        // ¿Alguna línea del asiento se aleja de lo que dice el propio movimiento? (>1% de tolerancia)
+        const lineaRota = asiento.lineas.find(l=>{
+          const lb=Number(l.debeBs||0)+Number(l.haberBs||0), lu=Number(l.debeUSD||0)+Number(l.haberUSD||0);
+          return (b>0 && Math.abs(lb-b) > b*0.01) || (u>0 && Math.abs(lu-u) > u*0.01);
+        });
+        if(!lineaRota) return;
+        const esCaja = !!m.cajaId;
+        const cuentaRef = esCaja ? cajas.find(c=>c.id===m.cajaId) : cuentas.find(c=>c.id===m.cuentaId);
+        const montoNativoActual = Number(m.monto ?? m.montoNativo ?? 0);
+        const montoNativoCorrecto = cuentaRef?.moneda==='BS' ? b : u;
+        // Líneas correctas: se conservan código/cuenta/tipoLinea, solo se corrigen los montos,
+        // y se descartan líneas extra (3ra línea de "Rebancarización" que no debía existir).
+        const lineasCorregidas = asiento.lineas.slice(0,2).map(l=>({
+          ...l,
+          debeBs: l.tipoLinea==='D'?b:0, haberBs: l.tipoLinea==='H'?b:0,
+          debeUSD: l.tipoLinea==='D'?u:0, haberUSD: l.tipoLinea==='H'?u:0,
+        }));
+        problemas.push({
+          mov:m, esCaja, cuenta:cuentaRef, esOrigen,
+          montoNativoActual, montoNativoCorrecto, delta: cuentaRef ? montoNativoCorrecto-montoNativoActual : 0,
+          asientoId: asiento.id, lineasCorregidas, lineasOriginales: asiento.lineas,
+        });
+      });
+      return problemas;
+    };
+    const revisarTraslados = () => setProblemasTraslado(detectarTrasladosRotos());
+    // Guarda lo que había ANTES de corregir, para poder reversar si algo sale mal.
+    const [ultimaCorreccionTraslados, setUltimaCorreccionTraslados] = useState(null);
+    const corregirTraslados = async () => {
+      if(!problemasTraslado || problemasTraslado.length===0) return;
+      setBusy(true);
+      try{
+        const batch = writeBatch(_bancoDB);
+        const deltaPorCuenta = {};
+        problemasTraslado.forEach(p=>{
+          if(!p.cuenta) return;
+          const key=(p.esCaja?'caja:':'banco:')+p.cuenta.id;
+          if(!deltaPorCuenta[key]) deltaPorCuenta[key]={esCaja:p.esCaja, cuenta:p.cuenta, delta:0};
+          deltaPorCuenta[key].delta += p.delta;
+        });
+        Object.values(deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
+          if(Math.abs(delta)<0.005) return;
+          const nuevoSaldo = Number(cuenta.saldo||0) + delta;
+          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: nuevoSaldo});
+          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
+        });
+        problemasTraslado.forEach(p=>{
+          if(p.cuenta && Math.abs(p.delta)>=0.005){
+            if(p.esCaja) batch.update(getDocRef('caja_movimientos', p.mov._docId||p.mov.id), {monto: p.montoNativoCorrecto});
+            else batch.update(getDocRef('banco_movimientos', p.mov._docId||p.mov.id), {montoNativo: p.montoNativoCorrecto});
+          }
+          batch.update(getDocRef('cont_asientos', p.asientoId), {
+            lineas: p.lineasCorregidas,
+            totalDebeBs: p.lineasCorregidas.reduce((a,l)=>a+l.debeBs,0), totalHaberBs: p.lineasCorregidas.reduce((a,l)=>a+l.haberBs,0),
+            totalDebeUSD: p.lineasCorregidas.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD: p.lineasCorregidas.reduce((a,l)=>a+l.haberUSD,0),
+          });
+        });
+        await batch.commit();
+        setUltimaCorreccionTraslados({problemas:problemasTraslado, deltaPorCuenta, fecha:new Date().toLocaleString('es-VE')});
+        alert(`✅ Se corrigieron ${problemasTraslado.length} asiento(s) contable(s) y el saldo de ${Object.keys(deltaPorCuenta).length} cuenta(s).\n\nSi algo no se ve bien, hay un botón "↩ Reversar" junto a "Corregir Traslados" para deshacer esto.`);
+        setProblemasTraslado(null);
+      }catch(e){ alert('❌ No se pudo corregir: '+(e?.message||e)); }
+      finally{ setBusy(false); }
+    };
+    // Deshace exactamente lo que hizo la última corrección: repone las líneas originales del
+    // asiento, el monto nativo original del movimiento, y resta el mismo delta al saldo de cada
+    // cuenta (dejándolo tal cual estaba antes de corregir).
+    const reversarCorreccionTraslados = async () => {
+      if(!ultimaCorreccionTraslados) return;
+      if(!window.confirm('¿Reversar la última corrección de traslados? Esto deja el asiento, el monto y los saldos exactamente como estaban antes de corregir.')) return;
+      setBusy(true);
+      try{
+        const batch = writeBatch(_bancoDB);
+        Object.values(ultimaCorreccionTraslados.deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
+          if(Math.abs(delta)<0.005) return;
+          const saldoRevertido = Number(cuenta.saldo||0); // el saldo ANTES de aplicar delta, ya capturado al momento de corregir
+          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: saldoRevertido});
+          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: saldoRevertido});
+        });
+        ultimaCorreccionTraslados.problemas.forEach(p=>{
+          if(p.cuenta && Math.abs(p.delta)>=0.005){
+            if(p.esCaja) batch.update(getDocRef('caja_movimientos', p.mov._docId||p.mov.id), {monto: p.montoNativoActual});
+            else batch.update(getDocRef('banco_movimientos', p.mov._docId||p.mov.id), {montoNativo: p.montoNativoActual});
+          }
+          batch.update(getDocRef('cont_asientos', p.asientoId), {
+            lineas: p.lineasOriginales,
+            totalDebeBs: p.lineasOriginales.reduce((a,l)=>a+Number(l.debeBs||0),0), totalHaberBs: p.lineasOriginales.reduce((a,l)=>a+Number(l.haberBs||0),0),
+            totalDebeUSD: p.lineasOriginales.reduce((a,l)=>a+Number(l.debeUSD||0),0), totalHaberUSD: p.lineasOriginales.reduce((a,l)=>a+Number(l.haberUSD||0),0),
+          });
+        });
+        await batch.commit();
+        alert('↩ Corrección reversada — todo quedó como estaba antes.');
+        setUltimaCorreccionTraslados(null);
+      }catch(e){ alert('❌ No se pudo reversar: '+(e?.message||e)); }
+      finally{ setBusy(false); }
+    };
+
     // ── Eliminar con clave de administrador ───────────────────────────
     const [adminPwd, setAdminPwd]   = useState('');
     const [pwdModal, setPwdModal]   = useState(null); // movement to delete
@@ -4134,8 +4255,49 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
           {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
+          <button onClick={revisarTraslados} title="Revisa los asientos de traslados/transferencias y detecta si la comisión de rebancarización se comió el monto" className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-600"><Settings size={12}/> Corregir Traslados</button>
+          {ultimaCorreccionTraslados && (
+            <button onClick={reversarCorreccionTraslados} disabled={busy} title={`Deshace la corrección aplicada el ${ultimaCorreccionTraslados.fecha}`} className="flex items-center gap-1.5 px-3 py-2 bg-red-100 text-red-600 border-2 border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><RefreshCw size={12}/> ↩ Reversar</button>
+          )}
           <BBg onClick={()=>{setForm(initF());setModal(true);}}><Plus size={13}/> Nuevo</BBg>
         </div>
+
+        {problemasTraslado!==null && (
+          <BModal open={true} onClose={()=>setProblemasTraslado(null)} title="🔧 Corregir Traslados con Asiento Roto" wide
+            footer={problemasTraslado.length>0
+              ? <><BBo onClick={()=>setProblemasTraslado(null)}>Cancelar</BBo><BBg onClick={corregirTraslados} disabled={busy}>{busy?'Corrigiendo...':`Corregir ${problemasTraslado.length} Asiento(s)`}</BBg></>
+              : <BBo onClick={()=>setProblemasTraslado(null)}>Cerrar</BBo>}>
+            {problemasTraslado.length===0 ? (
+              <div className="text-center py-8 text-slate-400 font-bold text-sm">✓ No se encontraron traslados con el asiento roto.</div>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-700 font-bold">
+                  Se encontraron {problemasTraslado.length} lado(s) de traslado/transferencia cuyo asiento contable no coincide con el monto real del movimiento (la comisión de rebancarización se comió parte o casi todo). Al corregir: se reconstruye el asiento (Debe/Haber Bs. y $) usando el monto real de cada movimiento, y se ajusta el monto nativo y el saldo de la cuenta si hacía falta.
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-slate-50 text-[9px] font-black uppercase text-slate-500">
+                      <th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Lado</th><th className="px-2 py-2 text-left">Cuenta</th><th className="px-2 py-2 text-left">Referencia</th>
+                      <th className="px-2 py-2 text-right">$ Real</th><th className="px-2 py-2 text-right">Bs. Real</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {problemasTraslado.map((p,i)=>(
+                        <tr key={i}>
+                          <td className="px-2 py-1.5">{bancoDd(p.mov.fecha)}</td>
+                          <td className="px-2 py-1.5">{p.esOrigen?'Origen':'Destino'}</td>
+                          <td className="px-2 py-1.5 font-bold">{p.cuenta?.banco||p.cuenta?.nombre||p.mov.cuentaNombre||p.mov.cajaNombre||'—'}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-400">{p.mov.referencia||'—'}</td>
+                          <td className="px-2 py-1.5 text-right font-mono text-emerald-600 font-black">${bancoFmt(p.mov.montoUSD)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono text-emerald-600 font-black">Bs.{bancoFmt(p.mov.montoBs)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </BModal>
+        )}
 
         {/* ── TABLA NACIONALES — Bs. ── */}
         {(()=>{const movRows=filtC?movFiltAll.filter(m=>m.cuentaId===filtC):movFiltBS; return(
