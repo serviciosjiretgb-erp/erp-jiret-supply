@@ -6265,6 +6265,117 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       a.href=url;a.download=`movimientos_caja_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
     };
 
+    // ── Corregir Traslados (reparación masiva) — misma lógica que en Movimientos de Banco.
+    // CajaOpViewImpl es un componente separado de MovimientosViewImpl, así que necesita su
+    // propia copia; ambos escanean movBanco+movCaja completos, así que desde cualquiera de las
+    // dos pantallas se detectan y corrigen los mismos problemas, sean de Banco o de Caja. ──
+    const [problemasTrasladoCaja, setProblemasTrasladoCaja] = useState(null);
+    const [ultimaCorreccionTrasladosCaja, setUltimaCorreccionTrasladosCaja] = useState(null);
+    const detectarTrasladosRotosCaja = () => {
+      const todosLosMovs = [...(movBanco||[]), ...(movCaja||[])];
+      const yaVistos = new Set();
+      const problemas = [];
+      todosLosMovs.forEach(m => {
+        const esOrigen = m.tipo==='Traslado de Fondo'||m.tipo==='Transferencia'||(/traslado de fondo/i.test(m.concepto||'')&&m.tipo!=='Ingreso');
+        const esDestino = m.tipo==='Ingreso' && /traslado recibido/i.test(m.concepto||'');
+        if(!esOrigen && !esDestino) return;
+        if(!m.referencia || !m.fecha) return;
+        const key = m.referencia+'|'+m.fecha;
+        if(yaVistos.has(key+'|'+esOrigen)) return;
+        yaVistos.add(key+'|'+esOrigen);
+        const asiento = asientosBanco.find(a=>a.id===m.asientoContableId);
+        if(!asiento?.lineas || asiento.lineas.length<2) return;
+        const b = Number(m.montoBs||0), u = Number(m.montoUSD||0);
+        if(b<=0 && u<=0) return;
+        const lineaRota = asiento.lineas.find(l=>{
+          const lb=Number(l.debeBs||0)+Number(l.haberBs||0), lu=Number(l.debeUSD||0)+Number(l.haberUSD||0);
+          return (b>0 && Math.abs(lb-b) > b*0.01) || (u>0 && Math.abs(lu-u) > u*0.01);
+        });
+        if(!lineaRota) return;
+        const esCaja = !!m.cajaId;
+        const cuentaRef = esCaja ? cajas.find(c=>c.id===m.cajaId) : cuentas.find(c=>c.id===m.cuentaId);
+        const montoNativoActual = Number(m.monto ?? m.montoNativo ?? 0);
+        const montoNativoCorrecto = cuentaRef?.moneda==='BS' ? b : u;
+        const lineasCorregidas = asiento.lineas.slice(0,2).map(l=>({
+          ...l,
+          debeBs: l.tipoLinea==='D'?b:0, haberBs: l.tipoLinea==='H'?b:0,
+          debeUSD: l.tipoLinea==='D'?u:0, haberUSD: l.tipoLinea==='H'?u:0,
+        }));
+        problemas.push({
+          mov:m, esCaja, cuenta:cuentaRef, esOrigen,
+          montoNativoActual, montoNativoCorrecto, delta: cuentaRef ? montoNativoCorrecto-montoNativoActual : 0,
+          asientoId: asiento.id, lineasCorregidas, lineasOriginales: asiento.lineas,
+        });
+      });
+      return problemas;
+    };
+    const revisarTrasladosCaja = () => setProblemasTrasladoCaja(detectarTrasladosRotosCaja());
+    const corregirTrasladosCaja = async () => {
+      if(!problemasTrasladoCaja || problemasTrasladoCaja.length===0) return;
+      setBusy(true);
+      try{
+        const batch = writeBatch(_bancoDB);
+        const deltaPorCuenta = {};
+        problemasTrasladoCaja.forEach(p=>{
+          if(!p.cuenta) return;
+          const key=(p.esCaja?'caja:':'banco:')+p.cuenta.id;
+          if(!deltaPorCuenta[key]) deltaPorCuenta[key]={esCaja:p.esCaja, cuenta:p.cuenta, delta:0};
+          deltaPorCuenta[key].delta += p.delta;
+        });
+        Object.values(deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
+          if(Math.abs(delta)<0.005) return;
+          const nuevoSaldo = Number(cuenta.saldo||0) + delta;
+          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: nuevoSaldo});
+          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
+        });
+        problemasTrasladoCaja.forEach(p=>{
+          if(p.cuenta && Math.abs(p.delta)>=0.005){
+            if(p.esCaja) batch.update(getDocRef('caja_movimientos', p.mov._docId||p.mov.id), {monto: p.montoNativoCorrecto});
+            else batch.update(getDocRef('banco_movimientos', p.mov._docId||p.mov.id), {montoNativo: p.montoNativoCorrecto});
+          }
+          batch.update(getDocRef('cont_asientos', p.asientoId), {
+            lineas: p.lineasCorregidas,
+            totalDebeBs: p.lineasCorregidas.reduce((a,l)=>a+l.debeBs,0), totalHaberBs: p.lineasCorregidas.reduce((a,l)=>a+l.haberBs,0),
+            totalDebeUSD: p.lineasCorregidas.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD: p.lineasCorregidas.reduce((a,l)=>a+l.haberUSD,0),
+          });
+        });
+        await batch.commit();
+        setUltimaCorreccionTrasladosCaja({problemas:problemasTrasladoCaja, deltaPorCuenta, fecha:new Date().toLocaleString('es-VE')});
+        alert(`✅ Se corrigieron ${problemasTrasladoCaja.length} asiento(s) contable(s) y el saldo de ${Object.keys(deltaPorCuenta).length} cuenta(s).\n\nSi algo no se ve bien, hay un botón "↩ Reversar" junto a "Corregir Traslados" para deshacer esto.`);
+        setProblemasTrasladoCaja(null);
+      }catch(e){ alert('❌ No se pudo corregir: '+(e?.message||e)); }
+      finally{ setBusy(false); }
+    };
+    const reversarCorreccionTrasladosCaja = async () => {
+      if(!ultimaCorreccionTrasladosCaja) return;
+      if(!window.confirm('¿Reversar la última corrección de traslados? Esto deja el asiento, el monto y los saldos exactamente como estaban antes de corregir.')) return;
+      setBusy(true);
+      try{
+        const batch = writeBatch(_bancoDB);
+        Object.values(ultimaCorreccionTrasladosCaja.deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
+          if(Math.abs(delta)<0.005) return;
+          const saldoRevertido = Number(cuenta.saldo||0);
+          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: saldoRevertido});
+          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: saldoRevertido});
+        });
+        ultimaCorreccionTrasladosCaja.problemas.forEach(p=>{
+          if(p.cuenta && Math.abs(p.delta)>=0.005){
+            if(p.esCaja) batch.update(getDocRef('caja_movimientos', p.mov._docId||p.mov.id), {monto: p.montoNativoActual});
+            else batch.update(getDocRef('banco_movimientos', p.mov._docId||p.mov.id), {montoNativo: p.montoNativoActual});
+          }
+          batch.update(getDocRef('cont_asientos', p.asientoId), {
+            lineas: p.lineasOriginales,
+            totalDebeBs: p.lineasOriginales.reduce((a,l)=>a+Number(l.debeBs||0),0), totalHaberBs: p.lineasOriginales.reduce((a,l)=>a+Number(l.haberBs||0),0),
+            totalDebeUSD: p.lineasOriginales.reduce((a,l)=>a+Number(l.debeUSD||0),0), totalHaberUSD: p.lineasOriginales.reduce((a,l)=>a+Number(l.haberUSD||0),0),
+          });
+        });
+        await batch.commit();
+        alert('↩ Corrección reversada — todo quedó como estaba antes.');
+        setUltimaCorreccionTrasladosCaja(null);
+      }catch(e){ alert('❌ No se pudo reversar: '+(e?.message||e)); }
+      finally{ setBusy(false); }
+    };
+
     return (
       <div className="space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -6326,9 +6437,50 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             )}
             <div className="ml-auto flex gap-2">
               <BBp onClick={exportarExcelCaja} sm><FileSpreadsheet size={12}/> Excel</BBp>
+              <BBp onClick={revisarTrasladosCaja} sm title="Revisa los asientos de traslados/transferencias y detecta si la comisión de rebancarización se comió el monto"><Settings size={12}/> Corregir Traslados</BBp>
+              {ultimaCorreccionTrasladosCaja && (
+                <BBp onClick={reversarCorreccionTrasladosCaja} sm title={`Deshace la corrección aplicada el ${ultimaCorreccionTrasladosCaja.fecha}`}><RefreshCw size={12}/> ↩ Reversar</BBp>
+              )}
               <BBg onClick={()=>{setForm(initF());setModal(true);}} sm><Plus size={12}/> Nuevo</BBg>
             </div>
           </div>
+
+          {problemasTrasladoCaja!==null && (
+            <BModal open={true} onClose={()=>setProblemasTrasladoCaja(null)} title="🔧 Corregir Traslados con Asiento Roto" wide
+              footer={problemasTrasladoCaja.length>0
+                ? <><BBo onClick={()=>setProblemasTrasladoCaja(null)}>Cancelar</BBo><BBg onClick={corregirTrasladosCaja} disabled={busy}>{busy?'Corrigiendo...':`Corregir ${problemasTrasladoCaja.length} Asiento(s)`}</BBg></>
+                : <BBo onClick={()=>setProblemasTrasladoCaja(null)}>Cerrar</BBo>}>
+              {problemasTrasladoCaja.length===0 ? (
+                <div className="text-center py-8 text-slate-400 font-bold text-sm">✓ No se encontraron traslados con el asiento roto.</div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-700 font-bold">
+                    Se encontraron {problemasTrasladoCaja.length} lado(s) de traslado/transferencia (Banco o Caja) cuyo asiento contable no coincide con el monto real del movimiento. Al corregir: se reconstruye el asiento usando el monto real de cada movimiento, y se ajusta el saldo de la cuenta si hacía falta.
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-50 text-[9px] font-black uppercase text-slate-500">
+                        <th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Lado</th><th className="px-2 py-2 text-left">Cuenta</th><th className="px-2 py-2 text-left">Referencia</th>
+                        <th className="px-2 py-2 text-right">$ Real</th><th className="px-2 py-2 text-right">Bs. Real</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {problemasTrasladoCaja.map((p,i)=>(
+                          <tr key={i}>
+                            <td className="px-2 py-1.5">{bancoDd(p.mov.fecha)}</td>
+                            <td className="px-2 py-1.5">{p.esOrigen?'Origen':'Destino'}</td>
+                            <td className="px-2 py-1.5 font-bold">{p.cuenta?.banco||p.cuenta?.nombre||p.mov.cuentaNombre||p.mov.cajaNombre||'—'}</td>
+                            <td className="px-2 py-1.5 font-mono text-slate-400">{p.mov.referencia||'—'}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-emerald-600 font-black">${bancoFmt(p.mov.montoUSD)}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-emerald-600 font-black">Bs.{bancoFmt(p.mov.montoBs)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </BModal>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh><BTh>Acciones</BTh></tr></thead>
