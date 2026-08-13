@@ -2028,17 +2028,18 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   const egTrans=todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
   const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
   const cargos=0;const abonos=0;
-  // Saldo Inicial del período: se retrocede desde el saldo ACTUAL de la cuenta (que ya incluye
-  // todo hasta hoy) restando el efecto de TODOS los movimientos desde "desde" en adelante — así
-  // se llega al saldo real que tenía la cuenta justo ANTES de "desde", sin importar cuánto haya
-  // pasado entre "hasta" y hoy. Antes "Saldo en Libros" usaba el saldo actual tal cual, sin
-  // ajustar por fecha — por eso no cuadraba con nada si "hasta" no era hoy mismo.
+  // Saldo Inicial del período: se ancla al Saldo Inicial FIJO que se declaró en la ficha de la
+  // cuenta (mesSaldoInicial) y avanza hacia adelante hasta "desde" — igual que el panel de
+  // Balance mensual. Antes se calculaba retrocediendo desde el saldo VIVO de la cuenta, que
+  // puede traer arrastrado el efecto de bugs ya corregidos (comisiones mal calculadas, traslados
+  // cross-currency, etc.) — apoyarse en el saldo vivo para esto daba números irreales.
   const montoNativoMov = m => esCuentaBs?Number(m.montoBs||0):Number(m.montoUSD||0);
   const signoMov = m => m.tipo==='Ingreso'?1:-1; // Egreso y Traslado de Fondo restan del saldo
-  const saldoActualNativo = Number(cuenta?.saldo||0);
-  const movsDesdeEnAdelante = cuenta ? movBanco.filter(m=>m.cuentaId===cuentaId && desde && m.fecha>=desde) : [];
-  const netoDesdeEnAdelante = movsDesdeEnAdelante.reduce((s,m)=>s+signoMov(m)*montoNativoMov(m),0);
-  const saldoInicialNativo = saldoActualNativo - netoDesdeEnAdelante;
+  const saldoIniCtaNativo = Number(cuenta?.saldoInicial ?? cuenta?.saldo ?? 0);
+  const inicioCtaConcil = `${cuenta?.mesSaldoInicial||'2000-01'}-01`;
+  const movsAncladas = cuenta ? movBanco.filter(m=>m.cuentaId===cuentaId && m.fecha>=inicioCtaConcil && (!desde || m.fecha<desde)) : [];
+  const netoAncladas = movsAncladas.reduce((s,m)=>s+signoMov(m)*montoNativoMov(m),0);
+  const saldoInicialNativo = saldoIniCtaNativo + netoAncladas;
   const entradasNativo = todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+montoNativoMov(m),0);
   const salidasNativo  = todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+montoNativoMov(m),0);
   const saldoLibrosCalculadoNativo = saldoInicialNativo + entradasNativo - salidasNativo;
@@ -3504,6 +3505,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(!form.cuentaId) return alert('Seleccione una cuenta bancaria');
       if(!form.montoNativo||mNat<=0) return alert('Ingrese un monto válido');
       if(!form.concepto) return alert('Ingrese el concepto');
+      const movOrigChk = movBanco.find(m=>(m._docId||m.id)===editId);
+      if(movOrigChk?.estatus==='Conciliado') return alert('🔒 Este movimiento está conciliado — reversa la conciliación primero (Conciliación → Historial) para poder editarlo.');
       setBusy(true);
       try {
         const movOriginal = movBanco.find(m=>(m._docId||m.id)===editId);
@@ -4001,9 +4004,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             footer={
               editId
                 ? <><BBo onClick={()=>{setEditId(null);setForm(initF());}}>Cancelar</BBo><BBg onClick={saveEdit} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
-                : <><BBd onClick={()=>setPwdModal(movDetalle)} disabled={busy||movDetalle.estatus==='Conciliado'}>{movDetalle.estatus==='Conciliado'?'🔒 Conciliado':'🗑 Eliminar'}</BBd><div className="flex-1"/><BBg onClick={()=>abrirEdicion(movDetalle)}>✏ Editar</BBg></>
+                : <><BBd onClick={()=>setPwdModal(movDetalle)} disabled={busy||movDetalle.estatus==='Conciliado'}>{movDetalle.estatus==='Conciliado'?'🔒 Conciliado':'🗑 Eliminar'}</BBd><div className="flex-1"/>{movDetalle.estatus==='Conciliado'?<p className="text-[10px] font-bold text-slate-400 flex items-center gap-1.5"><Lock size={12}/> Conciliado — reversa la conciliación (en Conciliación → Historial) para poder editarlo</p>:<BBg onClick={()=>abrirEdicion(movDetalle)}>✏ Editar</BBg>}</>
             }>
-            {editId ? (
+            {editId && movDetalle.estatus==='Conciliado' ? (
+              /* Resguardo extra: si por algo se abrió modo edición sobre un movimiento que
+                 mientras tanto quedó conciliado (otra pestaña, otro usuario), no se deja guardar. */
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 text-center">
+                <Lock size={24} className="mx-auto text-amber-500 mb-2"/>
+                <p className="font-black text-amber-700 text-sm">Este movimiento ya está conciliado</p>
+                <p className="text-xs text-amber-600 mt-1">Reversa la conciliación primero (Conciliación → Historial → Eliminar, con clave de admin) si necesitas corregir algo aquí.</p>
+              </div>
+            ) : editId ? (
               /* MODO EDICIÓN COMPLETO */
               <div className="space-y-5">
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-2">
