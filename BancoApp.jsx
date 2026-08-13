@@ -2056,9 +2056,9 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
     setBusy(true);
     try{
       const batch=writeBatch(_bancoDB);
-      const ids=Object.entries(marcados).filter(([,v])=>v).map(([k])=>k);
+      const movsConciliados=todos.filter(m=>marcados[m.id]!==false);
+      const ids=movsConciliados.map(m=>m.id);
       ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));
-      const movsConciliados=todos.filter(m=>marcados[m.id]);
       const movimientosDetalle=movsConciliados.map(m=>({fecha:m.fecha||'',tipo:m.tipo||'',concepto:m.concepto||'',referencia:m.referencia||'',montoUSD:Number(m.montoUSD||0),montoBs:Number(m.montoBs||0)})).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
       const entradasReconc=movsConciliados.filter(m=>m.tipo==='Ingreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0});
       const salidasReconc =movsConciliados.filter(m=>m.tipo==='Egreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0});
@@ -2161,7 +2161,7 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
         }>
           {todos.length===0?<BEmptyState icon={CheckCircle} title="Sin movimientos pendientes" desc=""/>:
             <div className="divide-y divide-slate-100">{todos.map(m=>(
-              <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]?'bg-emerald-50/60':''}`}>
+              <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]!==false?'bg-emerald-50/60':''}`}>
                 <input type="checkbox" checked={marcados[m.id]!==false} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
                 <div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-0.5"><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':'blue'}>{m.tipo}</BBadge><span className="text-[10px] text-slate-400">{bancoDd(m.fecha)}</span></div><p className="text-xs font-semibold text-slate-700 truncate">{m.concepto}</p></div>
                 <div className="text-right flex-shrink-0">
