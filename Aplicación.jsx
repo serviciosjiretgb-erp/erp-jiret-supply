@@ -45642,7 +45642,13 @@ ${resumenHtml}
       const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
       treeCostos = [{ n:'COSTO DE PRODUCCIÓN', c: treeCostos, u, b }];
     }
-    const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')));
+    // Depreciación se saca del árbol normal y se muestra aparte, calculada DIRECTO desde
+    // cuentasAgg (sin pasar por ccBuildArbol) — así se garantiza que aparezca sin depender de
+    // encontrar la causa exacta de por qué el árbol no la estaba mostrando.
+    const cuentasDeprec = contERVistaPlanta ? [] : cuentasAgg.filter(c=>/\.08\.01\./.test(c.codigo));
+    const depreciacionUSD = cuentasDeprec.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
+    const depreciacionBs  = cuentasDeprec.reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+    const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>(c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')))&&!/\.08\.01\./.test(c.codigo));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
@@ -45653,13 +45659,9 @@ ${resumenHtml}
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
     const totalIngresosUSD=sumTree(treeIngresos,'u'), totalIngresosBs=sumTree(treeIngresos,'b');
     const totalCostosUSD=sumTree(treeCostos,'u'), totalCostosBs=sumTree(treeCostos,'b');
-    const totalGastosUSD=sumTree(treeGastosReal,'u'), totalGastosBs=sumTree(treeGastosReal,'b');
+    const totalGastosUSD=sumTree(treeGastosReal,'u')+depreciacionUSD, totalGastosBs=sumTree(treeGastosReal,'b')+depreciacionBs;
     const utilidadBrutaUSD=totalIngresosUSD-totalCostosUSD, utilidadBrutaBs=totalIngresosBs-totalCostosBs;
     const utilidadNetaUSD=utilidadBrutaUSD-totalGastosUSD, utilidadNetaBs=utilidadBrutaBs-totalGastosBs;
-    // Diagnóstico temporal: cuentas de Depreciación (código con ".08.01.") en el período — para
-    // ver exactamente qué trae cuentasAgg (antes de armar el árbol) y detectar si el problema es
-    // saldo neto cero, cuenta ausente, o algo más. Se puede quitar una vez resuelto.
-    const diagDeprec = cuentasAgg.filter(c=>/\.08\.01\./.test(c.codigo));
     const showUSD = contERCurrency!=='bs'; const showBS = contERCurrency!=='usd';
     const baseVentas = totalIngresosUSD||1;
 
@@ -45686,29 +45688,6 @@ ${resumenHtml}
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Ingresos, costos y gastos — utilidad o pérdida del período</p>
           </div>
           <div className="p-6 space-y-4">
-            {diagDeprec.length>0 ? (
-              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
-                <p className="text-[10px] font-black uppercase text-red-700 mb-2">🔬 Diagnóstico temporal — cuentas de Depreciación en este período (antes del árbol)</p>
-                <table className="w-full text-[10px]">
-                  <thead><tr className="text-red-500 uppercase font-black"><th className="text-left">Código</th><th className="text-left">Cuenta</th><th className="text-right">Debe $</th><th className="text-right">Haber $</th><th className="text-right">Neto $</th><th className="text-right">Debe Bs</th><th className="text-right">Haber Bs</th><th className="text-right">Neto Bs</th></tr></thead>
-                  <tbody>
-                    {diagDeprec.map((c,i)=>(
-                      <tr key={i} className="border-t border-red-100">
-                        <td className="font-mono">{c.codigo}</td><td>{c.cuenta}</td>
-                        <td className="text-right font-mono">{contFmt(c.debeUSD)}</td><td className="text-right font-mono">{contFmt(c.haberUSD)}</td>
-                        <td className="text-right font-mono font-black">{contFmt(c.debeUSD-c.haberUSD)}</td>
-                        <td className="text-right font-mono">{contFmt(c.debeBs)}</td><td className="text-right font-mono">{contFmt(c.haberBs)}</td>
-                        <td className="text-right font-mono font-black">{contFmt(c.debeBs-c.haberBs)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
-                <p className="text-[10px] font-black uppercase text-red-700">🔬 Diagnóstico: no hay NINGUNA cuenta con ".08.01." en este período — el problema está antes de este reporte, en getAsientosReales().</p>
-              </div>
-            )}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
@@ -45747,6 +45726,23 @@ ${resumenHtml}
                     <td/>
                   </tr>
                   {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
+                  {cuentasDeprec.length>0 && (<>
+                    <tr className="bg-slate-50"><td className="px-3 py-1.5 font-black text-slate-500 text-[10px] uppercase" colSpan={showUSD&&showBS?3:2}>Depreciación</td></tr>
+                    {cuentasDeprec.map((c,i)=>(
+                      <tr key={'dep'+i} className="border-b border-gray-50">
+                        <td className="px-3 py-1 pl-8 text-gray-600 text-[10px]"><span className="text-blue-400 font-mono text-[9px] mr-1">{c.codigo}</span>{c.cuenta}</td>
+                        {showUSD && <td className="px-3 py-1 text-right font-mono text-[10px]">{ccFmtR(c.debeUSD-c.haberUSD)}</td>}
+                        {showBS  && <td className="px-3 py-1 text-right font-mono text-[10px]">{ccFmtR(c.debeBs-c.haberBs)}</td>}
+                        <td/>
+                      </tr>
+                    ))}
+                    <tr className="border-b-2 border-gray-100">
+                      <td className="px-3 py-1.5 pl-4 font-black text-gray-600 text-[10px] uppercase">Total Depreciación</td>
+                      {showUSD && <td className="px-3 py-1.5 text-right font-mono font-black text-[10px]">{ccFmtR(depreciacionUSD)}</td>}
+                      {showBS  && <td className="px-3 py-1.5 text-right font-mono font-black text-[10px]">{ccFmtR(depreciacionBs)}</td>}
+                      <td/>
+                    </tr>
+                  </>)}
                   <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
                     <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
                     {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
@@ -45847,12 +45843,18 @@ ${resumenHtml}
       return [saldoAnteriorRow, ...dentro];
     };
 
-    const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    // Depreciación Acumulada se saca del árbol normal (mismo problema que en Estado de
+    // Resultados) y se muestra aparte, calculada DIRECTO desde cuentasAgg.
+    const cuentasDeprecAcum = cuentasAgg.filter(c=>/dep\.?\s*acum|depreciaci[oó]n\s+acumulad/i.test(c.cuenta||''));
+    const deprecAcumUSD = cuentasDeprecAcum.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
+    const deprecAcumBs  = cuentasDeprecAcum.reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
+    const cuentasParaActivo = cuentasAgg.filter(c=>!/dep\.?\s*acum|depreciaci[oó]n\s+acumulad/i.test(c.cuenta||''));
+    const treeActivo = ccBuildArbol(cuentasParaActivo, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
     const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
-    const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
+    const totalActivoUSD=sumTree(treeActivo,'u')+deprecAcumUSD, totalActivoBs=sumTree(treeActivo,'b')+deprecAcumBs;
     const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
     // Si alguna de las dos no tenía cuenta configurada, esa sí se suma aparte (no había dónde
     // inyectarla) — si ambas se inyectaron, ya están contadas dentro del árbol y no se repiten.
@@ -45927,6 +45929,23 @@ ${resumenHtml}
                 </thead>
                 <tbody>
                   {treeActivo.map((n,i)=><CCArbolRow key={'act'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  {cuentasDeprecAcum.length>0 && (<>
+                    <tr className="bg-slate-50"><td className="px-3 py-1.5 font-black text-slate-500 text-[10px] uppercase" colSpan={showUSD&&showBS?3:2}>Depreciación Acumulada</td></tr>
+                    {cuentasDeprecAcum.map((c,i)=>(
+                      <tr key={'depac'+i} className="border-b border-gray-50">
+                        <td className="px-3 py-1 pl-8 text-gray-600 text-[10px]"><span className="text-blue-400 font-mono text-[9px] mr-1">{c.codigo}</span>{c.cuenta}</td>
+                        {showUSD && <td className="px-3 py-1 text-right font-mono text-[10px]">{ccFmtR(c.debeUSD-c.haberUSD)}</td>}
+                        {showBS  && <td className="px-3 py-1 text-right font-mono text-[10px]">{ccFmtR(c.debeBs-c.haberBs)}</td>}
+                        <td/>
+                      </tr>
+                    ))}
+                    <tr className="border-b-2 border-gray-100">
+                      <td className="px-3 py-1.5 pl-4 font-black text-gray-600 text-[10px] uppercase">Total Dep. Acumulada</td>
+                      {showUSD && <td className="px-3 py-1.5 text-right font-mono font-black text-[10px]">{ccFmtR(deprecAcumUSD)}</td>}
+                      {showBS  && <td className="px-3 py-1.5 text-right font-mono font-black text-[10px]">{ccFmtR(deprecAcumBs)}</td>}
+                      <td/>
+                    </tr>
+                  </>)}
                   <tr className="bg-blue-50 border-y-2 border-blue-200">
                     <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Total Activo</td>
                     {showUSD && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-blue-800">{ccFmtR(totalActivoUSD)}</td>}
