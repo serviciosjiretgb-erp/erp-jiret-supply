@@ -3582,8 +3582,8 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const eliminar = (p) => setDialog({title:'¿Eliminar proveedor?',text:`Se eliminará "${p.nombre}". Esta acción no se puede deshacer.`,type:'confirm',onConfirm:async()=>{
-    try{await deleteDoc(getDocRef('procura_proveedores',p.id));setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'});}
+  const eliminar = (p) => setDialog({title:'¿Eliminar proveedor?',text:`Se eliminará "${p.nombre}". Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.`,type:'confirm',onConfirm:async()=>{
+    try{await archivarEnPapelera('procura_proveedores',p.id,p,`Proveedor — ${p.nombre}`);await deleteDoc(getDocRef('procura_proveedores',p.id));setDialog({title:'Eliminado',text:'Proveedor eliminado.',type:'alert'});}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
 
@@ -4194,8 +4194,8 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const elimSrv=(s)=>setDialog({title:'¿Eliminar servicio?',text:`Se eliminará "${s.nombre}".`,type:'confirm',onConfirm:async()=>{
-    try{await deleteDoc(getDocRef('procura_servicios',s.id));}
+  const elimSrv=(s)=>setDialog({title:'¿Eliminar servicio?',text:`Se eliminará "${s.nombre}". Se archiva en Papelera antes de borrar.`,type:'confirm',onConfirm:async()=>{
+    try{await archivarEnPapelera('procura_servicios',s.id,s,`Servicio — ${s.nombre}`);await deleteDoc(getDocRef('procura_servicios',s.id));}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
 
@@ -4212,14 +4212,18 @@ const CatalogoServiciosView = ({dialog,setDialog}) => {
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const elimCat=(c)=>setDialog({title:'¿Eliminar categoría?',text:`Se eliminará "${c.nombre}". Las órdenes de compra ya registradas con esta categoría no se ven afectadas.`,type:'confirm',onConfirm:async()=>{
-    try{await deleteDoc(getDocRef('procura_categorias_servicio',c.id));}
+  const elimCat=(c)=>setDialog({title:'¿Eliminar categoría?',text:`Se eliminará "${c.nombre}". Las órdenes de compra ya registradas con esta categoría no se ven afectadas. Se archiva en Papelera antes de borrar.`,type:'confirm',onConfirm:async()=>{
+    try{await archivarEnPapelera('procura_categorias_servicio',c.id,c,`Categoría — ${c.nombre}`);await deleteDoc(getDocRef('procura_categorias_servicio',c.id));}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
   const elimCatMultiples=()=>{
     const nombres=categoriasSrv.filter(c=>catSeleccionadas.includes(c.id)).map(c=>c.nombre);
-    setDialog({title:`¿Eliminar ${catSeleccionadas.length} categoría(s)?`,text:`Se eliminarán: ${nombres.slice(0,5).join(', ')}${nombres.length>5?` y ${nombres.length-5} más`:''}. Las órdenes de compra ya registradas no se ven afectadas.`,type:'confirm',onConfirm:async()=>{
+    setDialog({title:`¿Eliminar ${catSeleccionadas.length} categoría(s)?`,text:`Se eliminarán: ${nombres.slice(0,5).join(', ')}${nombres.length>5?` y ${nombres.length-5} más`:''}. Las órdenes de compra ya registradas no se ven afectadas. Se archivan en Papelera antes de borrar.`,type:'confirm',onConfirm:async()=>{
       try{
+        for(const id of catSeleccionadas){
+          const c=categoriasSrv.find(x=>x.id===id);
+          if(c) await archivarEnPapelera('procura_categorias_servicio',id,c,`Categoría — ${c.nombre}`);
+        }
         const batch=writeBatch(db);
         catSeleccionadas.forEach(id=>batch.delete(getDocRef('procura_categorias_servicio',id)));
         await batch.commit();
@@ -4778,8 +4782,8 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
-  const eliminarOC=(oc)=>setDialog({title:'¿Eliminar OC?',text:`Se eliminará permanentemente la ${oc.nroOC}.`,type:'confirm',onConfirm:async()=>{
-    try{await deleteDoc(getDocRef('procura_ordenes_compra',oc.id));setDialog({title:'Eliminada',text:'OC eliminada.',type:'alert'});}
+  const eliminarOC=(oc)=>setDialog({title:'¿Eliminar OC?',text:`Se eliminará la ${oc.nroOC}. Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.`,type:'confirm',onConfirm:async()=>{
+    try{await archivarEnPapelera('procura_ordenes_compra',oc.id,oc,`OC ${oc.nroOC} — ${oc.proveedor||''}`);await deleteDoc(getDocRef('procura_ordenes_compra',oc.id));setDialog({title:'Eliminada',text:'OC eliminada.',type:'alert'});}
     catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   }});
 
@@ -4808,6 +4812,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
         // 2. Factura de compra asociada (si existe): se ELIMINA — se va a re-emitir de todos modos
         const facturaAsoc=(facturasCompra||[]).find(f=>f.ocId===oc.nroOC);
         if(facturaAsoc){
+          await archivarEnPapelera('procura_facturas_compra',facturaAsoc.id,facturaAsoc,`Factura ${facturaAsoc.nroFactura||facturaAsoc.id} (anulada junto a OC ${oc.nroOC})`);
           batch.delete(getDocRef('procura_facturas_compra',facturaAsoc.id));
           // 3. Retenciones de IVA asociadas (colección separada) — mantiene N° de comprobante y fecha
           (retIVACompra||[]).filter(r=>r.facturaId===facturaAsoc.id).forEach(r=>{
@@ -6075,6 +6080,29 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                   {form.id?'Editar factura':form.ocId?`Factura desde OC ${form.ocId}`:'Registrar factura de compra'}
                 </span>
                 {form.ocId&&<span className="text-[9px] bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded-full font-black uppercase">Pre-cargada desde {form.ocId}</span>}
+                {form.ocId&&(
+                  <button onClick={()=>{
+                    const ocVinc=(ordenesCompra||[]).find(o=>o.nroOC===form.ocId||o.id===form.ocId);
+                    if(!ocVinc){ setDialog({title:'No encontrada',text:`No se encontró la orden de compra ${form.ocId}.`,type:'alert'}); return; }
+                    setDialog({
+                      title:'¿Recargar ítems desde la OC?',
+                      text:`Esto REEMPLAZA los ítems actuales de la factura por los de ${ocVinc.nroOC} (${(ocVinc.items||[]).length} ítem(s)) y recalcula los totales. No toca N° Factura, N° Control, retenciones ni el resto del formulario.`,
+                      type:'confirm',
+                      onConfirm: () => {
+                        const itemsNuevos = (String(ocVinc.moneda||'USD').toUpperCase()==='BS' && pNum(ocVinc.tasa)>0)
+                          ? (ocVinc.items||[]).map(it=>({...it,
+                              precioUnit:pNum(it.precioUnit||0)/pNum(ocVinc.tasa),
+                              total:pNum(it.total||0)/pNum(ocVinc.tasa),
+                              _precioBsOriginal:pNum(it.precioUnit||0),_totalBsOriginal:pNum(it.total||0)}))
+                          : (ocVinc.items||[]);
+                        const tot = calcTotalesFC({...form, itemsOC:itemsNuevos});
+                        setForm(f=>({...f, itemsOC:itemsNuevos, montoBase:tot.sub||0, iva:tot.ivaTotal||0, total:tot.totalUSD||0}));
+                      }
+                    });
+                  }} title="Reemplaza los ítems de la factura por los de la OC vinculada, tal cual están ahí" className="flex items-center gap-1.5 text-[9px] bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:bg-blue-500/30 px-2 py-0.5 rounded-full font-black uppercase transition-colors">
+                    <RefreshCw size={10}/> Corregir Ítems desde OC
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {/* Toggle afecta contabilidad — para facturas provisionales (p.ej. registradas
@@ -7400,9 +7428,10 @@ ${body}
                                             const tienePagos=totalPag>0.001||rets.length>0||retISLR>0.001;
                                             setDialog({
                                               title:'¿Eliminar factura?',
-                                              text:`Se eliminará la factura ${f.nroFactura||f.id} de ${g.nombre||''} (${f.moneda==='Bs'?'Bs.':'$'}${fN(f.total||0)}).${tienePagos?' ⚠️ Esta factura YA TIENE pagos o retenciones registrados — se quedarán huérfanos, sin factura a la cual referenciar.':''} Esta acción no se puede deshacer.`,
+                                              text:`Se eliminará la factura ${f.nroFactura||f.id} de ${g.nombre||''} (${f.moneda==='Bs'?'Bs.':'$'}${fN(f.total||0)}).${tienePagos?' ⚠️ Esta factura YA TIENE pagos o retenciones registrados — se quedarán huérfanos, sin factura a la cual referenciar.':''} Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.`,
                                               type:'confirm',
                                               onConfirm: async()=>{
+                                                await archivarEnPapelera('procura_facturas_compra', f.id, f, `Factura de compra ${f.nroFactura||f.id} — ${g.nombre||''}`, appUser);
                                                 await deleteDoc(getDocRef('procura_facturas_compra',f.id));
                                                 logAuditoria(appUser,'Cuentas por Pagar','ELIMINACIÓN',`Factura de compra ELIMINADA: ${f.nroFactura||f.id} · Proveedor: ${g.nombre||'—'} · Total: ${f.moneda==='Bs'?'Bs.':'$'}${fN(f.total||0)}`);
                                                 setDialog({title:'✅ Eliminada',text:'La factura fue eliminada.',type:'alert'});
@@ -8427,6 +8456,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
     if(!window.confirm(`¿Reversar el pago de $${fN(pN(p.monto||0))} a ${p.proveedor||'—'}? Esta acción restaura el saldo de la factura y del banco/caja.`)) return;
     try{
       const batch = writeBatch(db);
+      await archivarEnPapelera('procura_pagos_cxp', p.id, p, `Pago $${fN(pN(p.monto||0))} — ${p.proveedor||''}`, appUser);
       batch.delete(getDocRef('procura_pagos_cxp', p.id));
       const f = _factMap.get(p.facturaId);
       if(f){
@@ -8537,6 +8567,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
           }
         }
         // 2) Borrar el registro de pago original y crear los nuevos según la distribución elegida
+        await archivarEnPapelera('procura_pagos_cxp', editPago.id, editPago, `Pago (editado/redistribuido) — ${editPago.proveedor||''}`, appUser);
         batch.delete(getDocRef('procura_pagos_cxp', editPago.id));
         editAplicaciones.filter(a=>pN(a.monto)>0.001).forEach((a,i)=>{
           const f=_factMap.get(a.facturaId);
@@ -9481,10 +9512,11 @@ const NotasCompraNCView = ({
     const usd=t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0);
     setDialog({
       title:'🗑️ Eliminar '+n.tipo,
-      text:`¿Eliminar ${n.tipo} ${n.nroDocumento||n.id} de ${fc?.proveedor||n.provName||'—'} por $${fN(usd)}?\n\nEsto también revierte su efecto en Cuentas por Pagar (el saldo de la factura vuelve a como estaba) y en el Libro de Compras — no queda ningún registro contable aparte que limpiar, todo se calcula a partir de este documento.\n\nEsta acción no se puede deshacer.`,
+      text:`¿Eliminar ${n.tipo} ${n.nroDocumento||n.id} de ${fc?.proveedor||n.provName||'—'} por $${fN(usd)}?\n\nEsto también revierte su efecto en Cuentas por Pagar (el saldo de la factura vuelve a como estaba) y en el Libro de Compras — no queda ningún registro contable aparte que limpiar, todo se calcula a partir de este documento.\n\nSe archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.`,
       type:'confirm',
       onConfirm: async ()=>{
         try{
+          await archivarEnPapelera('notasCompraCreditoDebito', n.id, n, `${n.tipo} ${n.nroDocumento||n.id} — ${fc?.proveedor||n.provName||''}`, appUser);
           await deleteDoc(getDocRef('notasCompraCreditoDebito',n.id));
           logAuditoria(appUser,'Notas de Crédito/Débito Compra','ELIMINACIÓN',`${n.tipo} ${n.nroDocumento||n.id} (compras) eliminada — proveedor ${fc?.proveedor||n.provName||'—'}, $${fN(usd)}.`);
           setDialog({title:'✅ Eliminada',text:'La nota se eliminó y su efecto en Cuentas por Pagar y Libro de Compras ya se revirtió.',type:'alert'});
@@ -10884,6 +10916,21 @@ const getTodayDate = () => {
 // se borró. Esta función escribe un registro APARTE, permanente, en el momento en que ocurre la
 // acción — funciona para cualquier módulo, pasando el usuario porque no todos los componentes
 // comparten el mismo ámbito de React.
+// Archiva una copia COMPLETA del documento en 'papelera' antes de eliminarlo — así "Auditoría
+// de Sistema → Papelera" lo puede restaurar tal cual estaba, para CUALQUIER colección. Antes
+// esto solo se hacía a mano para Anulación Fiscal; esta es la misma idea, reutilizable.
+const archivarEnPapelera = async (coleccion, docId, datos, resumen, appUser) => {
+  try {
+    const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    await setDoc(getDocRef('papelera', papId), {
+      id: papId, coleccionOrigen: coleccion, docId: String(docId), datos,
+      resumen: resumen || String(docId),
+      eliminadoPor: appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario',
+      fechaEliminado: getTodayDate(), eliminadoEn: Date.now(),
+    });
+  } catch(e) { console.warn('No se pudo archivar en papelera:', e); }
+};
+
 const logAuditoria = async (appUser, modulo, tipo, detalle) => {
   try {
     const id = `AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
@@ -12700,12 +12747,12 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     finally { setAjusteSaving(false); }
   };
   const eliminarAjuste = async (id) => {
-    if(!window.confirm('¿Eliminar este ajuste? Esta acción no se puede deshacer.')) return;
-    try{ await deleteDoc(getDocRef('comprobantes_ajustes', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
+    if(!window.confirm('¿Eliminar este ajuste? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.')) return;
+    try{ const doc_=(ajustesC||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('comprobantes_ajustes', id, doc_, `Ajuste — ${doc_.concepto||id}`); await deleteDoc(getDocRef('comprobantes_ajustes', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
   const eliminarNomina = async (id) => {
-    if(!window.confirm('¿Eliminar este comprobante de nómina? Esta acción no se puede deshacer.')) return;
-    try{ await deleteDoc(getDocRef('comprobantes_nomina', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
+    if(!window.confirm('¿Eliminar este comprobante de nómina? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.')) return;
+    try{ const doc_=(nominaC||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('comprobantes_nomina', id, doc_, `Nómina — ${doc_.concepto||id}`); await deleteDoc(getDocRef('comprobantes_nomina', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
   // ── Importar Nómina desde Excel ───────────────────────────────────────────────
   // Columnas esperadas (en cualquier orden, detectadas por nombre de encabezado):
@@ -15326,6 +15373,15 @@ function App() {
           const ctaGasto=(planDeCuentas||[]).find(p=>p.id===rubroCfg.costoGastoId);
           const ctaAcum=(planDeCuentas||[]).find(p=>p.id===rubroCfg.deprAcumId);
           if(!ctaGasto?.codigo||!ctaAcum?.codigo) return; // la cuenta configurada ya no existe en el plan
+          if(ctaGasto.codigo===ctaAcum.codigo){
+            // Gasto y Dep. Acumulada NO pueden ser la misma cuenta — si lo son, el Debe y el
+            // Haber caen en el mismo código y se cancelan entre sí al sumar por cuenta: Mayor
+            // Analítico sigue mostrando las dos líneas sueltas, pero Estado de Resultados y
+            // Balance General las ven en neto cero y las esconden (por diseño, para no mostrar
+            // cuentas sin movimiento real). Se omite en vez de generar ese asiento roto.
+            console.warn(`⚠️ Depreciación: "${act.centroCosto}" / "${act.rubro}" tiene la misma cuenta para Costo/Gasto y Dep. Acumulada (${ctaGasto.codigo}) — revisar en Activo Fijo → ⚙️ Configuración.`);
+            return;
+          }
           const depMensualUSD=(Number(act.valorCosto||0)-Number(act.valorResidual||0))/vidaMeses;
           if(!(depMensualUSD>0)) return;
           const tasaAct=Number(act.tasaCambio||0)||Number(settings?.tasaBCV||0);
@@ -15347,7 +15403,7 @@ function App() {
             });
             n++; cur=ymAdd(cur,1);
           }
-        }catch(e){}
+        }catch(e){ console.error('⚠️ Depreciación — activo omitido por error:', act?.nombre||act?.id, e); }
       });
     })();
     // 12) Impuestos por Enterar (Actividad Económica + Protección de Pensiones + Anticipo ISLR)
@@ -17200,6 +17256,7 @@ function App() {
       type: 'confirm',
       onConfirm: async () => {
         try {
+          await archivarEnPapelera('users', targetDocId, targetUser, `Usuario — ${targetUser.name||targetUsername}`, appUser);
           await deleteDoc(getDocRef('users', targetDocId));
           setDialog({ title: '✅ Eliminado', text: `Usuario "${targetUsername}" eliminado correctamente.`, type: 'alert' });
         } catch(err) {
@@ -18141,9 +18198,9 @@ function App() {
   const handleDeleteInvItem = (id) => {
     setDialog({ 
       title: 'Eliminar Ítem', 
-      text: `¿Eliminar ${id}?`, 
+      text: `¿Eliminar ${id}? Se archiva en Papelera antes de borrar.`, 
       type: 'confirm', 
-      onConfirm: async () => await deleteDoc(getDocRef('inventory', id))
+      onConfirm: async () => { const doc_=(inventory||[]).find(i=>i.id===id); if(doc_) await archivarEnPapelera('inventory', id, doc_, `Inventario — ${doc_.name||doc_.description||id}`, appUser); await deleteDoc(getDocRef('inventory', id)); }
     });
   };
 
@@ -18265,7 +18322,7 @@ function App() {
       title: 'Eliminar Cliente', 
       text: `¿Desea eliminar el cliente ${rif}?`, 
       type: 'confirm', 
-      onConfirm: async () => await deleteDoc(getDocRef('clientes', rif||'__INVALID__'))
+      onConfirm: async () => { const doc_=(clientes||[]).find(c=>(c.id||c.rif)===rif); if(doc_) await archivarEnPapelera('clientes', rif||'__INVALID__', doc_, `Cliente — ${doc_.name||doc_.razonSocial||rif}`, appUser); await deleteDoc(getDocRef('clientes', rif||'__INVALID__')); }
     });
   };
   const generateInvoiceId = () => `INVO-${((invoices || []).reduce((m, r) => Math.max(m, parseInt(String(r.id).replace(/\D/g, '')||0, 10)), 0) + 1).toString().padStart(4, '0')}`;
@@ -18470,7 +18527,7 @@ function App() {
   };
   const eliminarActivoFijo = async (id) => {
     requireAdminPassword(async()=>{
-      try { await deleteDoc(getDocRef('activos_fijos', id)); } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+      try { const doc_=(activosFijos||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('activos_fijos', id, doc_, `Activo Fijo — ${doc_.nombre||id}`, appUser); await deleteDoc(getDocRef('activos_fijos', id)); } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
     }, 'Eliminar Activo Fijo');
   };
   const procesarBajaActivo = async (a) => {
@@ -18685,6 +18742,7 @@ function App() {
               });
             }
           }
+          await archivarEnPapelera('maquilaInvoices', id, inv, `Factura de venta ${inv?.documento||id} — ${inv?.clientName||''}`, appUser);
           await deleteDoc(getDocRef('maquilaInvoices', id));
           logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Factura de venta ELIMINADA: ${inv?.documento||id} · Cliente: ${inv?.clientName||'—'} · Total: $${formatNum(parseNum(inv?.total||inv?.montoBase||0))}`);
           setDialog({title:'✅ Eliminada', text:'Factura eliminada y stock restaurado en Inventario de Terminados.', type:'alert'});
@@ -19810,6 +19868,8 @@ function App() {
   const handleDeletePO = (poId) => {
     requireAdminPassword(async () => {
       try {
+        const doc_=(purchaseOrders||[]).find(p=>p.id===poId);
+        if(doc_) await archivarEnPapelera('purchaseOrders', poId, doc_, `OC Producción ${doc_.nroOC||poId}`, appUser);
         await deleteDoc(getDocRef('purchaseOrders', poId));
         setDialog({title: 'Éxito', text: 'Orden de compra eliminada', type: 'alert'});
         setViewingPO(null);
@@ -21728,7 +21788,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                               setOsaHdr({ almacenOrigen: osa.almacenOrigen||depositos[0]||'ALMACEN ZI', destino: osa.destino||'', fecha: osa.fecha||getTodayDate(), docRef: osa.docRef||'', procesadoPor: osa.user||appUser?.name||'Admin', clienteNombre: osa.clienteNombre||'', clienteRif: osa.clienteRif||'', clienteDireccion: osa.clienteDireccion||'', nroOSAOriginal: osa.nroOSA||'' });
                               setDialog({title:'OSA Cargada para Editar', text:`${osa.nroOSA} cargada en el formulario. Modifica y vuelve a imprimir para actualizar (no se va a duplicar).`, type:'alert'});
                             }, 'Editar OSA — requiere clave admin')} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar (requiere clave admin)"><Edit size={10}/></button>
-                            <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar OSA',text:`¿Eliminar ${osa.nroOSA||osa.id}? Esta acción no revierte el inventario.`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('inventoryRequisitions',osa.id));setDialog({title:'Eliminada',text:`${osa.nroOSA} eliminada del historial.`,type:'alert'});}}), 'Eliminar OSA — requiere clave admin')}
+                            <button onClick={()=>requireAdminPassword(()=>setDialog({title:'Eliminar OSA',text:`¿Eliminar ${osa.nroOSA||osa.id}? Esta acción no revierte el inventario. Se archiva en Papelera antes de borrar.`,type:'confirm',onConfirm:async()=>{await archivarEnPapelera('inventoryRequisitions',osa.id,osa,`OSA ${osa.nroOSA||osa.id}`,appUser);await deleteDoc(getDocRef('inventoryRequisitions',osa.id));setDialog({title:'Eliminada',text:`${osa.nroOSA} eliminada del historial.`,type:'alert'});}}), 'Eliminar OSA — requiere clave admin')}
                               className="p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar del historial (requiere clave admin)"><Trash2 size={10}/></button>
                           </div>
                         </td>
@@ -22342,6 +22402,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                               .catch(e=>setDialog({title:'Error',text:e.message,type:'alert'}));
                           }} className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-[9px] font-black uppercase hover:bg-orange-500 hover:text-white flex items-center gap-1 justify-center"><Edit size={10}/> EDITAR</button>
                           <button onClick={() => requireAdminPassword(async () => {
+                            await archivarEnPapelera('finishedGoodsInventory', item.id, item, `Terminado — ${item.name||item.description||item.id}`, appUser);
                             await deleteDoc(getDocRef('finishedGoodsInventory', item.id));
                             setDialog({title:'Eliminado', text:'Registro eliminado.', type:'alert'});
                           }, 'Eliminar registro de Terminados')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[9px] font-black uppercase hover:bg-red-500 hover:text-white flex items-center gap-1 justify-center"><Trash2 size={10}/> ELIMINAR</button>
@@ -23123,7 +23184,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                   </button>
                                 )}
                                 {po.status === 'PENDIENTE' && <button onClick={()=>requireAdminPassword(async()=>{await updateDoc(getDocRef('purchaseOrders',po.id),{status:'RECIBIDA'});setDialog({title:'✅',text:'OC recibida.',type:'alert'});},'Recibir OC')} className="bg-green-50 text-green-600 px-2 py-1 rounded-lg text-[8px] font-black uppercase hover:bg-green-600 hover:text-white">RECIBIR</button>}
-                                <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
+                                <button onClick={()=>requireAdminPassword(async()=>{await archivarEnPapelera('purchaseOrders',po.id,po,`OC Producción ${po.nroOC||po.id}`,appUser);await deleteDoc(getDocRef('purchaseOrders',po.id));},'Eliminar OC')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white"><Trash2 size={12}/></button>
                               </div>
                             </td>
                           </tr>
@@ -24571,7 +24632,7 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                                  ) : (
                                    <>
                                      <button onClick={()=>requireAdminPassword(()=>startEditInvItem(inv),'Editar artículo')} className="p-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all"><Edit size={11}/></button>
-                                     <button onClick={()=>requireAdminPassword(async()=>{const cleanId2=inv.displayId||inv.id.split('___')[0]||inv.id;const realDocs=(inventory||[]).filter(i=>{const cid=i.displayId||(i.id||'').split('___')[0];return cid===cleanId2||i.id===cleanId2;});if(realDocs.length>0){for(const d of realDocs)await deleteDoc(getDocRef('inventory',d.id));}else{await deleteDoc(getDocRef('inventory',inv.id));}setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={11}/></button>
+                                     <button onClick={()=>requireAdminPassword(async()=>{const cleanId2=inv.displayId||inv.id.split('___')[0]||inv.id;const realDocs=(inventory||[]).filter(i=>{const cid=i.displayId||(i.id||'').split('___')[0];return cid===cleanId2||i.id===cleanId2;});if(realDocs.length>0){for(const d of realDocs){await archivarEnPapelera('inventory',d.id,d,`Inventario — ${d.name||d.description||d.id}`,appUser);await deleteDoc(getDocRef('inventory',d.id));}}else{await archivarEnPapelera('inventory',inv.id,inv,`Inventario — ${inv.name||inv.description||inv.id}`,appUser);await deleteDoc(getDocRef('inventory',inv.id));}setDialog({title:'Eliminado',text:'Artículo eliminado.',type:'alert'});},'Eliminar artículo')} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-all"><Trash2 size={11}/></button>
                                    </>
                                  )}
                                </div>
@@ -26566,7 +26627,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               </div>
                               <script>window.print();</script></body></html>`);
                             }} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-800 hover:text-white transition-all"><Printer size={16}/></button>
-                            <button onClick={()=>requireAdminPassword(async()=>{await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
+                            <button onClick={()=>requireAdminPassword(async()=>{await archivarEnPapelera('cotizaciones',cot.id,cot,`Cotización ${cot.documento||cot.id}`,appUser);await deleteDoc(getDocRef('cotizaciones',cot.id));setDialog({title:'Eliminada',text:`${cot.documento} eliminada.`,type:'alert'});},'Eliminar cotización')} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button>
                           </div>
                         </td>
                       </tr>
@@ -28605,10 +28666,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-700 border border-green-200 rounded-xl text-[10px] font-black uppercase hover:bg-green-600 hover:text-white transition-all">
                             <Download size={12}/> Excel
                           </button>
-                          <button onClick={()=>{
-                            if(window.confirm(`¿Eliminar reporte de ${r.vendedor} — ${r.mesLabel}?`))
-                              deleteDoc(getDocRef('comisionesReportes',r.id));
-                          }} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
+                          <button onClick={()=>setDialog({title:'Eliminar Reporte de Comisión',text:`¿Eliminar el reporte de ${r.vendedor} — ${r.mesLabel}? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.`,type:'confirm',onConfirm:async()=>{
+                            try{
+                              await archivarEnPapelera('comisionesReportes', r.id, r, `Reporte de comisión — ${r.vendedor} — ${r.mesLabel}`, appUser);
+                              await deleteDoc(getDocRef('comisionesReportes',r.id));
+                              logAuditoria(appUser,'Comisiones de Vendedores','ELIMINACIÓN',`Reporte de comisión ELIMINADO: ${r.vendedor} — ${r.mesLabel}`);
+                            }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+                          }})} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-400 border border-red-100 rounded-xl text-[10px] font-black uppercase hover:bg-red-500 hover:text-white transition-all">
                             <Trash2 size={12}/> Eliminar
                           </button>
                         </div>
@@ -28778,6 +28842,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 }
               }
               // 2. Eliminar la NE
+              await archivarEnPapelera('notasEntrega', ne.id, ne, `NE ${ne.id} — ${ne.clientName||''}`, appUser);
               batch.delete(getDocRef('notasEntrega',ne.id));
               await batch.commit();
               logAuditoria(appUser,'Notas de Entrega','ELIMINACIÓN',`NE ELIMINADA: ${ne.id} · Cliente: ${ne.clientName||'—'} · Fecha: ${ne.fecha||'—'} · Total: $${formatNum(ne.total||ne.totalUSD||0)}`);
@@ -30407,6 +30472,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           await batch.commit();
                                         }
                                         // 2. Eliminar la NC/ND usando el key real de Firestore
+                                        await archivarEnPapelera('notasVentaCreditoDebito', n._fsId||n.id, n, `${n.tipo} ${n.nroDocumento} — venta`, appUser);
                                         await deleteDoc(getDocRef('notasVentaCreditoDebito', n._fsId||n.id));
                                         setDialog({title:'✅ Eliminada',text:`${n.tipo} ${n.nroDocumento} eliminada.${n.tipo==='NC'&&(n.itemsRevertidos||[]).length>0?' Inventario revertido.':''}`,type:'alert'});
                                       }catch(e){setDialog({title:'Error al eliminar',text:e.message,type:'alert'});}
@@ -32062,6 +32128,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const ne=(notasEntrega||[]).find(n=>n.id===cobro.neId);
 
                 // 1. Eliminar el cobro de cobros_cxc
+                await archivarEnPapelera('cobros_cxc', cobro.id, cobro, `Cobro $${formatNum(cobro.monto)} — ${cobro.clientName||''}`, appUser);
                 batch.delete(getDocRef('cobros_cxc',cobro.id));
 
                 // 2. Recalcular NE — saldo = total NE − NC/ND − retenciones − cobros restantes
@@ -35813,7 +35880,7 @@ ${resumenHtml}
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
                               <button onClick={()=>{setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
-                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await archivarEnPapelera('retencionesClientes',ret.id,ret,`Retención ${ret.nroRetencion}`,appUser);await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
                         });
@@ -38698,8 +38765,8 @@ ${resumenHtml}
   };
 
   const handleDeleteFormula = (id) => {
-    setDialog({title:'Eliminar Fórmula', text:'¿Desea eliminar esta receta de producción?', type:'confirm',
-      onConfirm: async () => { await deleteDoc(getDocRef('formulas', id)); }
+    setDialog({title:'Eliminar Fórmula', text:'¿Desea eliminar esta receta de producción? Se archiva en Papelera antes de borrar.', type:'confirm',
+      onConfirm: async () => { const doc_=(formulas||[]).find(f=>f.id===id); if(doc_) await archivarEnPapelera('formulas', id, doc_, `Fórmula — ${doc_.nombre||id}`, appUser); await deleteDoc(getDocRef('formulas', id)); }
     });
   };
 
@@ -40031,6 +40098,7 @@ ${resumenHtml}
                                   }} className="p-1.5 bg-orange-50 text-orange-500 rounded-lg hover:bg-orange-500 hover:text-white" title="Modificar"><Edit size={13}/></button>
                                   <button onClick={async()=>{
                                     if(window.confirm(`¿Eliminar ${po.id}?`)){
+                                      await archivarEnPapelera('purchaseOrders',po.id,po,`OC Producción ${po.nroOC||po.id}`,appUser);
                                       await deleteDoc(getDocRef('purchaseOrders',po.id));
                                     }
                                   }} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar"><Trash2 size={13}/></button>
@@ -43306,8 +43374,8 @@ ${resumenHtml}
   };
 
   const handleDeleteCuenta = (id) => {
-    setDialog({title:'Eliminar Cuenta', text:'Eliminar esta cuenta del plan?', type:'confirm',
-      onConfirm: async () => await deleteDoc(getDocRef('planDeCuentas', id))});
+    setDialog({title:'Eliminar Cuenta', text:'¿Eliminar esta cuenta del plan? Se archiva en Papelera antes de borrar.', type:'confirm',
+      onConfirm: async () => { const doc_=(planDeCuentas||[]).find(c=>c.id===id); if(doc_) await archivarEnPapelera('planDeCuentas', id, doc_, `Cuenta ${doc_.codigo||''} — ${doc_.nombre||id}`, appUser); await deleteDoc(getDocRef('planDeCuentas', id)); }});
   };
 
   // ============================================================================
@@ -45081,6 +45149,7 @@ ${resumenHtml}
       logAuditoria(appUser,'Seguridad','EDICIÓN',`Dispositivo RECHAZADO: ${d.deviceLabel||'—'} para ${d.nombreUsuario||d.username}`);
     };
     const revocarDisp = (d) => setDialog({title:'¿Revocar acceso?', text:`${d.nombreUsuario||d.username} ya no podrá entrar desde "${d.deviceLabel||'este equipo'}" hasta que lo apruebes de nuevo.`, type:'confirm', onConfirm: async()=>{
+      await archivarEnPapelera('dispositivos_autorizados', d.id, d, `Dispositivo — ${d.deviceLabel||''} (${d.nombreUsuario||d.username})`, appUser);
       await deleteDoc(getDocRef('dispositivos_autorizados', d.id));
       logAuditoria(appUser,'Seguridad','ELIMINACIÓN',`Dispositivo REVOCADO: ${d.deviceLabel||'—'} de ${d.nombreUsuario||d.username}`);
     }});
@@ -45567,6 +45636,10 @@ ${resumenHtml}
     const totalGastosUSD=sumTree(treeGastosReal,'u'), totalGastosBs=sumTree(treeGastosReal,'b');
     const utilidadBrutaUSD=totalIngresosUSD-totalCostosUSD, utilidadBrutaBs=totalIngresosBs-totalCostosBs;
     const utilidadNetaUSD=utilidadBrutaUSD-totalGastosUSD, utilidadNetaBs=utilidadBrutaBs-totalGastosBs;
+    // Diagnóstico temporal: cuentas de Depreciación (código con ".08.01.") en el período — para
+    // ver exactamente qué trae cuentasAgg (antes de armar el árbol) y detectar si el problema es
+    // saldo neto cero, cuenta ausente, o algo más. Se puede quitar una vez resuelto.
+    const diagDeprec = cuentasAgg.filter(c=>/\.08\.01\./.test(c.codigo));
     const showUSD = contERCurrency!=='bs'; const showBS = contERCurrency!=='usd';
     const baseVentas = totalIngresosUSD||1;
 
@@ -45593,6 +45666,29 @@ ${resumenHtml}
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Ingresos, costos y gastos — utilidad o pérdida del período</p>
           </div>
           <div className="p-6 space-y-4">
+            {diagDeprec.length>0 ? (
+              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
+                <p className="text-[10px] font-black uppercase text-red-700 mb-2">🔬 Diagnóstico temporal — cuentas de Depreciación en este período (antes del árbol)</p>
+                <table className="w-full text-[10px]">
+                  <thead><tr className="text-red-500 uppercase font-black"><th className="text-left">Código</th><th className="text-left">Cuenta</th><th className="text-right">Debe $</th><th className="text-right">Haber $</th><th className="text-right">Neto $</th><th className="text-right">Debe Bs</th><th className="text-right">Haber Bs</th><th className="text-right">Neto Bs</th></tr></thead>
+                  <tbody>
+                    {diagDeprec.map((c,i)=>(
+                      <tr key={i} className="border-t border-red-100">
+                        <td className="font-mono">{c.codigo}</td><td>{c.cuenta}</td>
+                        <td className="text-right font-mono">{contFmt(c.debeUSD)}</td><td className="text-right font-mono">{contFmt(c.haberUSD)}</td>
+                        <td className="text-right font-mono font-black">{contFmt(c.debeUSD-c.haberUSD)}</td>
+                        <td className="text-right font-mono">{contFmt(c.debeBs)}</td><td className="text-right font-mono">{contFmt(c.haberBs)}</td>
+                        <td className="text-right font-mono font-black">{contFmt(c.debeBs-c.haberBs)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
+                <p className="text-[10px] font-black uppercase text-red-700">🔬 Diagnóstico: no hay NINGUNA cuenta con ".08.01." en este período — el problema está antes de este reporte, en getAsientosReales().</p>
+              </div>
+            )}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
@@ -48511,6 +48607,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                       {/* Eliminar OP completa */}
                       <button onClick={() => requireAdminPassword(async () => {
                         // 1. Eliminar la OP
+                        await archivarEnPapelera('requirements', selectedOP.id, selectedOP, `OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')}`, appUser);
                         await deleteDoc(getDocRef('requirements', selectedOP.id));
                         // 2. Eliminar FG
                         for (const fg of (finishedGoodsInventory||[]).filter(fg=>fg.opId===selectedOP.id))
@@ -48519,8 +48616,10 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                         for (const r of (invRequisitions||[]).filter(r=>r.opId===selectedOP.id))
                           await deleteDoc(getDocRef('invRequisitions', r.id));
                         // 4. Eliminar facturas asociadas
-                        for (const inv of (invoices||[]).filter(i=>i.opAsignada===selectedOP.id))
+                        for (const inv of (invoices||[]).filter(i=>i.opAsignada===selectedOP.id)){
+                          await archivarEnPapelera('maquilaInvoices', inv.id, inv, `Factura ${inv.documento||inv.id} (de OP #${selectedOP.id})`, appUser);
                           await deleteDoc(getDocRef('maquilaInvoices', inv.id));
+                        }
                         logAuditoria(appUser,'Ventas','ELIMINACIÓN',`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} ELIMINADA completa (incluye sus facturas asociadas)`);
                         setSelectedOpId('');
                         setDialog({title:'✅ Eliminada', text:`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} eliminada completamente.`, type:'alert'});
@@ -49062,7 +49161,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
     };
     const nuevaActa = () => { setPvActaId(null); setPvActaForm(initActaForm()); setPvActaFotos({1:null,2:null,3:null}); };
     const cargarActa = (a) => { setPvActaId(a.id); setPvActaForm({...initActaForm(),...a}); setPvActaFotos({1:null,2:null,3:null}); setPvShowActaHist(false); };
-    const eliminarActa = (id) => setDialog({title:'Eliminar acta',text:`¿Eliminar ${id}?`,type:'confirm',onConfirm:async()=>{await deleteDoc(getDocRef('actasReclamo',id));if(pvActaId===id){setPvActaId(null);setPvActaForm(null);}}});
+    const eliminarActa = (id) => setDialog({title:'Eliminar acta',text:`¿Eliminar ${id}? Se archiva en Papelera antes de borrar.`,type:'confirm',onConfirm:async()=>{const doc_=(actasReclamo||[]).find(a=>a.id===id);if(doc_) await archivarEnPapelera('actasReclamo',id,doc_,`Acta — ${id}`,appUser);await deleteDoc(getDocRef('actasReclamo',id));if(pvActaId===id){setPvActaId(null);setPvActaForm(null);}}});
 
     const INCONFORMIDADES=['Producto defectuoso','Producto incompleto / faltante','Producto incorrecto','Daño en transporte','Producto vencido / caducado','Error de facturación','Fallo de sellado / empaque','Otros'];
     const EVIDENCIAS=['Fotografía del producto','Video demostrativo','Factura / comprobante','Producto en condiciones originales','Empaque original','Otros documentos'];
