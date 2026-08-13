@@ -2018,15 +2018,37 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   const cuenta=cuentas.find(c=>c.id===cuentaId);
   const esCuentaBs=cuenta?.tipoBanco==='Nacional-Bs'||cuenta?.moneda==='BS';
   const todos=movBanco.filter(m=>m.cuentaId===cuentaId&&m.estatus!=='Conciliado'&&(!desde||m.fecha>=desde)&&(!hasta||m.fecha<=hasta));
-  const toggle=id=>setMarcados(p=>({...p,[id]:!p[id]}));
-  const egTrans=todos.filter(m=>m.tipo==='Egreso' &&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
-  const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&!marcados[m.id]).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+  const toggle=id=>setMarcados(p=>({...p,[id]:p[id]===false?true:false}));
+  const marcarTodos=()=>{const n={};todos.forEach(m=>n[m.id]=true);setMarcados(p=>({...p,...n}));};
+  const desmarcarTodos=()=>{const n={};todos.forEach(m=>n[m.id]=false);setMarcados(p=>({...p,...n}));};
+  const todosMarcados = todos.length>0 && todos.every(m=>marcados[m.id]!==false);
+  // "En tránsito" = lo que aparece en el rango pero NO se marcó como confirmado contra el estado
+  // de cuenta del banco — por defecto arranca marcado (asumiendo que todo cuadra), así que acá
+  // se cuenta lo que el usuario DESMARCÓ explícitamente.
+  const egTrans=todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+  const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
   const cargos=0;const abonos=0;
-  const saldoLibrosUSD=cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo)/tasaActiva:cuenta.saldo):0;
-  const saldoLibrosBs =cuenta?Number(cuenta.moneda==='BS'?Number(cuenta.saldo):Number(cuenta.saldo)*tasaActiva):0;
+  // Saldo Inicial del período: se retrocede desde el saldo ACTUAL de la cuenta (que ya incluye
+  // todo hasta hoy) restando el efecto de TODOS los movimientos desde "desde" en adelante — así
+  // se llega al saldo real que tenía la cuenta justo ANTES de "desde", sin importar cuánto haya
+  // pasado entre "hasta" y hoy. Antes "Saldo en Libros" usaba el saldo actual tal cual, sin
+  // ajustar por fecha — por eso no cuadraba con nada si "hasta" no era hoy mismo.
+  const montoNativoMov = m => esCuentaBs?Number(m.montoBs||0):Number(m.montoUSD||0);
+  const signoMov = m => m.tipo==='Ingreso'?1:-1; // Egreso y Traslado de Fondo restan del saldo
+  const saldoActualNativo = Number(cuenta?.saldo||0);
+  const movsDesdeEnAdelante = cuenta ? movBanco.filter(m=>m.cuentaId===cuentaId && desde && m.fecha>=desde) : [];
+  const netoDesdeEnAdelante = movsDesdeEnAdelante.reduce((s,m)=>s+signoMov(m)*montoNativoMov(m),0);
+  const saldoInicialNativo = saldoActualNativo - netoDesdeEnAdelante;
+  const entradasNativo = todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+montoNativoMov(m),0);
+  const salidasNativo  = todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+montoNativoMov(m),0);
+  const saldoLibrosCalculadoNativo = saldoInicialNativo + entradasNativo - salidasNativo;
+  const saldoLibrosUSD = cuenta?(esCuentaBs?saldoLibrosCalculadoNativo/tasaActiva:saldoLibrosCalculadoNativo):0;
+  const saldoLibrosBs  = cuenta?(esCuentaBs?saldoLibrosCalculadoNativo:saldoLibrosCalculadoNativo*tasaActiva):0;
   const saldoLibros=saldoLibrosUSD; // alias para compatibilidad con lógica de cuadre
-  const saldoConcil=saldoLibros+cargos-abonos+egTrans-ingTrans;
-  const sbNum=Number(saldoBanco)||0;const saldoConcilMonedaCta=esCuentaBs?saldoConcil*tasaActiva:saldoConcil;const diff=sbNum-saldoConcilMonedaCta;const OK=Math.abs(diff)<0.01&&sbNum>0;
+  const saldoInicialUSD = cuenta?(esCuentaBs?saldoInicialNativo/tasaActiva:saldoInicialNativo):0;
+  const saldoInicialBs  = cuenta?(esCuentaBs?saldoInicialNativo:saldoInicialNativo*tasaActiva):0;
+  const saldoConcil=saldoLibros; // el ajuste por marcados/no-marcados ya está adentro de saldoLibrosCalculadoNativo
+  const sbNum=Number(saldoBanco)||0;const saldoConcilMonedaCta=esCuentaBs?saldoLibrosBs:saldoLibrosUSD;const diff=sbNum-saldoConcilMonedaCta;const OK=Math.abs(diff)<0.01&&sbNum>0;
   const aprobar=async()=>{
     if(!OK)return alert('Diferencia debe ser $0.00');
     if(!window.confirm('¿Aprobar conciliación? Podrás editarla o eliminarla luego con la clave de administrador si necesitas corregir algo.'))return;
@@ -2129,17 +2151,23 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
     </div></BCard>
     {cuentaId&&<div className="grid lg:grid-cols-3 gap-5">
       <div className="lg:col-span-2 space-y-3">
-        <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle="Marque los que aparecen en el estado de cuenta">
+        <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle="Marque los que aparecen en el estado de cuenta" action={
+          todos.length>0 && (
+            <button onClick={todosMarcados?desmarcarTodos:marcarTodos} className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1">
+              <CheckCircle size={13}/> {todosMarcados?'Desmarcar todos':'Seleccionar todos'}
+            </button>
+          )
+        }>
           {todos.length===0?<BEmptyState icon={CheckCircle} title="Sin movimientos pendientes" desc=""/>:
             <div className="divide-y divide-slate-100">{todos.map(m=>(
               <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]?'bg-emerald-50/60':''}`}>
-                <input type="checkbox" checked={!!marcados[m.id]} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
+                <input type="checkbox" checked={marcados[m.id]!==false} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
                 <div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-0.5"><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':'blue'}>{m.tipo}</BBadge><span className="text-[10px] text-slate-400">{bancoDd(m.fecha)}</span></div><p className="text-xs font-semibold text-slate-700 truncate">{m.concepto}</p></div>
                 <div className="text-right flex-shrink-0">
                   <p className={`font-mono font-black text-sm ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{esCuentaBs?'Bs.'+bancoFmt(m.montoBs):'$'+bancoFmt(m.montoUSD)}</p>
                   <p className="text-[10px] text-slate-400">{esCuentaBs?'≈$'+bancoFmt(m.montoUSD):'Bs.'+bancoFmt(m.montoBs)}</p>
                 </div>
-                {marcados[m.id]&&<CheckCircle size={16} className="text-emerald-500 flex-shrink-0"/>}
+                {marcados[m.id]!==false&&<CheckCircle size={16} className="text-emerald-500 flex-shrink-0"/>}
               </label>
             ))}</div>}
         </BCard>
@@ -2148,11 +2176,17 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
         <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden shadow-sm sticky top-4">
           <div className="px-5 py-4" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}><p className="font-black text-white text-sm uppercase tracking-widest">Panel de Cuadre</p></div>
           <div className="p-5 space-y-3">
-            {[{l:'Saldo en Libros (Sistema)',v:saldoLibros,vbs:saldoLibrosBs,c:'text-slate-900',b:true},{l:'(+) Egresos Tránsito',v:egTrans,vbs:egTrans*tasaActiva,c:'text-red-500'},{l:'(−) Ingresos Tránsito',v:ingTrans,vbs:ingTrans*tasaActiva,c:'text-emerald-500'}].map(({l,v,vbs,c,b})=>(
+            {[
+              {l:'Saldo Inicial (antes del "Desde")',v:saldoInicialUSD,vbs:saldoInicialBs,c:'text-slate-700',b:false},
+              {l:'(+) Entradas marcadas',v:esCuentaBs?entradasNativo/tasaActiva:entradasNativo,vbs:esCuentaBs?entradasNativo:entradasNativo*tasaActiva,c:'text-emerald-500',b:false},
+              {l:'(−) Salidas marcadas',v:esCuentaBs?salidasNativo/tasaActiva:salidasNativo,vbs:esCuentaBs?salidasNativo:salidasNativo*tasaActiva,c:'text-red-500',b:false},
+              {l:'= Saldo en Libros (calculado)',v:saldoLibros,vbs:saldoLibrosBs,c:'text-slate-900',b:true},
+            ].map(({l,v,vbs,c,b})=>(
               <div key={l} className="flex items-center justify-between"><p className={`text-[10px] ${b?'font-black text-slate-700':'font-medium text-slate-500'} leading-tight max-w-[150px]`}>{l}</p>
                 <div className="text-right"><p className={`font-mono font-black text-sm ${c}`}>{esCuentaBs?'Bs.'+bancoFmt(vbs):'$'+bancoFmt(v)}</p><p className="text-[9px] text-slate-400 font-mono">{esCuentaBs?'≈$'+bancoFmt(v):'≈Bs.'+bancoFmt(vbs)}</p></div>
               </div>
             ))}
+            {(egTrans>0||ingTrans>0) && <p className="text-[9px] text-amber-600 font-bold">⚠ Hay {todos.filter(m=>marcados[m.id]===false).length} movimiento(s) desmarcado(s) (no incluido(s) arriba) — desmarca solo lo que NO aparezca todavía en tu estado de cuenta del banco.</p>}
             <div className="border-t-2 border-slate-200 pt-3 space-y-1">
               <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-700 uppercase">= Saldo Conciliado</p><p className="font-mono font-black text-blue-600">{esCuentaBs?'Bs.'+bancoFmt(saldoConcil*tasaActiva):'$'+bancoFmt(saldoConcil)}</p></div>
               <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-500 uppercase">Saldo según Banco</p><p className="font-mono font-black text-slate-900">{esCuentaBs?'Bs.'+bancoFmt(sbNum):'$'+bancoFmt(sbNum)}</p></div>
@@ -3887,16 +3921,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
         const v=Number(m[campo]||0);
         if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+v;
-        if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return s-v;
-        return s;
+        return s-v; // Egreso, Nota de Débito, Traslado, Transferencia — todos salen de esta cuenta
       },0);
       const saldoInicialUSD = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoUSD');
       const saldoInicialBs  = saldoBaseBs  + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoBs');
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
       const entradasUSD = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
       const entradasBs  = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
-      const salidasUSD  = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      const salidasBs   = movsDelMes.filter(m=>m.tipo==='Egreso'||m.tipo==='Nota de Débito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      const salidasUSD  = movsDelMes.filter(m=>m.tipo!=='Ingreso'&&m.tipo!=='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const salidasBs   = movsDelMes.filter(m=>m.tipo!=='Ingreso'&&m.tipo!=='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
       return {saldoInicialUSD,saldoInicialBs,entradasUSD,entradasBs,salidasUSD,salidasBs};
     };
     const esBsCuenta = (c) => c.moneda==='BS'||c.tipoBanco==='Nacional-Bs';
