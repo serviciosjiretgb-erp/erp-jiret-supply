@@ -2061,7 +2061,7 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
       ids.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'Conciliado'}));
       const movimientosDetalle=movsConciliados.map(m=>({fecha:m.fecha||'',tipo:m.tipo||'',concepto:m.concepto||'',referencia:m.referencia||'',montoUSD:Number(m.montoUSD||0),montoBs:Number(m.montoBs||0)})).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
       const entradasReconc=movsConciliados.filter(m=>m.tipo==='Ingreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0});
-      const salidasReconc =movsConciliados.filter(m=>m.tipo==='Egreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0});
+      const salidasReconc =movsConciliados.filter(m=>m.tipo!=='Ingreso').reduce((s,m)=>({usd:s.usd+Number(m.montoUSD||0),bs:s.bs+Number(m.montoBs||0)}),{usd:0,bs:0}); // Egreso, Traslado de Fondo, Transferencia — todo lo que no sea Ingreso sale de la cuenta
       const saldoInicialReconcUSD=saldoLibros-(entradasReconc.usd-salidasReconc.usd);
       const saldoInicialReconcBs=saldoLibrosBs-(entradasReconc.bs-salidasReconc.bs);
       const id=bancoGid();
