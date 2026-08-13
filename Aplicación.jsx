@@ -11991,7 +11991,19 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [claveReclasMasivaInput, setClaveReclasMasivaInput] = useState('');
   const [reclasBusq, setReclasBusq] = useState('');
   const [reclasSaving, setReclasSaving] = useState(false);
+  // La tasa de Depreciación se guarda en settings/general (campo tasaDeprecUltima) — antes vivía
+  // solo en memoria, así que cada vez que se recargaba la pantalla volvía a estar vacía y los Bs.
+  // salían en 0 hasta darle al botón de refrescar otra vez.
   const [tasaDeprec, setTasaDeprec] = useState('');
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('settings','general'), d=>{ const v=d.data()?.tasaDeprecUltima; if(v) setTasaDeprec(prev=>prev||String(v)); });
+    return ()=>u();
+  },[]);
+  useEffect(()=>{
+    if(!tasaDeprec) return;
+    const t=setTimeout(()=>{ setDoc(getDocRef('settings','general'),{tasaDeprecUltima:tasaDeprec},{merge:true}).catch(()=>{}); }, 800);
+    return ()=>clearTimeout(t);
+  },[tasaDeprec]);
   const [settingsCC, setSettingsCC] = useState({});
   const [impMes, setImpMes] = useState(getTodayDate().substring(5,7));
   const [impAnio, setImpAnio] = useState(getTodayDate().substring(0,4));
@@ -27990,12 +28002,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             };
           });
           const cobranzaVisible = cobranzaCalcAll.filter(r => !(comCobranza||[]).find(c=>c.neId===r.neId)?.excluido);
-          const cobranzaCalc = cobranzaVisible.filter(r => {
-            // Cobradas: solo las pagadas en el mes/año filtrado. Pendientes: todas las abiertas (histórico).
-            if(cobFiltro==='cobrado') return r.cobrado && (r.fechaPago||'').startsWith(ym);
-            if(cobFiltro==='pendiente') return !r.cobrado;
-            return !r.cobrado || (r.fechaPago||'').startsWith(ym);
-          });
+          const cobranzaCalc = cobFiltro==='excluidas'
+            ? cobranzaCalcAll.filter(r => (comCobranza||[]).find(c=>c.neId===r.neId)?.excluido)
+            : cobranzaVisible.filter(r => {
+                // Cobradas: solo las pagadas en el mes/año filtrado. Pendientes: todas las abiertas (histórico).
+                if(cobFiltro==='cobrado') return r.cobrado && (r.fechaPago||'').startsWith(ym);
+                if(cobFiltro==='pendiente') return !r.cobrado;
+                return !r.cobrado || (r.fechaPago||'').startsWith(ym);
+              });
           const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
           const updCobranza = (i,campo,val) => {
             const neId = cobranzaCalc[i]?.neId;
@@ -28335,7 +28349,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-3 flex-wrap">
                      <span className="text-[8px] font-bold text-gray-500 uppercase">Escala: {(cfg.cobranzaEscala||[]).map((e,ei)=>`R${ei+1}: ${e.dMin}-${e.dMax}d → ${e.pct}%`).join(' | ')||'No configurada'}</span>
-                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaVisible.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaVisible.filter(r=>r.cobrado&&(r.fechaPago||'').startsWith(ym)).length})`:'📋 Todos'}</button>))}</div>
+                     <div className="ml-auto flex gap-1">{['pendiente','cobrado','todos','excluidas'].map(f=>(<button key={f} onClick={()=>setCobFiltro(f)} className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase transition-all ${cobFiltro===f?'bg-orange-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{f==='pendiente'?`⏳ Pendientes (${cobranzaVisible.filter(r=>!r.cobrado).length})`:f==='cobrado'?`✅ Cobrados (${cobranzaVisible.filter(r=>r.cobrado&&(r.fechaPago||'').startsWith(ym)).length})`:f==='excluidas'?`🗑 Excluidas (${cobranzaCalcAll.length-cobranzaVisible.length})`:'📋 Todos'}</button>))}</div>
                    </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
@@ -28384,9 +28398,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                              </td>
                              <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
                              <td className="px-2 py-1.5 text-center">
-                               <button onClick={()=>quitarDeRelacionCobranza(i)} title="Quitar esta NE de la relación de cobranza (no la borra del sistema)" className="p-1 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors">
-                                 <Trash2 size={12}/>
-                               </button>
+                               {cobFiltro==='excluidas' ? (
+                                 <button onClick={()=>updCobranza(i,'excluido',false)} title="Restaurar esta NE a la relación de cobranza" className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-colors">
+                                   <RefreshCw size={11}/> Restaurar
+                                 </button>
+                               ) : (
+                                 <button onClick={()=>quitarDeRelacionCobranza(i)} title="Quitar esta NE de la relación de cobranza (no la borra del sistema)" className="p-1 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors">
+                                   <Trash2 size={12}/>
+                                 </button>
+                               )}
                              </td>
                           </tr>
                         ))}
