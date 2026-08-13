@@ -2676,12 +2676,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [editando, setEdit]   = useState(null);
     const [certCuenta, setCert] = useState(null);
     const [busy, setBusy]       = useState(false);
-    const initF = ()=>({banco:'',numeroCuenta:'',tipoCuenta:'Corriente',tipoBanco:'Nacional-Bs',moneda:'BS',saldo:'0',mesSaldoInicial:getTodayDate().substring(0,7),titular:'',cuentaContableCod:'',cuentaContableNom:'',logoUrl:''});
+    const initF = ()=>({banco:'',numeroCuenta:'',tipoCuenta:'Corriente',tipoBanco:'Nacional-Bs',moneda:'BS',saldo:'0',saldoInicial:'0',mesSaldoInicial:getTodayDate().substring(0,7),titular:'',cuentaContableCod:'',cuentaContableNom:'',logoUrl:''});
     const [form, setForm] = useState(initF());
     const monedaDe = tb => TIPO_BANCO.find(t=>t.id===tb)?.moneda||'BS';
 
     const openNew  = ()=>{ setEdit(null); setForm(initF()); setModal(true); };
-    const openEdit = c  =>{ setEdit(c); setForm({banco:c.banco,numeroCuenta:c.numeroCuenta,tipoCuenta:c.tipoCuenta,tipoBanco:c.tipoBanco||'Nacional-Bs',moneda:c.moneda||monedaDe(c.tipoBanco),saldo:String(c.saldo),mesSaldoInicial:c.mesSaldoInicial||getTodayDate().substring(0,7),titular:c.titular||'',cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',logoUrl:c.logoUrl||''}); setModal(true); };
+    const openEdit = c  =>{ setEdit(c); setForm({banco:c.banco,numeroCuenta:c.numeroCuenta,tipoCuenta:c.tipoCuenta,tipoBanco:c.tipoBanco||'Nacional-Bs',moneda:c.moneda||monedaDe(c.tipoBanco),saldo:String(c.saldo),saldoInicial:String(c.saldoInicial??c.saldo??0),mesSaldoInicial:c.mesSaldoInicial||getTodayDate().substring(0,7),titular:c.titular||'',cuentaContableCod:c.cuentaContableCod||'',cuentaContableNom:c.cuentaContableNom||'',logoUrl:c.logoUrl||''}); setModal(true); };
 
     const save = async()=>{
       if(!form.banco||!form.numeroCuenta) return alert('Banco y número requeridos');
@@ -2692,10 +2692,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // "Electrónica" en Bs. en vez de USD, aunque ese sea el default típico del tipo).
         // Si por algo llegara vacía (cuentas viejas sin este campo aún), cae al default del tipo.
         const moneda=form.moneda||monedaDe(form.tipoBanco);
+        // saldoInicial es el campo FIJO que el usuario controla — nunca lo toca ningún
+        // movimiento. saldo es el saldo VIVO, que SÍ se actualiza solo con cada Ingreso/Egreso/
+        // Traslado (igual que ya funciona Caja). Al editar una cuenta que YA existe, no se toca
+        // "saldo" — si se sobreescribiera cada vez que se guarda el formulario, se perdía todo
+        // el movimiento acumulado desde que se registró la cuenta.
+        const saldoInicialNum = Number(form.saldoInicial ?? form.saldo) || 0;
         if(editando) {
-          await updateDoc(getDocRef('banco_cuentas',editando.id),{...form,moneda,saldo:Number(form.saldo)});
+          await updateDoc(getDocRef('banco_cuentas',editando.id),{...form,moneda,saldoInicial:saldoInicialNum});
         } else {
-          const id=bancoGid(); await setDoc(getDocRef('banco_cuentas',id),{...form,id,moneda,saldo:Number(form.saldo),ts:serverTimestamp()});
+          const id=bancoGid();
+          await setDoc(getDocRef('banco_cuentas',id),{...form,id,moneda,saldoInicial:saldoInicialNum,saldo:saldoInicialNum,ts:serverTimestamp()});
         }
         setModal(false); setEdit(null); setForm(initF());
       } finally { setBusy(false); }
@@ -2929,7 +2936,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <BFG label="Número de Cuenta"><input className={inp} value={form.numeroCuenta} onChange={e=>setForm({...form,numeroCuenta:e.target.value})} placeholder="0134-0000-00-0000000000"/></BFG>
             <BFG label="Tipo de Cuenta"><select className={sel} value={form.tipoCuenta} onChange={e=>setForm({...form,tipoCuenta:e.target.value})}><option>Corriente</option><option>Ahorros</option><option>Nómina</option><option>Divisas</option><option>Custodia</option><option>Swift</option><option>Electrónica</option><option>Tarjeta de Débito Internacional</option></select></BFG>
             <BFG label="Titular de la Cuenta" full><input className={inp} value={form.titular} onChange={e=>setForm({...form,titular:e.target.value.toUpperCase()})} placeholder="SERVICIOS JIRET G&B C.A."/></BFG>
-            <BFG label={`Saldo Inicial (${form.moneda||monedaDe(form.tipoBanco)})`}><input type="number" step="0.01" className={inp} value={form.saldo} onChange={e=>setForm({...form,saldo:e.target.value})}/></BFG>
+            <BFG label={`Saldo Inicial (${form.moneda||monedaDe(form.tipoBanco)})`}>
+              <input type="number" step="0.01" className={inp} value={form.saldoInicial} onChange={e=>setForm({...form,saldoInicial:e.target.value})}/>
+              {editando && <p className="text-[9px] text-slate-400 mt-1">Esto es el punto de partida del mes indicado — no cambia solo. El saldo actual (con todos los movimientos ya registrados) es {form.moneda==='BS'?'Bs.':'$'} {bancoFmt(form.saldo)}.</p>}
+            </BFG>
             <BFG label="Mes al que corresponde el Saldo"><input type="month" className={inp} value={form.mesSaldoInicial} onChange={e=>setForm({...form,mesSaldoInicial:e.target.value})}/></BFG>
             <BFG label="Cuenta Contable Asociada (PUC)">
               <select className={sel} value={form.cuentaContableCod} onChange={e=>{const c=contCuentas.find(x=>x.codigo===e.target.value);setForm({...form,cuentaContableCod:e.target.value,cuentaContableNom:c?.nombre||''})}}>
@@ -3899,10 +3909,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return c?.moneda!=='BS'&&c?.tipoBanco!=='Nacional-Bs';
     });
 
-    // Balance del mes seleccionado, respetando la cuenta filtrada (o todas). A diferencia de Caja,
-    // el saldo de banco_cuentas se actualiza en vivo con cada movimiento, así que el saldo inicial
-    // de un mes se calcula "hacia atrás": saldo actual menos todo lo ocurrido desde el inicio de ese
-    // mes hasta hoy. Matemáticamente el disponible de un mes coincide con el inicial del siguiente.
+    // Balance del mes seleccionado, respetando la cuenta filtrada (o todas). Se ancla en
+    // saldoInicial (el punto fijo que el usuario declaró para mesSaldoInicial — nunca lo toca
+    // ningún movimiento) y avanza HACIA ADELANTE sumando/restando lo ocurrido hasta el inicio
+    // del mes que se está viendo. Antes se calculaba "hacia atrás" desde el saldo vivo actual,
+    // lo cual además tenía un error de signo (sumaba en vez de restar lo posterior al mes).
     const cuentasBalanceFiltro = filtC ? cuentas.filter(c=>c.id===filtC) : cuentas;
     const primerDiaMesBalance = `${filtMesBalance}-01`;
     const calcCuentaBalance = (c) => {
@@ -3915,8 +3926,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const sumBsProm  = movsParaProm.reduce((s,m)=>s+Number(m.montoBs ||0),0);
       const sumUsdProm = movsParaProm.reduce((s,m)=>s+Number(m.montoUSD||0),0);
       const tasaProm = sumUsdProm>0 ? sumBsProm/sumUsdProm : (tasaActiva||1);
-      const saldoBaseUSD = c.moneda==='BS' ? Number(c.saldo||0)/tasaProm : Number(c.saldo||0);
-      const saldoBaseBs  = c.moneda==='BS' ? Number(c.saldo||0) : Number(c.saldo||0)*tasaProm;
+      const saldoIniNum = Number(c.saldoInicial ?? c.saldo ?? 0);
+      const saldoBaseUSD = c.moneda==='BS' ? saldoIniNum/tasaProm : saldoIniNum;
+      const saldoBaseBs  = c.moneda==='BS' ? saldoIniNum : saldoIniNum*tasaProm;
       if(primerDiaMesBalance<inicioCuenta) return {saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0}; // mes anterior al de partida
       const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
         const v=Number(m[campo]||0);
