@@ -11993,18 +11993,25 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [reclasSaving, setReclasSaving] = useState(false);
   // La tasa de Depreciación se guarda en settings/general (campo tasaDeprecUltima) — antes vivía
   // solo en memoria, así que cada vez que se recargaba la pantalla volvía a estar vacía y los Bs.
-  // salían en 0 hasta darle al botón de refrescar otra vez.
+  // salían en 0 hasta darle al botón de refrescar otra vez. (Corrección: la primera versión tenía
+  // DOS suscripciones separadas al mismo documento — esta y la de settingsCC más abajo — compitiendo
+  // entre sí; ahora depende de una sola fuente, settingsCC, que ya existía.)
   const [tasaDeprec, setTasaDeprec] = useState('');
+  const tasaDeprecInit = useRef(false);
+  const [settingsCC, setSettingsCC] = useState({});
   useEffect(()=>{
-    const u=onSnapshot(getDocRef('settings','general'), d=>{ const v=d.data()?.tasaDeprecUltima; if(v) setTasaDeprec(prev=>prev||String(v)); });
-    return ()=>u();
-  },[]);
+    // Carga la tasa guardada la PRIMERA vez que settingsCC trae datos — solo una vez (tasaDeprecInit),
+    // para no pisar lo que el usuario esté escribiendo si settingsCC se actualiza después por otra razón.
+    if(!tasaDeprecInit.current && settingsCC?.tasaDeprecUltima){
+      setTasaDeprec(String(settingsCC.tasaDeprecUltima));
+      tasaDeprecInit.current = true;
+    }
+  },[settingsCC]);
   useEffect(()=>{
     if(!tasaDeprec) return;
     const t=setTimeout(()=>{ setDoc(getDocRef('settings','general'),{tasaDeprecUltima:tasaDeprec},{merge:true}).catch(()=>{}); }, 800);
     return ()=>clearTimeout(t);
   },[tasaDeprec]);
-  const [settingsCC, setSettingsCC] = useState({});
   const [impMes, setImpMes] = useState(getTodayDate().substring(5,7));
   const [impAnio, setImpAnio] = useState(getTodayDate().substring(0,4));
   const [aeCfgCC, setAeCfgCC] = useState({});
@@ -15164,6 +15171,46 @@ function App() {
           opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
         ].filter(Boolean).join(' · ');
         out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
+      }catch(e){}
+    });
+    // 2b) Notas de Crédito/Débito de Ventas FISCALES (naturaleza==='FISCAL'), sin contar las que
+    // son puramente Anulación Fiscal (esas solo corrigen un error de numeración, no representan
+    // una venta o ajuste real — ya se excluyen igual que las facturas anuladas arriba). Antes
+    // NINGUNA nota entraba aquí: Libro de Ventas SÍ las cuenta todas, por eso no coincidía con
+    // el Estado de Resultados. Mismo tratamiento de "monto = base, IVA = 16% aparte" que ya usa
+    // Libro de Ventas, para que ambos reportes cuadren exactamente.
+    const normRifVta=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    (notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL' && !n.esAnulacionFiscal).forEach(n=>{
+      try{
+        const tasa=Number(n.tasaFactura||n.tasa||0)||Number(settings?.tasaBCV||0)||1;
+        const montoBs=Number(n.monto||0);
+        const montoUSD=tasa?montoBs/tasa:0;
+        const esNC=n.tipo==='NC';
+        const facturaRef=n.facturaId?(invoices||[]).find(f=>f.id===n.facturaId):null;
+        const tieneOp=!!(facturaRef?.opAsignada||(facturaRef?.opsAsignadas&&facturaRef.opsAsignadas.length>0));
+        const cfgIngresoTxt=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
+        const [codIng,...restIng]=(cfgIngresoTxt||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)')).split('—');
+        const nomIng=restIng.join('—').trim();
+        const cliente=(clients||[]).find(c=>c.rif && n.clientRif && normRifVta(c.rif)===normRifVta(n.clientRif));
+        const [codCli,...restCli]=(cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes').split('—');
+        const nomCli=restCli.join('—').trim();
+        const conIva = n.tieneIva!==false;
+        const ivaBs = conIva ? parseFloat((montoBs*0.16).toFixed(2)) : 0;
+        const ivaUSD = tasa?ivaBs/tasa:0;
+        const lin0=aplicarReclasLinea('ventas_ncnd',n.id,0,codCli.trim(),nomCli);
+        const lin1=aplicarReclasLinea('ventas_ncnd',n.id,1,codIng.trim(),nomIng);
+        const lin2=conIva?aplicarReclasLinea('ventas_ncnd',n.id,2,'2.1.04.02.001','I.V.A. DÉBITO FISCAL (VENTAS)'):null;
+        const totalBs=montoBs+ivaBs, totalUSD=montoUSD+ivaUSD;
+        const lineas = esNC ? [
+          {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+          ...(conIva?[{codigo:lin2.codigo, cuenta:lin2.cuenta, debeBs:ivaBs, haberBs:0, debeUSD:ivaUSD, haberUSD:0}]:[]),
+          {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:0, haberBs:totalBs, debeUSD:0, haberUSD:totalUSD},
+        ] : [
+          {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:totalBs, haberBs:0, debeUSD:totalUSD, haberUSD:0},
+          {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+          ...(conIva?[{codigo:lin2.codigo, cuenta:lin2.cuenta, debeBs:0, haberBs:ivaBs, debeUSD:0, haberUSD:ivaUSD}]:[]),
+        ];
+        out.push({fecha:n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo} ${n.nroDocumento||''} — ${n.clientName||'—'}`, lineas});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -45687,14 +45734,16 @@ ${resumenHtml}
     const baseVentas = totalIngresosUSD||1;
 
     const exportarExcel = () => {
-      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
+      const nodoDeprec = cuentasDeprec.length>0 ? [{n:'DEPRECIACIÓN', c:cuentasDeprec.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:depreciacionUSD, b:depreciacionBs}] : [];
+      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal, ...nodoDeprec];
       const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
     };
     const exportarPDF = () => {
-      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
+      const nodoDeprec = cuentasDeprec.length>0 ? [{n:'DEPRECIACIÓN', c:cuentasDeprec.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:depreciacionUSD, b:depreciacionBs}] : [];
+      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal, ...nodoDeprec];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">RESULTADO DEL EJERCICIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
       const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas, getDetalleCuenta, contERExpandAll);
       ccAbrirVentana(html);
@@ -45897,14 +45946,16 @@ ${resumenHtml}
       return html;
     };
     const exportarExcel = () => {
-      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
+      const nodoDeprecAcum = cuentasDeprecAcum.length>0 ? [{n:'DEPRECIACIÓN ACUMULADA', c:cuentasDeprecAcum.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:deprecAcumUSD, b:deprecAcumBs}] : [];
+      const arbolCompleto = [...treeActivo, ...nodoDeprecAcum, ...treePasivo, ...treePatrimonio];
       const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `BalanceGeneral_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
     };
     const exportarPDF = () => {
-      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
+      const nodoDeprecAcum = cuentasDeprecAcum.length>0 ? [{n:'DEPRECIACIÓN ACUMULADA', c:cuentasDeprecAcum.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:deprecAcumUSD, b:deprecAcumBs}] : [];
+      const arbolCompleto = [...treeActivo, ...nodoDeprecAcum, ...treePasivo, ...treePatrimonio];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">TOTAL PASIVO + PATRIMONIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatBs)}</td>`:''}</tr>`;
       const html = ccExportPDFHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, filaExtra, baseActivo, getDetalleCuenta, contBGExpandAll);
       ccAbrirVentana(html);
