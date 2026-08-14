@@ -11377,10 +11377,10 @@ const ccBuildArbolNav = (cuentasAgregadas, planDeCuentasArr, gruposIncluir) => {
   root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
   return root;
 };
-const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, expandSignal }) => {
+const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, expandSignal, favoritas, onToggleFavorito }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
-  const [resaltado, setResaltado] = useState(false);
+  const resaltado = (favoritas||[]).includes(node.codigo);
   const isLeaf = !node.c || node.c.length===0;
   // El botón global "Expandir/Contraer Todos" controla el DETALLE de movimientos de cada
   // cuenta contable (nivel hoja) — no las carpetas de Grupo/Sub-grupo/Cuenta/Subcuenta, que
@@ -11397,7 +11397,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
       <>
         <tr onClick={()=>getDetalle&&setDetalleAbierto(!detalleAbierto)} className={`border-b border-gray-100 ${resaltado?'bg-amber-100 hover:bg-amber-200':'bg-white hover:bg-gray-50'} ${getDetalle?'cursor-pointer':''}`}>
           <td style={indent} className="py-1.5 px-3 font-bold text-[10px] text-gray-700 flex items-center gap-1.5">
-            <button onClick={e=>{e.stopPropagation();setResaltado(!resaltado);}} title="Resaltar para revisar" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center rounded text-[10px] leading-none ${resaltado?'':'opacity-30 hover:opacity-70'}`}>⭐</button>
+            <button onClick={e=>{e.stopPropagation();onToggleFavorito&&onToggleFavorito(node.codigo);}} title="Marcar como favorito para auditar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center rounded text-[10px] leading-none ${resaltado?'':'opacity-30 hover:opacity-70'}`}>⭐</button>
             {getDetalle && <span className={`flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 border rounded-sm text-[10px] leading-none ${detalleAbierto?'border-gray-400 text-gray-600 bg-white':'border-gray-300 text-gray-400 bg-white'}`}>{detalleAbierto?'−':'+'}</span>}
             <span className="truncate">{node.n}</span>
           </td>
@@ -11448,7 +11448,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
         </td>
         <td colSpan={3}/>
       </tr>
-      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle} expandSignal={expandSignal}/>)}
+      {isOpen && node.c.map((child,i)=><CCArbolRow key={i} node={child} level={level+1} totalBase={totalBase} currency={currency} getDetalle={getDetalle} expandSignal={expandSignal} favoritas={favoritas} onToggleFavorito={onToggleFavorito}/>)}
       {isOpen && (
         <tr className={isRoot?'bg-gray-800 text-white':'bg-gray-100 text-gray-800 border-y border-gray-300'}>
           <td style={{paddingLeft:level*16+24}} className="py-1.5 px-3 font-black text-[9px] uppercase tracking-wider">Total {node.n}</td>
@@ -15497,6 +15497,19 @@ function App() {
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
+  // Cuentas Favoritas (⭐) en los árboles de Estado de Resultados / Balance General — antes cada
+  // fila (CCArbolRow) tenía su propio useState, así que se perdía al recargar la página o volver
+  // a entrar. Ahora es una sola lista compartida, guardada en Firestore.
+  const [cuentasFavoritas, setCuentasFavoritas] = useState([]);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('settings','cuentasFavoritas'), d=>{ if(d.exists()) setCuentasFavoritas(d.data()?.codigos||[]); });
+    return ()=>u();
+  },[]);
+  const toggleCuentaFavorita = (codigo) => {
+    const nueva = cuentasFavoritas.includes(codigo) ? cuentasFavoritas.filter(c=>c!==codigo) : [...cuentasFavoritas, codigo];
+    setCuentasFavoritas(nueva); // optimista, para que se vea al instante
+    setDoc(getDocRef('settings','cuentasFavoritas'),{codigos:nueva},{merge:true}).catch(()=>{});
+  };
   // Impuestos por Enterar (Actividad Económica, Protección de Pensiones, Anticipo ISLR) — para
   // que getAsientosReales() los pueda contabilizar igual que ya se ven en Comprobantes
   // Contables → Impuestos. Las cuentas son config global; los datos de cada mes (tasas BCV,
@@ -45717,15 +45730,15 @@ ${resumenHtml}
                   </tr>
                 </thead>
                 <tbody>
-                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
-                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
+                  {treeIngresos.map((n,i)=><CCArbolRow key={'ing'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
+                  {treeCostos.map((n,i)=><CCArbolRow key={'cos'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
                   <tr className="bg-blue-50 border-y-2 border-blue-200">
                     <td className="px-3 py-2 font-black text-blue-800 text-[10px] uppercase">Utilidad Bruta</td>
                     {showUSD && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaUSD>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaUSD)}</td>}
                     {showBS  && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaBs>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaBs)}</td>}
                     <td/>
                   </tr>
-                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}}/>)}
+                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
                   {cuentasDeprec.length>0 && (<>
                     <tr className="bg-slate-50"><td className="px-3 py-1.5 font-black text-slate-500 text-[10px] uppercase" colSpan={showUSD&&showBS?3:2}>Depreciación</td></tr>
                     {cuentasDeprec.map((c,i)=>(
@@ -45928,7 +45941,7 @@ ${resumenHtml}
                   </tr>
                 </thead>
                 <tbody>
-                  {treeActivo.map((n,i)=><CCArbolRow key={'act'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  {treeActivo.map((n,i)=><CCArbolRow key={'act'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
                   {cuentasDeprecAcum.length>0 && (<>
                     <tr className="bg-slate-50"><td className="px-3 py-1.5 font-black text-slate-500 text-[10px] uppercase" colSpan={showUSD&&showBS?3:2}>Depreciación Acumulada</td></tr>
                     {cuentasDeprecAcum.map((c,i)=>(
@@ -45952,14 +45965,14 @@ ${resumenHtml}
                     {showBS  && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-blue-800">{ccFmtR(totalActivoBs)}</td>}
                     <td/>
                   </tr>
-                  {treePasivo.map((n,i)=><CCArbolRow key={'pas'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  {treePasivo.map((n,i)=><CCArbolRow key={'pas'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
                   <tr className="bg-red-50 border-y-2 border-red-200">
                     <td className="px-3 py-2 font-black text-red-700 text-[10px] uppercase">Total Pasivo</td>
                     {showUSD && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-red-700">{ccFmtR(totalPasivoUSD)}</td>}
                     {showBS  && <td className="px-3 py-2 text-right font-mono font-black text-[11px] text-red-700">{ccFmtR(totalPasivoBs)}</td>}
                     <td/>
                   </tr>
-                  {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}}/>)}
+                  {treePatrimonio.map((n,i)=><CCArbolRow key={'pat'+i} node={n} totalBase={baseActivo} currency={contBGCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contBGExpandAll, key:contBGExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
                   {!ejercicioInyectado && (
                     <tr className="border-b border-gray-100">
                       <td className="px-3 py-1.5 pl-6 text-gray-600 italic text-[10px]">{rangoPersonalizado?`Utilidad del Ejercicio (${contDd(inicioMesCorte)} – ${contDd(corte)})`:'Utilidad del Ejercicio (mes en curso)'} — sin cuenta configurada</td>
