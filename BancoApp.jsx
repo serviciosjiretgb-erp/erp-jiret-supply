@@ -2308,6 +2308,24 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // Uses ERP Firebase: getColRef/getDocRef/db
   const [sec, setSec] = useState('dashboard');
 
+  // ⭐ Favoritos de Movimientos (Banco y Caja) — para marcar partidas que se están revisando
+  // (montos, referencias) sin que se pierda al recargar o volver a entrar. Un solo lugar
+  // compartido entre Movimientos Banco y Movimientos Caja, guardado en Firestore.
+  const [favoritosMov, setFavoritosMov] = useState([]);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('settings','movimientosFavoritos'), d=>{ if(d.exists()) setFavoritosMov(d.data()?.ids||[]); });
+    return ()=>u();
+  },[]);
+  const toggleFavoritoMov = (id) => {
+    const nueva = favoritosMov.includes(id) ? favoritosMov.filter(x=>x!==id) : [...favoritosMov, id];
+    setFavoritosMov(nueva);
+    setDoc(getDocRef('settings','movimientosFavoritos'),{ids:nueva},{merge:true}).catch(()=>{});
+  };
+  const desmarcarTodosFavoritosMov = () => {
+    setFavoritosMov([]);
+    setDoc(getDocRef('settings','movimientosFavoritos'),{ids:[]},{merge:true}).catch(()=>{});
+  };
+
   // ── DIAGNÓSTICO TEMPORAL — mientras se ubica la causa de "la pantalla se cierra sola" ──
   // Las alertas del navegador se pueden bloquear en silencio (Chrome ofrece "no permitir más
   // mensajes de esta página" tras varias alertas seguidas). Por eso este log NO usa alert():
@@ -4368,6 +4386,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <input type="text" inputMode="decimal" value={busqMonto} onChange={e=>setBusqMonto(e.target.value)} placeholder="Monto... (Bs o $)" title="Busca por monto — acepta 61.88 o 46.201,45, en Bs. o en $" className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
           </div>
           {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef||busqMonto)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');setBusqMonto('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
+          {favoritosMov.length>0 && <button onClick={()=>window.confirm(`¿Desmarcar los ${favoritosMov.length} favorito(s)? Esto aplica a Banco y Caja por igual.`)&&desmarcarTodosFavoritosMov()} title="Quita la estrella de todos los movimientos marcados (Banco y Caja)" className="flex items-center gap-1 text-[9px] font-black uppercase text-amber-600 hover:text-amber-800 px-2">⭐ Desmarcar Todos ({favoritosMov.length})</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
           <button onClick={revisarTraslados} title="Revisa los asientos de traslados/transferencias y detecta si la comisión de rebancarización se comió el monto" className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-600"><Settings size={12}/> Corregir Traslados</button>
           {ultimaCorreccionTraslados && (
@@ -4422,7 +4441,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <tbody>
                   {movRows.length===0&&<tr><td colSpan={9}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos nacionales" desc="Registre transacciones en cuentas Bs."/></td></tr>}
                                   {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
-                  <BTd>{bancoDd(m.fecha)}</BTd>
+                  <BTd>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={e=>{e.stopPropagation();toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
+                      {bancoDd(m.fecha)}
+                    </div>
+                  </BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
                   <BTd className="max-w-[200px]">
@@ -4476,7 +4500,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>$</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
                 <tbody>
                   {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
-                  <BTd>{bancoDd(m.fecha)}</BTd>
+                  <BTd>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={e=>{e.stopPropagation();toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
+                      {bancoDd(m.fecha)}
+                    </div>
+                  </BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
                   <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
                   <BTd className="max-w-[200px]">
@@ -6610,6 +6639,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <button onClick={()=>{setCajFiltCaja('');setCajFiltTipo('');setCajFiltDesde('');setCajFiltHasta('');setCajBusqCli('');setCajBusqRef('');setCajBusqMonto('');}}
                 className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-all">× LIMPIAR</button>
             )}
+            {favoritosMov.length>0 && <button onClick={()=>window.confirm(`¿Desmarcar los ${favoritosMov.length} favorito(s)? Esto aplica a Banco y Caja por igual.`)&&desmarcarTodosFavoritosMov()} title="Quita la estrella de todos los movimientos marcados (Banco y Caja)" className="flex items-center gap-1 text-[10px] font-black uppercase text-amber-600 hover:text-amber-800 transition-all">⭐ Desmarcar Todos ({favoritosMov.length})</button>}
             <div className="ml-auto flex gap-2">
               <BBp onClick={exportarExcelCaja} sm><FileSpreadsheet size={12}/> Excel</BBp>
               <BBp onClick={revisarTrasladosCaja} sm title="Revisa los asientos de traslados/transferencias y detecta si la comisión de rebancarización se comió el monto"><Settings size={12}/> Corregir Traslados</BBp>
@@ -6694,7 +6724,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <tbody>
                 {allMovsCaja.length===0&&<tr><td colSpan={10}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
                 {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?(m.tipo==='Egreso'?'bg-red-50/20':'bg-green-50/20'):''}`}>
-                  <BTd>{bancoDd(m.fecha)}</BTd>
+                  <BTd>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={e=>{e.stopPropagation();toggleFavoritoMov(m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
+                      {bancoDd(m.fecha)}
+                    </div>
+                  </BTd>
                   <BTd><BBadge v={m.tipo==='Ingreso'?'green':'red'}>{m.tipo}</BBadge></BTd>
                   <BTd><BPill usd={m.moneda==='USD'}>{m.moneda==='BS'?'Bs':'USD'}</BPill></BTd>
                   <BTd className="max-w-[220px]">
