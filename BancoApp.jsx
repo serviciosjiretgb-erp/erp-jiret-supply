@@ -3158,6 +3158,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [filtHasta,setFiltH]   = useState(getTodayDate());
     const [busqCli,  setBusqCli] = useState('');
     const [busqRef,  setBusqRef] = useState('');
+    const [busqMonto,setBusqMonto] = useState('');
     const [detalleId,setDetalle] = useState(null);
     const [editId,   setEditId]  = useState(null);
     const [modal,    setModal]   = useState(ventasOnlyIngreso); // auto-open for ventas
@@ -3899,6 +3900,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(filtHasta && m.fecha>filtHasta)     return false;
       if(busqCli && !(m.terceroNombre||m.clientName||m.proveedor||m.concepto||'').toUpperCase().includes(busqCli.toUpperCase())) return false;
       if(busqRef && !(m.referencia||'').toUpperCase().includes(busqRef.toUpperCase())) return false;
+      if(busqMonto){
+        const q=Number(String(busqMonto).replace(',','.'));
+        if(!isNaN(q) && q>0){
+          const mBs=Number(m.montoBs||0), mUsd=Number(m.montoUSD||0);
+          // Tolerancia de 1 centavo (redondeo) — coincide con el monto en Bs. o en $, cualquiera
+          // de los dos, sin que el usuario tenga que saber en cuál moneda está tecleando.
+          if(Math.abs(mBs-q)>0.01 && Math.abs(mUsd-q)>0.01) return false;
+        }
+      }
       return true;
     });
     // Split by moneda de la cuenta
@@ -4338,7 +4348,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
             <input value={busqRef} onChange={e=>setBusqRef(e.target.value)} placeholder="Referencia..." className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
           </div>
-          {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
+          <div className="relative">
+            <DollarSign size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+            <input type="number" step="0.01" value={busqMonto} onChange={e=>setBusqMonto(e.target.value)} placeholder="Monto..." title="Busca por monto — Bs. o $, cualquiera de los dos" className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-24"/>
+          </div>
+          {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef||busqMonto)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');setBusqMonto('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
           <button onClick={revisarTraslados} title="Revisa los asientos de traslados/transferencias y detecta si la comisión de rebancarización se comió el monto" className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-600"><Settings size={12}/> Corregir Traslados</button>
           {ultimaCorreccionTraslados && (
@@ -5783,6 +5797,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [cajFiltHasta,  setCajFiltHasta]  = useState('');
     const [cajBusqCli,    setCajBusqCli]    = useState('');
     const [cajBusqRef,    setCajBusqRef]    = useState('');
+    const [cajBusqMonto,  setCajBusqMonto]  = useState('');
     const [cajaDet, setCajaDet]   = useState(null);   // movimiento seleccionado para ver/editar
     const [cajaEdit, setCajaEdit] = useState(false);   // modo edición
     const [cajaPwdModal, setCajaPwdModal] = useState(null); // movimiento a eliminar
@@ -5939,6 +5954,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(cajFiltHasta && (m.fecha||'') > cajFiltHasta) return false;
       if(cajBusqCli && !(m._tercero||m.terceroNombre||m.clientName||m.concepto||'').toUpperCase().includes(cajBusqCli.toUpperCase())) return false;
       if(cajBusqRef && !(m.referencia||'').toUpperCase().includes(cajBusqRef.toUpperCase())) return false;
+      if(cajBusqMonto){
+        const q=Number(String(cajBusqMonto).replace(',','.'));
+        if(!isNaN(q) && q>0){
+          const mBs=Number(m.montoBs||0), mUsd=Number(m.montoUSD||0);
+          if(Math.abs(mBs-q)>0.01 && Math.abs(mUsd-q)>0.01) return false;
+        }
+      }
       return true;
     });
     // Balance del mes filtrado, respetando la caja filtrada — el saldo inicial de un mes
@@ -6565,8 +6587,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
               <input value={cajBusqRef} onChange={e=>setCajBusqRef(e.target.value)} placeholder="Referencia..." className="border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
             </div>
-            {(cajFiltCaja||cajFiltTipo||cajFiltDesde||cajFiltHasta||cajBusqCli||cajBusqRef)&&(
-              <button onClick={()=>{setCajFiltCaja('');setCajFiltTipo('');setCajFiltDesde('');setCajFiltHasta('');setCajBusqCli('');setCajBusqRef('');}}
+            <div className="relative">
+              <DollarSign size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input type="number" step="0.01" value={cajBusqMonto} onChange={e=>setCajBusqMonto(e.target.value)} placeholder="Monto..." title="Busca por monto — Bs. o $, cualquiera de los dos" className="border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-24"/>
+            </div>
+            {(cajFiltCaja||cajFiltTipo||cajFiltDesde||cajFiltHasta||cajBusqCli||cajBusqRef||cajBusqMonto)&&(
+              <button onClick={()=>{setCajFiltCaja('');setCajFiltTipo('');setCajFiltDesde('');setCajFiltHasta('');setCajBusqCli('');setCajBusqRef('');setCajBusqMonto('');}}
                 className="text-[10px] font-black text-slate-400 hover:text-red-500 transition-all">× LIMPIAR</button>
             )}
             <div className="ml-auto flex gap-2">
