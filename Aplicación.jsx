@@ -45713,10 +45713,21 @@ ${resumenHtml}
     // Depreciación se saca del árbol normal y se muestra aparte, calculada DIRECTO desde
     // cuentasAgg (sin pasar por ccBuildArbol) — así se garantiza que aparezca sin depender de
     // encontrar la causa exacta de por qué el árbol no la estaba mostrando.
-    const cuentasDeprec = contERVistaPlanta ? [] : cuentasAgg.filter(c=>/\.08\.01\./.test(c.codigo));
+    // Códigos EXACTOS configurados como "Cuenta de Costo/Gasto" en Activo Fijo → Configuración —
+    // NO un patrón de texto genérico. ".08.01." como substring atrapaba cuentas de OTRAS ramas
+    // que por pura coincidencia numérica también tienen esos dígitos (ej. 5.3.08.01.003 = Flete
+    // de Ventas, nada que ver con depreciación) y se las robaba de su sección real.
+    const codigosDeprecCfg = new Set();
+    Object.values(activoFijoCfgC?.centrosCosto||[]).forEach(cc=>{
+      Object.values(cc?.rubros||{}).forEach(r=>{
+        const cta=r?.costoGastoId?(planDeCuentas||[]).find(p=>p.id===r.costoGastoId):null;
+        if(cta?.codigo) codigosDeprecCfg.add(cta.codigo);
+      });
+    });
+    const cuentasDeprec = contERVistaPlanta ? [] : cuentasAgg.filter(c=>codigosDeprecCfg.has(c.codigo));
     const depreciacionUSD = cuentasDeprec.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
     const depreciacionBs  = cuentasDeprec.reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>(c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')))&&!/\.08\.01\./.test(c.codigo));
+    const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>(c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')))&&!codigosDeprecCfg.has(c.codigo));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
@@ -45914,11 +45925,22 @@ ${resumenHtml}
     };
 
     // Depreciación Acumulada se saca del árbol normal (mismo problema que en Estado de
-    // Resultados) y se muestra aparte, calculada DIRECTO desde cuentasAgg.
-    const cuentasDeprecAcum = cuentasAgg.filter(c=>/dep\.?\s*acum|depreciaci[oó]n\s+acumulad/i.test(c.cuenta||''));
+    // Resultados) y se muestra aparte, calculada DIRECTO desde cuentasAgg. Se identifica por los
+    // códigos EXACTOS configurados como "Cuenta Dep. Acumulada" en Activo Fijo → Configuración
+    // (mismo criterio que Estado de Resultados) — el nombre de la cuenta queda solo como respaldo,
+    // por si alguna todavía no tiene código resuelto.
+    const codigosDeprecAcumCfg = new Set();
+    Object.values(activoFijoCfgC?.centrosCosto||[]).forEach(cc=>{
+      Object.values(cc?.rubros||{}).forEach(r=>{
+        const cta=r?.deprAcumId?(planDeCuentas||[]).find(p=>p.id===r.deprAcumId):null;
+        if(cta?.codigo) codigosDeprecAcumCfg.add(cta.codigo);
+      });
+    });
+    const esCuentaDeprecAcum = c => codigosDeprecAcumCfg.has(c.codigo) || /dep\.?\s*acum|depreciaci[oó]n\s+acumulad/i.test(c.cuenta||'');
+    const cuentasDeprecAcum = cuentasAgg.filter(esCuentaDeprecAcum);
     const deprecAcumUSD = cuentasDeprecAcum.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
     const deprecAcumBs  = cuentasDeprecAcum.reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const cuentasParaActivo = cuentasAgg.filter(c=>!/dep\.?\s*acum|depreciaci[oó]n\s+acumulad/i.test(c.cuenta||''));
+    const cuentasParaActivo = cuentasAgg.filter(c=>!esCuentaDeprecAcum(c));
     const treeActivo = ccBuildArbol(cuentasParaActivo, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
     const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
