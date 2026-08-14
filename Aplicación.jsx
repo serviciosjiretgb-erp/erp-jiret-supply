@@ -32296,13 +32296,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // una Nota de Crédito directa (sin factura específica) seguía apareciendo como
             // pendiente con su monto completo, aunque el cliente ya no debiera nada en total.
             Object.values(porClienteModal).forEach(cl=>{
-              const creditoNC = Math.max(0, -((_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)));
+              const notasCredito=(_manualNCPorCliente.get(cl.clientRif)||[]);
+              const creditoNC = Math.max(0, -(notasCredito.reduce((s,n)=>s+n._signedUSD,0)));
+              // Para poder mostrar "de dónde sale" el crédito aplicado: lista de las notas que
+              // componen ese pool, con su propio aporte (positivo=NC real, negativo=ND que resta).
+              const fuentesCredito = notasCredito.map(n=>({tipo:n.tipo,nro:n.nroDocumento||n.id,aporte:-n._signedUSD}));
               let pool = creditoNC;
               [...cl.nes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
                 const original = getSaldoNEAtFecha(ne,null);
                 const aplicado = pool>0 ? Math.min(pool, Math.max(0,original)) : 0;
                 pool -= aplicado;
                 ne._saldoAjustado = original - aplicado;
+                ne._creditoAplicado = aplicado>0.005 ? {monto:aplicado,fuentes:fuentesCredito} : null;
               });
             });
             const getSaldoNEAjustado = (ne) => ne._saldoAjustado!=null ? ne._saldoAjustado : getSaldoNEAtFecha(ne,null);
@@ -32519,6 +32524,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <span style={{fontWeight:900,fontSize:11,color:esCredito?'#0f766e':'#dc2626'}}>{esCredito?'-$'+formatNum(Math.abs(saldo)):'$'+formatNum(saldo)}</span>
                             </div>
                             {esCredito&&<div style={{marginTop:3}}><span style={{fontSize:8,fontWeight:900,color:'#0f766e',background:'#ccfbf1',padding:'1px 6px',borderRadius:4}}>Saldo a favor (sobrecobro) — cierre con ND o reasigne el pago</span></div>}
+                            {ne._creditoAplicado&&<div style={{marginTop:3,fontSize:8,color:'#0f766e',background:'#f0fdfa',border:'1px solid #99f6e4',borderRadius:4,padding:'3px 6px'}}>
+                              <b>🔍 Se le aplicó ${formatNum(ne._creditoAplicado.monto)} de crédito general del cliente</b> — bolsa formada por: {ne._creditoAplicado.fuentes.map(f=>`${f.tipo} ${f.nro} (${f.aporte>=0?'+':''}$${formatNum(f.aporte)})`).join(', ')||'—'}
+                            </div>}
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:2}}>
                               <span style={{fontSize:9,color:'#9ca3af'}}>{ne.fecha}{ne._esNDDirecta&&ne._ndDescripcion?` · ${ne._ndDescripcion}`:''}</span>
                               {sel&&montoDisponibleTotal>0&&(
