@@ -70,6 +70,21 @@ const BANCO_LETTERHEAD_CSS = `
   .lh-footer{margin-top:30px;border-top:2px solid #f97316;padding:12px 24px;display:flex;justify-content:space-between;font-size:8px;color:#94a3b8}
   @media print{@page{margin:1cm}}
 `;
+// Interpreta un monto escrito a mano en CUALQUIERA de los dos formatos: venezolano
+// (46.201,45 — punto de miles, coma decimal) o simple (61.88 — como se escribiría en inglés,
+// sin separador de miles). Se usa en los buscadores por monto, donde un <input type="number">
+// no sirve porque el navegador rechaza la coma decimal y el punto de miles.
+const parseMontoBuscado = (str) => {
+  let s = String(str||'').trim();
+  if(!s) return NaN;
+  const tieneComa = s.includes(',');
+  const tienePunto = s.includes('.');
+  if(tieneComa && tienePunto) s = s.replace(/\./g,'').replace(',','.'); // 46.201,45 -> 46201.45
+  else if(tieneComa) s = s.replace(',','.'); // 61,88 -> 61.88
+  // Solo con puntos (o ninguno) se deja tal cual: 61.88 o 46201.45 ya son válidos.
+  return Number(s);
+};
+
 const bancoLetterheadOpen = (titulo, subtitulo='') => `
   <html><head><meta charset="utf-8"><title>${titulo}</title><style>${BANCO_LETTERHEAD_CSS}</style></head><body>
   <div class="lh-header"><div style="font-size:20px;font-weight:900;">Supply G&B</div>
@@ -3901,7 +3916,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(busqCli && !(m.terceroNombre||m.clientName||m.proveedor||m.concepto||'').toUpperCase().includes(busqCli.toUpperCase())) return false;
       if(busqRef && !(m.referencia||'').toUpperCase().includes(busqRef.toUpperCase())) return false;
       if(busqMonto){
-        const q=Number(String(busqMonto).replace(',','.'));
+        const q=parseMontoBuscado(busqMonto);
         if(!isNaN(q) && q>0){
           const mBs=Number(m.montoBs||0), mUsd=Number(m.montoUSD||0);
           // Tolerancia de 1 centavo (redondeo) — coincide con el monto en Bs. o en $, cualquiera
@@ -4350,7 +4365,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
           <div className="relative">
             <DollarSign size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input type="number" step="0.01" value={busqMonto} onChange={e=>setBusqMonto(e.target.value)} placeholder="Monto..." title="Busca por monto — Bs. o $, cualquiera de los dos" className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-24"/>
+            <input type="text" inputMode="decimal" value={busqMonto} onChange={e=>setBusqMonto(e.target.value)} placeholder="Monto... (Bs o $)" title="Busca por monto — acepta 61.88 o 46.201,45, en Bs. o en $" className="border-2 border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
           </div>
           {(filtC||filtTipo||filtDesde||filtHasta||busqCli||busqRef||busqMonto)&&<button onClick={()=>{setFiltC('');setFiltTipo('');setFiltD('');setFiltH('');setBusqCli('');setBusqRef('');setBusqMonto('');}} className="text-[9px] font-black uppercase text-slate-400 hover:text-red-500 px-2">✕ Limpiar</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
@@ -5955,7 +5970,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(cajBusqCli && !(m._tercero||m.terceroNombre||m.clientName||m.concepto||'').toUpperCase().includes(cajBusqCli.toUpperCase())) return false;
       if(cajBusqRef && !(m.referencia||'').toUpperCase().includes(cajBusqRef.toUpperCase())) return false;
       if(cajBusqMonto){
-        const q=Number(String(cajBusqMonto).replace(',','.'));
+        const q=parseMontoBuscado(cajBusqMonto);
         if(!isNaN(q) && q>0){
           const mBs=Number(m.montoBs||0), mUsd=Number(m.montoUSD||0);
           if(Math.abs(mBs-q)>0.01 && Math.abs(mUsd-q)>0.01) return false;
@@ -6589,7 +6604,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </div>
             <div className="relative">
               <DollarSign size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-              <input type="number" step="0.01" value={cajBusqMonto} onChange={e=>setCajBusqMonto(e.target.value)} placeholder="Monto..." title="Busca por monto — Bs. o $, cualquiera de los dos" className="border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-24"/>
+              <input type="text" inputMode="decimal" value={cajBusqMonto} onChange={e=>setCajBusqMonto(e.target.value)} placeholder="Monto... (Bs o $)" title="Busca por monto — acepta 61.88 o 46.201,45, en Bs. o en $" className="border border-slate-200 rounded-xl pl-7 pr-3 py-1.5 text-[10px] font-bold outline-none focus:border-orange-400 w-28"/>
             </div>
             {(cajFiltCaja||cajFiltTipo||cajFiltDesde||cajFiltHasta||cajBusqCli||cajBusqRef||cajBusqMonto)&&(
               <button onClick={()=>{setCajFiltCaja('');setCajFiltTipo('');setCajFiltDesde('');setCajFiltHasta('');setCajBusqCli('');setCajBusqRef('');setCajBusqMonto('');}}
