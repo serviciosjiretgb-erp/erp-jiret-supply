@@ -13263,14 +13263,27 @@ ${valoresHtml}
 
   // Buscador compartido: si algún campo del comprobante (o de cualquiera de sus líneas)
   // coincide, se muestra el grupo completo — no solo la línea que coincidió.
+  // Interpreta un monto escrito a mano en cualquiera de los dos formatos: venezolano
+  // (46.201,45 — punto de miles, coma decimal) o simple (61.88 — sin separador de miles).
+  const parseMontoBuscadoCC = (str) => {
+    let s = String(str||'').trim();
+    if(!s) return NaN;
+    const tieneComa = s.includes(','), tienePunto = s.includes('.');
+    if(tieneComa && tienePunto) s = s.replace(/\./g,'').replace(',','.');
+    else if(tieneComa) s = s.replace(',','.');
+    return Number(s);
+  };
   const filtrarPorBusquedaCC = (lineasArr) => {
     const q = (buscarCC||'').toUpperCase().trim();
     if (!q) return lineasArr;
+    const qMonto = parseMontoBuscadoCC(buscarCC);
+    const esBusquedaMonto = !isNaN(qMonto) && qMonto>0;
     return (lineasArr||[]).filter(r => {
       if ((r.comprobante||'').toUpperCase().includes(q)) return true;
       if ((r.doc||'').toUpperCase().includes(q)) return true;
       if ((r.conc||'').toUpperCase().includes(q)) return true;
       if ((contDd(r.fecha)||'').includes(q) || (r.fecha||'').includes(q)) return true;
+      if (esBusquedaMonto && (r.lineas||[]).some(l => Math.abs(Number(l.debeBs||0)-qMonto)<=0.01 || Math.abs(Number(l.haberBs||0)-qMonto)<=0.01 || Math.abs(Number(l.debeUSD||0)-qMonto)<=0.01 || Math.abs(Number(l.haberUSD||0)-qMonto)<=0.01)) return true;
       return (r.lineas||[]).some(l => (l.codigo||'').toUpperCase().includes(q) || (l.cuenta||'').toUpperCase().includes(q));
     });
   };
@@ -13452,7 +13465,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasProc.length} factura(s)</p>
             <BotonesExportCC tabId="procura"/>
           </div>
@@ -13507,7 +13520,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{nFact} factura(s) · {nNC} NC · {nND} ND</p>
             <BotonesExportCC tabId="ventas"/>
           </div>
@@ -13562,7 +13575,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasRet.length} retención(es)</p>
             <BotonesExportCC tabId="ret_cli"/>
           </div>
@@ -13617,7 +13630,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasRP.length} comprobante(s) · {nIVA} IVA · {nISLR} ISLR</p>
             <BotonesExportCC tabId="ret_prov"/>
           </div>
@@ -13678,7 +13691,7 @@ ${valoresHtml}
               </div>
             </div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasDep.length} mes(es) · Total ${contFmt(totalDepUSD)}</p>
             <BotonesExportCC tabId="deprec"/>
           </div>
@@ -13743,7 +13756,7 @@ ${valoresHtml}
                 {[parseInt(impAnio)-1,parseInt(impAnio),parseInt(impAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
               </select></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasImp.length} impuesto(s) · Total ${contFmt(totalImpUSD)}</p>
             <BotonesExportCC tabId="imp_enterar"/>
           </div>
@@ -13803,7 +13816,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
             <BotonesExportCC tabId="ajustes"/>
           </div>
@@ -13954,7 +13967,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={importarNominaExcel} disabled={nominaImportando} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5 disabled:opacity-50"><Download size={14}/> {nominaImportando?'Importando...':'Importar Excel'}</button>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+              <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasNom.length} nómina(s) · Total ${contFmt(totalNomUSD)}</p>
             <BotonesExportCC tabId="nomina"/>
           </div>
@@ -14705,7 +14718,7 @@ ${valoresHtml}
           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
           <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
-            <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
+            <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
           <p className="text-[10px] text-gray-400 ml-auto">{lineasPorComprobante.length} comprobante(s)</p>
           <BotonesExportCC tabId={esBanco?'banco':'caja'}/>
         </div>
