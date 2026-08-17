@@ -2131,7 +2131,16 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   const eliminarConcilReal=async(c)=>{
     const tieneIds=Array.isArray(c.movimientoIds)&&c.movimientoIds.length>0;
     const batch=writeBatch(_bancoDB);
-    if(tieneIds) c.movimientoIds.forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'No Conciliado'}));
+    if(tieneIds){
+      // Algunos de los movimientos guardados en esta conciliación pueden haber sido eliminados
+      // después de aprobarla — intentar actualizar un documento que ya no existe hace fallar el
+      // lote ENTERO (Firestore es todo-o-nada). Se filtran los que ya no existen antes de armar
+      // el lote, para que los demás sí se desbloqueen correctamente.
+      const idsValidos = new Set((movBanco||[]).map(m=>m._docId||m.id));
+      const faltantes = c.movimientoIds.filter(id=>!idsValidos.has(id));
+      c.movimientoIds.filter(id=>idsValidos.has(id)).forEach(id=>batch.update(getDocRef('banco_movimientos',id),{estatus:'No Conciliado'}));
+      if(faltantes.length>0) console.warn(`Reversar conciliación: ${faltantes.length} movimiento(s) ya no existen, se omiten: ${faltantes.join(', ')}`);
+    }
     batch.delete(getDocRef('banco_conciliaciones',c.id));
     await batch.commit();
   };
