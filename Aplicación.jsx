@@ -3065,6 +3065,66 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
 // Cuenta de ingresos configurable UNA sola vez (con OP / sin OP) — aplica a
 // TODAS las facturas, incluidas las ya registradas, porque se recalcula al
 // vuelo a partir de si la factura tiene o no una OP relacionada.
+// Determina las líneas contables (cuenta propia + contrapartida) de UN movimiento de banco o
+// caja. Es la MISMA función que usan tanto "Comprobantes Contables" como el motor central
+// (getAsientosReales) — antes eran dos copias parecidas mantenidas a mano por separado, y cada
+// diferencia entre ellas terminaba siendo un caso donde el Balance/Estado de Resultado no
+// coincidía con lo que ya se veía bien en Comprobantes Contables. Ahora es un solo lugar: lo que
+// se vea en Comprobantes Contables (incluida cualquier reclasificación) es exactamente lo que
+// viaja a los reportes financieros.
+const construirLineasMovimientoBancoCaja = (m, ctx) => {
+  const {cuentas, idField, nombreCta, asientos, provs, clientes, tercerosRel, planCuentas, tabId, aplicarReclas} = ctx;
+  const cta = (cuentas||[]).find(c=>c.id===m[idField]);
+  const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
+  const montoBs = Number(m.montoBs||0), montoUSD = Number(m.montoUSD||0);
+  const compId = m._docId||m.id;
+  // 1) Si ya existe un asiento formal vinculado, se usan SUS líneas reales tal cual.
+  const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
+  if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
+    return (asientoLigado.lineas||[]).map((l,li)=>{
+      const r = aplicarReclas(tabId, compId, li, l.codigo||'', l.cuenta||'—');
+      return {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)};
+    });
+  }
+  // 2) Si no, se reconstruye: primero el tercero específico (su propia cuenta configurada),
+  // luego relacionadas, luego lineasContra guardadas, y solo al final la cuenta genérica.
+  const nombreDirecto = m.terceroNombre || m.clientName || m.proveedor || '';
+  const partesGuion = (m.concepto||'').split('—').map(s=>s.trim());
+  const partesPunto = (m.concepto||'').split('·').map(s=>s.trim());
+  const nombreEnConcepto = nombreDirecto || partesGuion[1] || partesPunto[1] || '';
+  const nombreNorm = contNormNombre(nombreEnConcepto);
+  const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
+  const tercero = (esProveedorMov ? (provs||[]).find(p=>p.id===m.terceroId) : (clientes||[]).find(c=>c.id===m.terceroId))
+    || (clientes||[]).find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
+    || (provs||[]).find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
+  const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+  const cuentaGenerica=(patron)=>{const c2=(planCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
+  let contra;
+  if(m.tipoTercero==='Relacionado' && m.terceroId){
+    const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
+    const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+    const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
+    contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
+  } else if(tercero && (codTercero||nomTercero)){
+    contra = {codigo:codTercero||tercero.cuentaContableId||'', cuenta:nomTercero||tercero.razonSocial||tercero.nombre||''};
+  } else if(m.lineasContra && m.lineasContra.length>0){
+    const l=m.lineasContra[0];
+    contra = {codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):''};
+  } else {
+    const g = isIng ? cuentaGenerica(/cuentas?\s+por\s+cobrar|^cxc\b/i) : cuentaGenerica(/cuentas?\s+por\s+pagar|^cxp\b/i);
+    const gOk = g && !/anticipo/i.test(g.nombre||'');
+    contra = gOk ? {codigo:g.codigo, cuenta:g.nombre} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
+  }
+  const codPropia = cta ? (cta.cuentaContableCod||'') : '9.9.99.99.999';
+  const nombrePropia = cta ? (nombreCta(cta)||'') : `⚠️ Sin cuenta configurada — ${m.cuentaNombre||m[idField]||''}`;
+  const propiaR = aplicarReclas(tabId, compId, 0, codPropia, nombrePropia);
+  const contraR = aplicarReclas(tabId, compId, 1, contra.codigo, contra.cuenta);
+  return [
+    {codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD},
+    {codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0},
+  ];
+};
+
 const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const tasa=pNum(f.tasa||0);
   const montoBase=pNum(f.montoBase||0);
@@ -12252,55 +12312,13 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     return filtrados.map(m => {
       const cta = cuentas.find(c => c.id === m[idField]);
       if (!cta) return null;
-      const isIng = m.tipo === 'Ingreso' || m.tipo === 'Nota de Crédito';
       const tasa = Number(m.tasa) || 1;
-      const montoBs = Number(m.montoBs || 0), montoUSD = Number(m.montoUSD || 0);
-      // Si ya existe un asiento formal para este movimiento, se usan SUS líneas tal cual (las
-      // cuentas reales que se seleccionaron al registrarlo) — mismo criterio que se corrigió en
-      // el Libro Diario de BancoApp.jsx. Sin esto, un traslado entre bancos, por ejemplo, caía en
-      // "Contrapartida (origen no identificado)" en vez de mostrar la cuenta real.
-      const asientoLigado = (asientosCC||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
-      let lineas;
-      if (asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0) {
-        lineas = asientoLigado.lineas.map(l=>({ codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipoLinea||(Number(l.debeBs||0)>0?'D':'H'), dBs: Number(l.debeBs||0), hBs: Number(l.haberBs||0), dUSD: Number(l.debeUSD||0), hUSD: Number(l.haberUSD||0) }));
-      } else {
-      const lineaPropia = { codigo: cta.cuentaContableCod || '—', cuenta: nombreCta(cta), tipo: isIng?'D':'H', dBs: isIng?montoBs:0, hBs: isIng?0:montoBs, dUSD: isIng?montoUSD:0, hUSD: isIng?0:montoUSD };
-      const nombreDirecto = m.terceroNombre || m.clientName || m.proveedor || '';
-      const partesGuion = (m.concepto||'').split('—').map(s=>s.trim());
-      const partesPunto = (m.concepto||'').split('·').map(s=>s.trim());
-      const nombreEnConcepto = nombreDirecto || partesGuion[1] || partesPunto[1] || '';
-      const nombreNorm = contNormNombre(nombreEnConcepto);
-      const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
-      const tercero = (esProveedorMov ? provsC.find(p=>p.id===m.terceroId) : clientesC.find(c=>c.id===m.terceroId))
-        || clientesC.find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
-        || provsC.find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
-      const [codTercero, nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-      const cuentaGenerica=(patron)=>{const c2=(planCuentasC||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
-      let contra;
-      if (m.tipoTercero==='Relacionado'&&m.terceroId) {
-        // Los terceros "Relacionado" (préstamos entre empresas) viven en cxp_terceros_relacionados,
-        // no en Clientes ni Proveedores — si no se busca ahí, este bloque nunca los reconoce y cae
-        // en un "Cuentas por Pagar" genérico de proveedor, que no es lo que es.
-        const tercRel=(tercerosRelC||[]).find(t=>t.id===m.terceroId);
-        const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
-        const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
-        contra = { codigo: codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta: nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas') };
-      }
-      else if (tercero && (codTercero||nomTercero)) {
-        contra = { codigo: codTercero||tercero.cuentaContableId||'', cuenta: nomTercero||tercero.razonSocial||tercero.nombre||'' };
-      } else if (m.lineasContra && m.lineasContra.length>0) {
-        const l = m.lineasContra[0];
-        contra = { codigo: l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta: l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'' };
-      } else {
-        const esCobro=!!m.grupoCobroId, esPago=!!m.grupoPagoId;
-        const g=esCobro?(planCuentasC||[]).find(p=>/cuentas?\s+por\s+cobrar|^cxc\b/i.test(p.nombre||'')&&!/anticipo/i.test(p.nombre||''))
-              :esPago?(planCuentasC||[]).find(p=>/cuentas?\s+por\s+pagar|^cxp\b/i.test(p.nombre||'')&&!/anticipo/i.test(p.nombre||''))
-              :null;
-        contra = { codigo: g?g.codigo:'', cuenta: g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)') };
-      }
-      const lineaContra = { codigo: contra.codigo, cuenta: contra.cuenta, tipo: isIng?'H':'D', dBs: isIng?0:montoBs, hBs: isIng?montoBs:0, dUSD: isIng?0:montoUSD, hUSD: isIng?montoUSD:0 };
-      lineas = [lineaPropia, lineaContra];
-      }
+      const lineasRaw = construirLineasMovimientoBancoCaja(m, {
+        cuentas, idField, nombreCta, asientos:asientosCC, provs:provsC, clientes:clientesC,
+        tercerosRel:tercerosRelC, planCuentas:planCuentasC, tabId:(esBanco?'banco':'caja'),
+        aplicarReclas:aplicarReclasLinea,
+      });
+      const lineas = lineasRaw.map(l => ({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0||l.debeUSD>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD}));
       return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas };
     }).filter(Boolean);
   };
@@ -15340,67 +15358,13 @@ function App() {
         // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
         // con su propia cuenta puente hacia el mismo banco. Relacionadas ya genera el asiento
         // completo y balanceado para este movimiento, incluyendo el lado del banco/caja.
-        if((pagosRelApp||[]).some(p=>p.movimientoId===m.id)) return;
-        const cta=(cuentas||[]).find(c=>c.id===m[idField]);
-        const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
-        if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
-          out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:(asientoLigado.lineas||[]).map((l,li)=>{
-            const r = aplicarReclasLinea(tabId, m._docId||m.id, li, l.codigo||'', l.cuenta||'—');
-            return {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)};
-          })});
-          return;
-        }
-        // Si no hay asiento vinculado NI se encuentra la cuenta bancaria/caja propia (cuentaId
-        // roto, cuenta borrada, o mal configurada), antes ese movimiento se perdía en silencio
-        // (if(!cta) return) — desaparecía del todo de Mayor Analítico y del resto de reportes,
-        // sin dejar rastro. Ahora se incluye igual, con la cuenta marcada como "Sin cuenta
-        // configurada" (usando el nombre que trae el propio movimiento como referencia), para
-        // que quede visible en vez de invisible — y se pueda ir a corregir esa cuenta en Banco/Caja.
-        // Contrapartida — MISMA lógica, en el mismo orden, que ya usa Comprobantes Contables
-        // (construirLineas): primero el tercero específico (su propia cuenta configurada),
-        // luego relacionadas, luego lineasContra guardadas, y solo al final la cuenta genérica
-        // por patrón. Antes esta sección tenía su PROPIA versión simplificada (solo el patrón
-        // genérico) — dos motores calculando lo mismo de formas distintas es la raíz de que
-        // Mayor Analítico/Balance no coincidieran con lo que ya se veía bien en Comprobantes
-        // Contables. Ahora es una sola lógica.
-        const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
-        const montoBs=Number(m.montoBs||0), montoUSD=Number(m.montoUSD||0);
-        const nombreDirecto = m.terceroNombre || m.clientName || m.proveedor || '';
-        const partesGuion = (m.concepto||'').split('—').map(s=>s.trim());
-        const partesPunto = (m.concepto||'').split('·').map(s=>s.trim());
-        const nombreEnConcepto = nombreDirecto || partesGuion[1] || partesPunto[1] || '';
-        const nombreNorm = contNormNombre(nombreEnConcepto);
-        const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
-        const tercero = (esProveedorMov ? (proveedoresApp||[]).find(p=>p.id===m.terceroId) : (clients||[]).find(c=>c.id===m.terceroId))
-          || (clients||[]).find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
-          || (proveedoresApp||[]).find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
-        const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-        const cuentaGenericaApp=(patron)=>{const c2=(planDeCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
-        let contra;
-        if(m.tipoTercero==='Relacionado' && m.terceroId){
-          const tercRel=(tercerosRelApp||[]).find(t=>t.id===m.terceroId);
-          const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
-          const ctaPrestamo=cuentaGenericaApp(/(pr[ée]stamo|relacionad)/i);
-          contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
-        } else if(tercero && (codTercero||nomTercero)){
-          contra = {codigo:codTercero||tercero.cuentaContableId||'', cuenta:nomTercero||tercero.razonSocial||tercero.nombre||''};
-        } else if(m.lineasContra && m.lineasContra.length>0){
-          const l=m.lineasContra[0];
-          contra = {codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):''};
-        } else {
-          const g = isIng
-            ? cuentaGenericaApp(/cuentas?\s+por\s+cobrar|^cxc\b/i)
-            : cuentaGenericaApp(/cuentas?\s+por\s+pagar|^cxp\b/i);
-          const gOk = g && !/anticipo/i.test(g.nombre||'');
-          contra = gOk ? {codigo:g.codigo, cuenta:g.nombre} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
-        }
-        const codPropia = cta ? (cta.cuentaContableCod||'') : '9.9.99.99.999';
-        const nombrePropia = cta ? (nombreCta(cta)||mod) : `⚠️ Sin cuenta configurada — ${m.cuentaNombre||m[idField]||mod}`;
-        const propiaR = aplicarReclasLinea(tabId, m._docId||m.id, 0, codPropia, nombrePropia);
-        const contraR = aplicarReclasLinea(tabId, m._docId||m.id, 1, contra.codigo, contra.cuenta);
-        const lineaPropia={codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
-        const lineaContra={codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
-        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:[lineaPropia,lineaContra]});
+        if((pagosRelApp||[]).some(p=>p.movimientoId===m.id||p.movimientoId===m._docId)) return;
+        const lineasRaw = construirLineasMovimientoBancoCaja(m, {
+          cuentas, idField, nombreCta, asientos:asientosApp, provs:proveedoresApp, clientes:clients,
+          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea,
+        });
+        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—',
+          lineas: lineasRaw.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeBs:l.debeBs, haberBs:l.haberBs, debeUSD:l.debeUSD, haberUSD:l.haberUSD}))});
       });
     });
     // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
@@ -15423,15 +15387,18 @@ function App() {
       const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
       const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
       const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-      // La cuenta de origen (banco/caja) de este préstamo es EL MISMO movimiento que también se
-      // ve y se puede reclasificar desde "Comprobante de Banco/Caja" — pero esa reclasificación
-      // se guardaba bajo una clave completamente distinta ('relacionadas' en vez de 'banco'/
-      // 'caja'), así que nunca se aplicaba aquí. Se revisa primero la reclasificación real del
-      // movimiento (la que el usuario ve y usa en Comprobante de Banco/Caja) y, solo si no hay
-      // ninguna, se cae a la propia de Relacionadas (por si alguna vez se usó esa vía distinta).
-      const origenReclas = movLigado ? aplicarReclasLinea(p.origen==='caja'?'caja':'banco', movLigado._docId||movLigado.id, 0, codCtaOrigen, nombreCtaOrigen) : {codigo:codCtaOrigen, cuenta:nombreCtaOrigen};
-      const relLinea0 = aplicarReclasLinea('relacionadas', p.id, 0, origenReclas.codigo, origenReclas.cuenta);
-      const relLinea1 = aplicarReclasLinea('relacionadas', p.id, 1, codRelFinal, `${nomRelFinal} — ${nombreTercero}`);
+      // La cuenta de origen (banco/caja) Y su contrapartida son EL MISMO movimiento que también
+      // se ve y se puede reclasificar desde "Comprobante de Banco/Caja" — pero esa
+      // reclasificación se guardaba bajo una clave completamente distinta ('relacionadas' en vez
+      // de 'banco'/'caja'), así que nunca se aplicaba aquí. Se revisa primero la reclasificación
+      // real del movimiento en CADA línea (la que el usuario ve y usa en Comprobante de Banco/
+      // Caja — línea 0 = cuenta propia, línea 1 = contrapartida) y, solo si no hay ninguna, se
+      // cae a la propia de Relacionadas.
+      const tabOrigen = p.origen==='caja'?'caja':'banco';
+      const origenReclas0 = movLigado ? aplicarReclasLinea(tabOrigen, movLigado._docId||movLigado.id, 0, codCtaOrigen, nombreCtaOrigen) : {codigo:codCtaOrigen, cuenta:nombreCtaOrigen};
+      const origenReclas1 = movLigado ? aplicarReclasLinea(tabOrigen, movLigado._docId||movLigado.id, 1, codRelFinal, `${nomRelFinal} — ${nombreTercero}`) : {codigo:codRelFinal, cuenta:`${nomRelFinal} — ${nombreTercero}`};
+      const relLinea0 = aplicarReclasLinea('relacionadas', p.id, 0, origenReclas0.codigo, origenReclas0.cuenta);
+      const relLinea1 = aplicarReclasLinea('relacionadas', p.id, 1, origenReclas1.codigo, origenReclas1.cuenta);
       out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas', concepto:`${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${nombreTercero}`,
         lineas:[
           {codigo:relLinea0.codigo, cuenta:relLinea0.cuenta, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
