@@ -15423,7 +15423,14 @@ function App() {
       const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
       const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
       const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-      const relLinea0 = aplicarReclasLinea('relacionadas', p.id, 0, codCtaOrigen, nombreCtaOrigen);
+      // La cuenta de origen (banco/caja) de este préstamo es EL MISMO movimiento que también se
+      // ve y se puede reclasificar desde "Comprobante de Banco/Caja" — pero esa reclasificación
+      // se guardaba bajo una clave completamente distinta ('relacionadas' en vez de 'banco'/
+      // 'caja'), así que nunca se aplicaba aquí. Se revisa primero la reclasificación real del
+      // movimiento (la que el usuario ve y usa en Comprobante de Banco/Caja) y, solo si no hay
+      // ninguna, se cae a la propia de Relacionadas (por si alguna vez se usó esa vía distinta).
+      const origenReclas = movLigado ? aplicarReclasLinea(p.origen==='caja'?'caja':'banco', movLigado._docId||movLigado.id, 0, codCtaOrigen, nombreCtaOrigen) : {codigo:codCtaOrigen, cuenta:nombreCtaOrigen};
+      const relLinea0 = aplicarReclasLinea('relacionadas', p.id, 0, origenReclas.codigo, origenReclas.cuenta);
       const relLinea1 = aplicarReclasLinea('relacionadas', p.id, 1, codRelFinal, `${nomRelFinal} — ${nombreTercero}`);
       out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas', concepto:`${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${nombreTercero}`,
         lineas:[
