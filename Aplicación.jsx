@@ -13109,6 +13109,13 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // ── Reclasificar cuenta ──────────────────────────────────────────────────────────────
   const claveReclas = (tabId, compId, lineIdx) => `${tabId}__${compId}__${lineIdx}`;
   const cuentaReclas = (tabId, compId, lineIdx) => reclasificacionesC[claveReclas(tabId,compId,lineIdx)] || null;
+  // Adaptador con la misma forma que aplicarReclasLinea de App() (get-o-fallback en una sola
+  // llamada) — para que construirLineasMovimientoBancoCaja (compartida entre los dos) reciba
+  // siempre la misma firma de función, sin importar desde qué componente se llame.
+  const aplicarReclasLinea = (tabId, compId, lineIdx, codigo, cuenta) => {
+    const ov = cuentaReclas(tabId, compId, lineIdx);
+    return ov ? {codigo: ov.codigo||codigo, cuenta: ov.cuenta||cuenta} : {codigo, cuenta};
+  };
   const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual, ctxComprobante) => {
     setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual, ...(ctxComprobante||{})});
     setReclasBusq('');
