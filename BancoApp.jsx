@@ -2312,6 +2312,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // (montos, referencias) sin que se pierda al recargar o volver a entrar. Un solo lugar
   // compartido entre Movimientos Banco y Movimientos Caja, guardado en Firestore.
   const [favoritosMov, setFavoritosMov] = useState([]);
+  // Asientos formales (cont_asientos) — necesarios para que "Movimientos Banco" respete el monto
+  // real de un asiento corregido a mano, igual que ya hace Comprobante de Contabilidad. Esta
+  // suscripción nunca existió dentro de BancoApp — por error se usaba una variable con el mismo
+  // nombre que en realidad pertenece a otro componente completamente aparte (AsientosApp).
+  const [asientos, setAsientos] = useState([]);
+  useEffect(()=>{
+    const u = onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientos(s.docs.map(d=>({_docId:d.id,...d.data()}))));
+    return ()=>u();
+  },[]);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('settings','movimientosFavoritos'), d=>{ if(d.exists()) setFavoritosMov(d.data()?.ids||[]); });
     return ()=>u();
