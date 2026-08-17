@@ -12293,7 +12293,9 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         contra = { codigo: l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta: l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):'' };
       } else {
         const esCobro=!!m.grupoCobroId, esPago=!!m.grupoPagoId;
-        const g=esCobro?cuentaGenerica(/(cuentas?\s+por\s+cobrar|cxc|client)/i):esPago?cuentaGenerica(/(cuentas?\s+por\s+pagar|cxp|proveedor)/i):null;
+        const g=esCobro?(planCuentasC||[]).find(p=>/cuentas?\s+por\s+cobrar|^cxc\b/i.test(p.nombre||'')&&!/anticipo/i.test(p.nombre||''))
+              :esPago?(planCuentasC||[]).find(p=>/cuentas?\s+por\s+pagar|^cxp\b/i.test(p.nombre||'')&&!/anticipo/i.test(p.nombre||''))
+              :null;
         contra = { codigo: g?g.codigo:'', cuenta: g?g.nombre:(esCobro?'Cuentas por Cobrar':esPago?'Cuentas por Pagar':'Contrapartida (origen no identificado)') };
       }
       const lineaContra = { codigo: contra.codigo, cuenta: contra.cuenta, tipo: isIng?'H':'D', dBs: isIng?0:montoBs, hBs: isIng?montoBs:0, dUSD: isIng?0:montoUSD, hUSD: isIng?montoUSD:0 };
@@ -15354,12 +15356,44 @@ function App() {
         // sin dejar rastro. Ahora se incluye igual, con la cuenta marcada como "Sin cuenta
         // configurada" (usando el nombre que trae el propio movimiento como referencia), para
         // que quede visible en vez de invisible — y se pueda ir a corregir esa cuenta en Banco/Caja.
+        // Contrapartida — MISMA lógica, en el mismo orden, que ya usa Comprobantes Contables
+        // (construirLineas): primero el tercero específico (su propia cuenta configurada),
+        // luego relacionadas, luego lineasContra guardadas, y solo al final la cuenta genérica
+        // por patrón. Antes esta sección tenía su PROPIA versión simplificada (solo el patrón
+        // genérico) — dos motores calculando lo mismo de formas distintas es la raíz de que
+        // Mayor Analítico/Balance no coincidieran con lo que ya se veía bien en Comprobantes
+        // Contables. Ahora es una sola lógica.
         const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
         const montoBs=Number(m.montoBs||0), montoUSD=Number(m.montoUSD||0);
-        const g = isIng
-          ? (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+cobrar|cxc|client)/i.test(p.nombre||''))
-          : (planDeCuentas||[]).find(p=>/(cuentas?\s+por\s+pagar|cxp|proveedor)/i.test(p.nombre||''));
-        const contra = g ? {codigo:String(g.codigo||g.id||''), cuenta:g.nombre||''} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
+        const nombreDirecto = m.terceroNombre || m.clientName || m.proveedor || '';
+        const partesGuion = (m.concepto||'').split('—').map(s=>s.trim());
+        const partesPunto = (m.concepto||'').split('·').map(s=>s.trim());
+        const nombreEnConcepto = nombreDirecto || partesGuion[1] || partesPunto[1] || '';
+        const nombreNorm = contNormNombre(nombreEnConcepto);
+        const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
+        const tercero = (esProveedorMov ? (proveedoresApp||[]).find(p=>p.id===m.terceroId) : (clients||[]).find(c=>c.id===m.terceroId))
+          || (clients||[]).find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
+          || (proveedoresApp||[]).find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
+        const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+        const cuentaGenericaApp=(patron)=>{const c2=(planDeCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
+        let contra;
+        if(m.tipoTercero==='Relacionado' && m.terceroId){
+          const tercRel=(tercerosRelApp||[]).find(t=>t.id===m.terceroId);
+          const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+          const ctaPrestamo=cuentaGenericaApp(/(pr[ée]stamo|relacionad)/i);
+          contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
+        } else if(tercero && (codTercero||nomTercero)){
+          contra = {codigo:codTercero||tercero.cuentaContableId||'', cuenta:nomTercero||tercero.razonSocial||tercero.nombre||''};
+        } else if(m.lineasContra && m.lineasContra.length>0){
+          const l=m.lineasContra[0];
+          contra = {codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):''};
+        } else {
+          const g = isIng
+            ? cuentaGenericaApp(/cuentas?\s+por\s+cobrar|^cxc\b/i)
+            : cuentaGenericaApp(/cuentas?\s+por\s+pagar|^cxp\b/i);
+          const gOk = g && !/anticipo/i.test(g.nombre||'');
+          contra = gOk ? {codigo:g.codigo, cuenta:g.nombre} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
+        }
         const codPropia = cta ? (cta.cuentaContableCod||'') : '9.9.99.99.999';
         const nombrePropia = cta ? (nombreCta(cta)||mod) : `⚠️ Sin cuenta configurada — ${m.cuentaNombre||m[idField]||mod}`;
         const propiaR = aplicarReclasLinea(tabId, m._docId||m.id, 0, codPropia, nombrePropia);
