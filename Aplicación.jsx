@@ -3125,6 +3125,67 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   ];
 };
 
+// Determina las líneas contables del Costo de Producción para UNA factura — usada tanto por
+// Comprobantes Contables como por el motor central. Antes eran dos copias: una que OMITÍA en
+// silencio la factura si faltaba alguna cuenta configurada, y otra que la mostraba con un aviso
+// "⚠️ Sin configurar" — ahora las dos se comportan igual (muestran con aviso, nunca desaparecen).
+const CATEGORIA_A_BALDE_SHARED = {
+  'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
+  'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
+  'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
+  'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
+};
+const construirLineasCostoProduccionCompartido = (f, ctx) => {
+  const {cfg, inventory, tasasManuales, settingsTasa} = ctx;
+  const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
+  const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
+  let totalMP=0, totalCons=0, totalTerm=0;
+  (f.itemsFacturados||[]).forEach(it=>{
+    const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
+    if (val<=0) return;
+    const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
+    const balde = CATEGORIA_A_BALDE_SHARED[invItem?.category] || 'MATERIA_PRIMA';
+    if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
+  });
+  if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005) return null;
+  const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+  const tasa = (tasasManuales||{})[f.id] || Number(settingsTasa||0) || 1;
+  const [codDeb,nomDeb] = partirCuenta(tieneOp ? cfg.costoVentaProduccionNombre : cfg.costoVentaMercanciaNombre);
+  const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
+  const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
+  const [codInvTerm,nomInvTerm] = partirCuenta(cfg.invTerminadosNombre);
+  const totalVal = totalMP+totalCons+totalTerm;
+  const lineas = [{codigo:codDeb, cuenta:nomDeb, debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0, detalle:tieneOp?'Costo de venta (con OP)':'Costo de venta (sin OP)'}];
+  if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP, detalle:'Materia Prima'});
+  if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons, detalle:'Consumibles'});
+  if (totalTerm>0.005) lineas.push({codigo:codInvTerm, cuenta:nomInvTerm, debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm, detalle:'Productos Terminados'});
+  return {tasa, tieneOp, lineas};
+};
+
+// Determina las líneas contables de UN movimiento de Consumo Interno (autoconsumo, avería,
+// muestra, pérdida) — misma función compartida entre Comprobantes Contables y el motor central.
+const construirLineasConsumoInternoCompartido = (m, ctx) => {
+  const {cfg, inventory, tasasManuales, settingsTasa} = ctx;
+  if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return null;
+  if (m.status==='ANULADO') return null;
+  if (/^MOV-\d+-/.test(m.docRef||'')) return null; // generado por transformación/carga masiva, no es autoconsumo real
+  const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
+  const item = itemPorId[m.itemId];
+  const balde = CATEGORIA_A_BALDE_SHARED[item?.category] || 'MATERIA_PRIMA';
+  const claveInv = {'MATERIA_PRIMA':'invMateriaPrima','CONSUMIBLES':'invConsumibles','TERMINADOS':'invTerminados'}[balde];
+  const claveDeb = m.type==='MUESTRA' ? 'muestrasClientes' : m.type==='PERDIDA' ? (cfg.perdidaId?'perdida':'consumosInternos') : 'consumosInternos';
+  const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
+  if (valor<=0) return null;
+  const tasa = (tasasManuales||{})[m.id] || Number(settingsTasa||0) || 1;
+  const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
+  const [codDeb,nomDeb] = partirCuenta(cfg[`${claveDeb}Nombre`]);
+  const [codInv,nomInv] = partirCuenta(cfg[`${claveInv}Nombre`]);
+  return {tasa, lineas:[
+    {codigo:codDeb, cuenta:nomDeb, debeBs:valor*tasa, haberBs:0, debeUSD:valor, haberUSD:0, detalle:m.notes||''},
+    {codigo:codInv, cuenta:nomInv, debeBs:0, haberBs:valor*tasa, debeUSD:0, haberUSD:valor, detalle:''},
+  ]};
+};
+
 const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const tasa=pNum(f.tasa||0);
   const montoBase=pNum(f.montoBase||0);
@@ -12641,7 +12702,6 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // categoría de inventario involucrada (Materia Prima/Consumibles/Terminados).
   const construirLineasCostosProduccion = () => {
     const cfg = cuentasProduccionCfgC;
-    const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (facturasVentaC||[]).filter(f=>{
       if (f.esAnulacionFiscal) return false;
       const items = f.itemsFacturados||[];
@@ -12651,39 +12711,19 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if (filtHasta && fecha > filtHasta) return false;
       return true;
     }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(f=>{
-      let totalMP=0, totalCons=0, totalTerm=0;
-      (f.itemsFacturados||[]).forEach(it=>{
-        const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
-        if (val<=0) return;
-        const invItem = it.invCode ? (inventoryC||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
-        const balde = CATEGORIA_A_BALDE_CC[invItem?.category] || 'MATERIA_PRIMA';
-        if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
-      });
-      const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
-      const tasaUsar = tasasManualesProdC[f.id] || Number(settingsCC?.tasaBCV||0) || 1;
-      // Con OP: el costo va a Costo de Venta (Producción). Sin OP: va a Costo de Venta
-      // (Mercancía). Son cuentas distintas, ambas configuradas en Producción.
-      const [codDeb,nomDeb] = partirCuenta(tieneOp ? cfg.costoVentaProduccionNombre : cfg.costoVentaMercanciaNombre);
-      const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
-      const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
-      const [codInvTerm,nomInvTerm] = partirCuenta(cfg.invTerminadosNombre);
-      const totalVal = totalMP+totalCons+totalTerm;
-      const lineas = [{codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:totalVal*tasaUsar, hBs:0, dUSD:totalVal, hUSD:0, detalle:tieneOp?'Costo de venta (con OP)':'Costo de venta (sin OP)'}];
-      if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, tipo:'H', dBs:0, hBs:totalMP*tasaUsar, dUSD:0, hUSD:totalMP, detalle:'Materia Prima'});
-      if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, tipo:'H', dBs:0, hBs:totalCons*tasaUsar, dUSD:0, hUSD:totalCons, detalle:'Consumibles'});
-      if (totalTerm>0.005) lineas.push({codigo:codInvTerm, cuenta:nomInvTerm, tipo:'H', dBs:0, hBs:totalTerm*tasaUsar, dUSD:0, hUSD:totalTerm, detalle:'Productos Terminados'});
+      const r = construirLineasCostoProduccionCompartido(f, {cfg, inventory:inventoryC, tasasManuales:tasasManualesProdC, settingsTasa:settingsCC?.tasaBCV});
+      if(!r) return null;
       return {
         id: f.id, comprobante: f.nroFiscal||f.documento||f.id, fecha: f.fecha||'', doc: f.nroFiscal||f.documento||'—',
-        tasa: tasaUsar, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${tieneOp?' · OP:'+(f.opAsignada||f.opsAsignadas[0]):' · Sin OP'}`, _raw:f,
-        lineas,
+        tasa: r.tasa, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?' · OP:'+(f.opAsignada||f.opsAsignadas[0]):' · Sin OP'}`, _raw:f,
+        lineas: r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD, detalle:l.detalle})),
       };
-    }).filter(x => x.lineas.some(l=>l.dUSD>0||l.hUSD>0)); // por si acaso, aunque ya se filtró arriba
+    }).filter(Boolean);
   };
   // Consumos Internos: autoconsumo, avería, muestras y pérdida — vienen directo de los
   // movimientos de Salida en Control de Inventario, cada uno con su propia tasa editable.
   const construirLineasConsumosInternos = () => {
     const cfg = cuentasProduccionCfgC;
-    const itemPorId = {}; (inventoryC||[]).forEach(it=>{ itemPorId[it.id]=it; });
     return (invMovementsC||[]).filter(m=>{
       if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return false;
       if (m.status==='ANULADO') return false;
@@ -12692,23 +12732,14 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if (filtHasta && m.date > filtHasta) return false;
       return true;
     }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(m=>{
-      const item = itemPorId[m.itemId];
-      const balde = CATEGORIA_A_BALDE_CC[item?.category] || 'MATERIA_PRIMA';
-      const claveInv = {'MATERIA_PRIMA':'invMateriaPrima','CONSUMIBLES':'invConsumibles','TERMINADOS':'invTerminados'}[balde];
-      const claveDeb = m.type==='MUESTRA' ? 'muestrasClientes' : m.type==='PERDIDA' ? (cfg.perdidaId?'perdida':'consumosInternos') : 'consumosInternos';
-      const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
-      const tasaUsar = tasasManualesProdC[m.id] || Number(settingsCC?.tasaBCV||0) || 1;
-      const [codDeb,nomDeb] = partirCuenta(cfg[`${claveDeb}Nombre`]);
-      const [codInv,nomInv] = partirCuenta(cfg[`${claveInv}Nombre`]);
+      const r = construirLineasConsumoInternoCompartido(m, {cfg, inventory:inventoryC, tasasManuales:tasasManualesProdC, settingsTasa:settingsCC?.tasaBCV});
+      if(!r) return null;
       return {
         id: m.id, comprobante: m.docRef||m.id, fecha: m.date, doc: m.docRef||'—',
-        tasa: tasaUsar, conc: `${m.type} — ${m.itemDesc||m.itemId||''}`, _raw:m,
-        lineas: [
-          {codigo:codDeb, cuenta:nomDeb, tipo:'D', dBs:valor*tasaUsar, hBs:0, dUSD:valor, hUSD:0, detalle:m.notes||''},
-          {codigo:codInv, cuenta:nomInv, tipo:'H', dBs:0, hBs:valor*tasaUsar, dUSD:0, hUSD:valor, detalle:''},
-        ],
+        tasa: r.tasa, conc: `${m.type} — ${m.itemDesc||m.itemId||''}`, _raw:m,
+        lineas: r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD, detalle:l.detalle})),
       };
-    });
+    }).filter(Boolean);
   };
 
   const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:'', detalle:''});
@@ -15433,78 +15464,23 @@ function App() {
     // 9a) Costo de Producción/Venta — el mismo costo que ya se captura en cada factura
     // (costoUnit × cantidad por ítem, congelado al facturar), igual que el Reporte General de
     // Ventas y Costos. Usa tasa manual guardada por comprobante si existe, si no la BCV actual.
-    {
-      const CATEGORIA_A_BALDE = {
-        'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
-        'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
-        'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
-        'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
-      };
-      const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
-      const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : null;
-      (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
-        let totalMP=0, totalCons=0, totalTerm=0;
-        (f.itemsFacturados||[]).forEach(it=>{
-          const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
-          if (val<=0) return;
-          const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
-          const balde = CATEGORIA_A_BALDE[invItem?.category] || 'MATERIA_PRIMA';
-          if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
-        });
-        if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005) return;
-        const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
-        const debC = partirCuenta(tieneOp ? cuentasProduccionCfg.costoVentaProduccionNombre : cuentasProduccionCfg.costoVentaMercanciaNombre);
-        const invMPC = partirCuenta(cuentasProduccionCfg.invMateriaPrimaNombre);
-        const invConsC = partirCuenta(cuentasProduccionCfg.invConsumiblesNombre);
-        const invTermC = partirCuenta(cuentasProduccionCfg.invTerminadosNombre);
-        if (!debC || (totalMP>0.005 && !invMPC) || (totalCons>0.005 && !invConsC) || (totalTerm>0.005 && !invTermC)) return; // sin configurar, se omite
-        const tasa = tasasManualesProdApp[f.id] || Number(settings?.tasaBCV||0) || 1;
-        const totalVal = totalMP+totalCons+totalTerm;
-        const lineas = [{codigo:debC[0], cuenta:debC[1], debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0}];
-        if (totalMP>0.005) lineas.push({codigo:invMPC[0], cuenta:invMPC[1], debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP});
-        if (totalCons>0.005) lineas.push({codigo:invConsC[0], cuenta:invConsC[1], debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons});
-        if (totalTerm>0.005) lineas.push({codigo:invTermC[0], cuenta:invTermC[1], debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm});
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${tieneOp?'':' · Sin OP'}`, lineas});
-      });
-    }
+    // 9a) Costo de Producción/Venta — MISMA función compartida que usa Comprobantes Contables
+    // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
+    // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV});
+      if(!r) return;
+      out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
+    });
     // 9b) Consumos Internos / Muestras Clientes — Autoconsumo, Avería (combinados), Muestra y
     // Pérdida/Merma, desde Control de Inventario. Misma tasa manual editable que en 9a.
-    {
-      const CATEGORIA_A_BALDE = {
-        'Materia Prima':'MATERIA_PRIMA', 'Semielaborados':'MATERIA_PRIMA', 'Pigmentos':'MATERIA_PRIMA',
-        'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
-        'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
-        'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
-      };
-      const CUENTA_INVENTARIO_POR_BALDE = {
-        'MATERIA_PRIMA': ['invMateriaPrimaId','invMateriaPrimaNombre'],
-        'CONSUMIBLES': ['invConsumiblesId','invConsumiblesNombre'],
-        'TERMINADOS': ['invTerminadosId','invTerminadosNombre'],
-      };
-      const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
-      (invMovements||[]).forEach(m=>{
-        if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return;
-        if (m.status==='ANULADO') return;
-        if (/^MOV-\d+-/.test(m.docRef||'')) return; // generado por transformación/carga masiva, no es autoconsumo real
-        const item = itemPorId[m.itemId];
-        const balde = CATEGORIA_A_BALDE[item?.category] || 'MATERIA_PRIMA';
-        const claveInv = CUENTA_INVENTARIO_POR_BALDE[balde];
-        const claveDebito = m.type==='MUESTRA' ? ['muestrasClientesId','muestrasClientesNombre'] : m.type==='PERDIDA' ? (cuentasProduccionCfg.perdidaId?['perdidaId','perdidaNombre']:['consumosInternosId','consumosInternosNombre']) : ['consumosInternosId','consumosInternosNombre'];
-        const [invId, invNombreCampo] = claveInv;
-        const [debId, debNombreCampo] = claveDebito;
-        if (!cuentasProduccionCfg[invId] || !cuentasProduccionCfg[debId]) return; // sin configurar, se omite
-        const valor = Number(m.totalValue||0) || (Number(m.qty||0)*Number(m.unitCost||0));
-        if (valor<=0) return;
-        const [codDebito, nomDebito] = cuentasProduccionCfg[debNombreCampo].split('—').map(s=>s.trim());
-        const [codInv, nomInv] = cuentasProduccionCfg[invNombreCampo].split('—').map(s=>s.trim());
-        const tasa = tasasManualesProdApp[m.id] || Number(settings?.tasaBCV||0) || 1;
-        out.push({fecha:m.date||'', comprobante:m.docRef||m.id, modulo:'Producción', concepto:`${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`,
-          lineas:[
-            {codigo:codDebito, cuenta:nomDebito, debeBs:valor*tasa, haberBs:0, debeUSD:valor, haberUSD:0},
-            {codigo:codInv, cuenta:nomInv, debeBs:0, haberBs:valor*tasa, debeUSD:0, haberUSD:valor},
-          ]});
-      });
-    }
+    // 9b) Consumos Internos / Muestras Clientes — MISMA función compartida que usa Comprobantes
+    // Contables (antes esta sección omitía en silencio si faltaba una cuenta configurada).
+    (invMovements||[]).forEach(m=>{
+      const r = construirLineasConsumoInternoCompartido(m, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV});
+      if(!r) return;
+      out.push({fecha:m.date||'', comprobante:m.docRef||m.id, modulo:'Producción', concepto:`${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`, lineas:r.lineas});
+    });
     // 10) Cierre de Compensación de IVA — cada quincena cerrada ya generó su asiento completo
     // (Débito/Crédito Fiscal, retenciones aplicadas, IVA por pagar o excedente); se incluyen
     // esas mismas líneas guardadas tal cual, sin recalcular nada aquí.
