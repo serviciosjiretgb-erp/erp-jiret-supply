@@ -2146,9 +2146,13 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   const confirmarPwdPrompt=async()=>{
     const ok=await validarClaveAdmin(pwdInput);
     if(!ok){ setPwdError(true); setPwdInput(''); return; }
-    if(pwdPrompt.accion==='editar') await guardarEditConcilReal();
-    if(pwdPrompt.accion==='eliminar') await eliminarConcilReal(pwdPrompt.c);
-    setPwdPrompt(null); setPwdInput(''); setPwdError(false);
+    try{
+      if(pwdPrompt.accion==='editar') await guardarEditConcilReal();
+      if(pwdPrompt.accion==='eliminar') await eliminarConcilReal(pwdPrompt.c);
+      setPwdPrompt(null); setPwdInput(''); setPwdError(false);
+    }catch(e){
+      alert('❌ No se pudo completar la acción: '+(e?.message||e));
+    }
   };
   return(<div className="space-y-5">
     <BCard title="Parámetros de Conciliación"><div className="grid grid-cols-4 gap-4">
