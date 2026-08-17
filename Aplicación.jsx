@@ -15125,9 +15125,9 @@ function App() {
       onSnapshot(getColRef('procura_proveedores'), s=>setProveedoresApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('procura_servicios'), s=>setServiciosApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('retencionesClientes'), s=>setRetencionesClientesApp(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(getColRef('banco_movimientos'), s=>setMovBancoApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('banco_movimientos'), s=>setMovBancoApp(s.docs.map(d=>({_docId:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_reclasificaciones'), s=>setReclasificacionesApp(Object.fromEntries(s.docs.map(d=>[d.id,d.data()])))),
-      onSnapshot(getColRef('caja_movimientos'), s=>setMovCajaApp(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('caja_movimientos'), s=>setMovCajaApp(s.docs.map(d=>({_docId:d.id, ...d.data()})))),
       onSnapshot(getColRef('banco_cuentas'), s=>setCuentasBancoApp(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s=>setCuentasCajaApp(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('cxp_terceros_relacionados'), s=>setTercerosRelApp(s.docs.map(d=>({id:d.id,...d.data()})))),
@@ -15296,7 +15296,7 @@ function App() {
       const montoSigno = p.origen ? Number(p.monto||0) : (p.tipo==='Ingreso'?-Math.abs(Number(p.monto||0)):Math.abs(Number(p.monto||0)));
       const esIngreso = montoSigno < 0;
       const montoUSD = Math.abs(montoSigno);
-      const movLigado = p.origen==='caja' ? (movCajaApp||[]).find(m=>m.id===p.movimientoId) : p.origen==='banco' ? (movBancoApp||[]).find(m=>m.id===p.movimientoId) : null;
+      const movLigado = p.origen==='caja' ? (movCajaApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : p.origen==='banco' ? (movBancoApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
       const cuentasOrigen = p.origen==='caja' ? cuentasCajaApp : cuentasBancoApp;
       const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
       const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
