@@ -13278,14 +13278,25 @@ ${valoresHtml}
     if (!q) return lineasArr;
     const qMonto = parseMontoBuscadoCC(buscarCC);
     const esBusquedaMonto = !isNaN(qMonto) && qMonto>0;
-    return (lineasArr||[]).filter(r => {
-      if ((r.comprobante||'').toUpperCase().includes(q)) return true;
-      if ((r.doc||'').toUpperCase().includes(q)) return true;
-      if ((r.conc||'').toUpperCase().includes(q)) return true;
-      if ((contDd(r.fecha)||'').includes(q) || (r.fecha||'').includes(q)) return true;
-      if (esBusquedaMonto && (r.lineas||[]).some(l => Math.abs(Number(l.debeBs||0)-qMonto)<=0.01 || Math.abs(Number(l.haberBs||0)-qMonto)<=0.01 || Math.abs(Number(l.debeUSD||0)-qMonto)<=0.01 || Math.abs(Number(l.haberUSD||0)-qMonto)<=0.01)) return true;
-      return (r.lineas||[]).some(l => (l.codigo||'').toUpperCase().includes(q) || (l.cuenta||'').toUpperCase().includes(q));
+    const resultado = [];
+    (lineasArr||[]).forEach(r => {
+      const matchComprobante = (r.comprobante||'').toUpperCase().includes(q) || (r.doc||'').toUpperCase().includes(q) || (r.conc||'').toUpperCase().includes(q) || (contDd(r.fecha)||'').includes(q) || (r.fecha||'').includes(q);
+      if (matchComprobante) {
+        // Coincide algo del comprobante en sí (concepto, doc, fecha) — se muestra completo con
+        // todas sus líneas, para no perder el contexto de la transacción.
+        resultado.push(r);
+        return;
+      }
+      // Si no, buscar línea por línea (código, cuenta o monto puntual) — y mostrar SOLO esas
+      // líneas, no el comprobante entero, para poder revisar justo esa cuenta o monto.
+      const lineasCoincidentes = (r.lineas||[]).filter(l => {
+        if ((l.codigo||'').toUpperCase().includes(q) || (l.cuenta||'').toUpperCase().includes(q)) return true;
+        if (esBusquedaMonto && (Math.abs(Number(l.debeBs||0)-qMonto)<=0.01 || Math.abs(Number(l.haberBs||0)-qMonto)<=0.01 || Math.abs(Number(l.debeUSD||0)-qMonto)<=0.01 || Math.abs(Number(l.haberUSD||0)-qMonto)<=0.01)) return true;
+        return false;
+      });
+      if (lineasCoincidentes.length>0) resultado.push({...r, lineas:lineasCoincidentes});
     });
+    return resultado;
   };
 
   const configExportCC = (tabId) => {
