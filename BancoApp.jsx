@@ -3963,31 +3963,42 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const cuentasBalanceFiltro = filtC ? cuentas.filter(c=>c.id===filtC) : cuentas;
     const primerDiaMesBalance = `${filtMesBalance}-01`;
     const calcCuentaBalance = (c) => {
+      // Si un movimiento tiene un asiento formal vinculado (cont_asientos), ESE es el monto real
+      // que ya usa "Comprobante de Contabilidad" — puede diferir del monto crudo guardado en el
+      // propio movimiento si alguna vez se corrigió el asiento directamente. Antes este cálculo
+      // solo miraba el monto crudo, así que podía no coincidir con lo que ya se veía bien ahí.
+      const montoRealCta = (m, campo) => {
+        const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
+        if(!asientoLigado || !asientoLigado.lineas || !asientoLigado.lineas.length) return Number(m[campo]||0);
+        const campoLinea = campo==='montoBs' ? (m.tipo==='Ingreso'||m.tipo==='Nota de Crédito'?'debeBs':'haberBs') : (m.tipo==='Ingreso'||m.tipo==='Nota de Crédito'?'debeUSD':'haberUSD');
+        const propia = (asientoLigado.lineas||[]).find(l=>Number(l[campoLinea]||0)>0);
+        return propia ? Number(propia[campoLinea]||0) : Number(m[campo]||0);
+      };
       const movsCta = movBanco.filter(m=>m.cuentaId===c.id);
       const inicioCuenta = `${c.mesSaldoInicial||'2000-01'}-01`;
       const finMesBalance = `${filtMesBalance}-32`; // cualquier fecha después del último día del mes
       // Tasa promedio ponderada, calculada con los movimientos reales de esta cuenta (hasta el mes
       // visto) — evita depender de una "tasa global" que puede no estar registrada o quedar vieja.
       const movsParaProm = movsCta.filter(m=>(m.fecha||'')<finMesBalance);
-      const sumBsProm  = movsParaProm.reduce((s,m)=>s+Number(m.montoBs ||0),0);
-      const sumUsdProm = movsParaProm.reduce((s,m)=>s+Number(m.montoUSD||0),0);
+      const sumBsProm  = movsParaProm.reduce((s,m)=>s+montoRealCta(m,'montoBs'),0);
+      const sumUsdProm = movsParaProm.reduce((s,m)=>s+montoRealCta(m,'montoUSD'),0);
       const tasaProm = sumUsdProm>0 ? sumBsProm/sumUsdProm : (tasaActiva||1);
       const saldoIniNum = Number(c.saldoInicial ?? c.saldo ?? 0);
       const saldoBaseUSD = c.moneda==='BS' ? saldoIniNum/tasaProm : saldoIniNum;
       const saldoBaseBs  = c.moneda==='BS' ? saldoIniNum : saldoIniNum*tasaProm;
       if(primerDiaMesBalance<inicioCuenta) return {saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0}; // mes anterior al de partida
       const netoEntre = (desde,hasta,campo) => movsCta.filter(m=>(m.fecha||'')>=desde&&(!hasta||(m.fecha||'')<hasta)).reduce((s,m)=>{
-        const v=Number(m[campo]||0);
+        const v=montoRealCta(m,campo);
         if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return s+v;
         return s-v; // Egreso, Nota de Débito, Traslado, Transferencia — todos salen de esta cuenta
       },0);
       const saldoInicialUSD = saldoBaseUSD + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoUSD');
       const saldoInicialBs  = saldoBaseBs  + netoEntre(inicioCuenta, primerDiaMesBalance, 'montoBs');
       const movsDelMes = movsCta.filter(m=>(m.fecha||'').startsWith(filtMesBalance));
-      const entradasUSD = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      const entradasBs  = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
-      const salidasUSD  = movsDelMes.filter(m=>m.tipo!=='Ingreso'&&m.tipo!=='Nota de Crédito').reduce((s,m)=>s+Number(m.montoUSD||0),0);
-      const salidasBs   = movsDelMes.filter(m=>m.tipo!=='Ingreso'&&m.tipo!=='Nota de Crédito').reduce((s,m)=>s+Number(m.montoBs ||0),0);
+      const entradasUSD = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+montoRealCta(m,'montoUSD'),0);
+      const entradasBs  = movsDelMes.filter(m=>m.tipo==='Ingreso'||m.tipo==='Nota de Crédito').reduce((s,m)=>s+montoRealCta(m,'montoBs'),0);
+      const salidasUSD  = movsDelMes.filter(m=>m.tipo!=='Ingreso'&&m.tipo!=='Nota de Crédito').reduce((s,m)=>s+montoRealCta(m,'montoUSD'),0);
+      const salidasBs   = movsDelMes.filter(m=>m.tipo!=='Ingreso'&&m.tipo!=='Nota de Crédito').reduce((s,m)=>s+montoRealCta(m,'montoBs'),0);
       return {saldoInicialUSD,saldoInicialBs,entradasUSD,entradasBs,salidasUSD,salidasBs};
     };
     const esBsCuenta = (c) => c.moneda==='BS'||c.tipoBanco==='Nacional-Bs';
@@ -10015,7 +10026,7 @@ function AsientosApp({ fbUser, onBack }) {
   useEffect(() => {
     if (!fbUser) return;
     const subs = [
-      onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientos(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientos(s.docs.map(d=>({_docId:d.id,...d.data()})))),
       onSnapshot(getColRef('planDeCuentas'), s => setCuentas(s.docs.map(d=>({id:d.id,...d.data()})))),
     ];
     return () => subs.forEach(u=>u());
@@ -10411,7 +10422,7 @@ function BalancesApp({ fbUser, onBack }) {
     if(!fbUser) return;
     const subs=[
       onSnapshot(getColRef('planDeCuentas'), s=>setCuentas(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s=>setAsientos(s.docs.map(d=>d.data()))),
+      onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s=>setAsientos(s.docs.map(d=>({_docId:d.id,...d.data()})))),
       onSnapshot(getColRef('cont_periodos'), s=>setPeriodos(s.docs.map(d=>d.data()))),
     ];
     return()=>subs.forEach(u=>u());
