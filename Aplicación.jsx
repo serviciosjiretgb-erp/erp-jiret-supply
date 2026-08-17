@@ -12022,8 +12022,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
 
   useEffect(() => {
     const subs = [
-      onSnapshot(getColRef('banco_movimientos'), s => setMovBanco(s.docs.map(d => d.data()))),
-      onSnapshot(getColRef('caja_movimientos'), s => setMovCaja(s.docs.map(d => d.data()))),
+      onSnapshot(getColRef('banco_movimientos'), s => setMovBanco(s.docs.map(d => ({_docId:d.id, ...d.data()})))),
+      onSnapshot(getColRef('caja_movimientos'), s => setMovCaja(s.docs.map(d => ({_docId:d.id, ...d.data()})))),
       onSnapshot(getColRef('banco_cuentas'), s => setCuentasBanco(s.docs.map(d => d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s => setCuentasCaja(s.docs.map(d => d.data()))),
       onSnapshot(getColRef('clientes'), s => setClientesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -12259,7 +12259,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       // cuentas reales que se seleccionaron al registrarlo) — mismo criterio que se corrigió en
       // el Libro Diario de BancoApp.jsx. Sin esto, un traslado entre bancos, por ejemplo, caía en
       // "Contrapartida (origen no identificado)" en vez de mostrar la cuenta real.
-      const asientoLigado = (asientosCC||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
+      const asientoLigado = (asientosCC||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
       let lineas;
       if (asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0) {
         lineas = asientoLigado.lineas.map(l=>({ codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipoLinea||(Number(l.debeBs||0)>0?'D':'H'), dBs: Number(l.debeBs||0), hBs: Number(l.haberBs||0), dUSD: Number(l.debeUSD||0), hUSD: Number(l.haberUSD||0) }));
@@ -12299,7 +12299,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       const lineaContra = { codigo: contra.codigo, cuenta: contra.cuenta, tipo: isIng?'H':'D', dBs: isIng?0:montoBs, hBs: isIng?montoBs:0, dUSD: isIng?0:montoUSD, hUSD: isIng?montoUSD:0 };
       lineas = [lineaPropia, lineaContra];
       }
-      return { id: m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas };
+      return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas };
     }).filter(Boolean);
   };
 
@@ -14775,6 +14775,50 @@ ${valoresHtml}
     );
   };
 
+  // ── Reparar Reclasificaciones ────────────────────────────────────────────────────────
+  // Antes, algunas reclasificaciones se guardaron usando un identificador del movimiento que
+  // no coincidía con el que usa el motor central (getAsientosReales) para buscarlas — por eso
+  // "no pegaban" en Mayor Analítico/Estado de Resultados aunque sí se veían marcadas aquí. Esta
+  // herramienta busca, por fecha+monto exacto, el movimiento REAL al que pertenece cada
+  // reclasificación huérfana, y la vuelve a guardar con la clave correcta — sin que el usuario
+  // tenga que rehacerlas una por una.
+  const [reparandoReclas, setReparandoReclas] = useState(false);
+  const [resultadoRepararReclas, setResultadoRepararReclas] = useState(null);
+  const repararReclasificaciones = async () => {
+    setReparandoReclas(true);
+    try{
+      const movsPorTab = { banco: movBanco||[], caja: movCaja||[] };
+      const entradas = Object.entries(reclasificacionesC).filter(([,r])=>r.tabId==='banco'||r.tabId==='caja');
+      let reparadas=0, yaOk=0; const sinMatch=[];
+      const batch = writeBatch(db);
+      entradas.forEach(([keyVieja,r])=>{
+        const movs = movsPorTab[r.tabId]||[];
+        const idsValidos = new Set(movs.map(m=>m._docId||m.id));
+        if(idsValidos.has(r.compId)){ yaOk++; return; } // ya apunta a un movimiento real, no se toca
+        const candidatos = movs.filter(m =>
+          m.fecha===r.fechaComprobante &&
+          Math.abs(Number(m.montoBs||0)-Number(r.montoBs||0))<0.01 &&
+          Math.abs(Number(m.montoUSD||0)-Number(r.montoUSD||0))<0.01
+        );
+        if(candidatos.length===1){
+          const nuevoId = candidatos[0]._docId||candidatos[0].id;
+          const nuevaKey = `${r.tabId}__${nuevoId}__${r.lineIdx}`;
+          if(nuevaKey!==keyVieja && !reclasificacionesC[nuevaKey]){
+            batch.set(getDocRef('comprobantes_reclasificaciones', nuevaKey), {...r, compId:nuevoId});
+            batch.delete(getDocRef('comprobantes_reclasificaciones', keyVieja));
+            reparadas++;
+          } else { yaOk++; }
+        } else {
+          sinMatch.push({...r, keyVieja, candidatos:candidatos.length});
+        }
+      });
+      if(reparadas>0) await batch.commit();
+      setResultadoRepararReclas({reparadas, yaOk, sinMatch});
+    }catch(e){ alert('Error al reparar: '+e.message); }
+    finally{ setReparandoReclas(false); }
+  };
+
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div style={{background:'#0f172a'}} className="px-6 py-3 flex items-center gap-3 border-b border-black/20">
@@ -14782,7 +14826,31 @@ ${valoresHtml}
         <div className="w-px h-5 bg-white/20"/>
         <BookOpen size={18} className="text-cyan-400"/>
         <span className="text-white font-black uppercase tracking-wide text-sm">Contabilidad — Comprobantes Contables</span>
+        <button onClick={repararReclasificaciones} disabled={reparandoReclas} title="Busca reclasificaciones que no están pegando en los reportes, y las repara automáticamente" className="ml-auto flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-black uppercase px-3 py-1.5 rounded-lg disabled:opacity-50">
+          <RefreshCw size={12} className={reparandoReclas?'animate-spin':''}/> {reparandoReclas?'Reparando...':'🔧 Reparar Reclasificaciones'}
+        </button>
       </div>
+      {resultadoRepararReclas && (
+        <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4" onClick={()=>setResultadoRepararReclas(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+            <h3 className="font-black text-lg text-gray-800">🔧 Resultado de la Reparación</h3>
+            <div className="space-y-2 text-sm">
+              <p className="flex justify-between"><span className="text-gray-500 font-bold">Reparadas ahora:</span><span className="font-black text-emerald-600">{resultadoRepararReclas.reparadas}</span></p>
+              <p className="flex justify-between"><span className="text-gray-500 font-bold">Ya estaban bien:</span><span className="font-black text-gray-700">{resultadoRepararReclas.yaOk}</span></p>
+              <p className="flex justify-between"><span className="text-gray-500 font-bold">Sin match automático:</span><span className="font-black text-red-500">{resultadoRepararReclas.sinMatch.length}</span></p>
+            </div>
+            {resultadoRepararReclas.sinMatch.length>0 && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 max-h-48 overflow-y-auto space-y-1.5">
+                <p className="text-[10px] font-black uppercase text-red-600 mb-1">Estas necesitan revisión manual (fecha/monto no coincide con ningún movimiento actual, o coincide con más de uno):</p>
+                {resultadoRepararReclas.sinMatch.map((s,i)=>(
+                  <p key={i} className="text-[10px] text-red-700">• {s.conceptoComprobante||s.fechaComprobante} — ${formatNum(s.montoUSD)} ({s.candidatos===0?'ningún movimiento coincide':`${s.candidatos} movimientos coinciden, ambiguo`})</p>
+                ))}
+              </div>
+            )}
+            <button onClick={()=>setResultadoRepararReclas(null)} className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black uppercase text-xs py-3 rounded-xl">Cerrar</button>
+          </div>
+        </div>
+      )}
       <div className="bg-white border-b border-gray-200 px-4 flex items-center gap-1 overflow-x-auto">
         {TABS_CC.map(t=>(
           <button key={t.id} disabled={!t.activo} onClick={()=>t.activo&&setSub(t.id)}
@@ -15272,10 +15340,10 @@ function App() {
         // completo y balanceado para este movimiento, incluyendo el lado del banco/caja.
         if((pagosRelApp||[]).some(p=>p.movimientoId===m.id)) return;
         const cta=(cuentas||[]).find(c=>c.id===m[idField]);
-        const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoCajaId===m.id);
+        const asientoLigado=(asientosApp||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
         if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
           out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:(asientoLigado.lineas||[]).map((l,li)=>{
-            const r = aplicarReclasLinea(tabId, m.id, li, l.codigo||'', l.cuenta||'—');
+            const r = aplicarReclasLinea(tabId, m._docId||m.id, li, l.codigo||'', l.cuenta||'—');
             return {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)};
           })});
           return;
@@ -15294,8 +15362,8 @@ function App() {
         const contra = g ? {codigo:String(g.codigo||g.id||''), cuenta:g.nombre||''} : {codigo:'', cuenta:isIng?'Cuentas por Cobrar':'Cuentas por Pagar'};
         const codPropia = cta ? (cta.cuentaContableCod||'') : '9.9.99.99.999';
         const nombrePropia = cta ? (nombreCta(cta)||mod) : `⚠️ Sin cuenta configurada — ${m.cuentaNombre||m[idField]||mod}`;
-        const propiaR = aplicarReclasLinea(tabId, m.id, 0, codPropia, nombrePropia);
-        const contraR = aplicarReclasLinea(tabId, m.id, 1, contra.codigo, contra.cuenta);
+        const propiaR = aplicarReclasLinea(tabId, m._docId||m.id, 0, codPropia, nombrePropia);
+        const contraR = aplicarReclasLinea(tabId, m._docId||m.id, 1, contra.codigo, contra.cuenta);
         const lineaPropia={codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD};
         const lineaContra={codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0};
         out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', lineas:[lineaPropia,lineaContra]});
