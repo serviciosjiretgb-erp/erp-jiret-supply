@@ -10078,14 +10078,17 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
       impTotal:  f.esImportacion&&imp ? pNum(imp.totalImportacion||0) : 0,
       impBase:   f.esImportacion&&imp ? pNum(imp.baseImponible||0) : 0,
       impIVA:    f.esImportacion&&imp ? pNum(imp.iva||0) : 0,
-      // Compras internas — se incluyen siempre; una factura con DUA lleva datos en AMBAS secciones
-      ciTotal:   totalBs,
-      ciSinDer:  exentoBs,
-      ciBase:    base16Bs,
-      ciCred:    iva16Bs,
-      crTotal:   base8Bs+iva8Bs,
-      crBase:    base8Bs,
-      crCred:    iva8Bs,
+      // Compras internas — si la factura tiene una Importación (DUA) registrada, sus montos
+      // SOLO van en la sección Importaciones; Compras Internas debe quedar en cero para esa
+      // factura (antes se llenaban las dos secciones con los mismos montos, duplicando la
+      // información — el Libro de Compras terminaba contando el mismo monto dos veces).
+      ciTotal:   f.esImportacion ? 0 : totalBs,
+      ciSinDer:  f.esImportacion ? 0 : exentoBs,
+      ciBase:    f.esImportacion ? 0 : base16Bs,
+      ciCred:    f.esImportacion ? 0 : iva16Bs,
+      crTotal:   f.esImportacion ? 0 : base8Bs+iva8Bs,
+      crBase:    f.esImportacion ? 0 : base8Bs,
+      crCred:    f.esImportacion ? 0 : iva8Bs,
       retPct:'', retMonto:0, retFact:'', retComp:'', _id:f.id,
     });
     const ret = (retIVACompra||[]).find(r => r.facturaId === f.id);
