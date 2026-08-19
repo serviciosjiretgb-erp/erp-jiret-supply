@@ -3199,8 +3199,12 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const tieneOp=!!(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas.length>0));
   const cfgIngreso=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
   const ctaIngreso=cfgIngreso||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
-  const ingresoBs = tasa?montoBase*tasa:0;
-  const ivaBs = tasa?iva*tasa:0;
+  // La factura guarda sus PROPIOS Bs. reales (baseGravableBs, ivaBs) — NO son iguales a
+  // USD×tasa porque se calculan con más precisión al momento de facturar. Usarlos directo es lo
+  // que hace que el comprobante coincida con lo que la factura ya muestra; recalcular por
+  // multiplicación (como se hacía antes) daba un número parecido pero no exacto.
+  const ingresoBs = f.baseGravableBs!=null ? pNum(f.baseGravableBs) : (tasa?montoBase*tasa:0);
+  const ivaBs = f.ivaBs!=null ? pNum(f.ivaBs) : (tasa?iva*tasa:0);
   lineas.push({tipo:'CREDITO',cuenta:ctaIngreso,
     concepto:`Venta ${tieneOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
     montoUSD:montoBase,montoBs:ingresoBs});
