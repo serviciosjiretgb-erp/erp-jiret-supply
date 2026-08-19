@@ -3196,20 +3196,25 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const rifFactura=normRif(f.clientRif);
   const cliente=(clientesArg||[]).find(c=>rifFactura&&normRif(c.rif)===rifFactura);
   const ctaCliente=cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
-  lineas.push({tipo:'DEBITO',cuenta:ctaCliente,
-    concepto:`${f.clientName||'—'} · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:total,montoBs:tasa?total*tasa:0});
   const tieneOp=!!(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas.length>0));
   const cfgIngreso=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
   const ctaIngreso=cfgIngreso||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
+  const ingresoBs = tasa?montoBase*tasa:0;
+  const ivaBs = tasa?iva*tasa:0;
   lineas.push({tipo:'CREDITO',cuenta:ctaIngreso,
     concepto:`Venta ${tieneOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:montoBase,montoBs:tasa?montoBase*tasa:0});
+    montoUSD:montoBase,montoBs:ingresoBs});
   if(iva>0){
     lineas.push({tipo:'CREDITO',cuenta:'2.1.04.02.001 — I.V.A. DÉBITO FISCAL (VENTAS)',
       concepto:`IVA 16% repercutido · Fact. ${f.nroFiscal||f.documento||'—'}`,
-      montoUSD:iva,montoBs:tasa?iva*tasa:0});
+      montoUSD:iva,montoBs:ivaBs});
   }
+  // El Bs. de Cuentas por Cobrar es la SUMA de los Bs. de Ingresos + IVA (no total×tasa por
+  // separado) — así el asiento SIEMPRE cuadra en Bs., sin importar diferencias de redondeo entre
+  // el total guardado en la factura y la suma de sus partes (base + iva).
+  lineas.unshift({tipo:'DEBITO',cuenta:ctaCliente,
+    concepto:`${f.clientName||'—'} · Fact. ${f.nroFiscal||f.documento||'—'}`,
+    montoUSD:total,montoBs:ingresoBs+ivaBs});
   const totDeb=lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoUSD,0);
   const totCred=lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoUSD,0);
   const cuadrado=Math.abs(totDeb-totCred)<0.02;
