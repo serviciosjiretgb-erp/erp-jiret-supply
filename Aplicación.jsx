@@ -3466,6 +3466,45 @@ const construirLineasManualCompartida = (a, ctx) => {
   });
 };
 
+// Deriva "movimientos de caja virtuales" para Cobros CxC y Pagos CxP hechos por CAJA (CAJA::) —
+// Aplicación.jsx NO crea un documento caja_movimientos aparte para estos (solo lo hace cuando el
+// cobro/pago es por banco); BancoApp.jsx ya los deriva así mismo para mostrarlos en "Movimientos
+// de Caja" y en su Panel de Balance. Sin este mismo derivado aquí, tanto el Comprobante de Caja
+// de Comprobantes Contables como Mayor Analítico/Estado de Resultados/Balance General quedaban
+// CIEGOS a todo cobro o pago hecho en efectivo: el cliente aparecía cobrado en el estado de
+// cuenta operativo pero su Cuenta por Cobrar en el Mayor nunca bajaba, la Caja nunca reflejaba
+// el ingreso/egreso real, y por eso el saldo del Panel de Balance (Caja) no cuadraba con Mayor
+// Analítico para la misma cuenta. Mismo criterio de "ya tiene su movimiento real" que usa
+// BancoApp.jsx: se excluye solo si el grupoCobroId/grupoPagoId YA aparece en un caja_movimientos
+// real (para no duplicar en el caso raro de que ambos existan).
+const derivarMovsCajaDesdeCxcCxp = (cobrosCxc, pagosCxp, movCaja, tasaFallback) => {
+  const cobrosCaja = (cobrosCxc||[]).filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::') && !(c.grupoCobroId && (movCaja||[]).some(m=>m.grupoCobroId===c.grupoCobroId)));
+  const pagosCaja  = (pagosCxp||[]).filter(p=>(p.cuentaId||'').startsWith('CAJA::') && !(p.grupoPagoId && (movCaja||[]).some(m=>m.grupoPagoId===p.grupoPagoId)));
+  const desdeCobros = cobrosCaja.map(c=>{
+    const tasa = Number(c.tasa||tasaFallback)||tasaFallback||1;
+    const montoUSD = Number(c.monto||c.montoUSD||0);
+    const montoBs = Number(c.montoBs||0) || montoUSD*tasa;
+    return {
+      id:c.id, _docId:c.id, fecha:c.fecha||'', tipo:'Ingreso', cajaId:(c.cuentaBancariaId||'').replace('CAJA::',''),
+      montoUSD, montoBs, tasa, terceroNombre:c.clientName||'', clientName:c.clientName||'', tipoTercero:'Cliente',
+      referencia:c.referencia||'', concepto:c.concepto||`Cobro ${c.metodo||''} · ${c.neDocumento||''} · ${c.clientName||''}`,
+      grupoCobroId:c.grupoCobroId||'', _origenDerivado:'cobros_cxc',
+    };
+  });
+  const desdePagos = pagosCaja.map(p=>{
+    const tasa = Number(p.tasa||tasaFallback)||tasaFallback||1;
+    const montoUSD = Number(p.monto||p.montoUSD||0);
+    const montoBs = Number(p.montoBs||0) || montoUSD*tasa;
+    return {
+      id:p.id, _docId:p.id, fecha:p.fecha||'', tipo:'Egreso', cajaId:(p.cuentaId||'').replace('CAJA::',''),
+      montoUSD, montoBs, tasa, terceroNombre:p.proveedor||'', proveedor:p.proveedor||'', tipoTercero:'Proveedor', terceroId:p.proveedorId||'',
+      referencia:p.referencia||'', concepto:p.concepto||`Pago ${p.proveedor||''} · ${p.referencia||''}`,
+      grupoPagoId:p.grupoPagoId||'', _origenDerivado:'procura_pagos_cxp',
+    };
+  });
+  return [...desdeCobros, ...desdePagos];
+};
+
 const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const tasa=pNum(f.tasa||0);
   const montoBase=pNum(f.montoBase||0);
@@ -12185,6 +12224,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [mayorBusqCuenta, setMayorBusqCuenta] = useState('');
   const [retIvaProvC, setRetIvaProvC] = useState([]);
   const [retIslrProvC, setRetIslrProvC] = useState([]);
+  const [cobrosCxcC, setCobrosCxcC] = useState([]);
+  const [pagosCxpC, setPagosCxpC] = useState([]);
   const [activosFijosC, setActivosFijosC] = useState([]);
   // Config de cuentas de Depreciación por Centro de Costo + Rubro (la misma que se arma en
   // Contabilidad → Activo Fijo → ⚙️ Configuración) — este componente es independiente de App(),
@@ -12447,6 +12488,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       onSnapshot(getColRef('retencionesClientes'), s => setRetencionesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_ret_iva'), s => setRetIvaProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('procura_ret_islr'), s => setRetIslrProvC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('cobros_cxc'), s => setCobrosCxcC(s.docs.map(d => ({id:d.id, ...d.data()})))),
+      onSnapshot(getColRef('procura_pagos_cxp'), s => setPagosCxpC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('activos_fijos'), s => setActivosFijosC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_ajustes'), s => setAjustesC(s.docs.map(d => ({id:d.id, ...d.data()})))),
       onSnapshot(getColRef('comprobantes_nomina'), s => setNominaC(s.docs.map(d => ({id:d.id, ...d.data()})))),
@@ -12631,7 +12674,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
 
   const construirLineas = (esBanco) => {
-    const movs = esBanco ? movBanco : movCaja;
+    const movs = esBanco ? movBanco : [...movCaja, ...derivarMovsCajaDesdeCxcCxp(cobrosCxcC, pagosCxpC, movCaja, settingsCC?.tasaBCV)];
     const cuentas = esBanco ? cuentasBanco : cuentasCaja;
     const idField = esBanco ? 'cuentaId' : 'cajaId';
     const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
@@ -15400,6 +15443,7 @@ function App() {
   const [pagosRelApp, setPagosRelApp] = useState([]);
   const [ajustesApp, setAjustesApp] = useState([]);
   const [nominaApp, setNominaApp] = useState([]);
+  const [procuraPagosCxpApp, setProcuraPagosCxpApp] = useState([]);
   useEffect(()=>{
     const subs = [
       onSnapshot(getColRef('procura_facturas_compra'), s=>setFacturasCompraApp(s.docs.map(d=>({id:d.id,...d.data()})))),
@@ -15415,6 +15459,7 @@ function App() {
       onSnapshot(getColRef('cxp_pagos_relacionados'), s=>setPagosRelApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('comprobantes_ajustes'), s=>setAjustesApp(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(getColRef('comprobantes_nomina'), s=>setNominaApp(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('procura_pagos_cxp'), s=>setProcuraPagosCxpApp(s.docs.map(d=>({id:d.id,...d.data()})))),
     ];
     return ()=>subs.forEach(u=>u());
   },[]);
@@ -15523,9 +15568,13 @@ function App() {
     });
     // 4) Banco y 5) Caja — el movimiento propio + su contrapartida. Si el movimiento ya
     // tiene un asiento formal vinculado (asientoContableId), se usan esas líneas reales
-    // en vez de reconstruir una genérica.
+    // en vez de reconstruir una genérica. La Caja además incluye los Cobros CxC / Pagos CxP
+    // hechos en efectivo (CAJA::), que Aplicación.jsx nunca guarda como caja_movimientos real
+    // (ver derivarMovsCajaDesdeCxcCxp) — antes esos cobros/pagos no llegaban nunca a Mayor
+    // Analítico ni a Estado de Resultados/Balance General, aunque el cliente/proveedor ya
+    // apareciera cobrado/pagado en su estado de cuenta operativo.
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
-     {movs:movCajaApp, cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
+     {movs:[...movCajaApp, ...derivarMovsCajaDesdeCxcCxp(cobrosCxc, procuraPagosCxpApp, movCajaApp, settings?.tasaBCV)], cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
         // Si este movimiento YA está vinculado a un registro de "Cuentas por Pagar Relacionadas"
         // (sección 6, más abajo), se omite aquí — si no, se cuenta dos veces: una vez como
