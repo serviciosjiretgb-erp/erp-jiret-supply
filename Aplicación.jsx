@@ -45580,8 +45580,15 @@ ${resumenHtml}
     // sección (no mezcladas) — mismo criterio de Saldo Anterior/Entradas/Salidas/Saldo Actual
     // que ya se ve en pantalla para la cuenta seleccionada, pero repetido para cada cuenta.
     const construirDetalleTodasLasCuentas = () => {
-      const codigos = new Set(Object.keys(cuentasConMov));
-      asientosAntes.forEach(a=>(a.lineas||[]).forEach(l=>{ if(l.codigo) codigos.add(l.codigo); }));
+      // Si hay una cuenta seleccionada en pantalla, el export trae SOLO esa cuenta — antes
+      // ignoraba la selección por completo y siempre traía TODAS las cuentas con movimiento,
+      // aunque el usuario ya hubiera filtrado por una cuenta puntual (el filtro por fecha sí se
+      // aplicaba, vía asientosPeriodo, pero al venir mezclado con TODAS las demás cuentas el
+      // archivo igual parecía traerlo todo).
+      const codigos = mayorCuentaSelApp ? new Set([mayorCuentaSelApp]) : new Set(Object.keys(cuentasConMov));
+      if (!mayorCuentaSelApp) {
+        asientosAntes.forEach(a=>(a.lineas||[]).forEach(l=>{ if(l.codigo) codigos.add(l.codigo); }));
+      }
       return [...codigos].sort().map(codigo=>{
         let saldoAnt=0, saldoAntUSD=0;
         asientosAntes.forEach(a=>(a.lineas||[]).forEach(l=>{
@@ -45596,11 +45603,12 @@ ${resumenHtml}
           return {...l, fecha:a.fecha, referencia:a.comprobante, modulo:a.modulo, concepto:a.concepto||'—', saldoAcum:acum, saldoAcumUSD:acumUSD};
         }));
         const nombreCuenta = cuentasConMov[codigo]?.cuenta || (planDeCuentas||[]).find(p=>p.codigo===codigo)?.nombre || '';
-        if(movs.length===0 && Math.abs(saldoAnt)<0.005 && Math.abs(saldoAntUSD)<0.005) return null;
+        if(!mayorCuentaSelApp && movs.length===0 && Math.abs(saldoAnt)<0.005 && Math.abs(saldoAntUSD)<0.005) return null;
         return {codigo, nombre:nombreCuenta, saldoAnt, saldoAntUSD, movs, saldoFinalBs:acum, saldoFinalUSD:acumUSD};
       }).filter(Boolean);
     };
     const rangoTexto = contFiltDesde||contFiltHasta ? `${contFiltDesde?contDd(contFiltDesde):'inicio'} — ${contFiltHasta?contDd(contFiltHasta):'hoy'}` : 'Todo el historial';
+    const cuentaTexto = mayorCuentaSelApp && cuentaInfo ? ` · Cuenta: ${cuentaInfo.codigo} - ${cuentaInfo.cuenta}` : '';
     const exportarMayorExcel = async () => {
       if(!window.XLSX){
         await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
@@ -45609,7 +45617,7 @@ ${resumenHtml}
       const cuentas = construirDetalleTodasLasCuentas();
       const aoa=[];
       aoa.push(['SERVICIOS JIRET G&B, C.A.']); aoa.push(['RIF: J-412309374']);
-      aoa.push([`MAYOR ANALÍTICO — ${rangoTexto}`]);
+      aoa.push([`MAYOR ANALÍTICO — ${rangoTexto}${cuentaTexto}`]);
       aoa.push([`Generado: ${new Date().toLocaleDateString('es-VE')} · ${cuentas.length} cuenta(s)`]);
       cuentas.forEach(c=>{
         aoa.push([]);
@@ -45640,7 +45648,7 @@ ${resumenHtml}
         body += `<tr class="total-row"><td colspan="6">Saldo Actual</td><td>${ccFmtR(c.saldoFinalBs)}</td><td colspan="2"></td><td>${ccFmtR(c.saldoFinalUSD)}</td></tr>`;
         body += `</tbody></table>`;
       });
-      const html = pdfOpen('Mayor Analítico', rangoTexto) + body + pdfClose(`${cuentas.length} cuenta(s)`);
+      const html = pdfOpen('Mayor Analítico', rangoTexto+cuentaTexto) + body + pdfClose(`${cuentas.length} cuenta(s)`);
       pdfPrint(html);
     };
     return (
