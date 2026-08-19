@@ -11881,6 +11881,15 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-300 bg-gray-100">
+                      <td className="px-2 py-1.5 font-black text-gray-600 uppercase" style={{paddingLeft:level*16+34}} colSpan={4}>Totales</td>
+                      {showUSD && <td className="px-2 py-1.5 text-right font-mono font-black text-emerald-700">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.debeUSD||0),0))}</td>}
+                      {showUSD && <td className="px-2 py-1.5 text-right font-mono font-black text-red-600">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.haberUSD||0),0))}</td>}
+                      {showBS && <td className="px-2 py-1.5 text-right font-mono font-black text-emerald-700">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.debeBs||0),0))}</td>}
+                      {showBS && <td className="px-2 py-1.5 text-right font-mono font-black text-red-600">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.haberBs||0),0))}</td>}
+                    </tr>
+                  </tfoot>
                 </table>
               )}
             </td>
@@ -11995,6 +12004,15 @@ const CCArbolRowBC = ({ node, level=0, currency='both', getDetalle, expandSignal
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-300 bg-gray-100">
+                      <td className="px-2 py-1.5 font-black text-gray-600 uppercase" style={{paddingLeft:level*16+34}} colSpan={4}>Totales</td>
+                      {showBS && <td className="px-2 py-1.5 text-right font-mono font-black text-emerald-700">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.debeBs||0),0))}</td>}
+                      {showBS && <td className="px-2 py-1.5 text-right font-mono font-black text-red-600">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.haberBs||0),0))}</td>}
+                      {showUSD && <td className="px-2 py-1.5 text-right font-mono font-black text-emerald-700">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.debeUSD||0),0))}</td>}
+                      {showUSD && <td className="px-2 py-1.5 text-right font-mono font-black text-red-600">{ccFmtR(detalle.reduce((s,d)=>s+parseNum(d.haberUSD||0),0))}</td>}
+                    </tr>
+                  </tfoot>
                 </table>
               )}
             </td>
