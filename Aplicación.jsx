@@ -12575,11 +12575,22 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
 
   const construirLineasVentas = () => {
+    // Deduplicado por número fiscal (ver misma protección en getAsientosReales) — un nroFiscal
+    // con dos documentos de factura activos duplicaba el monto también aquí.
+    const _nroFiscalVistoCC = new Map();
+    facturasVentaC.forEach(f=>{
+      const nf = f.nroFiscal || f.documento || '';
+      if (!nf || f.esAnulacionFiscal) return;
+      const previo = _nroFiscalVistoCC.get(nf);
+      if (!previo || (f.timestamp||0) >= (previo.timestamp||0)) _nroFiscalVistoCC.set(nf, f);
+    });
     const filtradas = facturasVentaC.filter(f => {
       // Anulaciones fiscales: factura "fantasma" que solo existe para el Libro de
       // Ventas legal (reemplaza un número fiscal dañado/anulado). No es una venta
       // real, así que no debe generar asiento contable.
       if (f.esAnulacionFiscal) return false;
+      const nf = f.nroFiscal || f.documento || '';
+      if (nf && _nroFiscalVistoCC.get(nf)?.id !== f.id) return false; // duplicado, se omite
       if (filtDesde && f.fecha < filtDesde) return false;
       if (filtHasta && f.fecha > filtHasta) return false;
       return true;
@@ -12642,12 +12653,26 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       const ctaIng = ctaDev ? {codigo:ctaDev.codigo,nombre:ctaDev.nombre} : {codigo:codIngD,nombre:nomIngD};
       const ctaIvaObj=ctaPlan(/iva\s+d[eé]bito/i)||{codigo:'2.1.02.01.001',nombre:'IVA Débito Fiscal'};
 
-      const lineas=[];
-      if(esNC){
+      const esFiscalNota = n.naturaleza==='FISCAL';
+      let lineas;
+      if (!esFiscalNota) {
+        // No fiscal: no toca Ingresos/IVA (protege Libro de Ventas) — solo Cuentas por Cobrar
+        // contra una cuenta de ajuste aparte. Mismo tratamiento que getAsientosReales (Sección 2c).
+        const ctaAjusteNF = {codigo:'4.3.01.99.001', nombre:'Ajustes de Cuentas por Cobrar (No Fiscal)'};
+        lineas = esNC ? [
+          {codigo:ctaAjusteNF.codigo, cuenta:ctaAjusteNF.nombre, tipo:'D', dBs:baseBs, hBs:0, dUSD:cv(baseBs), hUSD:0},
+          {codigo:codCli, cuenta:nomCli, tipo:'H', dBs:0, hBs:baseBs, dUSD:0, hUSD:cv(baseBs)},
+        ] : [
+          {codigo:codCli, cuenta:nomCli, tipo:'D', dBs:baseBs, hBs:0, dUSD:cv(baseBs), hUSD:0},
+          {codigo:ctaAjusteNF.codigo, cuenta:ctaAjusteNF.nombre, tipo:'H', dBs:0, hBs:baseBs, dUSD:0, hUSD:cv(baseBs)},
+        ];
+      } else if(esNC){
+        lineas=[];
         lineas.push({codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:'D',dBs:baseBs,hBs:0,dUSD:cv(baseBs),hUSD:0});
         if(ivaBs>0) lineas.push({codigo:ctaIvaObj.codigo,cuenta:ctaIvaObj.nombre,tipo:'D',dBs:ivaBs,hBs:0,dUSD:cv(ivaBs),hUSD:0});
         lineas.push({codigo:codCli,cuenta:nomCli,tipo:'H',dBs:0,hBs:totalBs,dUSD:0,hUSD:cv(totalBs)});
       }else{
+        lineas=[];
         lineas.push({codigo:codCli,cuenta:nomCli,tipo:'D',dBs:totalBs,hBs:0,dUSD:cv(totalBs),hUSD:0});
         lineas.push({codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:'H',dBs:0,hBs:baseBs,dUSD:0,hUSD:cv(baseBs)});
         if(ivaBs>0) lineas.push({codigo:ctaIvaObj.codigo,cuenta:ctaIvaObj.nombre,tipo:'H',dBs:0,hBs:ivaBs,dUSD:0,hUSD:cv(ivaBs)});
@@ -15518,7 +15543,28 @@ function App() {
       }catch(e){}
     });
     // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
+    // Deduplicado por número fiscal: un mismo nroFiscal NUNCA debería tener dos documentos de
+    // factura activos (encontrado en datos reales — dos facturas 00003242 para VE-PACK INVESTMENT,
+    // ambas activas, duplicando el monto en Mayor Analítico). Se avisa por consola y se cuenta
+    // solo la más reciente (mayor timestamp) — la otra sigue existiendo como documento y debe
+    // revisarse/eliminarse manualmente en Ventas → Facturas, esto solo evita que se sume dos veces.
+    const _nroFiscalVistoApp = new Map();
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+      const nf = f.nroFiscal || f.documento || '';
+      if (nf) {
+        const previo = _nroFiscalVistoApp.get(nf);
+        if (previo && previo.id !== f.id) {
+          const [masNuevo, masViejo] = (f.timestamp||0) >= (previo.timestamp||0) ? [f, previo] : [previo, f];
+          console.warn(`⚠️ Factura fiscal duplicada: nroFiscal "${nf}" existe en 2 documentos (${masViejo.id} y ${masNuevo.id}) — se cuenta solo ${masNuevo.id} en Mayor Analítico. Revisar y eliminar el duplicado en Ventas → Facturas.`);
+          _nroFiscalVistoApp.set(nf, masNuevo);
+          return;
+        }
+        _nroFiscalVistoApp.set(nf, f);
+      }
+    });
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+      const nf = f.nroFiscal || f.documento || '';
+      if (nf && _nroFiscalVistoApp.get(nf)?.id !== f.id) return; // duplicado — ya se avisó arriba, se omite
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
         const nesRef = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean);
@@ -15573,6 +15619,37 @@ function App() {
           ...(conIva?[{codigo:lin2.codigo, cuenta:lin2.cuenta, debeBs:0, haberBs:ivaBs, debeUSD:0, haberUSD:ivaUSD}]:[]),
         ];
         out.push({fecha:n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo} ${n.nroDocumento||''} — ${n.clientName||'—'}`, lineas});
+      }catch(e){}
+    });
+    // 2c) Notas de Crédito/Débito de Ventas NO fiscales — 2b las excluye a propósito (no son
+    // ventas reales para el Libro de Ventas/SENIAT, y no deben inflar Ingresos), pero SÍ cambian
+    // lo que el cliente realmente debe (ej. "cruce de cuenta por cobrar", "diferencial cambiario",
+    // "retención pendiente de período anterior") — encontrado con datos reales: en 7 meses había
+    // 24 de estas notas, ~$28.349 netos, que Estado de Cuenta sí refleja (vía "NC/ND directa") pero
+    // que nunca llegaban a Cuentas por Cobrar en Mayor Analítico ni en Estado de Resultados/Balance
+    // General — el cliente aparecía con un saldo distinto entre un reporte y el otro sin ninguna
+    // razón visible. Se contabiliza SOLO contra Cuentas por Cobrar, con la contrapartida en una
+    // cuenta de ajuste aparte — nunca contra Ingresos/IVA, para no tocar Libro de Ventas.
+    (notasVentaCD||[]).filter(n=>n.naturaleza!=='FISCAL' && !n.esAnulacionFiscal).forEach(n=>{
+      try{
+        const tasa=Number(n.tasaFactura||n.tasa||0)||Number(settings?.tasaBCV||0)||1;
+        const montoBs=Number(n.monto||0);
+        const montoUSD=tasa?montoBs/tasa:0;
+        const esNC=n.tipo==='NC';
+        const cliente=(clients||[]).find(c=>c.rif && n.clientRif && normRifVta(c.rif)===normRifVta(n.clientRif));
+        const [codCli,...restCli]=(cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes').split('—');
+        const nomCli=restCli.join('—').trim();
+        const compIdNota = `NOTA-${n.id}`;
+        const lin0=aplicarReclasLinea('ventas',compIdNota,0,codCli.trim(),nomCli);
+        const lin1=aplicarReclasLinea('ventas',compIdNota,1,'4.3.01.99.001','Ajustes de Cuentas por Cobrar (No Fiscal)');
+        out.push({fecha:n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo||'NC'} ${n.nroDocumento||''} — ${n.descripcion||n.clientName||'—'} (no fiscal)`,
+          lineas: esNC ? [
+            {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+            {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+          ] : [
+            {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+            {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+          ]});
       }catch(e){}
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
@@ -18834,6 +18911,7 @@ function App() {
     } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
   };
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
+  const [invoiceOriginalNesAdicionales, setInvoiceOriginalNesAdicionales] = useState([]);
 
   const handleCreateInvoice = async (e) => {
     e.preventDefault(); 
@@ -18912,24 +18990,33 @@ function App() {
         }
       }
 
-      // ── Edición: si el vínculo NE Origen cambió, sincronizar ambas notas de entrega ──
+      // ── Edición: si el vínculo NE Origen O las NE Adicionales cambiaron, sincronizar todas ──
+      // Antes esto solo sincronizaba neOrigen (la NE principal) — las nesAdicionales (el resto de
+      // NE consolidadas en una factura de varias NE) nunca se resincronizaban al editar, así que
+      // si cambiabas cuáles NE cubre la factura, esas NE quedaban con un facturaId viejo o vacío
+      // para siempre — Estado de Cuenta terminaba mostrando la factura fiscal equivocada (u
+      // ninguna) para esa NE, aunque Mayor Analítico (que no depende de facturaId, solo de la
+      // factura misma) sí mostrara la correcta.
       if (editingInvoiceId) {
         const neOrigenAnterior = invoiceOriginalNeOrigen; // capturado al abrir la edición
         const neOrigenNueva = newInvoiceForm.neOrigen || '';
-        if (neOrigenAnterior !== neOrigenNueva) {
-          try {
-            if (neOrigenAnterior) {
-              // Solo desvincular si de verdad apuntaba a ESTA factura (evita pisar otra NE ajena)
-              const neVieja = (notasEntrega||[]).find(n=>n.id===neOrigenAnterior);
-              if (neVieja && neVieja.facturaId === id) {
-                await updateDoc(getDocRef('notasEntrega', neOrigenAnterior), { facturaId: '', status: 'TRANSITO', updatedAt: Date.now() });
-              }
+        const nesAdicAnteriores = invoiceOriginalNesAdicionales || [];
+        const nesAdicNuevas = newInvoiceForm.nesAdicionales || [];
+        const antesTodas = new Set([neOrigenAnterior, ...nesAdicAnteriores].filter(Boolean));
+        const nuevasTodas = new Set([neOrigenNueva, ...nesAdicNuevas].filter(Boolean));
+        try {
+          for (const neId of antesTodas) {
+            if (nuevasTodas.has(neId)) continue; // sigue en la factura, no tocar
+            const neVieja = (notasEntrega||[]).find(n=>n.id===neId);
+            if (neVieja && neVieja.facturaId === id) { // solo desvincular si de verdad apuntaba a ESTA factura
+              await updateDoc(getDocRef('notasEntrega', neId), { facturaId: '', status: 'TRANSITO', updatedAt: Date.now() });
             }
-            if (neOrigenNueva) {
-              await updateDoc(getDocRef('notasEntrega', neOrigenNueva), { facturaId: id, status: 'PROCESADA', updatedAt: Date.now() });
-            }
-          } catch(e) { console.error('Error sincronizando NE Origen en edición:', e); }
-        }
+          }
+          for (const neId of nuevasTodas) {
+            if (antesTodas.has(neId)) continue; // ya estaba, ya tiene el facturaId correcto
+            await updateDoc(getDocRef('notasEntrega', neId), { facturaId: id, status: 'PROCESADA', updatedAt: Date.now() });
+          }
+        } catch(e) { console.error('Error sincronizando NE Origen/Adicionales en edición:', e); }
       }
 
       // ── DESCUENTO DE INVENTARIO: DESHABILITADO EN FACTURACIÓN ──────────────
@@ -18960,7 +19047,7 @@ function App() {
         }
       }
 
-      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setInvoiceOriginalNeOrigen(''); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
+      setShowNewInvoicePanel(false); setEditingInvoiceId(null); setInvoiceOriginalNeOrigen(''); setInvoiceOriginalNesAdicionales([]); setNewInvoiceForm(initialInvoiceForm); setFgItems([]); setDescuentoVal(''); setDescuentoTipo('monto');
       if(editingInvoiceId) logAuditoria(appUser,'Ventas','EDICIÓN',`Factura de venta EDITADA: ${id} · Cliente: ${newInvoiceForm.clientName||'—'}`);
       setDialog({title: '✅ Éxito', text: editingInvoiceId ? `Factura ${id} actualizada.` : `Factura ${id} registrada correctamente.`, type: 'alert'}); 
     } catch(err) { setDialog({title: 'Error al guardar factura', text: err.message, type: 'alert'}); }
@@ -19028,6 +19115,7 @@ function App() {
   const startEditInvoice = (inv) => {
     setEditingInvoiceId(inv.id);
     setInvoiceOriginalNeOrigen(inv.neOrigen || '');
+    setInvoiceOriginalNesAdicionales(inv.nesAdicionales || []);
     setNewInvoiceForm({
       fecha:             inv.fecha || getTodayDate(),
       clientRif:         inv.clientRif || '',
@@ -30068,7 +30156,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               placeholder="00-001234" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold w-28 outline-none focus:border-orange-400"/>
                           </div>
                         </div>
-                        <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setInvoiceOriginalNeOrigen('');setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
+                        <button type="button" onClick={()=>{setShowNewInvoicePanel(false);setEditingInvoiceId(null);setInvoiceOriginalNeOrigen('');setInvoiceOriginalNesAdicionales([]);setNewInvoiceForm(initialInvoiceForm);}} className="text-gray-400 hover:text-red-500"><X size={20}/></button>
                       </div>
                     </div>
 
@@ -33888,9 +33976,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const ne of (notasEntrega||[])){
             const neRif=(ne.clientRif||'').trim().toUpperCase();
             const rifOkEc=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
-            const inv = ne.facturaId
-              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkEc(i))
-              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOkEc(i));
+            // Se busca PRIMERO por neOrigen/nesAdicionales de la propia factura (la misma fuente
+            // que usa Mayor Analítico, así que es la más confiable) — facturaId (guardado aparte
+            // en la NE) es solo respaldo si ninguna factura la referencia directamente.
+            let inv = (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))&&rifOkEc(i));
+            if(!inv && ne.facturaId) inv = (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkEc(i));
             if(!inv) continue;
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
               if(!_neByFiscalEc.has(k)) _neByFiscalEc.set(k, {ne, inv});
@@ -45719,13 +45809,18 @@ ${resumenHtml}
                 // Una NE ya está reflejada en Mayor Analítico si tiene factura fiscal vinculada
                 // Y esa factura cae dentro del corte — si no, la venta todavía no existe para la
                 // contabilidad formal, aunque la mercancía ya se haya entregado.
-                const invPorNE = (ne) => ne.facturaId
-                  ? (invoices||[]).find(i=>i.id===ne.facturaId||i.documento===ne.facturaId)
-                  : (invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
+                const invPorNE = (ne) => (invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))
+                  || (ne.facturaId ? (invoices||[]).find(i=>i.id===ne.facturaId||i.documento===ne.facturaId) : null);
+                // Si hay "Inicio de Contabilidad Real" activo, todo lo anterior a esa fecha ya
+                // debería estar resumido dentro del Ajuste manual de saldo inicial (mismo criterio
+                // que usa getAsientosReales al final) — sin este límite, una NE vieja se contaba
+                // aquí Y otra vez dentro del Ajuste, duplicando el pendiente de facturar.
+                const inicioReal = settings?.fechaInicioContabilidad || '';
                 let pendienteUSD = 0, nPendientes = 0;
                 (notasEntrega||[]).forEach(ne=>{
                   if (ne.status==='ANULADA') return;
                   if ((ne.fecha||'') > corte) return;
+                  if (inicioReal && (ne.fecha||'') < inicioReal) return; // ya cubierta por el Ajuste de saldo inicial
                   const inv = invPorNE(ne);
                   const fInv = inv ? (inv.fechaFactura||inv.fecha||'') : '';
                   if (inv && fInv && fInv <= corte) return; // ya facturada dentro del corte — ya está en Mayor Analítico
