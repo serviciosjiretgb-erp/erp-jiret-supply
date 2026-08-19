@@ -34231,7 +34231,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const header='<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">'
               +'<div><div style="font-size:15px;font-weight:900">'+emp+'</div><div style="font-size:8px;color:#64748b">RIF: '+rifEmp+(dirEmp?' · '+dirEmp:'')+'</div></div>'
               +'<div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">ESTADO DE CUENTA — CUENTAS POR COBRAR</div>'
-              +'<div style="font-size:8px;color:#64748b">Corte: '+getTodayDate()+' · '+cliList.length+' clientes · '+cliList.reduce((s,cl)=>s+cl.nes.length,0)+' docs · Saldo total: $'+fmtN(totalSaldo)+'</div>'
+              +'<div style="font-size:8px;color:#64748b">Corte: '+(ecHasta||getTodayDate())+' · '+cliList.length+' clientes · '+cliList.reduce((s,cl)=>s+cl.nes.length,0)+' docs · Saldo total: $'+fmtN(totalSaldo)+'</div>'
               +'</div></div>';
             const html='<!DOCTYPE html><html><head><meta charset="utf-8"><style>'+css+'</style></head><body>'+header+bodyHtml+'<script>window.onload=function(){window.print();}<\/script></body></html>';
             try{
@@ -45714,6 +45714,60 @@ ${resumenHtml}
                   </div>
                 </div>
               )}
+              {cuentaInfo && /cobrar/i.test(cuentaInfo.cuenta||'') && (() => {
+                const corte = contFiltHasta || getTodayDate();
+                // Una NE ya está reflejada en Mayor Analítico si tiene factura fiscal vinculada
+                // Y esa factura cae dentro del corte — si no, la venta todavía no existe para la
+                // contabilidad formal, aunque la mercancía ya se haya entregado.
+                const invPorNE = (ne) => ne.facturaId
+                  ? (invoices||[]).find(i=>i.id===ne.facturaId||i.documento===ne.facturaId)
+                  : (invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento);
+                let pendienteUSD = 0, nPendientes = 0;
+                (notasEntrega||[]).forEach(ne=>{
+                  if (ne.status==='ANULADA') return;
+                  if ((ne.fecha||'') > corte) return;
+                  const inv = invPorNE(ne);
+                  const fInv = inv ? (inv.fechaFactura||inv.fecha||'') : '';
+                  if (inv && fInv && fInv <= corte) return; // ya facturada dentro del corte — ya está en Mayor Analítico
+                  const cobrado = (cobrosCxc||[]).filter(c=>c.neId===ne.id && (c.fecha||'')<=corte).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                  const nc = (notasVentaCD||[]).filter(n=>(n.neId===ne.id||n.neOrigen===ne.id) && (n.fecha||'')<=corte).reduce((s,n)=>{
+                    const t=parseNum(n.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+                    const b=parseNum(n.monto||0);
+                    const u=(((n.naturaleza||'FISCAL')==='FISCAL')?b*1.16:b)/t;
+                    return s+(n.tipo==='NC'?u:-u);
+                  },0);
+                  const saldoNE = parseNum(ne.total||ne.montoBase||0) - cobrado - nc;
+                  if (Math.abs(saldoNE) > 0.01) { pendienteUSD += saldoNE; nPendientes++; }
+                });
+                const totalRealUSD = saldoAcumUSD + pendienteUSD;
+                return (
+                  <div className="mb-4 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 p-4">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-amber-700 mb-2">⚠️ Conciliación — esta cuenta es control de Cuentas por Cobrar</p>
+                    <div className="flex flex-wrap gap-4 items-end">
+                      <div>
+                        <p className="text-[8px] font-black uppercase text-gray-500">Mayor Analítico (fiscal, al {contDd(corte)})</p>
+                        <p className="text-sm font-black font-mono text-gray-800">${contFmt(saldoAcumUSD)}</p>
+                      </div>
+                      <div className="text-amber-600 font-black">+</div>
+                      <div>
+                        <p className="text-[8px] font-black uppercase text-amber-700">Pendiente de facturar ({nPendientes} NE entregada{nPendientes!==1?'s':''}, sin factura o facturada después del corte)</p>
+                        <p className="text-sm font-black font-mono text-amber-700">${contFmt(pendienteUSD)}</p>
+                      </div>
+                      <div className="text-amber-600 font-black">=</div>
+                      <div>
+                        <p className="text-[8px] font-black uppercase text-gray-500">Total real estimado (facturado + entregado sin facturar)</p>
+                        <p className="text-base font-black font-mono text-gray-900">${contFmt(totalRealUSD)}</p>
+                      </div>
+                    </div>
+                    <p className="text-[9px] text-amber-700 mt-2 leading-tight">
+                      Si aun así no cuadra con el total de Estado de Cuenta (Ventas → Cuentas por Cobrar → Estado de Cuenta), lo que sobra normalmente
+                      viene de Ajustes u otros movimientos contabilizados directo contra esta cuenta sin pasar por una Nota de Entrega
+                      (ej. un saldo inicial migrado, una reclasificación, o Cuentas por Pagar Relacionadas contabilizada aquí) — revisa esos módulos
+                      filtrando por esta cuenta contable.
+                    </p>
+                  </div>
+                );
+              })()}
               {!mayorCuentaSelApp ? (
                 <div className="text-center py-16 text-gray-400 text-sm">← Selecciona una cuenta para ver su detalle</div>
               ) : (
