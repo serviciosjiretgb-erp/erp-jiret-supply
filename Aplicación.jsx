@@ -3136,7 +3136,7 @@ const CATEGORIA_A_BALDE_SHARED = {
   'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
 };
 const construirLineasCostoProduccionCompartido = (f, ctx) => {
-  const {cfg, inventory, tasasManuales, settingsTasa} = ctx;
+  const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas} = ctx;
   const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
   const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
   let totalMP=0, totalCons=0, totalTerm=0;
@@ -3155,17 +3155,24 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
   const [codInvTerm,nomInvTerm] = partirCuenta(cfg.invTerminadosNombre);
   const totalVal = totalMP+totalCons+totalTerm;
-  const lineas = [{codigo:codDeb, cuenta:nomDeb, debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0, detalle:tieneOp?'Costo de venta (con OP)':'Costo de venta (sin OP)'}];
-  if (totalMP>0.005) lineas.push({codigo:codInvMP, cuenta:nomInvMP, debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP, detalle:'Materia Prima'});
-  if (totalCons>0.005) lineas.push({codigo:codInvCons, cuenta:nomInvCons, debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons, detalle:'Consumibles'});
-  if (totalTerm>0.005) lineas.push({codigo:codInvTerm, cuenta:nomInvTerm, debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm, detalle:'Productos Terminados'});
+  // Reclasificación aplicada AQUÍ (misma clave tabId/f.id/lineIdx que usa Comprobantes Contables) —
+  // antes solo se aplicaba del lado de Comprobantes Contables (aplicarReclasCC externo);
+  // getAsientosReales() nunca la tocaba, así que reclasificar esta cuenta no llegaba a Mayor
+  // Analítico ni a Estado de Resultados/Balance General. Si no se pasa aplicarReclas (por si algo
+  // más sigue llamando esta función sin ese contexto), se comporta igual que antes.
+  const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, f.id, li, codigo, cuenta) : {codigo,cuenta};
+  const l0 = reclas(0, codDeb, nomDeb);
+  const lineas = [{codigo:l0.codigo, cuenta:l0.cuenta, debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0, detalle:tieneOp?'Costo de venta (con OP)':'Costo de venta (sin OP)'}];
+  if (totalMP>0.005){ const l=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP, detalle:'Materia Prima'}); }
+  if (totalCons>0.005){ const l=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons, detalle:'Consumibles'}); }
+  if (totalTerm>0.005){ const l=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm, detalle:'Productos Terminados'}); }
   return {tasa, tieneOp, lineas};
 };
 
 // Determina las líneas contables de UN movimiento de Consumo Interno (autoconsumo, avería,
 // muestra, pérdida) — misma función compartida entre Comprobantes Contables y el motor central.
 const construirLineasConsumoInternoCompartido = (m, ctx) => {
-  const {cfg, inventory, tasasManuales, settingsTasa} = ctx;
+  const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas} = ctx;
   if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return null;
   if (m.status==='ANULADO') return null;
   if (/^MOV-\d+-/.test(m.docRef||'')) return null; // generado por transformación/carga masiva, no es autoconsumo real
@@ -3180,10 +3187,283 @@ const construirLineasConsumoInternoCompartido = (m, ctx) => {
   const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
   const [codDeb,nomDeb] = partirCuenta(cfg[`${claveDeb}Nombre`]);
   const [codInv,nomInv] = partirCuenta(cfg[`${claveInv}Nombre`]);
+  // Misma reclasificación (tabId/m.id/lineIdx) aplicada aquí — antes solo la veía Comprobantes
+  // Contables; getAsientosReales() usaba las cuentas crudas sin reclasificar.
+  const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, m.id, li, codigo, cuenta) : {codigo,cuenta};
+  const l0 = reclas(0, codDeb, nomDeb);
+  const l1 = reclas(1, codInv, nomInv);
   return {tasa, lineas:[
-    {codigo:codDeb, cuenta:nomDeb, debeBs:valor*tasa, haberBs:0, debeUSD:valor, haberUSD:0, detalle:m.notes||''},
-    {codigo:codInv, cuenta:nomInv, debeBs:0, haberBs:valor*tasa, debeUSD:0, haberUSD:valor, detalle:''},
+    {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:valor*tasa, haberBs:0, debeUSD:valor, haberUSD:0, detalle:m.notes||''},
+    {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:0, haberBs:valor*tasa, debeUSD:0, haberUSD:valor, detalle:''},
   ]};
+};
+
+// Determina las líneas contables de Depreciación para UN mes — agrupadas por Centro de Costo +
+// Rubro (sumando todos los activos que compartan esa combinación). Es la MISMA función que usan
+// tanto Comprobantes Contables como el motor central: antes Comprobantes Contables agrupaba así,
+// pero getAsientosReales() generaba un asiento POR ACTIVO por separado (mismo total en teoría,
+// pero nunca coincidían exactamente por redondeo, y sobre todo: ninguna de las dos aplicaba
+// reclasificación, así que reclasificar una cuenta de Depreciación en Comprobantes Contables no
+// llegaba nunca a Mayor Analítico ni a Estado de Resultados/Balance General).
+const construirLineasDepreciacionCompartida = (ym, ctx) => {
+  const {activosFijos, activoFijoCfg, planCuentas, tasa, tabId, aplicarReclas, compId} = ctx;
+  const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
+  const porCCRubro = new Map();
+  (activosFijos||[]).forEach(a=>{
+    const adq=(a.fechaAdquisicion||'').substring(0,7); if(!adq) return;
+    const vidaMeses=Number(a.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
+    const transcurridos=ymDiff(adq,ym);
+    if(transcurridos<0||transcurridos>=vidaMeses) return; // la depreciación empieza el mes SIGUIENTE a la adquisición
+    const depMensual=(Number(a.valorCosto||0)-Number(a.valorResidual||0))/vidaMeses;
+    if(!(depMensual>0)) return;
+    const rubro=a.rubro||a.categoria||'Otros';
+    const cc=a.centroCosto||'';
+    const key=`${cc}|${rubro}`;
+    const acc=porCCRubro.get(key)||{monto:0,n:0,cc,rubro};
+    acc.monto+=depMensual; acc.n+=1; porCCRubro.set(key,acc);
+  });
+  if(porCCRubro.size===0) return null;
+  const resolverCuentasDeprec = (cc,rubro) => {
+    const ccCfg=(activoFijoCfg?.centrosCosto||[]).find(c=>c.codigo===cc||c.nombre===cc);
+    const rubroCfg=ccCfg?.rubros?.[rubro];
+    const ctaGastoCfg=rubroCfg?.costoGastoId?(planCuentas||[]).find(p=>p.id===rubroCfg.costoGastoId):null;
+    const ctaAcumCfg=rubroCfg?.deprAcumId?(planCuentas||[]).find(p=>p.id===rubroCfg.deprAcumId):null;
+    return {
+      gasto: {codigo:ctaGastoCfg?.codigo||'', nombre:ctaGastoCfg?.nombre||rubroCfg?.costoGastoNombre||'⚠️ Sin cuenta configurada'},
+      acum:  {codigo:ctaAcumCfg?.codigo||'',  nombre:ctaAcumCfg?.nombre||rubroCfg?.deprAcumNombre||'⚠️ Sin cuenta configurada'},
+    };
+  };
+  const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, compId, li, codigo, cuenta) : {codigo,cuenta};
+  const grupos=[...porCCRubro.values()].sort((x,y)=>(x.cc+x.rubro).localeCompare(y.cc+y.rubro));
+  const detalles=[]; let totalUSD=0, nAct=0;
+  grupos.forEach(({monto,n,cc,rubro})=>{
+    const {gasto,acum}=resolverCuentasDeprec(cc,rubro);
+    if(gasto.codigo && acum.codigo && gasto.codigo===acum.codigo){
+      // Gasto y Dep. Acumulada NO pueden ser la misma cuenta — se cancelarían entre sí al sumar
+      // por cuenta en Estado de Resultados/Balance General. Se omite en vez de generar un asiento
+      // roto (antes esto solo se evitaba del lado de getAsientosReales, nunca en Comprobantes
+      // Contables, así que la pestaña Depreciaciones sí llegaba a mostrar el par roto).
+      console.warn(`⚠️ Depreciación: "${cc}" / "${rubro}" tiene la misma cuenta para Costo/Gasto y Dep. Acumulada (${gasto.codigo}) — revisar en Activo Fijo → ⚙️ Configuración.`);
+      return;
+    }
+    const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
+    totalUSD+=usd; nAct+=n;
+    detalles.push({usd,bs,cc,rubro,gasto,acum});
+  });
+  if(detalles.length===0) return null;
+  const lineas=[];
+  detalles.forEach(({usd,bs,cc,rubro,gasto})=>{
+    const l=reclas(lineas.length, gasto.codigo, `${gasto.nombre} — ${rubro}${cc?' ('+cc+')':''}`);
+    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:bs, haberBs:0, debeUSD:usd, haberUSD:0});
+  });
+  detalles.forEach(({usd,bs,cc,rubro,acum})=>{
+    const l=reclas(lineas.length, acum.codigo, `${acum.nombre} — ${rubro}${cc?' ('+cc+')':''}`);
+    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:bs, debeUSD:0, haberUSD:usd});
+  });
+  return {lineas, totalUSD, nActivos:nAct};
+};
+
+// Determina los comprobantes de Impuestos por Enterar (Actividad Económica + Protección de
+// Pensiones + Anticipo ISLR) para UN mes — misma función que usan Comprobantes Contables y el
+// motor central. Antes cada lado tenía su propia copia de la fórmula (coincidían en el número,
+// pero ninguna aplicaba reclasificación, así que reclasificar estas cuentas en Comprobantes
+// Contables no llegaba a Mayor Analítico). Si una cuenta no está configurada, se muestra igual
+// con un texto de aviso — así el monto sigue entrando a los reportes y no desaparece en silencio.
+const construirLineasImpuestosPorEnterarCompartida = (mesKey, ctx) => {
+  const {facturasVenta, notasVenta, aeCfg, ppCuentasCfg, anticipoIslrCfg, aeManual, ppData, settingsTasa, tabId, aplicarReclas} = ctx;
+  const [anio,mes] = mesKey.split('-');
+  const lastDay = new Date(parseInt(anio,10), parseInt(mes,10), 0).getDate();
+  const rango = (q) => ({
+    desde: q===2 ? `${anio}-${mes}-16` : `${anio}-${mes}-01`,
+    hasta: q===1 ? `${anio}-${mes}-15` : `${anio}-${mes}-${String(lastDay).padStart(2,'0')}`,
+  });
+  const ventasBrutasQ = (q) => {
+    const {desde,hasta} = rango(q);
+    const facts = (facturasVenta||[]).filter(inv=>{
+      if (!inv || (!inv.nroFiscal && !inv.nroControl)) return false;
+      if (inv.esAnulacionFiscal) return false;
+      const f = inv.fechaFactura || inv.fecha || '';
+      return f>=desde && f<=hasta;
+    });
+    const ncnd = (notasVenta||[]).filter(n => n.naturaleza==='FISCAL' && !n.esAnulacionFiscal && n.fecha>=desde && n.fecha<=hasta);
+    let tot = 0;
+    facts.forEach(inv=>{
+      const tasa = Number(inv.tasa||0) || Number(settingsTasa||0) || 1;
+      const base = Number(inv.montoBase||0);
+      tot += Number(inv.baseGravableBs||0) || base*tasa;
+    });
+    ncnd.forEach(n=>{ tot += Number(n.monto||0) * (n.tipo==='NC'?-1:1); });
+    return tot;
+  };
+  const totalIngresos = ventasBrutasQ(1)+ventasBrutasQ(2);
+  const tasaUCD = Math.max(Number(aeManual.tasaBcvEuro||0), Number(aeManual.tasaBcvUsd||0)) || 1;
+  const mtBs = Number(aeCfg.mtUCD||0) * tasaUCD;
+  const impuestoAE = Math.max(totalIngresos*(Number(aeCfg.alicuotaAE||0)/100), mtBs);
+  const salarioMinTotal = Number(ppData.cantidadEmpleados||0) * Number(ppData.salarioMinimoOficial||0);
+  const montoPensiones = Number(ppData.minimoTributableUSD||0) * Number(ppData.tasaBcvCierre||0) * Number(ppData.cantidadEmpleados||0);
+  const impuestoPP = (montoPensiones+salarioMinTotal) * (Number(ppData.alicuotaTributable||0)/100);
+  const tasaPP = Number(ppData.tasaBcvCierre||0) || 1;
+  const anticipoISLR = parseFloat((totalIngresos*0.01).toFixed(2));
+  const fechaMes = `${mesKey}-${String(lastDay).padStart(2,'0')}`;
+  const partesCta=(n)=>n?n.split('—').map(s=>s.trim()):null;
+  const reclas = (compId,li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, compId, li, codigo, cuenta) : {codigo,cuenta};
+  const items = [];
+  if (impuestoAE > 0.005) {
+    const ctaG = partesCta(aeCfg.cuentaGastoNombre), ctaP = partesCta(aeCfg.cuentaPasivoNombre);
+    const compId = `AE-${mesKey}`;
+    const l0 = reclas(compId,0, ctaG?.[0]||'', ctaG?.[1]||'Gasto de Actividad Económica (sin cuenta — Impuestos → Configuración)');
+    const l1 = reclas(compId,1, ctaP?.[0]||'', ctaP?.[1]||'Impuesto Municipal por Pagar (sin cuenta — Impuestos → Configuración)');
+    items.push({id:compId, comprobante:'Actividad Económica', fecha:fechaMes, tasa:tasaUCD,
+      conc:`Impuesto Municipal (AE) — Ingresos Bs.${totalIngresos.toFixed(2)} × ${Number(aeCfg.alicuotaAE||0)}%`,
+      lineas:[
+        {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:impuestoAE, haberBs:0, debeUSD:tasaUCD?impuestoAE/tasaUCD:0, haberUSD:0},
+        {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:0, haberBs:impuestoAE, debeUSD:0, haberUSD:tasaUCD?impuestoAE/tasaUCD:0},
+      ]});
+  }
+  if (impuestoPP > 0.005) {
+    const ctaG = partesCta(ppCuentasCfg.cuentaGastoNombre), ctaP = partesCta(ppCuentasCfg.cuentaPasivoNombre);
+    const compId = `PP-${mesKey}`;
+    const l0 = reclas(compId,0, ctaG?.[0]||'', ctaG?.[1]||'Gasto de Protección de Pensiones (sin cuenta — Impuestos → Configuración)');
+    const l1 = reclas(compId,1, ctaP?.[0]||'', ctaP?.[1]||'Protección de Pensiones por Pagar (sin cuenta — Impuestos → Configuración)');
+    items.push({id:compId, comprobante:'Protección de Pensiones', fecha:fechaMes, tasa:tasaPP,
+      conc:`Protección de Pensiones — ${Number(ppData.cantidadEmpleados||0)} empleado(s) × ${Number(ppData.alicuotaTributable||0)}%`,
+      lineas:[
+        {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:impuestoPP, haberBs:0, debeUSD:tasaPP?impuestoPP/tasaPP:0, haberUSD:0},
+        {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:0, haberBs:impuestoPP, debeUSD:0, haberUSD:tasaPP?impuestoPP/tasaPP:0},
+      ]});
+  }
+  if (anticipoISLR > 0.005) {
+    const ctaA = partesCta(anticipoIslrCfg.cuentaActivoNombre), ctaP = partesCta(anticipoIslrCfg.cuentaPasivoNombre);
+    const compId = `ANT-ISLR-${mesKey}`;
+    const l0 = reclas(compId,0, ctaA?.[0]||'', ctaA?.[1]||'Anticipo ISLR (sin cuenta — Impuestos → Configuración)');
+    const l1 = reclas(compId,1, ctaP?.[0]||'', ctaP?.[1]||'Anticipo ISLR por Enterar (sin cuenta — Impuestos → Configuración)');
+    items.push({id:compId, comprobante:'Anticipo ISLR', fecha:fechaMes, tasa:tasaUCD,
+      conc:`Anticipo ISLR (1%) — Base Imponible Bs.${totalIngresos.toFixed(2)}`,
+      lineas:[
+        {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:anticipoISLR, haberBs:0, debeUSD:tasaUCD?anticipoISLR/tasaUCD:0, haberUSD:0},
+        {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:0, haberBs:anticipoISLR, debeUSD:0, haberUSD:tasaUCD?anticipoISLR/tasaUCD:0},
+      ]});
+  }
+  return items;
+};
+
+// Determina las líneas contables de UNA Retención practicada a un Cliente (IVA/ISLR/Municipal u
+// "Otra") — misma función que usan Comprobantes Contables y el motor central. Antes cada lado
+// tenía su propia cadena de cuentas de respaldo cuando el registro no traía la cuenta ya
+// guardada (y el motor central, para colmo, caía en la cuenta de retenciones a PROVEEDORES como
+// último recurso — mezclando dos cosas distintas), y el motor central solo miraba r.clientRif sin
+// probar el de la factura vinculada como sí hace la pantalla. Dos causas de que la cuenta de
+// Cuentas por Cobrar Clientes saliera distinta entre pantalla y reportes — además de que la
+// reclasificación no se aplicaba aquí.
+const construirLineasRetencionClienteCompartida = (r, ctx) => {
+  const {facturasVenta, clientes, retClienteCuentasCfg, planCuentas, tabId, aplicarReclas} = ctx;
+  const tipo = r.tipoExtra ? (r.tipoLabel||r.tipo||'Otra') : (r.tipoRetencion||'IVA');
+  const cuentaRetencionFallback = (tipoBuscado) => {
+    const cfg = retClienteCuentasCfg?.[tipoBuscado];
+    if (cfg?.cuentaContableNombre) {
+      return { codigo:(cfg.cuentaContableNombre.split('—')[0]||'').trim(),
+               nombre:(cfg.cuentaContableNombre.split('—').slice(1).join('—')||cfg.cuentaContableNombre).trim() };
+    }
+    const patrones = { IVA:/iva\s+retenid/i, ISLR:/(islr|renta)\s+retenid/i, Municipal:/(municipal).*retenid|retenid.*municipal/i };
+    const patron = patrones[tipoBuscado] || /retenid/i;
+    const cta = (planCuentas||[]).find(p => patron.test(p.nombre||''));
+    return cta ? { codigo: cta.codigo||cta.id||'', nombre: cta.nombre||'' } : { codigo:'', nombre:`Retención ${tipoBuscado} (sin cuenta configurada — ver Impuestos → Configuración)` };
+  };
+  const ctaRet = r.tipoExtra
+    ? (r.cuentaContableNombre
+        ? { codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim() }
+        : { codigo:'', nombre:`${tipo} (sin cuenta configurada — ver Impuestos → Configuración)` })
+    : (r.cuentaContableRetNombre
+        ? { codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim() }
+        : cuentaRetencionFallback(tipo));
+  const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const esManual = (r.facturaId||'').startsWith('MANUAL-');
+  const facAsoc = esManual ? null : (facturasVenta||[]).find(f => f.id===r.facturaId || f.documento===r.facturaId);
+  const nombreCliente = r._manualCliente || facAsoc?.clientName || r.clientName || '—';
+  const nroFactura = r._manualNroFiscal || facAsoc?.nroFiscal || facAsoc?.documento || '—';
+  // El RIF puede venir en el propio registro o, si no, en la factura vinculada — antes el motor
+  // central solo miraba r.clientRif y se quedaba sin cliente (y sin su cuenta CxC configurada) en
+  // los registros donde ese campo no se llenó directamente.
+  const rifRet = normRif(r.clientRif || facAsoc?.clientRif);
+  const cliente = (clientes||[]).find(c => rifRet && normRif(c.rif)===rifRet) || null;
+  const [codCli, nomCli] = cliente?.cuentaContableNombre ? cliente.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+  const montoBs = Number(r.montoRetenido||0);
+  const montoUSD = montoBs / Math.max(Number(r.tasa||1),1);
+  const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, r.id, li, codigo, cuenta) : {codigo,cuenta};
+  const l0 = reclas(0, ctaRet.codigo, `${ctaRet.nombre} (${tipo})`);
+  const l1 = reclas(1, codCli||'1.1.02.01.001', nomCli||'Cuentas por Cobrar Clientes');
+  return {
+    tipo, nombreCliente, nroFactura, montoBs, montoUSD,
+    lineas: [
+      {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+      {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+    ],
+  };
+};
+
+// Determina las líneas contables de UN movimiento de Cuentas por Pagar Relacionadas (préstamos
+// entre empresas) — misma función que usan Comprobantes Contables y el motor central. Revisa
+// PRIMERO la reclasificación real del movimiento de Banco/Caja de origen (línea 0 = cuenta
+// propia, línea 1 = contrapartida — la misma que el usuario ve y usa en el Comprobante de Banco/
+// Caja) y solo si no hay ninguna cae a la propia de Relacionadas. Antes esta revisión solo la
+// hacía el motor central; Comprobantes Contables no, así que su pestaña "Relacionadas" podía
+// mostrar una cuenta de origen distinta a la que realmente terminaba en Mayor Analítico.
+const construirLineasRelacionadaCompartida = (p, ctx) => {
+  const {movBanco, movCaja, cuentasBanco, cuentasCaja, tercerosRel, planCuentas, settingsTasa, tabId, aplicarReclas} = ctx;
+  const montoConSigno = (pp) => {
+    if (pp.origen) return Number(pp.monto||0);
+    const m = Math.abs(Number(pp.monto||0));
+    return pp.tipo==='Ingreso' ? -m : m;
+  };
+  const montoSigno = montoConSigno(p);
+  const esIngreso = montoSigno < 0;
+  const montoUSD = Math.abs(montoSigno);
+  const movLigado = p.origen==='caja'
+    ? (movCaja||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId)
+    : p.origen==='banco' ? (movBanco||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
+  const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
+  const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
+  const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
+  const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
+  const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
+  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
+  const montoBs = montoUSD * tasa;
+  const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
+  const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+  const ctaPrestamo = (planCuentas||[]).find(pc=>/(pr[ée]stamo|relacionad)/i.test(pc.nombre||''));
+  const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
+  const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
+  const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
+  const tabOrigen = p.origen==='caja'?'caja':'banco';
+  const reclasOrigen = (li,codigo,cuenta) => (aplicarReclas && movLigado) ? aplicarReclas(tabOrigen, movLigado._docId||movLigado.id, li, codigo, cuenta) : {codigo,cuenta};
+  const reclasProp = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, p.id, li, codigo, cuenta) : {codigo,cuenta};
+  const origenReclas0 = reclasOrigen(0, codCtaOrigen, nombreCtaOrigen);
+  const origenReclas1 = reclasOrigen(1, codRelFinal, `${nomRelFinal} — ${nombreTercero}`);
+  const relLinea0 = reclasProp(0, origenReclas0.codigo, origenReclas0.cuenta);
+  const relLinea1 = reclasProp(1, origenReclas1.codigo, origenReclas1.cuenta);
+  return {
+    esIngreso, montoUSD, montoBs, tasa, nombreTercero,
+    lineas: [
+      {codigo:relLinea0.codigo, cuenta:relLinea0.cuenta, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
+      {codigo:relLinea1.codigo, cuenta:relLinea1.cuenta, debeBs:esIngreso?0:montoBs, haberBs:esIngreso?montoBs:0, debeUSD:esIngreso?0:montoUSD, haberUSD:esIngreso?montoUSD:0},
+    ],
+  };
+};
+
+// Determina las líneas contables de UN comprobante 100% manual (Ajuste contable o Nómina
+// importada) — sus líneas ya vienen armadas tal cual se guardaron, así que esta función solo
+// existe para que la reclasificación se aplique de forma IDÉNTICA en Comprobantes Contables y en
+// el motor central (antes era el mismo código copiado dos veces — funcionaba igual hoy, pero
+// nada impedía que un cambio futuro en un lado se olvidara en el otro).
+const construirLineasManualCompartida = (a, ctx) => {
+  const {tabId, aplicarReclas} = ctx;
+  const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, a.id, li, codigo, cuenta) : {codigo,cuenta};
+  return (a.lineas||[]).map((l,li) => {
+    const r = reclas(li, l.codigo||'', l.cuenta||'—');
+    return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'',
+      debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0,
+      debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
+  });
 };
 
 const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
@@ -12340,35 +12620,13 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       return true;
     }).sort((a,b) => (b.fechaComprobante||'').localeCompare(a.fechaComprobante||''));
     return filtradas.map(r => {
-      // Dos orígenes posibles en 'retencionesClientes': el modal IVA/ISLR/Municipal (tipoRetencion +
-      // cuentaContableRetNombre) y el modal "Otras Retenciones" (tipoExtra:true, tipo/tipoLabel +
-      // cuentaContableNombre, configurada por tipo en Ajustes). Cada uno guarda su cuenta con un
-      // nombre de campo distinto — hay que leer el que corresponda o se pierde la cuenta configurada.
-      const tipo = r.tipoExtra ? (r.tipoLabel || r.tipo || 'Otra') : (r.tipoRetencion || 'IVA');
-      const ctaRet = r.tipoExtra
-        ? (r.cuentaContableNombre
-            ? { codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(),
-                nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim() }
-            : { codigo:'', nombre:`${tipo} (sin cuenta configurada — ver Impuestos → Configuración)` })
-        : (r.cuentaContableRetNombre
-            ? { codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(),
-                nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim() }
-            : cuentaRetencion(tipo));
-      const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-      // El registro de retención solo guarda facturaId + clientRif — el nombre del cliente y el
-      // N° de factura viven en la factura vinculada (o en los campos _manual* si es registro manual).
-      const esManual = (r.facturaId||'').startsWith('MANUAL-');
-      const facAsoc = esManual ? null : (facturasVentaC||[]).find(f => f.id===r.facturaId || f.documento===r.facturaId);
-      const nombreCliente = r._manualCliente || facAsoc?.clientName || r.clientName || '—';
-      const nroFactura = r._manualNroFiscal || facAsoc?.nroFiscal || facAsoc?.documento || '—';
-      const rifRet=normRif(r.clientRif || facAsoc?.clientRif);
-      const cliente = clientesC.find(c => rifRet && normRif(c.rif)===rifRet) || null;
-      const [codCli, nomCli] = cliente?.cuentaContableNombre ? cliente.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-      const montoBs = Number(r.montoRetenido||0);
-      const montoUSD = montoBs / Math.max(Number(r.tasa||1),1);
-      const lineaRet = { codigo: ctaRet.codigo, cuenta: `${ctaRet.nombre} (${tipo})`, tipo:'D', dBs: montoBs, hBs:0, dUSD: montoUSD, hUSD:0 };
-      const lineaCxc = { codigo: codCli||'1.1.02.01.001', cuenta: nomCli||'Cuentas por Cobrar Clientes', tipo:'H', dBs:0, hBs: montoBs, dUSD:0, hUSD: montoUSD };
-      return { id: r.id, comprobante: nombreCliente, fecha: r.fechaComprobante||r.createdAt||'', doc: r.nroRetencion||'—', conc: `Retención ${tipo} — ${nombreCliente} · Fact. ${nroFactura}`, tasa: Number(r.tasa||1), lineas: [lineaRet, lineaCxc] };
+      const res = construirLineasRetencionClienteCompartida(r, {
+        facturasVenta:facturasVentaC, clientes:clientesC, retClienteCuentasCfg:settingsCC?.retClienteCuentasCfg,
+        planCuentas:planCuentasC, tabId:'ret_cli', aplicarReclas:aplicarReclasLinea,
+      });
+      return { id: r.id, comprobante: res.nombreCliente, fecha: r.fechaComprobante||r.createdAt||'', doc: r.nroRetencion||'—',
+        conc: `Retención ${res.tipo} — ${res.nombreCliente} · Fact. ${res.nroFactura}`, tasa: Number(r.tasa||1),
+        lineas: res.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})) };
     });
   };
 
@@ -12457,54 +12715,19 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const meses=[]; let cur=desdeYM;
     while(ymDiff(cur,hastaYM)>=0 && meses.length<240){ meses.push(cur); cur=ymAdd(cur,1); }
     const tasa=Number(tasaDeprec)||0;
-    // Cuenta de Gasto/Costo y de Depreciación Acumulada por CENTRO DE COSTO + RUBRO (configuradas
-    // en Activo Fijo → ⚙️ Configuración) — antes esta pantalla usaba una sola cuenta genérica para
-    // TODAS las categorías, ignorando que un mismo rubro (ej. Maquinaria y Equipos) puede ir a una
-    // cuenta de Costo (5.x) en un Centro de Costo y a una de Gasto (6.x) en otro.
-    const resolverCuentasDeprec = (cc, rubro) => {
-      const ccCfg=(activoFijoCfgC?.centrosCosto||[]).find(c=>c.codigo===cc||c.nombre===cc);
-      const rubroCfg=ccCfg?.rubros?.[rubro];
-      const ctaGastoCfg=rubroCfg?.costoGastoId?(planCuentasC||[]).find(p=>p.id===rubroCfg.costoGastoId):null;
-      const ctaAcumCfg=rubroCfg?.deprAcumId?(planCuentasC||[]).find(p=>p.id===rubroCfg.deprAcumId):null;
-      return {
-        gasto: {codigo:ctaGastoCfg?.codigo||'', nombre:ctaGastoCfg?.nombre||rubroCfg?.costoGastoNombre||'⚠️ Sin cuenta configurada'},
-        acum:  {codigo:ctaAcumCfg?.codigo||'',  nombre:ctaAcumCfg?.nombre||rubroCfg?.deprAcumNombre||'⚠️ Sin cuenta configurada'},
-      };
-    };
     return meses.map(ym=>{
-      const porCCRubro=new Map(); // clave: centroCosto|rubro — cada combinación puede tener cuentas distintas
-      (activosFijosC||[]).forEach(a=>{
-        const adq=(a.fechaAdquisicion||'').substring(0,7); if(!adq) return;
-        const vidaMeses=Number(a.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
-        const transcurridos=ymDiff(adq,ym);
-        if(transcurridos<0||transcurridos>=vidaMeses) return;
-        const depMensual=(Number(a.valorCosto||0)-Number(a.valorResidual||0))/vidaMeses;
-        if(!(depMensual>0)) return;
-        const rubro=a.rubro||a.categoria||'Otros';
-        const cc=a.centroCosto||'';
-        const key=`${cc}|${rubro}`;
-        const acc=porCCRubro.get(key)||{monto:0,n:0,cc,rubro};
-        acc.monto+=depMensual; acc.n+=1; porCCRubro.set(key,acc);
+      const compId=`DEP-${ym}`;
+      const r = construirLineasDepreciacionCompartida(ym, {
+        activosFijos:activosFijosC, activoFijoCfg:activoFijoCfgC, planCuentas:planCuentasC, tasa,
+        tabId:'deprec', aplicarReclas:aplicarReclasLinea, compId,
       });
-      if(porCCRubro.size===0) return null;
-      const grupos=[...porCCRubro.values()].sort((x,y)=>(x.cc+x.rubro).localeCompare(y.cc+y.rubro));
-      const lineas=[]; let totalUSD=0, nAct=0;
-      grupos.forEach(({monto,n,cc,rubro})=>{
-        const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
-        totalUSD+=usd; nAct+=n;
-        const {gasto}=resolverCuentasDeprec(cc,rubro);
-        lineas.push({codigo:gasto.codigo, cuenta:`${gasto.nombre} — ${rubro}${cc?' ('+cc+')':''}`, tipo:'D', dBs:bs, hBs:0, dUSD:usd, hUSD:0});
-      });
-      grupos.forEach(({monto,cc,rubro})=>{
-        const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
-        const {acum}=resolverCuentasDeprec(cc,rubro);
-        lineas.push({codigo:acum.codigo, cuenta:`${acum.nombre} — ${rubro}${cc?' ('+cc+')':''}`, tipo:'H', dBs:0, hBs:bs, dUSD:0, hUSD:usd});
-      });
+      if(!r) return null;
       const [yy,mm]=ym.split('-');
       const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
-      return { id:`DEP-${ym}`, comprobante:`DEPREC. ${mm}/${yy}`,
-        fecha:`${ym}-${String(ultimoDia).padStart(2,'0')}`, doc:`DEP-${ym}`, tasa,
-        conc:`Depreciación mensual — ${nAct} activo(s) · $${contFmt(totalUSD)}`, lineas };
+      return { id:compId, comprobante:`DEPREC. ${mm}/${yy}`,
+        fecha:`${ym}-${String(ultimoDia).padStart(2,'0')}`, doc:compId, tasa,
+        conc:`Depreciación mensual — ${r.nActivos} activo(s) · $${contFmt(r.totalUSD)}`,
+        lineas: r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})) };
     }).filter(Boolean);
   };
 
@@ -12515,97 +12738,33 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // ni retenciones de clientes — esas ya tienen sus propias pestañas en este mismo módulo.
   const construirLineasImpuestosPorEnterar = () => {
     const mesKey = `${impAnio}-${impMes}`;
-    const lastDay = new Date(parseInt(impAnio,10), parseInt(impMes,10), 0).getDate();
-    const rango = (q) => ({
-      desde: q===2 ? `${impAnio}-${impMes}-16` : `${impAnio}-${impMes}-01`,
-      hasta: q===1 ? `${impAnio}-${impMes}-15` : `${impAnio}-${impMes}-${String(lastDay).padStart(2,'0')}`,
+    const items = construirLineasImpuestosPorEnterarCompartida(mesKey, {
+      facturasVenta:facturasVentaC, notasVenta:notasVentaC, aeCfg:aeCfgCC, ppCuentasCfg:ppCuentasCfgCC,
+      anticipoIslrCfg:anticipoIslrCfgCC, aeManual:aeManualCC, ppData:ppDataCC, settingsTasa:settingsCC?.tasaBCV,
+      tabId:'imp_enterar', aplicarReclas:aplicarReclasLinea,
     });
-    const ventasBrutasQ = (q) => {
-      const {desde,hasta} = rango(q);
-      const facts = (facturasVentaC||[]).filter(inv=>{
-        if (!inv || (!inv.nroFiscal && !inv.nroControl)) return false;
-        if (inv.esAnulacionFiscal) return false;
-        const f = inv.fechaFactura || inv.fecha || '';
-        return f>=desde && f<=hasta;
-      });
-      const ncnd = (notasVentaC||[]).filter(n => n.naturaleza==='FISCAL' && !n.esAnulacionFiscal && n.fecha>=desde && n.fecha<=hasta);
-      let tot = 0;
-      facts.forEach(inv=>{
-        const tasa = Number(inv.tasa||0) || Number(settingsCC?.tasaBCV||0) || 1;
-        const base = Number(inv.montoBase||0);
-        tot += Number(inv.baseGravableBs||0) || base*tasa;
-      });
-      ncnd.forEach(n=>{ tot += Number(n.monto||0) * (n.tipo==='NC'?-1:1); });
-      return tot;
-    };
-    const vb1 = ventasBrutasQ(1), vb2 = ventasBrutasQ(2);
-    const totalIngresos = vb1+vb2;
-    const tasaUCD = Math.max(Number(aeManualCC.tasaBcvEuro||0), Number(aeManualCC.tasaBcvUsd||0)) || 1;
-    const mtBs = Number(aeCfgCC.mtUCD||0) * tasaUCD;
-    const impuestoAE = Math.max(totalIngresos*(Number(aeCfgCC.alicuotaAE||0)/100), mtBs);
-
-    const salarioMinTotal = Number(ppDataCC.cantidadEmpleados||0) * Number(ppDataCC.salarioMinimoOficial||0);
-    const montoPensiones = Number(ppDataCC.minimoTributableUSD||0) * Number(ppDataCC.tasaBcvCierre||0) * Number(ppDataCC.cantidadEmpleados||0);
-    const totalBasePP = montoPensiones + salarioMinTotal;
-    const impuestoPP = totalBasePP * (Number(ppDataCC.alicuotaTributable||0)/100);
-    const tasaPP = Number(ppDataCC.tasaBcvCierre||0) || 1;
-
-    const fechaMes = `${mesKey}-${String(lastDay).padStart(2,'0')}`;
-    const lineas = [];
-    if (impuestoAE > 0) {
-      const ctaGasto = aeCfgCC.cuentaGastoNombre ? partesCtaCC(aeCfgCC.cuentaGastoNombre) : null;
-      const ctaPasivo = aeCfgCC.cuentaPasivoNombre ? partesCtaCC(aeCfgCC.cuentaPasivoNombre) : null;
-      lineas.push({
-        id:`AE-${mesKey}`, comprobante:'Actividad Económica', fecha:fechaMes, doc:`AE-${mesKey}`, tasa:tasaUCD,
-        conc:`Impuesto Municipal (AE) — Ingresos Bs.${contFmt(totalIngresos)} × ${Number(aeCfgCC.alicuotaAE||0)}%`,
-        lineas:[
-          {codigo:ctaGasto?.codigo||'', cuenta:ctaGasto?.nombre||'Gasto de Actividad Económica (sin cuenta — Impuestos → Configuración)', tipo:'D', dBs:impuestoAE, hBs:0, dUSD:tasaUCD?impuestoAE/tasaUCD:0, hUSD:0},
-          {codigo:ctaPasivo?.codigo||'', cuenta:ctaPasivo?.nombre||'Impuesto Municipal por Pagar (sin cuenta — Impuestos → Configuración)', tipo:'H', dBs:0, hBs:impuestoAE, dUSD:0, hUSD:tasaUCD?impuestoAE/tasaUCD:0},
-        ],
-      });
-    }
-    if (impuestoPP > 0) {
-      const ctaGasto = ppCuentasCfgCC.cuentaGastoNombre ? partesCtaCC(ppCuentasCfgCC.cuentaGastoNombre) : null;
-      const ctaPasivo = ppCuentasCfgCC.cuentaPasivoNombre ? partesCtaCC(ppCuentasCfgCC.cuentaPasivoNombre) : null;
-      lineas.push({
-        id:`PP-${mesKey}`, comprobante:'Protección de Pensiones', fecha:fechaMes, doc:`PP-${mesKey}`, tasa:tasaPP,
-        conc:`Protección de Pensiones — ${Number(ppDataCC.cantidadEmpleados||0)} empleado(s) × ${Number(ppDataCC.alicuotaTributable||0)}%`,
-        lineas:[
-          {codigo:ctaGasto?.codigo||'', cuenta:ctaGasto?.nombre||'Gasto de Protección de Pensiones (sin cuenta — Impuestos → Configuración)', tipo:'D', dBs:impuestoPP, hBs:0, dUSD:tasaPP?impuestoPP/tasaPP:0, hUSD:0},
-          {codigo:ctaPasivo?.codigo||'', cuenta:ctaPasivo?.nombre||'Protección de Pensiones por Pagar (sin cuenta — Impuestos → Configuración)', tipo:'H', dBs:0, hBs:impuestoPP, dUSD:0, hUSD:tasaPP?impuestoPP/tasaPP:0},
-        ],
-      });
-    }
-    // Anticipo ISLR (1% × Base Imponible del mes) — NO es gasto: D Activo (anticipo aplicable a la
-    // declaración anual) / H Pasivo (lo que se debe enterar por este período). Misma base de ventas
-    // (totalIngresos) que ya se usa arriba para Actividad Económica, misma tasa (tasaUCD).
-    const anticipoISLR = parseFloat((totalIngresos*0.01).toFixed(2));
-    if (anticipoISLR > 0) {
-      const ctaActivo = anticipoIslrCfgCC.cuentaActivoNombre ? partesCtaCC(anticipoIslrCfgCC.cuentaActivoNombre) : null;
-      const ctaPasivoIslr = anticipoIslrCfgCC.cuentaPasivoNombre ? partesCtaCC(anticipoIslrCfgCC.cuentaPasivoNombre) : null;
-      lineas.push({
-        id:`ANT-ISLR-${mesKey}`, comprobante:'Anticipo ISLR', fecha:fechaMes, doc:`ANT-ISLR-${mesKey}`, tasa:tasaUCD,
-        conc:`Anticipo ISLR (1%) — Base Imponible Bs.${contFmt(totalIngresos)}`,
-        lineas:[
-          {codigo:ctaActivo?.codigo||'', cuenta:ctaActivo?.nombre||'Anticipo ISLR (sin cuenta — Impuestos → Configuración)', tipo:'D', dBs:anticipoISLR, hBs:0, dUSD:tasaUCD?anticipoISLR/tasaUCD:0, hUSD:0},
-          {codigo:ctaPasivoIslr?.codigo||'', cuenta:ctaPasivoIslr?.nombre||'Anticipo ISLR por Enterar (sin cuenta — Impuestos → Configuración)', tipo:'H', dBs:0, hBs:anticipoISLR, dUSD:0, hUSD:tasaUCD?anticipoISLR/tasaUCD:0},
-        ],
-      });
-    }
+    const lineas = items.map(it => ({
+      id:it.id, comprobante:it.comprobante, fecha:it.fecha, doc:it.id, tasa:it.tasa, conc:it.conc,
+      lineas: it.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})),
+    }));
     // Cierre de Compensación de IVA — se muestran las quincenas ya generadas que caen dentro
     // del mes seleccionado, leyendo directo el comprobante ya guardado (mismas líneas exactas
-    // que se generaron en Cierre IVA, no se recalcula nada aquí).
+    // que se generaron en Cierre IVA, no se recalcula nada aquí), con reclasificación aplicada
+    // bajo el mismo tabId='imp_enterar' que usa esta pestaña (antes esta parte tampoco reclasificaba).
     ['Q1','Q2'].forEach(q=>{
       const cierre = (cierresIvaC||[]).find(c=>c.id===`IVA-${mesKey}-${q}`);
       if (!cierre) return;
       lineas.push({
         id:cierre.id, comprobante:`Cierre IVA — ${q==='Q1'?'1ra':'2da'} Quincena`, fecha:cierre.fecha, doc:cierre.nroComprobante||cierre.id, tasa:Number(cierre.tasa||0),
         conc:cierre.concepto||`Compensación de IVA — ${mesKey} ${q}`,
-        lineas:(cierre.lineas||[]).map(l=>({
-          codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo,
-          dBs:l.tipo==='D'?Number(l.montoBs||0):0, hBs:l.tipo==='H'?Number(l.montoBs||0):0,
-          dUSD:l.tipo==='D'?Number(l.montoUSD||0):0, hUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
-        })),
+        lineas:(cierre.lineas||[]).map((l,li)=>{
+          const r = aplicarReclasLinea('imp_enterar', cierre.id, li, l.codigo||'', l.cuenta||'—');
+          return {
+            codigo:r.codigo, cuenta:r.cuenta, tipo:l.tipo,
+            dBs:l.tipo==='D'?Number(l.montoBs||0):0, hBs:l.tipo==='H'?Number(l.montoBs||0):0,
+            dUSD:l.tipo==='D'?Number(l.montoUSD||0):0, hUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
+          };
+        }),
       });
     });
     return lineas;
@@ -12617,11 +12776,6 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // movimiento real (origen+movimientoId, monto ya con signo) y los manuales (con campo
   // tipo aparte, monto sin signo) — se normalizan ambos aquí.
   const construirLineasRelacionadas = () => {
-    const montoConSigno = (p) => {
-      if (p.origen) return Number(p.monto||0);
-      const m = Math.abs(Number(p.monto||0));
-      return p.tipo==='Ingreso' ? -m : m;
-    };
     const filtradas = (pagosRelC||[]).filter(p => {
       if (filtDesde && p.fecha < filtDesde) return false;
       if (filtHasta && p.fecha > filtHasta) return false;
@@ -12629,35 +12783,15 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 
     return filtradas.map(p => {
-      const montoSigno = montoConSigno(p);
-      const esIngreso = montoSigno < 0; // recibimos del relacionado / aumenta lo que le debemos
-      const montoUSD = Math.abs(montoSigno);
-
-      const movLigado = p.origen==='caja'
-        ? (movCaja||[]).find(m=>m.id===p.movimientoId)
-        : p.origen==='banco' ? (movBanco||[]).find(m=>m.id===p.movimientoId) : null;
-      const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
-      const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
-      const ctaOrigen = movLigado ? cuentasOrigen.find(c=>c.id===movLigado[idFieldOrigen]) : null;
-      const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
-      const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
-      const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsCC?.tasaBCV||0)||1);
-      const montoBs = montoUSD * tasa;
-
-      const tercRel = (tercerosRelC||[]).find(t=>t.id===p.terceroId);
-      const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-      const ctaPrestamo = (planCuentasC||[]).find(pc=>/(pr[ée]stamo|relacionad)/i.test(pc.nombre||''));
-      const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
-      const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
-      const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-
-      const lineaOrigen = { codigo: codCtaOrigen, cuenta: nombreCtaOrigen, tipo: esIngreso?'D':'H', dBs: esIngreso?montoBs:0, hBs: esIngreso?0:montoBs, dUSD: esIngreso?montoUSD:0, hUSD: esIngreso?0:montoUSD };
-      const lineaRelacionada = { codigo: codRelFinal, cuenta: `${nomRelFinal} — ${nombreTercero}`, tipo: esIngreso?'H':'D', dBs: esIngreso?0:montoBs, hBs: esIngreso?montoBs:0, dUSD: esIngreso?0:montoUSD, hUSD: esIngreso?montoUSD:0 };
-
+      const res = construirLineasRelacionadaCompartida(p, {
+        movBanco, movCaja, cuentasBanco, cuentasCaja, tercerosRel:tercerosRelC,
+        planCuentas:planCuentasC, settingsTasa:settingsCC?.tasaBCV, tabId:'relacionadas', aplicarReclas:aplicarReclasLinea,
+      });
       return {
-        id: p.id, comprobante: nombreTercero, fecha: p.fecha||'', doc: p.referencia||'—',
-        conc: `${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''}`,
-        tasa, lineas: [lineaOrigen, lineaRelacionada],
+        id: p.id, comprobante: res.nombreTercero, fecha: p.fecha||'', doc: p.referencia||'—',
+        conc: `${res.esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''}`,
+        tasa: res.tasa,
+        lineas: res.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})),
       };
     });
   };
@@ -12668,30 +12802,28 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if (filtDesde && a.fecha < filtDesde) return false;
       if (filtHasta && a.fecha > filtHasta) return false;
       return true;
-    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(a => ({
-      id: a.id, comprobante: a.nroComprobante||'AJUSTE', fecha: a.fecha, doc: a.nroComprobante||'—',
-      tasa: Number(a.tasa||0), conc: a.concepto||'Ajuste manual', _raw:a,
-      lineas: (a.lineas||[]).map(l => ({
-        codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipo,
-        dBs: l.tipo==='D'?Number(l.montoBs||0):0, hBs: l.tipo==='H'?Number(l.montoBs||0):0,
-        dUSD: l.tipo==='D'?Number(l.montoUSD||0):0, hUSD: l.tipo==='H'?Number(l.montoUSD||0):0,
-      })),
-    }));
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(a => {
+      const lineas = construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea});
+      return {
+        id: a.id, comprobante: a.nroComprobante||'AJUSTE', fecha: a.fecha, doc: a.nroComprobante||'—',
+        tasa: Number(a.tasa||0), conc: a.concepto||'Ajuste manual', _raw:a,
+        lineas: lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})),
+      };
+    });
   };
   const construirLineasNomina = () => {
     return (nominaC||[]).filter(a => {
       if (filtDesde && a.fecha < filtDesde) return false;
       if (filtHasta && a.fecha > filtHasta) return false;
       return true;
-    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(a => ({
-      id: a.id, comprobante: a.nroComprobante||'NÓMINA', fecha: a.fecha, doc: a.nroComprobante||'—',
-      tasa: Number(a.tasa||0), conc: a.concepto||'Nómina', _raw:a,
-      lineas: (a.lineas||[]).map(l => ({
-        codigo: l.codigo||'', cuenta: l.cuenta||'—', tipo: l.tipo, detalle: l.detalle||'',
-        dBs: l.tipo==='D'?Number(l.montoBs||0):0, hBs: l.tipo==='H'?Number(l.montoBs||0):0,
-        dUSD: l.tipo==='D'?Number(l.montoUSD||0):0, hUSD: l.tipo==='H'?Number(l.montoUSD||0):0,
-      })),
-    }));
+    }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(a => {
+      const lineas = construirLineasManualCompartida(a, {tabId:'nomina', aplicarReclas:aplicarReclasLinea});
+      return {
+        id: a.id, comprobante: a.nroComprobante||'NÓMINA', fecha: a.fecha, doc: a.nroComprobante||'—',
+        tasa: Number(a.tasa||0), conc: a.concepto||'Nómina', _raw:a,
+        lineas: lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', detalle:l.detalle, dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})),
+      };
+    });
   };
   // ── Salidas de Inventario con cuenta contable configurada (Producción) ───────────────
   // Mismo mapeo categoría→cuenta que usa getAsientosReales() en App(): Materia Prima/
@@ -12723,7 +12855,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if (filtHasta && fecha > filtHasta) return false;
       return true;
     }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')).map(f=>{
-      const r = construirLineasCostoProduccionCompartido(f, {cfg, inventory:inventoryC, tasasManuales:tasasManualesProdC, settingsTasa:settingsCC?.tasaBCV});
+      const r = construirLineasCostoProduccionCompartido(f, {cfg, inventory:inventoryC, tasasManuales:tasasManualesProdC, settingsTasa:settingsCC?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea});
       if(!r) return null;
       return {
         id: f.id, comprobante: f.nroFiscal||f.documento||f.id, fecha: f.fecha||'', doc: f.nroFiscal||f.documento||'—',
@@ -12744,7 +12876,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if (filtHasta && m.date > filtHasta) return false;
       return true;
     }).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(m=>{
-      const r = construirLineasConsumoInternoCompartido(m, {cfg, inventory:inventoryC, tasasManuales:tasasManualesProdC, settingsTasa:settingsCC?.tasaBCV});
+      const r = construirLineasConsumoInternoCompartido(m, {cfg, inventory:inventoryC, tasasManuales:tasasManualesProdC, settingsTasa:settingsCC?.tasaBCV, tabId:'consumos_internos', aplicarReclas:aplicarReclasLinea});
       if(!r) return null;
       return {
         id: m.id, comprobante: m.docRef||m.id, fecha: m.date, doc: m.docRef||'—',
@@ -15359,9 +15491,14 @@ function App() {
         const conIva = n.tieneIva!==false;
         const ivaBs = conIva ? parseFloat((montoBs*0.16).toFixed(2)) : 0;
         const ivaUSD = tasa?ivaBs/tasa:0;
-        const lin0=aplicarReclasLinea('ventas_ncnd',n.id,0,codCli.trim(),nomCli);
-        const lin1=aplicarReclasLinea('ventas_ncnd',n.id,1,codIng.trim(),nomIng);
-        const lin2=conIva?aplicarReclasLinea('ventas_ncnd',n.id,2,'2.1.04.02.001','I.V.A. DÉBITO FISCAL (VENTAS)'):null;
+        // Comprobantes Contables muestra Notas de Crédito/Débito DENTRO de la misma tabla de
+        // Ventas (mismo tabId='ventas'), con compId='NOTA-'+id para no chocar con el id de una
+        // factura — usa EXACTAMENTE esa misma clave aquí, o una reclasificación hecha ahí (en vez
+        // de en la pestaña de la factura) se guardaba bajo una clave que este motor no leía.
+        const compIdNota = `NOTA-${n.id}`;
+        const lin0=aplicarReclasLinea('ventas',compIdNota,0,codCli.trim(),nomCli);
+        const lin1=aplicarReclasLinea('ventas',compIdNota,1,codIng.trim(),nomIng);
+        const lin2=conIva?aplicarReclasLinea('ventas',compIdNota,2,'2.1.04.02.001','I.V.A. DÉBITO FISCAL (VENTAS)'):null;
         const totalBs=montoBs+ivaBs, totalUSD=montoUSD+ivaUSD;
         const lineas = esNC ? [
           {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
@@ -15377,25 +15514,12 @@ function App() {
     });
     // 3) Retenciones a Clientes — evento separado de la factura de venta (no se solapa)
     (retencionesClientesApp||[]).forEach(r=>{
-      const tipo = r.tipoExtra ? (r.tipoLabel||r.tipo||'Otra') : (r.tipoRetencion||'IVA');
-      const ctaRet = r.tipoExtra
-        ? (r.cuentaContableNombre ? {codigo:(r.cuentaContableNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableNombre.split('—').slice(1).join('—')||r.cuentaContableNombre).trim()} : {codigo:'2.1.03.99.001', nombre:`${tipo} por enterar`})
-        : (r.cuentaContableRetNombre ? {codigo:(r.cuentaContableRetNombre.split('—')[0]||'').trim(), nombre:(r.cuentaContableRetNombre.split('—').slice(1).join('—')||r.cuentaContableRetNombre).trim()}
-            : tipo==='IVA' && cuentasIvaCfgApp.retClienteNombre ? {codigo:cuentasIvaCfgApp.retClienteNombre.split('—')[0].trim(), nombre:cuentasIvaCfgApp.retClienteNombre.split('—').slice(1).join('—').trim()}
-            : tipo==='IVA' && cuentasRetProvCfg.ivaNombre ? {codigo:cuentasRetProvCfg.ivaNombre.split('—')[0].trim(), nombre:cuentasRetProvCfg.ivaNombre.split('—').slice(1).join('—').trim()}
-            : tipo!=='IVA' && cuentasRetProvCfg.islrNombre ? {codigo:cuentasRetProvCfg.islrNombre.split('—')[0].trim(), nombre:cuentasRetProvCfg.islrNombre.split('—').slice(1).join('—').trim()}
-            : tipo==='IVA' ? {codigo:'2.1.04.02.002', nombre:'RETENCIÓN IVA (100-75%)'} : {codigo:'2.1.04.01.001', nombre:'RETENCIONES I.S.L.R. POR PAGAR'});
-      const montoBs=Number(r.montoRetenido||0);
-      const montoUSD=montoBs/Math.max(Number(r.tasa||1),1);
-      const cliente = (clients||[]).find(c=>c.rif && r.clientRif && c.rif.replace(/\W/g,'')===String(r.clientRif).replace(/\W/g,''));
-      const [codCli,nomCli]=cliente?.cuentaContableNombre?cliente.cuentaContableNombre.split('—').map(s=>s.trim()):['1.1.02.01.001','Cuentas por Cobrar Clientes'];
-      const rLinea0 = aplicarReclasLinea('ret_cli', r.id, 0, ctaRet.codigo, `${ctaRet.nombre} (${tipo})`);
-      const rLinea1 = aplicarReclasLinea('ret_cli', r.id, 1, codCli||'1.1.02.01.001', nomCli||'Cuentas por Cobrar Clientes');
-      out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes', concepto:`Retención ${tipo} — ${r.clientName||cliente?.razonSocial||cliente?.nombre||'—'}`,
-        lineas:[
-          {codigo:rLinea0.codigo, cuenta:rLinea0.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
-          {codigo:rLinea1.codigo, cuenta:rLinea1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
-        ]});
+      const res = construirLineasRetencionClienteCompartida(r, {
+        facturasVenta:invoices, clientes:clients, retClienteCuentasCfg:settings?.retClienteCuentasCfg,
+        planCuentas:planDeCuentas, tabId:'ret_cli', aplicarReclas:aplicarReclasLinea,
+      });
+      out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes',
+        concepto:`Retención ${res.tipo} — ${res.nombreCliente} · Fact. ${res.nroFactura}`, lineas:res.lineas});
     });
     // 4) Banco y 5) Caja — el movimiento propio + su contrapartida. Si el movimiento ya
     // tiene un asiento formal vinculado (asientoContableId), se usan esas líneas reales
@@ -15420,58 +15544,26 @@ function App() {
     // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
     // ningún otro módulo.
     (pagosRelApp||[]).forEach(p=>{
-      const montoSigno = p.origen ? Number(p.monto||0) : (p.tipo==='Ingreso'?-Math.abs(Number(p.monto||0)):Math.abs(Number(p.monto||0)));
-      const esIngreso = montoSigno < 0;
-      const montoUSD = Math.abs(montoSigno);
-      const movLigado = p.origen==='caja' ? (movCajaApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : p.origen==='banco' ? (movBancoApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
-      const cuentasOrigen = p.origen==='caja' ? cuentasCajaApp : cuentasBancoApp;
-      const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
-      const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
-      const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
-      const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
-      const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settings?.tasaBCV||0)||1);
-      const montoBs = montoUSD * tasa;
-      const tercRel = (tercerosRelApp||[]).find(t=>t.id===p.terceroId);
-      const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-      const ctaPrestamo = (planDeCuentas||[]).find(pc=>/(pr[ée]stamo|relacionad)/i.test(pc.nombre||''));
-      const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
-      const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
-      const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-      // La cuenta de origen (banco/caja) Y su contrapartida son EL MISMO movimiento que también
-      // se ve y se puede reclasificar desde "Comprobante de Banco/Caja" — pero esa
-      // reclasificación se guardaba bajo una clave completamente distinta ('relacionadas' en vez
-      // de 'banco'/'caja'), así que nunca se aplicaba aquí. Se revisa primero la reclasificación
-      // real del movimiento en CADA línea (la que el usuario ve y usa en Comprobante de Banco/
-      // Caja — línea 0 = cuenta propia, línea 1 = contrapartida) y, solo si no hay ninguna, se
-      // cae a la propia de Relacionadas.
-      const tabOrigen = p.origen==='caja'?'caja':'banco';
-      const origenReclas0 = movLigado ? aplicarReclasLinea(tabOrigen, movLigado._docId||movLigado.id, 0, codCtaOrigen, nombreCtaOrigen) : {codigo:codCtaOrigen, cuenta:nombreCtaOrigen};
-      const origenReclas1 = movLigado ? aplicarReclasLinea(tabOrigen, movLigado._docId||movLigado.id, 1, codRelFinal, `${nomRelFinal} — ${nombreTercero}`) : {codigo:codRelFinal, cuenta:`${nomRelFinal} — ${nombreTercero}`};
-      const relLinea0 = aplicarReclasLinea('relacionadas', p.id, 0, origenReclas0.codigo, origenReclas0.cuenta);
-      const relLinea1 = aplicarReclasLinea('relacionadas', p.id, 1, origenReclas1.codigo, origenReclas1.cuenta);
-      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas', concepto:`${esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${nombreTercero}`,
-        lineas:[
-          {codigo:relLinea0.codigo, cuenta:relLinea0.cuenta, debeBs:esIngreso?montoBs:0, haberBs:esIngreso?0:montoBs, debeUSD:esIngreso?montoUSD:0, haberUSD:esIngreso?0:montoUSD},
-          {codigo:relLinea1.codigo, cuenta:relLinea1.cuenta, debeBs:esIngreso?0:montoBs, haberBs:esIngreso?montoBs:0, debeUSD:esIngreso?0:montoUSD, haberUSD:esIngreso?montoUSD:0},
-        ]});
+      const res = construirLineasRelacionadaCompartida(p, {
+        movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp,
+        tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, settingsTasa:settings?.tasaBCV,
+        tabId:'relacionadas', aplicarReclas:aplicarReclasLinea,
+      });
+      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
+        concepto:`${res.esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${res.nombreTercero}`,
+        lineas:res.lineas});
     });
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
-        lineas:(a.lineas||[]).map((l,li)=>{
-          const r = aplicarReclasLinea('ajustes', a.id, li, l.codigo||'', l.cuenta||'—');
-          return {codigo:r.codigo, cuenta:r.cuenta, debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
-        })});
+        lineas: construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea})});
     });
     // 8) Nómina — comprobantes importados desde Excel (Fecha/Código/Cuenta/Nro Doc/Detalle/
     // Tasa/Debe Bs/Haber Bs), agrupados por Fecha+Nro Documento al importar.
     (nominaApp||[]).forEach(a=>{
       out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'NÓMINA', modulo:'Nómina', concepto:a.concepto||'Nómina',
-        lineas:(a.lineas||[]).map((l,li)=>{
-          const r = aplicarReclasLinea('nomina', a.id, li, l.codigo||'', l.cuenta||'—');
-          return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0, debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
-        })});
+        lineas: construirLineasManualCompartida(a, {tabId:'nomina', aplicarReclas:aplicarReclasLinea})});
     });
     // 9a) Costo de Producción/Venta — el mismo costo que ya se captura en cada factura
     // (costoUnit × cantidad por ítem, congelado al facturar), igual que el Reporte General de
@@ -15480,7 +15572,7 @@ function App() {
     // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
     // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
-      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV});
+      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea});
       if(!r) return;
       out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
     });
@@ -15489,7 +15581,7 @@ function App() {
     // 9b) Consumos Internos / Muestras Clientes — MISMA función compartida que usa Comprobantes
     // Contables (antes esta sección omitía en silencio si faltaba una cuenta configurada).
     (invMovements||[]).forEach(m=>{
-      const r = construirLineasConsumoInternoCompartido(m, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV});
+      const r = construirLineasConsumoInternoCompartido(m, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'consumos_internos', aplicarReclas:aplicarReclasLinea});
       if(!r) return;
       out.push({fecha:m.date||'', comprobante:m.docRef||m.id, modulo:'Producción', concepto:`${m.type} — ${m.itemDesc||m.itemId||''}${m.notes?' · '+m.notes:''}`, lineas:r.lineas});
     });
@@ -15497,12 +15589,18 @@ function App() {
     // (Débito/Crédito Fiscal, retenciones aplicadas, IVA por pagar o excedente); se incluyen
     // esas mismas líneas guardadas tal cual, sin recalcular nada aquí.
     (cierresIvaApp||[]).forEach(c=>{
+      // Mismo tabId='imp_enterar' que usa Comprobantes Contables para estas filas (las muestra
+      // dentro de la pestaña Impuestos por Enterar) — antes esta sección no reclasificaba en
+      // absoluto.
       out.push({fecha:c.fecha||'', comprobante:c.nroComprobante||c.id, modulo:'Impuestos', concepto:c.concepto||`Compensación de IVA — ${c.quincena||c.mes||''}`,
-        lineas:(c.lineas||[]).map(l=>({
-          codigo:l.codigo, cuenta:l.cuenta,
-          debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0,
-          debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
-        }))});
+        lineas:(c.lineas||[]).map((l,li)=>{
+          const r = aplicarReclasLinea('imp_enterar', c.id, li, l.codigo||'', l.cuenta||'—');
+          return {
+            codigo:r.codigo, cuenta:r.cuenta,
+            debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0,
+            debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0,
+          };
+        })});
     });
     // 11) Depreciación de Activos Fijos — mes a mes, por cada activo, desde el mes SIGUIENTE a
     // su adquisición hasta que se cumple su vida útil (sin pasar de hoy). Usa la cuenta de
@@ -15515,50 +15613,40 @@ function App() {
       const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
       const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
       const hoyYM = getTodayDate().substring(0,7);
+      // Misma tasa única "del día" que usa la pestaña Depreciaciones (settings/general.tasaDeprecUltima,
+      // ver tasaDeprec en ComprobantesContablesApp) — antes cada activo usaba su propia tasaCambio,
+      // así que el mismo mes podía salir con montos en Bs. distintos entre Comprobantes Contables y
+      // Mayor Analítico aunque los USD coincidieran.
+      const tasa = Number(settings?.tasaDeprecUltima||0) || Number(settings?.tasaBCV||0);
+      // Rango de meses a generar: desde el mes siguiente a la adquisición MÁS TEMPRANA de cualquier
+      // activo, hasta hoy — así se cubren todos los meses con algo que depreciar, sin depender de
+      // ningún filtro de fecha de pantalla (a diferencia de Comprobantes Contables).
+      let primerMes = null;
       (activosFijos||[]).forEach(act=>{
-        try{
-          const adq=(act.fechaAdquisicion||'').substring(0,7); if(!adq) return;
-          const vidaMeses=Number(act.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
-          const cc=(activoFijoCfgC?.centrosCosto||[]).find(c=>c.codigo===act.centroCosto||c.nombre===act.centroCosto);
-          const rubroCfg=cc?.rubros?.[act.rubro];
-          if(!rubroCfg?.deprAcumId||!rubroCfg?.costoGastoId) return; // sin cuentas configuradas para ese CC+Rubro
-          // deprAcumId/costoGastoId son el ID de documento de planDeCuentas (así se guardan desde
-          // el selector de ⚙️ Configuración), no el código — hay que resolverlos.
-          const ctaGasto=(planDeCuentas||[]).find(p=>p.id===rubroCfg.costoGastoId);
-          const ctaAcum=(planDeCuentas||[]).find(p=>p.id===rubroCfg.deprAcumId);
-          if(!ctaGasto?.codigo||!ctaAcum?.codigo) return; // la cuenta configurada ya no existe en el plan
-          if(ctaGasto.codigo===ctaAcum.codigo){
-            // Gasto y Dep. Acumulada NO pueden ser la misma cuenta — si lo son, el Debe y el
-            // Haber caen en el mismo código y se cancelan entre sí al sumar por cuenta: Mayor
-            // Analítico sigue mostrando las dos líneas sueltas, pero Estado de Resultados y
-            // Balance General las ven en neto cero y las esconden (por diseño, para no mostrar
-            // cuentas sin movimiento real). Se omite en vez de generar ese asiento roto.
-            console.warn(`⚠️ Depreciación: "${act.centroCosto}" / "${act.rubro}" tiene la misma cuenta para Costo/Gasto y Dep. Acumulada (${ctaGasto.codigo}) — revisar en Activo Fijo → ⚙️ Configuración.`);
-            return;
-          }
-          const depMensualUSD=(Number(act.valorCosto||0)-Number(act.valorResidual||0))/vidaMeses;
-          if(!(depMensualUSD>0)) return;
-          const tasaAct=Number(act.tasaCambio||0)||Number(settings?.tasaBCV||0);
-          const ultimoMesVida=ymAdd(adq,vidaMeses); // adquisición + vida útil completa (la depreciación empieza el mes siguiente, así que se necesitan exactamente vidaMeses entradas)
-          const ultimoMes=ymDiff(ultimoMesVida,hoyYM)<0?hoyYM:ultimoMesVida; // no depreciar más allá de hoy
-          let cur=ymAdd(adq,1); // empieza el mes SIGUIENTE a la adquisición
-          let n=0;
-          while(ymDiff(cur,ultimoMes)>=0 && n<600){
+        const adq=(act.fechaAdquisicion||'').substring(0,7); if(!adq) return;
+        const desde=ymAdd(adq,1);
+        if(!primerMes || ymDiff(desde,primerMes)<0) primerMes=desde;
+      });
+      if(primerMes){
+        let cur=primerMes, n=0;
+        while(ymDiff(cur,hoyYM)<=0 && n<600){
+          const compId=`DEP-${cur}`;
+          const r = construirLineasDepreciacionCompartida(cur, {
+            activosFijos, activoFijoCfg:activoFijoCfgC, planCuentas:planDeCuentas, tasa,
+            tabId:'deprec', aplicarReclas:aplicarReclasLinea, compId,
+          });
+          if(r){
             const [yy,mm]=cur.split('-');
             const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
-            const depBs=tasaAct?depMensualUSD*tasaAct:0;
             out.push({
-              fecha:`${cur}-${String(ultimoDia).padStart(2,'0')}`, comprobante:`DEP-${cur}`, modulo:'Depreciación',
-              concepto:`Depreciación mensual — ${act.nombre||'Activo'} (${act.rubro||'—'})`,
-              lineas:[
-                {codigo:ctaGasto.codigo, cuenta:ctaGasto.nombre||rubroCfg.costoGastoNombre||'', debeBs:depBs, haberBs:0, debeUSD:depMensualUSD, haberUSD:0},
-                {codigo:ctaAcum.codigo, cuenta:ctaAcum.nombre||rubroCfg.deprAcumNombre||'', debeBs:0, haberBs:depBs, debeUSD:0, haberUSD:depMensualUSD},
-              ],
+              fecha:`${cur}-${String(ultimoDia).padStart(2,'0')}`, comprobante:compId, modulo:'Depreciación',
+              concepto:`Depreciación mensual — ${r.nActivos} activo(s) · $${r.totalUSD.toFixed(2)}`,
+              lineas:r.lineas,
             });
-            n++; cur=ymAdd(cur,1);
           }
-        }catch(e){ console.error('⚠️ Depreciación — activo omitido por error:', act?.nombre||act?.id, e); }
-      });
+          n++; cur=ymAdd(cur,1);
+        }
+      }
     })();
     // 12) Impuestos por Enterar (Actividad Económica + Protección de Pensiones + Anticipo ISLR)
     // — un asiento por cada mes que ya se llenó en Comprobantes Contables → Impuestos (esa
@@ -15568,63 +15656,14 @@ function App() {
       const mesesConDatos = new Set([...Object.keys(aeManualPorMesApp||{}), ...Object.keys(ppDataPorMesApp||{})]);
       mesesConDatos.forEach(mesKey=>{
         try{
-          const [anio,mes]=mesKey.split('-'); if(!anio||!mes) return;
-          const lastDay=new Date(parseInt(anio,10),parseInt(mes,10),0).getDate();
-          const rango=(q)=>({desde: q===2?`${anio}-${mes}-16`:`${anio}-${mes}-01`, hasta: q===1?`${anio}-${mes}-15`:`${anio}-${mes}-${String(lastDay).padStart(2,'0')}`});
-          const ventasBrutasQ=(q)=>{
-            const {desde,hasta}=rango(q);
-            const facts=(invoices||[]).filter(inv=>{
-              if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-              if(inv.esAnulacionFiscal) return false;
-              const f=inv.fechaFactura||inv.fecha||'';
-              return f>=desde&&f<=hasta;
-            });
-            const ncnd=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&!n.esAnulacionFiscal&&n.fecha>=desde&&n.fecha<=hasta);
-            let tot=0;
-            facts.forEach(inv=>{ const tasa=Number(inv.tasa||0)||Number(settings?.tasaBCV||0)||1; const base=Number(inv.montoBase||0); tot+=Number(inv.baseGravableBs||0)||base*tasa; });
-            ncnd.forEach(n=>{ tot+=Number(n.monto||0)*(n.tipo==='NC'?-1:1); });
-            return tot;
-          };
-          const totalIngresos=ventasBrutasQ(1)+ventasBrutasQ(2);
-          const fechaMes=`${mesKey}-${String(lastDay).padStart(2,'0')}`;
-          const aeManual=(aeManualPorMesApp||{})[mesKey]||{};
-          const ppData=(ppDataPorMesApp||{})[mesKey]||{};
-          const partesCta=(n)=>n?n.split('—').map(s=>s.trim()):null;
-
-          const tasaUCD=Math.max(Number(aeManual.tasaBcvEuro||0),Number(aeManual.tasaBcvUsd||0))||1;
-          const mtBs=Number(aeCfgApp.mtUCD||0)*tasaUCD;
-          const impuestoAE=Math.max(totalIngresos*(Number(aeCfgApp.alicuotaAE||0)/100), mtBs);
-          const ctaAEg=partesCta(aeCfgApp.cuentaGastoNombre), ctaAEp=partesCta(aeCfgApp.cuentaPasivoNombre);
-          if(impuestoAE>0.005 && ctaAEg && ctaAEp){
-            out.push({fecha:fechaMes, comprobante:`AE-${mesKey}`, modulo:'Impuestos', concepto:`Impuesto Municipal (Actividad Económica) — ${mesKey}`,
-              lineas:[
-                {codigo:ctaAEg[0], cuenta:ctaAEg[1], debeBs:impuestoAE, haberBs:0, debeUSD:tasaUCD?impuestoAE/tasaUCD:0, haberUSD:0},
-                {codigo:ctaAEp[0], cuenta:ctaAEp[1], debeBs:0, haberBs:impuestoAE, debeUSD:0, haberUSD:tasaUCD?impuestoAE/tasaUCD:0},
-              ]});
-          }
-
-          const salarioMinTotal=Number(ppData.cantidadEmpleados||0)*Number(ppData.salarioMinimoOficial||0);
-          const montoPensiones=Number(ppData.minimoTributableUSD||0)*Number(ppData.tasaBcvCierre||0)*Number(ppData.cantidadEmpleados||0);
-          const impuestoPP=(montoPensiones+salarioMinTotal)*(Number(ppData.alicuotaTributable||0)/100);
-          const tasaPP=Number(ppData.tasaBcvCierre||0)||1;
-          const ctaPPg=partesCta(ppCuentasCfgApp.cuentaGastoNombre), ctaPPp=partesCta(ppCuentasCfgApp.cuentaPasivoNombre);
-          if(impuestoPP>0.005 && ctaPPg && ctaPPp){
-            out.push({fecha:fechaMes, comprobante:`PP-${mesKey}`, modulo:'Impuestos', concepto:`Protección de Pensiones — ${mesKey}`,
-              lineas:[
-                {codigo:ctaPPg[0], cuenta:ctaPPg[1], debeBs:impuestoPP, haberBs:0, debeUSD:tasaPP?impuestoPP/tasaPP:0, haberUSD:0},
-                {codigo:ctaPPp[0], cuenta:ctaPPp[1], debeBs:0, haberBs:impuestoPP, debeUSD:0, haberUSD:tasaPP?impuestoPP/tasaPP:0},
-              ]});
-          }
-
-          const anticipoISLR=parseFloat((totalIngresos*0.01).toFixed(2));
-          const ctaISLRa=partesCta(anticipoIslrCfgApp.cuentaActivoNombre), ctaISLRp=partesCta(anticipoIslrCfgApp.cuentaPasivoNombre);
-          if(anticipoISLR>0.005 && ctaISLRa && ctaISLRp){
-            out.push({fecha:fechaMes, comprobante:`ANT-ISLR-${mesKey}`, modulo:'Impuestos', concepto:`Anticipo ISLR (1%) — ${mesKey}`,
-              lineas:[
-                {codigo:ctaISLRa[0], cuenta:ctaISLRa[1], debeBs:anticipoISLR, haberBs:0, debeUSD:tasaUCD?anticipoISLR/tasaUCD:0, haberUSD:0},
-                {codigo:ctaISLRp[0], cuenta:ctaISLRp[1], debeBs:0, haberBs:anticipoISLR, debeUSD:0, haberUSD:tasaUCD?anticipoISLR/tasaUCD:0},
-              ]});
-          }
+          const items = construirLineasImpuestosPorEnterarCompartida(mesKey, {
+            facturasVenta:invoices, notasVenta:notasVentaCD, aeCfg:aeCfgApp, ppCuentasCfg:ppCuentasCfgApp,
+            anticipoIslrCfg:anticipoIslrCfgApp, aeManual:(aeManualPorMesApp||{})[mesKey]||{}, ppData:(ppDataPorMesApp||{})[mesKey]||{},
+            settingsTasa:settings?.tasaBCV, tabId:'imp_enterar', aplicarReclas:aplicarReclasLinea,
+          });
+          items.forEach(it=>{
+            out.push({fecha:it.fecha, comprobante:it.id, modulo:'Impuestos', concepto:`${it.comprobante} — ${mesKey}`, lineas:it.lineas});
+          });
         }catch(e){}
       });
     })();
