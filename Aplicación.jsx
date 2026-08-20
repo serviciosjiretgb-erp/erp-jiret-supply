@@ -46116,6 +46116,10 @@ ${resumenHtml}
     // DIAGNÓSTICO TEMPORAL — quitar una vez resuelto. Revisar la consola del navegador (F12).
     console.log('🔍 DIAGNÓSTICO Estado de Resultados — cuentas 5.2.08.x / 6.2.08.x en cuentasAgg:',
       cuentasAgg.filter(c=>c.codigo.startsWith('5.2.08')||c.codigo.startsWith('6.2.08')));
+    console.log('🔍 DIAGNÓSTICO filtro de fecha — contFiltDesde:', JSON.stringify(contFiltDesde), 'contFiltHasta:', JSON.stringify(contFiltHasta));
+    const _todosDeprec = getAsientosReales().filter(a=>a.modulo==='Depreciación');
+    console.log('🔍 DIAGNÓSTICO todos los asientos de Depreciación (sin filtrar por fecha) — total:', _todosDeprec.length,
+      '| últimos 3:', _todosDeprec.slice(-3).map(a=>({fecha:JSON.stringify(a.fecha), pasaFiltro: (!contFiltDesde||a.fecha>=contFiltDesde)&&(!contFiltHasta||a.fecha<=contFiltHasta)})));
 
     const getDetalleCuenta = (codigo) => asientosPeriodo
       .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
