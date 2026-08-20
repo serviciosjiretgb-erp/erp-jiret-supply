@@ -48116,7 +48116,43 @@ const RestaurarCobrosView = ({settings, appUser}) => {
     // bancos, cuentas por cobrar/pagar y obligaciones financieras son MONETARIAS (no se
     // reexpresan); inventario, activo fijo y patrimonio son NO MONETARIAS (sí se reexpresan).
     // Es solo una sugerencia inicial — se puede corregir cuenta por cuenta.
-    const renderPlanDeCuentasModule = () => { try { return (
+    const renderPlanDeCuentasModule = () => {
+      const pdcFiltradasOrdenadas = () => (planDeCuentas||[]).filter(p => {
+        const q = pdcSearchTerm.toUpperCase();
+        return !q || (p.codigo||'').includes(q) || (p.nombre||'').includes(q) || (p.grupo||'').includes(q) || (p.cuenta||'').includes(q) || (p.subcuenta||'').includes(q);
+      }).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'', undefined, {numeric:true}));
+      const pdcFilasHTML = (filtradas) => filtradas.map(p=>`<tr>
+          <td style="padding:4px 6px;font-family:monospace;font-weight:700;color:#1d4ed8">${p.codigo||''}</td>
+          <td style="padding:4px 6px;font-weight:700">${p.nombre||''}</td>
+          <td style="padding:4px 6px">${p.grupo||''}</td>
+          <td style="padding:4px 6px">${p.subGrupo||''}</td>
+          <td style="padding:4px 6px;color:#666">${p.cuenta||''}</td>
+          <td style="padding:4px 6px;color:#666">${p.subcuenta||''}</td>
+          <td style="padding:4px 6px;text-align:center">${(p.tipoPartida||sugerirTipoPartida(p.codigo))==='MONETARIA'?'Monetaria':'No Monetaria'}</td>
+        </tr>`).join('');
+      const pdcExportarPDF = () => {
+        const filtradas = pdcFiltradasOrdenadas();
+        const body = `<table style="width:100%;border-collapse:collapse;font-size:9px">
+          <thead><tr style="background:#1f2937;color:#fff;text-align:left">
+            <th style="padding:5px 6px">Código</th><th style="padding:5px 6px">Cuenta de Movimiento</th><th style="padding:5px 6px">Grupo</th><th style="padding:5px 6px">Sub-grupo</th><th style="padding:5px 6px">Cuenta</th><th style="padding:5px 6px">Subcuenta</th><th style="padding:5px 6px;text-align:center">Partida</th>
+          </tr></thead>
+          <tbody>${pdcFilasHTML(filtradas)}</tbody>
+        </table>`;
+        const html = pdfOpen('Plan de Cuentas', pdcSearchTerm?`Filtro: "${pdcSearchTerm}"`:'') + body + pdfClose(`${filtradas.length} cuenta(s)`);
+        pdfPrint(html);
+      };
+      const pdcExportarExcel = () => {
+        const filtradas = pdcFiltradasOrdenadas();
+        const html = `<html><head><meta charset="utf-8"></head><body>
+          <table border="1">
+            <tr><th>Código</th><th>Cuenta de Movimiento</th><th>Grupo</th><th>Sub-grupo</th><th>Cuenta</th><th>Subcuenta</th><th>Partida</th></tr>
+            ${filtradas.map(p=>`<tr><td>${p.codigo||''}</td><td>${p.nombre||''}</td><td>${p.grupo||''}</td><td>${p.subGrupo||''}</td><td>${p.cuenta||''}</td><td>${p.subcuenta||''}</td><td>${(p.tipoPartida||sugerirTipoPartida(p.codigo))==='MONETARIA'?'Monetaria':'No Monetaria'}</td></tr>`).join('')}
+          </table></body></html>`;
+        const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url; link.download = `PlanDeCuentas_${getTodayDate()}.xls`;
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      };
+      try { return (
       <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in">
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <div className="flex justify-between items-center mb-6 border-b pb-4">
@@ -48124,6 +48160,8 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                <FileText className="text-blue-500"/> Plan de Cuentas
              </h2>
              <div className="flex gap-2">
+               <button onClick={pdcExportarPDF} className="bg-red-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-red-700"><FileText size={14}/> Exportar PDF</button>
+               <button onClick={pdcExportarExcel} className="bg-green-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-green-700"><ArrowDownToLine size={14}/> Exportar Excel</button>
                <button onClick={()=>{setPdcEditando(null);setPdcForm({codigo:'',nombre:'',grupo:'',subGrupo:'',cuenta:'',subcuenta:''});setShowPDCForm(true);}} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-emerald-700"><Plus size={14}/> Agregar Cuenta</button>
                <button onClick={()=>setShowPDCImport(true)} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-blue-700"><ArrowDownToLine size={14}/> IMPORTAR TXT</button>
                {planDeCuentas.length > 0 && <button onClick={()=>setDialog({title:'Limpiar Plan',text:'Eliminar TODAS las cuentas del plan? Esta accion es irreversible.',type:'confirm',onConfirm:async()=>{const b=writeBatch(db);planDeCuentas.forEach(p=>b.delete(getDocRef('planDeCuentas',p.id)));await b.commit();}})} className="bg-red-100 text-red-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><Trash2 size={14}/></button>}
