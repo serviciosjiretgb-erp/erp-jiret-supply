@@ -28381,7 +28381,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const pct = esc ? esc.pct : 0;
             const rango = esc ? (cfg.cobranzaEscala.indexOf(esc)+1) : '—';
             const monto = parseNum(ne.total||ne.montoBase||0);
-            const facturaVinculada = ne.facturaId ? (invoices||[]).find(inv=>inv.id===ne.facturaId) : null;
+            const facturaVinculada = ne.facturaId ? (invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal) : null;
             const factura = facturaVinculada?.nroFiscal || '';
             return {
               neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'', factura,
@@ -29298,7 +29298,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const handleChangeStatusNE = async (ne, newStatus) => { await updateDoc(getDocRef('notasEntrega',ne.id),{status:newStatus,updatedAt:Date.now()}); };
 
           const corregirVinculacionErronea = (ne) => {
-            const facturaVinc = (invoices||[]).find(i=>i.id===ne.facturaId);
+            const facturaVinc = (invoices||[]).find(i=>i.id===ne.facturaId&&!i.esAnulacionFiscal);
             const descFactura = facturaVinc
               ? `${facturaVinc.nroFiscal||facturaVinc.documento||ne.facturaId} — ${facturaVinc.clientName||'cliente desconocido'}`
               : `${ne.facturaId} (no se encontró el documento — puede ya no existir)`;
@@ -31757,18 +31757,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const tasaBCV = parseNum(settings?.tasaBCV||0)||1;
 
           // ── Pre-computar mapas para lookups O(1) ─────────────────────────────
-          // Mapa invoice por id / nroFiscal / documento
+          // Mapa invoice por id / nroFiscal / documento — excluye Anulación Fiscal: esas
+          // facturas/NC no son operaciones reales (solo corrigen el correlativo del Libro
+          // de Ventas ante un error de impresión), así que nunca deben poder "engancharse"
+          // como la factura de una NE real, ni aunque compartan nroFiscal por coincidencia.
           const _invMap = new Map();
           for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
             if(inv.id) _invMap.set(inv.id, inv);
             if(inv.nroFiscal) _invMap.set(inv.nroFiscal, inv);
             if(inv.documento) _invMap.set(inv.documento, inv);
           }
           const findInv=(key)=>key?_invMap.get(key):null;
 
-          // Mapa: neId/neDoc → lista de invoices vinculados a esa NE
+          // Mapa: neId/neDoc → lista de invoices vinculados a esa NE (excluye Anulación Fiscal)
           const _invsByNe = new Map();
           for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
             if(inv.neOrigen){
               if(!_invsByNe.has(inv.neOrigen)) _invsByNe.set(inv.neOrigen,[]);
               _invsByNe.get(inv.neOrigen).push(inv);
@@ -31786,8 +31791,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const rifOk=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
             // Misma lógica que invVinc en el modal cobro
             const inv = ne.facturaId
-              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOk(i))
-              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOk(i));
+              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOk(i))
+              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOk(i));
             if(!inv) continue;
             // Indexar por todos los identificadores posibles de la factura
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
@@ -32138,7 +32143,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
                   const totalUSD=parseNum(ne.total||ne.totalUSD||0);
                   clTotalUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
-                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
+                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
                     <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
@@ -32228,7 +32233,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const d=getAgingDays(ne,fechaRef);
                   const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-                  const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                  const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                   const docFisc=invVinc?(invVinc.nroFiscal||invVinc.documento||'—'):'—';
                   const diasCred=parseNum(ne.diasCredito||0);
                   const retDetalleAg=getRetsDetalleNE(ne);
@@ -32271,7 +32276,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
                   const totalUSD=parseNum(ne.total||ne.totalUSD||0);
                   clTotUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
-                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
+                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
                   body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#b45309">${getVence(ne)}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                 });
@@ -32874,7 +32879,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const saldo=getSaldoNEAjustado(ne);
                         const sel=!!pm.nesSelec?.[ne.id];
                         const aplicado=distMap[ne.id]||0;
-                        const invVinc=ne._esNDDirecta?null:(ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())));
+                        const invVinc=ne._esNDDirecta?null:(ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())));
                         const nroFiscal=ne._esNDDirecta?ne.nroFiscal:(invVinc?.nroFiscal||ne.nroFiscal||null);
                         const tasa=parseNum(invVinc?.tasa||ne.tasa||tasaBCV||1);
                         const baseUSD=parseNum(invVinc?.montoBase||ne.montoBase||ne.total||0);
@@ -33421,8 +33426,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           const getNCsNE = (ne) => {
                             const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
                             const invNc = ne.facturaId
-                              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkNc(i))
-                              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOkNc(i));
+                              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkNc(i))
+                              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOkNc(i));
                             const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
                             const seenNc=new Set(); const ncsNe=[];
                             for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
@@ -33492,9 +33497,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                                           // Factura vinculada (ambas direcciones, con guarda de RIF para evitar facturas de otro cliente)
                                           const _rifOkInv=inv=>!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
-                                          const invVinc=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&_rifOkInv(inv))||
-                                                         (ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&_rifOkInv(inv)):null)||
-                                                         (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal&&_rifOkInv(inv)):null);
+                                          const invVinc=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&!inv.esAnulacionFiscal&&_rifOkInv(inv))||
+                                                         (ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&!inv.esAnulacionFiscal&&_rifOkInv(inv)):null)||
+                                                         (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal&&!inv.esAnulacionFiscal&&_rifOkInv(inv)):null);
                                           const docFiscal = invVinc
                                             ? (invVinc.nroFiscal || invVinc.nroControl || ne.nroFiscal || '—')
                                             : (ne.nroFiscal || '—');
@@ -34018,8 +34023,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // Se busca PRIMERO por neOrigen/nesAdicionales de la propia factura (la misma fuente
             // que usa Mayor Analítico, así que es la más confiable) — facturaId (guardado aparte
             // en la NE) es solo respaldo si ninguna factura la referencia directamente.
-            let inv = (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))&&rifOkEc(i));
-            if(!inv && ne.facturaId) inv = (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkEc(i));
+            let inv = (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))&&!i.esAnulacionFiscal&&rifOkEc(i));
+            if(!inv && ne.facturaId) inv = (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkEc(i));
             if(!inv) continue;
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
               if(!_neByFiscalEc.has(k)) _neByFiscalEc.set(k, {ne, inv});
@@ -34062,8 +34067,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const getNCsNE = (ne) => {
             const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
             const invNc = ne.facturaId
-              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&rifOkNc(i))
-              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&rifOkNc(i));
+              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkNc(i))
+              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOkNc(i));
             const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
             const seenNc=new Set(); const ncsNe=[];
             for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
@@ -34189,7 +34194,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const fV=n=>{const a=Math.abs(parseNum(n)||0);const s=a.toFixed(2).split('.');return(n<0?'-':'')+s[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+s[1];};
             const badge=(txt,bg,col)=>'<span style="background:'+bg+';color:'+col+';padding:1px 6px;border-radius:8px;font-size:7px;font-weight:900;white-space:nowrap">'+txt+'</span>';
             const neRif=ne=>ne.clientRif||'';
-            const neInvFiscal=ne=>localNroFiscal[((invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento)||{}).id||'']||((invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento)||{}).nroFiscal||'';
+            const neInvFiscal=ne=>localNroFiscal[((invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal)||{}).id||'']||((invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal)||{}).nroFiscal||'';
             let bodyHtml='';
             cliList.forEach(cl=>{
               const manualRetsCl=_manualRetsPorClienteEc.get(cl.clientRif)||[];
@@ -34208,7 +34213,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let neRowsHtml='';
               cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne,ni)=>{
                 const sNE=getSaldoNE(ne);
-                const invV=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                const invV=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                 const fiscalNum=localNroFiscal[invV?.id||'']||invV?.nroFiscal||'';
                 const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id);
                 const totalCobNE=cobrosNE.reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -34391,7 +34396,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 bodyXls+='<tr style="background:#0f172a;color:#f97316;font-weight:bold;font-size:9pt"><td>Documento</td><td>Fecha</td><td>Tipo</td><td>Detalle</td><td>Cargo USD</td><td>Ret. IVA</td><td>Otra Ret.</td><td>Cobrado</td><td>Saldo</td></tr>';
                 cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
                   const sNEx=getSaldoNE(ne);
-                  const invVx=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                  const invVx=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                   const fiscalNumX=localNroFiscal[invVx?.id||'']||invVx?.nroFiscal||'';
                   const cobrosNEx=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                   const totalCobNEx=cobrosNEx.reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -34541,7 +34546,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                            const invV2=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)))&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                            const invV2=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)))&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                             const retDetalle2=getRetsDetalleNEec(ne);
                             const retsNE2=[...retDetalle2.iva,...retDetalle2.otras].sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
                             const enCredito2=sNE<-0.01;
@@ -45848,8 +45853,8 @@ ${resumenHtml}
                 // Una NE ya está reflejada en Mayor Analítico si tiene factura fiscal vinculada
                 // Y esa factura cae dentro del corte — si no, la venta todavía no existe para la
                 // contabilidad formal, aunque la mercancía ya se haya entregado.
-                const invPorNE = (ne) => (invoices||[]).find(i=>i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))
-                  || (ne.facturaId ? (invoices||[]).find(i=>i.id===ne.facturaId||i.documento===ne.facturaId) : null);
+                const invPorNE = (ne) => (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))&&!i.esAnulacionFiscal)
+                  || (ne.facturaId ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal) : null);
                 // Si hay "Inicio de Contabilidad Real" activo, todo lo anterior a esa fecha ya
                 // debería estar resumido dentro del Ajuste manual de saldo inicial (mismo criterio
                 // que usa getAsientosReales al final) — sin este límite, una NE vieja se contaba
