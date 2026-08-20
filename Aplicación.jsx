@@ -15814,6 +15814,14 @@ function App() {
               concepto:`Depreciación mensual — ${r.nActivos} activo(s) · $${r.totalUSD.toFixed(2)}`,
               lineas:r.lineas,
             });
+            // DIAGNÓSTICO TEMPORAL — quitar una vez confirmado por qué Depreciación no llegaba a
+            // Estado de Resultados. Revisar la consola del navegador (F12) para ver si esto imprime
+            // algo para julio 2026, y con qué códigos de cuenta exactos.
+            if (cur === '2026-07') {
+              console.log('🔍 DIAGNÓSTICO Depreciación', cur, '— líneas generadas:', r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeUSD:l.debeUSD, haberUSD:l.haberUSD})));
+            }
+          } else if (cur === '2026-07') {
+            console.log('🔍 DIAGNÓSTICO Depreciación', cur, '— construirLineasDepreciacionCompartida devolvió null (sin activos en depreciación ese mes, o porCCRubro vacío)');
           }
           n++; cur=ymAdd(cur,1);
         }
@@ -46104,6 +46112,9 @@ ${resumenHtml}
       });
     });
     const cuentasAgg = Object.values(porCuenta);
+    // DIAGNÓSTICO TEMPORAL — quitar una vez resuelto. Revisar la consola del navegador (F12).
+    console.log('🔍 DIAGNÓSTICO Estado de Resultados — cuentas 5.2.08.x / 6.2.08.x en cuentasAgg:',
+      cuentasAgg.filter(c=>c.codigo.startsWith('5.2.08')||c.codigo.startsWith('6.2.08')));
 
     const getDetalleCuenta = (codigo) => asientosPeriodo
       .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
