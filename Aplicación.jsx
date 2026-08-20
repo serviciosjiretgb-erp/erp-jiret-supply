@@ -15678,15 +15678,23 @@ function App() {
         const [codCli,...restCli]=(cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes').split('—');
         const nomCli=restCli.join('—').trim();
         const compIdNota = `NOTA-${n.id}`;
-        const lin0=aplicarReclasLinea('ventas',compIdNota,0,codCli.trim(),nomCli);
-        const lin1=aplicarReclasLinea('ventas',compIdNota,1,'4.3.01.99.001','Ajustes de Cuentas por Cobrar (No Fiscal)');
+        // El orden final del array cambia según sea NC o ND (cliente y ajuste intercambian
+        // posición) — la clave de reclasificación debe coincidir con la POSICIÓN FINAL en el
+        // array, no con un "rol" fijo, porque así es como CC (aplicarReclasCC, que es por donde
+        // el usuario realmente reclasifica) guarda la clave: por índice de línea tal como se
+        // renderiza. Antes esto usaba lineIdx=0 para cliente y 1 para ajuste siempre, sin
+        // importar en qué posición terminaban — para NC (ajuste en posición 0), la clave nunca
+        // coincidía con la que guardaba CC, así que reclasificar el lado "Ajustes" de una NC no
+        // fiscal nunca se reflejaba aquí (Mayor Analítico, Balance General, Estado de Resultados).
+        const linCli=aplicarReclasLinea('ventas',compIdNota,esNC?1:0,codCli.trim(),nomCli);
+        const linAdj=aplicarReclasLinea('ventas',compIdNota,esNC?0:1,'4.3.01.99.001','Ajustes de Cuentas por Cobrar (No Fiscal)');
         out.push({fecha:n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo||'NC'} ${n.nroDocumento||''} — ${n.descripcion||n.clientName||'—'} (no fiscal)`,
           lineas: esNC ? [
-            {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
-            {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+            {codigo:linAdj.codigo, cuenta:linAdj.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+            {codigo:linCli.codigo, cuenta:linCli.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
           ] : [
-            {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
-            {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+            {codigo:linCli.codigo, cuenta:linCli.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+            {codigo:linAdj.codigo, cuenta:linAdj.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
           ]});
       }catch(e){}
     });
