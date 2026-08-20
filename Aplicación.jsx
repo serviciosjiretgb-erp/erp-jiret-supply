@@ -3246,6 +3246,17 @@ const construirLineasDepreciacionCompartida = (ym, ctx) => {
       console.warn(`⚠️ Depreciación: "${cc}" / "${rubro}" tiene la misma cuenta para Costo/Gasto y Dep. Acumulada (${gasto.codigo}) — revisar en Activo Fijo → ⚙️ Configuración.`);
       return;
     }
+    // Aviso (no cambia el asiento) si la cuenta de Dep. Acumulada configurada no parece
+    // corresponder al rubro del activo — ej. Mobiliario apuntando por error a la cuenta
+    // acumuladora de Maquinaria y Equipos. Encontrado en datos reales: C2/Mobiliario y Equipo de
+    // Oficina llevaba su Dep. Acumulada a 1.1.06.02.002 (Maquinaria y Equipos) en vez de
+    // 1.1.06.06.002 (Mobiliario). Esto es una cuenta mal seleccionada en la configuración de ese
+    // rubro, no un error de cálculo — se corrige en Activo Fijo → ⚙️ Configuración, ahí donde se
+    // liga cada rubro a su cuenta de costo/gasto y su cuenta de Dep. Acumulada.
+    const _claveRubro = (rubro||'').match(/inmueble|galp[oó]n|maquinari[ae]|equipos?\s+de\s+comput|comput|veh[ií]culo|servidor|mobiliario|planta\s+el[eé]ctrica|montacargas/i);
+    if(_claveRubro && acum.nombre && !new RegExp(_claveRubro[0],'i').test(acum.nombre)){
+      console.warn(`⚠️ Depreciación: el rubro "${rubro}" (${cc}) tiene configurada la cuenta de Dep. Acumulada "${acum.codigo} — ${acum.nombre}", que no parece corresponder al rubro — revisar en Activo Fijo → ⚙️ Configuración.`);
+    }
     const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
     totalUSD+=usd; nAct+=n;
     detalles.push({usd,bs,cc,rubro,gasto,acum});
@@ -11768,7 +11779,15 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
     const codC = ccNormCodigo(c.codigo);
     const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
     const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
-    const grNom = grupoMap[grKey] || pdc?.grupo || grKey;
+    let grNom = grupoMap[grKey] || pdc?.grupo || grKey;
+    // Entre "COSTOS" y "GASTOS" el prefijo numérico por sí solo es ambiguo (ej. 5.2.xx cae en
+    // "GASTOS" por defecto vía grupoMap, pero el usuario puede haberlo clasificado como "COSTOS"
+    // en su Plan de Cuentas) — ahí sí manda el Grupo real configurado. El resto de grupos
+    // (Activos/Pasivos/Patrimonio/Ingresos) no se toca, siguen con el texto de grupoMap de siempre.
+    if (pdc?.grupo && (grNom==='GASTOS'||grNom==='COSTOS')) {
+      if (/costo/i.test(pdc.grupo)) grNom = 'COSTOS';
+      else if (/gasto/i.test(pdc.grupo)) grNom = 'GASTOS';
+    }
     // Camino completo: categoría del Estado de Resultados, y luego los 4 niveles reales del
     // Plan de Cuentas (Grupo, Sub-grupo, Cuenta, Subcuenta) — cada uno como carpeta con su
     // propio subtotal. Se descartan segmentos vacíos y los que se repiten consecutivos (Cuenta
@@ -46096,40 +46115,33 @@ ${resumenHtml}
       ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || /orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
       : cuentasAgg;
     const treeIngresos = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-    // En Resultado Planta, el Costo de Producción incluye 5.1 (costo directo) Y 5.2 (Costo
-    // Operacional: personal de producción) — este último vive dentro de "Gastos Operativos" en
-    // el plan normal, pero es costo de planta, no gasto administrativo, así que aquí sí cuenta.
-    const gruposCostoPlanta = contERVistaPlanta ? ['5.1','5.2'] : ['5.1'];
-    // En Resultado Planta, Costo de Venta (Mercancía) NO debe contar — es reventa de mercancía
-    // comprada, no algo que produjo la planta. Se excluye por su código configurado (no por
-    // prefijo), así el resto de lo que vive bajo 5.1 (que sí es costo de planta) queda intacto.
+    // Costo vs Gasto: se decide por el Grupo REAL que el usuario configuró en Plan de Cuentas
+    // para esa cuenta (ej. 5.2.xx / 5.3.xx de depreciación operacional, que el usuario clasificó
+    // como "COSTOS", no "GASTOS" — el prefijo numérico por sí solo los mandaría a Gastos). Si la
+    // cuenta no está registrada en el Plan, se cae al criterio anterior por prefijo (5.1 = Costo;
+    // en Vista Planta, 5.2 también). Esto reemplaza el parche que sacaba Depreciación del árbol
+    // normal y la mostraba aparte al final — ahora cada cuenta de depreciación cae en su Grupo/
+    // Sub-grupo/Cuenta/Subcuenta real, igual que cualquier otra cuenta de Costos o Gastos.
+    const _grupoPlanDeCuenta = (codigo) => {
+      const pdc = (planDeCuentas||[]).find(p=>ccNormCodigo(p.codigo)===ccNormCodigo(codigo));
+      if (!pdc?.grupo) return null;
+      if (/costo/i.test(pdc.grupo)) return 'COSTOS';
+      if (/gasto/i.test(pdc.grupo)) return 'GASTOS';
+      return null;
+    };
+    const _esCuentaDeCosto = (c) => {
+      const g = _grupoPlanDeCuenta(c.codigo);
+      if (g) return g==='COSTOS';
+      return c.codigo.startsWith('5.1') || (contERVistaPlanta && c.codigo.startsWith('5.2'));
+    };
     const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
-    const cuentasParaCostos = (contERVistaPlanta && codCostoMercancia)
-      ? cuentasAggUsar.filter(c=>c.codigo!==codCostoMercancia)
-      : cuentasAggUsar;
-    let treeCostos    = ccBuildArbol(cuentasParaCostos, planDeCuentas, gruposCostoPlanta, c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const cuentasParaCostos = cuentasAggUsar.filter(c => _esCuentaDeCosto(c) && !(contERVistaPlanta && codCostoMercancia && c.codigo===codCostoMercancia));
+    let treeCostos = ccBuildArbol(cuentasParaCostos, planDeCuentas, ['5'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     if (contERVistaPlanta && treeCostos.length) {
       const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
       treeCostos = [{ n:'COSTO DE PRODUCCIÓN', c: treeCostos, u, b }];
     }
-    // Depreciación se saca del árbol normal y se muestra aparte, calculada DIRECTO desde
-    // cuentasAgg (sin pasar por ccBuildArbol) — así se garantiza que aparezca sin depender de
-    // encontrar la causa exacta de por qué el árbol no la estaba mostrando.
-    // Códigos EXACTOS configurados como "Cuenta de Costo/Gasto" en Activo Fijo → Configuración —
-    // NO un patrón de texto genérico. ".08.01." como substring atrapaba cuentas de OTRAS ramas
-    // que por pura coincidencia numérica también tienen esos dígitos (ej. 5.3.08.01.003 = Flete
-    // de Ventas, nada que ver con depreciación) y se las robaba de su sección real.
-    const codigosDeprecCfg = new Set();
-    Object.values(activoFijoCfgC?.centrosCosto||[]).forEach(cc=>{
-      Object.values(cc?.rubros||{}).forEach(r=>{
-        const cta=r?.costoGastoId?(planDeCuentas||[]).find(p=>p.id===r.costoGastoId):null;
-        if(cta?.codigo) codigosDeprecCfg.add(cta.codigo);
-      });
-    });
-    const cuentasDeprec = contERVistaPlanta ? [] : cuentasAgg.filter(c=>codigosDeprecCfg.has(c.codigo));
-    const depreciacionUSD = cuentasDeprec.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
-    const depreciacionBs  = cuentasDeprec.reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const cuentasGastos = contERVistaPlanta ? [] : cuentasAgg.filter(c=>(c.codigo.startsWith('6')||(c.codigo.startsWith('5')&&!c.codigo.startsWith('5.1')))&&!codigosDeprecCfg.has(c.codigo));
+    const cuentasGastos = contERVistaPlanta ? [] : cuentasAggUsar.filter(c=>!_esCuentaDeCosto(c) && (c.codigo.startsWith('5')||c.codigo.startsWith('6')));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
@@ -46140,23 +46152,21 @@ ${resumenHtml}
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
     const totalIngresosUSD=sumTree(treeIngresos,'u'), totalIngresosBs=sumTree(treeIngresos,'b');
     const totalCostosUSD=sumTree(treeCostos,'u'), totalCostosBs=sumTree(treeCostos,'b');
-    const totalGastosUSD=sumTree(treeGastosReal,'u')+depreciacionUSD, totalGastosBs=sumTree(treeGastosReal,'b')+depreciacionBs;
+    const totalGastosUSD=sumTree(treeGastosReal,'u'), totalGastosBs=sumTree(treeGastosReal,'b');
     const utilidadBrutaUSD=totalIngresosUSD-totalCostosUSD, utilidadBrutaBs=totalIngresosBs-totalCostosBs;
     const utilidadNetaUSD=utilidadBrutaUSD-totalGastosUSD, utilidadNetaBs=utilidadBrutaBs-totalGastosBs;
     const showUSD = contERCurrency!=='bs'; const showBS = contERCurrency!=='usd';
     const baseVentas = totalIngresosUSD||1;
 
     const exportarExcel = () => {
-      const nodoDeprec = cuentasDeprec.length>0 ? [{n:'DEPRECIACIÓN', c:cuentasDeprec.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:depreciacionUSD, b:depreciacionBs}] : [];
-      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal, ...nodoDeprec];
+      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
       const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
     };
     const exportarPDF = () => {
-      const nodoDeprec = cuentasDeprec.length>0 ? [{n:'DEPRECIACIÓN', c:cuentasDeprec.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:depreciacionUSD, b:depreciacionBs}] : [];
-      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal, ...nodoDeprec];
+      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">RESULTADO DEL EJERCICIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
       const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas, getDetalleCuenta, contERExpandAll);
       ccAbrirVentana(html);
@@ -46209,23 +46219,6 @@ ${resumenHtml}
                     <td/>
                   </tr>
                   {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
-                  {cuentasDeprec.length>0 && (<>
-                    <tr className="bg-slate-50"><td className="px-3 py-1.5 font-black text-slate-500 text-[10px] uppercase" colSpan={showUSD&&showBS?3:2}>Depreciación</td></tr>
-                    {cuentasDeprec.map((c,i)=>(
-                      <tr key={'dep'+i} className="border-b border-gray-50">
-                        <td className="px-3 py-1 pl-8 text-gray-600 text-[10px]"><span className="text-blue-400 font-mono text-[9px] mr-1">{c.codigo}</span>{c.cuenta}</td>
-                        {showUSD && <td className="px-3 py-1 text-right font-mono text-[10px]">{ccFmtR(c.debeUSD-c.haberUSD)}</td>}
-                        {showBS  && <td className="px-3 py-1 text-right font-mono text-[10px]">{ccFmtR(c.debeBs-c.haberBs)}</td>}
-                        <td/>
-                      </tr>
-                    ))}
-                    <tr className="border-b-2 border-gray-100">
-                      <td className="px-3 py-1.5 pl-4 font-black text-gray-600 text-[10px] uppercase">Total Depreciación</td>
-                      {showUSD && <td className="px-3 py-1.5 text-right font-mono font-black text-[10px]">{ccFmtR(depreciacionUSD)}</td>}
-                      {showBS  && <td className="px-3 py-1.5 text-right font-mono font-black text-[10px]">{ccFmtR(depreciacionBs)}</td>}
-                      <td/>
-                    </tr>
-                  </>)}
                   <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
                     <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
                     {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
