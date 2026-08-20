@@ -3543,6 +3543,40 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const cuadrado=Math.abs(totDeb-totCred)<0.02;
   return{lineas,totDeb,totCred,cuadrado,tieneOp};
 };
+// Cuando una factura consolida NE de antes Y después de "Inicio de Contabilidad Real" (ej.
+// Fact. 00003205: junta NE de junio —ya cubiertas por el Ajuste "Saldo Junio"— con NE de
+// julio), reconocer el total completo en la fecha fiscal de la factura duplica la porción
+// vieja: ya está en el Ajuste de saldo inicial Y en la factura. Se prorratea montoBase/iva/
+// total a solo la fracción de NE ≥ corte (por proporción de sus montos en USD) — el resto se
+// asume ya representado por el Ajuste. Devuelve la factura sin cambios si no aplica (sin
+// corte configurado, una sola NE vinculada, o todas las NE del mismo lado del corte).
+const prorratearFacturaPorCorte = (f, notasEntrega, fechaCorte) => {
+  if (!fechaCorte) return f;
+  const nesIds = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean);
+  if (nesIds.length < 2) return f;
+  const nes = nesIds.map(id => (notasEntrega||[]).find(n => n.id===id || n.documento===id)).filter(Boolean);
+  if (nes.length < 2) return f; // no se pudieron resolver al menos 2 NE reales — no se toca
+  const nuevas = nes.filter(n => (n.fecha||'') >= fechaCorte);
+  const viejas = nes.filter(n => (n.fecha||'') < fechaCorte);
+  if (!viejas.length || !nuevas.length) return f; // no está mezclada, no hace falta prorratear
+  const totalNEs = nes.reduce((s,n)=>s+pNum(n.total??n.montoBase??0),0);
+  const totalNuevas = nuevas.reduce((s,n)=>s+pNum(n.total??n.montoBase??0),0);
+  if (totalNEs <= 0) return f;
+  const frac = totalNuevas/totalNEs;
+  const totalOriginal = pNum(f.total||(pNum(f.montoBase||0)+pNum(f.iva||0)));
+  return {
+    ...f,
+    montoBase: pNum(f.montoBase||0)*frac,
+    iva: pNum(f.iva||0)*frac,
+    total: totalOriginal*frac,
+    baseGravableBs: f.baseGravableBs!=null ? pNum(f.baseGravableBs)*frac : f.baseGravableBs,
+    ivaBs: f.ivaBs!=null ? pNum(f.ivaBs)*frac : f.ivaBs,
+    _prorrateada: true,
+    _fraccionReconocida: frac,
+    _nesExcluidas: viejas.map(n=>n.documento||n.id),
+    _montoExcluidoUSD: totalOriginal*(1-frac),
+  };
+};
 const pCtaNombre=(cat)=>{const c=P_CUENTA_MAP[cat];return c?`${c.codigo} — ${c.nombre}`:''};
 
 
@@ -15566,14 +15600,18 @@ function App() {
       const nf = f.nroFiscal || f.documento || '';
       if (nf && _nroFiscalVistoApp.get(nf)?.id !== f.id) return; // duplicado — ya se avisó arriba, se omite
       try{
-        const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
+        const fParaAsiento = prorratearFacturaPorCorte(f, notasEntrega, settings?.fechaInicioContabilidad||'');
+        const asiento=generarAsientoVenta(fParaAsiento,cuentasIngresoCfg,planDeCuentas,clients);
         const nesRef = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean);
         const opsRef = [f.opAsignada, ...(f.opsAsignadas||[])].filter(Boolean);
         const refExtra = [
           nesRef.length ? `NE: ${nesRef.join(', ')}` : '',
           opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
         ].filter(Boolean).join(' · ');
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
+        const avisoProrrateo = fParaAsiento._prorrateada
+          ? ` · ⚠ PRORRATEADA (excluye NE previas al corte: ${fParaAsiento._nesExcluidas.join(', ')} — $${fParaAsiento._montoExcluidoUSD.toFixed(2)} ya cubiertos por el Ajuste de saldo inicial)`
+          : '';
+        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}${avisoProrrateo}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
       }catch(e){}
     });
     // 2b) Notas de Crédito/Débito de Ventas FISCALES (naturaleza==='FISCAL'), sin contar las que
@@ -27237,6 +27275,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'reporte_ventas' && (() => {
           const filtInvs = (invoices||[]).filter(inv=>{
             if(!inv) return false;
+            if(inv.esAnulacionFiscal) return false; // anuladas fiscalmente no deben viajar a este reporte
             const _fechaMostrada=inv.fechaFactura||inv.fecha||'';
             if(pvFilter && pvFilter !== 'general') { if(!_fechaMostrada.startsWith(pvFilter)) return false; }
             // Respetar filtros activos de Facturación (año + mes)
