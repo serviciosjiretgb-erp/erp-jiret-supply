@@ -3253,8 +3253,9 @@ const construirLineasDepreciacionCompartida = (ym, ctx) => {
     // 1.1.06.06.002 (Mobiliario). Esto es una cuenta mal seleccionada en la configuración de ese
     // rubro, no un error de cálculo — se corrige en Activo Fijo → ⚙️ Configuración, ahí donde se
     // liga cada rubro a su cuenta de costo/gasto y su cuenta de Dep. Acumulada.
-    const _claveRubro = (rubro||'').match(/inmueble|galp[oó]n|maquinari[ae]|equipos?\s+de\s+comput|comput|veh[ií]culo|servidor|mobiliario|planta\s+el[eé]ctrica|montacargas/i);
-    if(_claveRubro && acum.nombre && !new RegExp(_claveRubro[0],'i').test(acum.nombre)){
+    const _sinTildes = (s) => (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    const _claveRubro = _sinTildes(rubro).match(/inmueble|galpon|maquinari[ae]|equipos?\s+de\s+comput|comput|vehiculo|servidor|mobiliario|planta\s+electrica|montacargas/i);
+    if(_claveRubro && acum.nombre && !new RegExp(_claveRubro[0],'i').test(_sinTildes(acum.nombre))){
       console.warn(`⚠️ Depreciación: el rubro "${rubro}" (${cc}) tiene configurada la cuenta de Dep. Acumulada "${acum.codigo} — ${acum.nombre}", que no parece corresponder al rubro — revisar en Activo Fijo → ⚙️ Configuración.`);
     }
     const usd=Number(monto.toFixed(2)); const bs=tasa?usd*tasa:0;
