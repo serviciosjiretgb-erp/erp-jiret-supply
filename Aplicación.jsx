@@ -35148,10 +35148,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const mesesLabel = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
           const mesLabel = mesesLabel[parseInt(libroMes,10)-1]||'';
 
+          // Un registro (factura o NC/ND) cae en el período mostrado si su fecha cruda cae en el
+          // rango, O si tiene un Período Fiscal explícito (periodoAnio/periodoMes/quincena, como
+          // los que asigna Anulación Fiscal) que coincide — así una NC de anulación no "se pierde"
+          // del libro solo porque se registró con fecha de días después que la factura que anula.
+          const _matchPeriodoExplicito = (doc) => {
+            if(!doc || !doc.periodoAnio || !doc.periodoMes) return false;
+            if(String(doc.periodoAnio)!==String(libroAnio)) return false;
+            if(String(doc.periodoMes).padStart(2,'0')!==mes2) return false;
+            if(libroQuincena!=='AMBAS' && doc.quincena && doc.quincena!=='AMBAS' && doc.quincena!==libroQuincena) return false;
+            return true;
+          };
           // ── Facturas con nroFiscal en el período ──────────────────────────────
           const factsPeriodo = (invoices||[]).filter(inv=>{
             if(!inv||(!inv.nroFiscal&&!inv.nroControl)) return false;
-            const f=inv.fechaFactura||inv.fecha||''; if(f<periodoDesde||f>periodoHasta) return false;
+            const f=inv.fechaFactura||inv.fecha||'';
+            if((f<periodoDesde||f>periodoHasta) && !_matchPeriodoExplicito(inv)) return false;
             if(libroFiltFact&&!(inv.nroFiscal||'').includes(libroFiltFact.toUpperCase())&&!(inv.nroControl||'').includes(libroFiltFact.toUpperCase())&&!(inv.documento||'').toUpperCase().includes(libroFiltFact.toUpperCase())) return false;
             if(libroFiltCliente&&!(inv.clientName||'').toUpperCase().includes(libroFiltCliente.toUpperCase())&&!(inv.clientRif||'').includes(libroFiltCliente.toUpperCase())) return false;
             return true;
@@ -35173,7 +35185,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           }).sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
 
           // ── NC/ND Fiscales del período ────────────────────────────────────────
-          const ncndFiscales=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=periodoDesde&&n.fecha<=periodoHasta);
+          const ncndFiscales=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&((n.fecha>=periodoDesde&&n.fecha<=periodoHasta)||_matchPeriodoExplicito(n)));
 
           // ── Filas del libro ───────────────────────────────────────────────────
           const rows=[]; let seq=1;
@@ -45848,7 +45860,7 @@ ${resumenHtml}
                   </div>
                 </div>
               )}
-              {cuentaInfo && /cobrar/i.test(cuentaInfo.cuenta||'') && (() => {
+              {cuentaInfo && cuentaInfo.codigo==='1.1.02.01.001' && (() => {
                 const corte = contFiltHasta || getTodayDate();
                 // Una NE ya está reflejada en Mayor Analítico si tiene factura fiscal vinculada
                 // Y esa factura cae dentro del corte — si no, la venta todavía no existe para la
