@@ -15801,7 +15801,7 @@ function App() {
       });
       if(primerMes){
         let cur=primerMes, n=0;
-        while(ymDiff(cur,hoyYM)<=0 && n<600){
+        while(ymDiff(cur,hoyYM)>=0 && n<600){
           const compId=`DEP-${cur}`;
           const r = construirLineasDepreciacionCompartida(cur, {
             activosFijos, activoFijoCfg:activoFijoCfgC, planCuentas:planDeCuentas, tasa,
@@ -15815,14 +15815,6 @@ function App() {
               concepto:`Depreciación mensual — ${r.nActivos} activo(s) · $${r.totalUSD.toFixed(2)}`,
               lineas:r.lineas,
             });
-            // DIAGNÓSTICO TEMPORAL — quitar una vez confirmado por qué Depreciación no llegaba a
-            // Estado de Resultados. Revisar la consola del navegador (F12) para ver si esto imprime
-            // algo para julio 2026, y con qué códigos de cuenta exactos.
-            if (cur === '2026-07') {
-              console.log('🔍 DIAGNÓSTICO Depreciación', cur, '— líneas generadas:', r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeUSD:l.debeUSD, haberUSD:l.haberUSD})));
-            }
-          } else if (cur === '2026-07') {
-            console.log('🔍 DIAGNÓSTICO Depreciación', cur, '— construirLineasDepreciacionCompartida devolvió null (sin activos en depreciación ese mes, o porCCRubro vacío)');
           }
           n++; cur=ymAdd(cur,1);
         }
@@ -46119,16 +46111,6 @@ ${resumenHtml}
       });
     });
     const cuentasAgg = Object.values(porCuenta);
-    // DIAGNÓSTICO TEMPORAL EN PANTALLA — quitar una vez resuelto.
-    const _todosDeprecDbg = getAsientosReales().filter(a=>a.modulo==='Depreciación');
-    const _debugDeprec = {
-      totalGenerados: _todosDeprecDbg.length,
-      ultimos5: _todosDeprecDbg.slice(-5).map(a=>a.fecha),
-      contFiltDesde: JSON.stringify(contFiltDesde),
-      contFiltHasta: JSON.stringify(contFiltHasta),
-      enAsientosPeriodo: asientosPeriodo.filter(a=>a.modulo==='Depreciación').length,
-      en562o62Codigos: cuentasAgg.filter(c=>c.codigo.startsWith('5.2.08')||c.codigo.startsWith('6.2.08')).map(c=>`${c.codigo}:${(c.debeUSD-c.haberUSD).toFixed(2)}`),
-    };
 
     const getDetalleCuenta = (codigo) => asientosPeriodo
       .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
@@ -46199,10 +46181,6 @@ ${resumenHtml}
 
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
-        <div className="bg-yellow-100 border-4 border-yellow-500 rounded-xl p-4 mb-4 text-[11px] font-mono whitespace-pre-wrap">
-          <div className="font-black text-yellow-800 mb-1">🔍 DIAGNÓSTICO TEMPORAL — Depreciación</div>
-          {JSON.stringify(_debugDeprec, null, 2)}
-        </div>
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           <ContNavBar active="estado_resultados_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
