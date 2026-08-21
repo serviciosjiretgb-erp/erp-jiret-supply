@@ -45992,9 +45992,12 @@ ${resumenHtml}
   // MÓDULO BALANCE DE COMPROBACIÓN (independiente)
   // ============================================================================
   const renderBalanceComprobacionModule = () => {
+    const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
+    const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
     const asientosPeriodo = getAsientosReales().filter(a=>{
-      const f=a.fecha||'';
-      return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
+      const fNum = _fNum(a.fecha);
+      if (fNum===null) return true;
+      return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
     });
     const porCuenta = {};
     asientosPeriodo.forEach(a=>{
@@ -46096,9 +46099,12 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
+    const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
+    const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
     const asientosPeriodo = getAsientosReales().filter(a=>{
-      const f=a.fecha||'';
-      return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
+      const fNum = _fNum(a.fecha);
+      if (fNum===null) return true;
+      return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
     });
     const porCuenta = {};
     asientosPeriodo.forEach(a=>{
