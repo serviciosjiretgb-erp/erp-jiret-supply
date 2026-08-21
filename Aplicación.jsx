@@ -15809,6 +15809,15 @@ function App() {
         tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, settingsTasa:settings?.tasaBCV,
         tabId:'relacionadas', aplicarReclas:aplicarReclasLinea,
       });
+      if (typeof window!=='undefined' && ['3642','3645'].includes(String(p.referencia||p.id))) {
+        const movBuscado = p.origen==='caja' ? (movCajaApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : p.origen==='banco' ? (movBancoApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
+        window.__relDebug = window.__relDebug || [];
+        window.__relDebug.push({
+          comprobante: p.referencia||p.id, p_origen: p.origen, p_movimientoId: p.movimientoId, p_monto: p.monto, p_tipo: p.tipo,
+          movEncontrado: !!movBuscado, mov_montoBs: movBuscado?.montoBs, mov_montoUSD: movBuscado?.montoUSD, mov_tasa: movBuscado?.tasa,
+          lineas_resultantes: res.lineas,
+        });
+      }
       out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
         concepto:`${res.esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${res.nombreTercero}`,
         lineas:res.lineas});
@@ -46015,6 +46024,12 @@ ${resumenHtml}
                   </div>
                 </div>
               )}
+              {typeof window!=='undefined' && window.__relDebug && window.__relDebug.length>0 && (
+                <div className="bg-red-100 border-4 border-red-500 rounded-xl p-4 m-4 text-[10px] font-mono whitespace-pre-wrap">
+                  <div className="font-black text-red-800 mb-1">🔍 DIAGNÓSTICO — Relacionadas 3642/3645</div>
+                  {JSON.stringify(window.__relDebug, null, 2)}
+                </div>
+              )}
               {cuentaInfo && cuentaInfo.codigo==='1.1.02.01.001' && (() => {
                 const corte = contFiltHasta || getTodayDate();
                 // Una NE ya está reflejada en Mayor Analítico si tiene factura fiscal vinculada
@@ -46536,6 +46551,12 @@ ${resumenHtml}
 
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
+        {typeof window!=='undefined' && window.__relDebug && window.__relDebug.length>0 && (
+          <div className="bg-red-100 border-4 border-red-500 rounded-xl p-4 mb-4 text-[10px] font-mono whitespace-pre-wrap">
+            <div className="font-black text-red-800 mb-1">🔍 DIAGNÓSTICO — Relacionadas 3642/3645</div>
+            {JSON.stringify(window.__relDebug, null, 2)}
+          </div>
+        )}
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           <ContNavBar active="balance_general_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
