@@ -13087,6 +13087,62 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       alert(`✅ Se creó "SALDOS JUNIO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`);
     } catch(e) { alert('Error: '+e.message); }
   };
+  // Genera el comprobante "ALTA DE ACTIVOS FIJOS" como UN documento real y editable (igual que
+  // "Saldos Junio"), con una línea Debe (Cuenta del Activo) + Haber (Dep. Acumulada, lo ya
+  // devengado hasta el corte) + Haber (3.3.01.01.002, el remanente) POR CADA activo con fecha
+  // anterior al corte y que no venga de Procura — misma lógica que ya corre en vivo dentro de
+  // getAsientosReales. Al quedar guardado aquí, se puede editar/corregir como cualquier Ajuste.
+  const generarComprobanteActivosFijos = async () => {
+    const yaExiste = (ajustesC||[]).find(a => (a.nroComprobante||'').trim().toUpperCase() === 'ALTA DE ACTIVOS FIJOS');
+    if (yaExiste) {
+      alert('Ya existe un comprobante "ALTA DE ACTIVOS FIJOS" — no se creó uno nuevo, para no duplicar. Si necesitas regenerarlo, bórralo primero desde esta misma pestaña.');
+      return;
+    }
+    const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
+    const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
+    const fechaCorte = settingsCC?.fechaInicioContabilidad || '';
+    const cortePrevioYM = fechaCorte ? ymAdd(fechaCorte.substring(0,7), -1) : '';
+    const lineas = [];
+    (activosFijosC||[]).forEach(act=>{
+      if ((act.origen||'') === 'procura') return;
+      const costoUSD = parseFloat(act.valorCosto||0) || 0;
+      const costoBs = (parseFloat(act.valorCostoBs||0) || (costoUSD*Number(act.tasaCambio||0)) || (costoUSD*Number(settingsCC?.tasaBCV||0))) || 0;
+      if (costoUSD<=0 && costoBs<=0) return;
+      const codActivo = (act.cuentaActivoNombre||'').split('—')[0].trim();
+      const nomActivo = (act.cuentaActivoNombre||'').split('—').slice(1).join('—').trim();
+      if (!codActivo) return;
+      let acumUSD = 0, acumBs = 0;
+      const codAcum = (act.cuentaDeprAcumNombre||'').split('—')[0].trim();
+      const nomAcum = (act.cuentaDeprAcumNombre||'').split('—').slice(1).join('—').trim();
+      const adq = (act.fechaAdquisicion||'').substring(0,7);
+      const vidaMeses = Number(act.vidaUtilAnios||0)*12;
+      if (cortePrevioYM && adq && vidaMeses>0) {
+        const transcurridos = ymDiff(adq, cortePrevioYM);
+        const mesesDevengados = Math.max(0, Math.min(vidaMeses, transcurridos+1));
+        const depMensualUSD = (costoUSD - parseFloat(act.valorResidual||0)) / vidaMeses;
+        const depMensualBs = (costoBs - parseFloat(act.valorResidual||0)*Number(act.tasaCambio||0)) / vidaMeses;
+        acumUSD = Math.max(0, depMensualUSD*mesesDevengados);
+        acumBs = Math.max(0, depMensualBs*mesesDevengados);
+      }
+      if (!codAcum) acumUSD = acumBs = 0;
+      const remUSD = costoUSD - acumUSD, remBs = costoBs - acumBs;
+      lineas.push({codigo:codActivo, cuenta:`${nomActivo} — ${act.nombre||''}`, tipo:'D', montoUSD:Number(costoUSD.toFixed(2)), montoBs:Number(costoBs.toFixed(2))});
+      if (acumUSD>0.005 || acumBs>0.005) lineas.push({codigo:codAcum, cuenta:`${nomAcum} — ${act.nombre||''}`, tipo:'H', montoUSD:Number(acumUSD.toFixed(2)), montoBs:Number(acumBs.toFixed(2))});
+      lineas.push({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', tipo:'H', montoUSD:Number(remUSD.toFixed(2)), montoBs:Number(remBs.toFixed(2))});
+    });
+    if (lineas.length===0) { alert('No hay activos (fuera de Procura) con fecha anterior al corte — nada que generar.'); return; }
+    const totD = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoUSD,0);
+    const totH = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoUSD,0);
+    if (!window.confirm(`Se va a crear "ALTA DE ACTIVOS FIJOS" con ${lineas.length} líneas (${(activosFijosC||[]).filter(a=>a.origen!=='procura').length} activo(s)), cuadrado en $${totD.toFixed(2)}.\n\nUna vez guardado como comprobante, se quitará el cálculo en vivo equivalente para no duplicar.\n\n¿Continuar?`)) return;
+    try {
+      await addDoc(getColRef('comprobantes_ajustes'), {
+        fecha: fechaCorte ? ymAdd(fechaCorte.substring(0,7),-1)+'-28' : getTodayDate(), nroComprobante:'ALTA DE ACTIVOS FIJOS',
+        concepto:'Alta de Activos Fijos preexistentes — costo, depreciación acumulada al corte, y remanente contra Utilidad Acumulada',
+        tasa:Number(settingsCC?.tasaBCV||0)||1, lineas, createdAt:Date.now(), user:'Generado desde Activo Fijo', origen:'activos_fijos_alta',
+      });
+      alert(`✅ Se creó "ALTA DE ACTIVOS FIJOS" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)} (Debe) / $${totH.toFixed(2)} (Haber).\n\nRecuerda: pídele a Claude que quite el cálculo en vivo de "Alta de Activos" en getAsientosReales, para no duplicar.`);
+    } catch(e) { alert('Error: '+e.message); }
+  };
   const abrirNuevoAjuste = () => {
     setAjusteEditando(null);
     setAjusteForm({fecha:getTodayDate(), nroComprobante:'', concepto:'', tasa:String(settingsCC?.tasaBCV||''), lineas:[nuevaLineaAjusteVacia(),nuevaLineaAjusteVacia()]});
@@ -14228,6 +14284,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano.\n\n¿Continuar?')) importarSaldosIniciales2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
+            <button onClick={generarComprobanteActivosFijos} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><FileText size={14}/>Generar Comprobante — Alta de Activos</button>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
@@ -15913,65 +15970,6 @@ function App() {
           n++; cur=ymAdd(cur,1);
         }
       }
-    })();
-    // 11b) Alta de Activos Fijos — lleva el costo histórico de cada activo (Relación de Activos
-    // Fijos) a su Cuenta del Activo, en su fecha de adquisición real, sin necesitar un comprobante
-    // manual. Un asiento por activo (no mensual, a diferencia de la depreciación mes a mes) con 3
-    // líneas: Debe Cuenta del Activo (costo completo); Haber Dep. Acumulada (lo ya devengado hasta
-    // el corte de "Inicio de Contabilidad Real" — misma fórmula que usa la depreciación mensual,
-    // para que ambas coincidan); Haber 3.3.01.01.002 — (Utilidad) Pérdida Acumulada por el
-    // remanente (valor neto en libros), igual que se usó para el resto de "Saldos Junio". No hay
-    // doble conteo con la depreciación mensual normal: esos meses anteriores al corte ya los
-    // excluye el filtro de "Inicio de Contabilidad Real" al final de esta función (son módulo
-    // 'Depreciación', no 'Ajustes'), así que solo lo mensual DESDE el corte sigue sumando aparte.
-    // modulo:'Ajustes' para que, igual que "Saldos Junio", nunca lo excluya ese mismo corte — un
-    // activo de 2019 debe seguir sumando al Balance General de hoy sin importar la fecha.
-    (() => {
-      const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
-      const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
-      const fechaCorteAlta = settings?.fechaInicioContabilidad || '';
-      const cortePrevioYM = fechaCorteAlta ? ymAdd(fechaCorteAlta.substring(0,7), -1) : '';
-      (activosFijos||[]).forEach(act=>{
-        try{
-          // El criterio correcto no es la fecha — es si el activo YA tiene su contrapartida real
-          // (Banco/Caja/CxP) contabilizada en Procura al momento de la compra. Si origen==='procura',
-          // ese asiento ya existe y "Alta" no debe tocarlo, sin importar cuándo se compró — evita
-          // duplicar (visto en datos reales: mismo monto exacto contado dos veces, una vez bien en
-          // Procura → cuenta real, y otra de más aquí → código inventado "Sin Clasificar").
-          if ((act.origen||'') === 'procura') return;
-          const costoUSD = parseNum(act.valorCosto||0);
-          const costoBs = parseNum(act.valorCostoBs||0);
-          if (costoUSD<=0 && costoBs<=0) return;
-          const codActivo = (act.cuentaActivoNombre||'').split('—')[0].trim();
-          if (!codActivo) return;
-          // Depreciación ya devengada hasta el corte (misma fórmula que construirLineasDepreciacionCompartida).
-          let acumUSD = 0, acumBs = 0, codAcum = (act.cuentaDeprAcumNombre||'').split('—')[0].trim();
-          const adq = (act.fechaAdquisicion||'').substring(0,7);
-          const vidaMeses = Number(act.vidaUtilAnios||0)*12;
-          if (cortePrevioYM && adq && vidaMeses>0) {
-            const transcurridos = ymDiff(adq, cortePrevioYM);
-            const mesesDevengados = Math.max(0, Math.min(vidaMeses, transcurridos+1));
-            const depMensualUSD = (costoUSD - parseNum(act.valorResidual||0)) / vidaMeses;
-            const depMensualBs = (costoBs - parseNum(act.valorResidual||0)*Number(act.tasaCambio||0)) / vidaMeses;
-            acumUSD = Math.max(0, depMensualUSD*mesesDevengados);
-            acumBs = Math.max(0, depMensualBs*mesesDevengados);
-          }
-          if (!codAcum) acumUSD = acumBs = 0; // sin cuenta configurada, no se puede separar — todo va al remanente
-          const remanenteUSD = costoUSD - acumUSD, remanenteBs = costoBs - acumBs;
-          const lineas = [
-            {codigo:codActivo, cuenta:(act.cuentaActivoNombre||'').split('—').slice(1).join('—').trim(), debeUSD:costoUSD, haberUSD:0, debeBs:costoBs, haberBs:0},
-          ];
-          if (acumUSD>0.005 || acumBs>0.005) {
-            lineas.push({codigo:codAcum, cuenta:(act.cuentaDeprAcumNombre||'').split('—').slice(1).join('—').trim(), debeUSD:0, haberUSD:acumUSD, debeBs:0, haberBs:acumBs});
-          }
-          lineas.push({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', debeUSD:0, haberUSD:remanenteUSD, debeBs:0, haberBs:remanenteBs});
-          out.push({
-            fecha: act.fechaAdquisicion || '', comprobante: `ALTA-${act.id}`, modulo:'Ajustes',
-            concepto: `Alta de activo — ${act.nombre||'—'} (${act.categoria||''} · ${act.centroCosto||''})`,
-            lineas,
-          });
-        }catch(e){}
-      });
     })();
     // 12) Impuestos por Enterar (Actividad Económica + Protección de Pensiones + Anticipo ISLR)
     // — un asiento por cada mes que ya se llenó en Comprobantes Contables → Impuestos (esa
