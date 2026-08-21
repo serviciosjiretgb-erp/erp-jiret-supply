@@ -3265,11 +3265,11 @@ const construirLineasDepreciacionCompartida = (ym, ctx) => {
   if(detalles.length===0) return null;
   const lineas=[];
   detalles.forEach(({usd,bs,cc,rubro,gasto})=>{
-    const l=reclas(lineas.length, gasto.codigo, `${gasto.nombre} — ${rubro}${cc?' ('+cc+')':''}`);
+    const l=reclas(lineas.length, gasto.codigo, gasto.nombre);
     lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:bs, haberBs:0, debeUSD:usd, haberUSD:0});
   });
   detalles.forEach(({usd,bs,cc,rubro,acum})=>{
-    const l=reclas(lineas.length, acum.codigo, `${acum.nombre} — ${rubro}${cc?' ('+cc+')':''}`);
+    const l=reclas(lineas.length, acum.codigo, acum.nombre);
     lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:bs, debeUSD:0, haberUSD:usd});
   });
   return {lineas, totalUSD, nActivos:nAct};
