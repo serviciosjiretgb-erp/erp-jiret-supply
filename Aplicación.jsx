@@ -3443,7 +3443,12 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   // un código propio, en vez de desaparecer o simular una cuenta bancaria que no existe.
   const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco)
     : (p.origen ? `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})` : 'Ajuste manual (sin cuenta bancaria)');
-  const codCtaOrigen = ctaOrigen?.cuentaContableCod || (p.origen && p.movimientoId ? `SIN-MOV-${p.movimientoId}` : '');
+  // Prefijo '1.' (grupo Activo, es cuenta de banco/caja) para que ccBuildArbol la clasifique
+  // como Activo — sin el prefijo numérico, el código no empataba con ningún gruposIncluir
+  // ('1'/'2'/'3') y la línea desaparecía por completo de Balance General/Estado de Resultados,
+  // dejando el asiento descuadrado silenciosamente (visto en datos reales: diferencia de
+  // USD 148,40 / Bs.110.328,66 entre Total Activos y Total Pasivo+Patrimonio).
+  const codCtaOrigen = ctaOrigen?.cuentaContableCod || (p.origen && p.movimientoId ? `1.SIN-MOV-${p.movimientoId}` : '');
   const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
   // El monto en Bs. se toma DIRECTO del movimiento de Banco/Caja vinculado (que ya lo guarda
   // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
@@ -3458,7 +3463,9 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   // reales: pagos a Agro-Avícola El Caimito apareciendo en "Préstamos Bancarios", una cuenta que
   // no le pertenece, solo porque su nombre también dice "préstamo"). Ahora, sin cuenta configurada
   // para ESE tercero específico, se marca visible en vez de mezclarse con otra cuenta real.
-  const codRelFinal = codRel || `SIN-CTA-${p.terceroId||'?'}`;
+  // Mismo motivo que codCtaOrigen arriba: prefijo '2.' (grupo Pasivo, es la contraparte de una
+  // Cuenta por Pagar Relacionada) para que ccBuildArbol la cuente en vez de excluirla.
+  const codRelFinal = codRel || `2.SIN-CTA-${p.terceroId||'?'}`;
   const nomRelFinal = nomRel || `⚠️ Sin cuenta configurada — ${p.terceroNombre||tercRel?.nombre||'tercero desconocido'}`;
   const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
   const tabOrigen = p.origen==='caja'?'caja':'banco';
@@ -11756,7 +11763,11 @@ const sugerirTipoPartida = (codigo) => {
   if (/^[4-7]/.test(c))    return 'NO_MONETARIA';   // Ingresos, Costos, Gastos, ISLR — ctas de resultado, se reexpresan
   return 'MONETARIA';
 };
-const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(Number(n) || 0));
+// Antes usaba Math.abs() — cualquier subtotal o cuenta que neteara negativo (ej. Dep. Acumulada
+// superando el costo histórico de un activo viejo, o un tercero con posición acreedora) se
+// mostraba como si fuera positivo, sin signo ni ningún indicio visual. Visto en datos reales:
+// "Total Inmueble (Galpón)" mostrando Bs.3.738.003,64 cuando el neto real era -3.738.003,64.
+const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
 
 // ════════════════════════════════════════════════════════════════════════
 // ÁRBOL CONTABLE — Estado de Resultados / Balance General (Contabilidad)
