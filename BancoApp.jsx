@@ -2439,6 +2439,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const [cuentas,    setCuentas]  = useState([]);
   const [cajas,      setCajas]    = useState([]);
   const [tercerosRel, setTercerosRel] = useState([]);
+  const [ajustesContables, setAjustesContables] = useState([]);
+  const [reclasificaciones, setReclasificaciones] = useState({});
   const [pagosRel,    setPagosRel]    = useState([]);
   const [movBanco,   setMovBanco] = useState([]);
   const [movCaja,    setMovCaja]  = useState([]);
@@ -2476,6 +2478,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('cxp_terceros_relacionados'), s => setTercerosRel(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('comprobantes_ajustes'), s => setAjustesContables(s.docs.map(d=>({id:d.id,...d.data()})))),
+      onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificaciones(Object.fromEntries(s.docs.map(d=>[d.id,d.data()])))),
       onSnapshot(getColRef('cxp_pagos_relacionados'), s => setPagosRel(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>({_docId:d.id,...d.data()})))),
       onSnapshot(query(getColRef('caja_movimientos'), orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
@@ -5389,10 +5393,47 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const esIngresoRel = (p) => p.origen ? Number(p.monto||0) < 0 : p.tipo === 'Ingreso';
   const montoAbsRel = (p) => Math.abs(Number(p.monto||0));
 
+  // Movimientos de Banco/Caja reclasificados (en Mayor Analítico, fuera de "Pagos Relacionados")
+  // hacia la cuenta contable exacta de un tercero — se revisan ambas posiciones de línea (0 y 1)
+  // porque no hay garantía de cuál lado del asiento es el que se reclasificó.
+  const movsReclasificadosDeTercero = (t) => {
+    const cod=(t.cuentaContableCod||'').trim(); if(!cod) return [];
+    const out=[];
+    const revisar = (m, tabId) => {
+      const compId = m._docId||m.id;
+      for (const lineIdx of [0,1]) {
+        const r = reclasificaciones[`${tabId}__${compId}__${lineIdx}`];
+        if (r && (r.codigo||'').trim()===cod) {
+          out.push({fecha:m.fecha||'', concepto:`${m.concepto||'—'} (reclasificado desde ${tabId==='banco'?'Banco':'Caja'})`,
+            referencia:m.referencia||m.numero||'', tipo: m.tipo==='Ingreso'?'Ingreso':'Egreso', monto: Math.abs(Number(m.montoUSD||0))});
+        }
+      }
+    };
+    (movBanco||[]).forEach(m=>revisar(m,'banco'));
+    (movCaja||[]).forEach(m=>revisar(m,'caja'));
+    return out;
+  };
   const saldoTercero = (t) => {
     const movs = pagosRel.filter(p=>p.terceroId===t.id);
     const efecto = movs.reduce((s,p)=>s+(esIngresoRel(p)?montoAbsRel(p):-montoAbsRel(p)),0);
-    return Number(t.saldoInicial||0) + efecto;
+    // Ajustes Contables manuales que se hayan cargado directo a la cuenta contable de este
+    // tercero (ej. "2.1.01.04.001 — CUENTAS POR PAGAR JUAN D. BOHORQUEZ") — antes esta pantalla
+    // no tenía forma de verlos porque ni siquiera estaba conectada a esa colección. Para un
+    // Pasivo, Haber aumenta la deuda (como un Ingreso/préstamo) y Debe la disminuye (como un
+    // Egreso/pago) — mismo criterio que ya usa esta función para los pagos relacionados.
+    const cod = (t.cuentaContableCod||'').trim();
+    let efectoAjustes = 0;
+    if (cod) {
+      (ajustesContables||[]).forEach(a=>{
+        (a.lineas||[]).forEach(l=>{
+          if ((l.codigo||'').trim() !== cod) return;
+          const m = Number(l.montoUSD||0);
+          efectoAjustes += l.tipo==='H' ? m : -m;
+        });
+      });
+    }
+    const efectoReclasificados = movsReclasificadosDeTercero(t).reduce((s,p)=>s+(p.tipo==='Ingreso'?p.monto:-p.monto),0);
+    return Number(t.saldoInicial||0) + efecto + efectoAjustes + efectoReclasificados;
   };
 
   const TercerosRelacionadosView = () => {
@@ -5714,7 +5755,23 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const filtrados = tercerosRel.filter(t=>!filtro||((t.nombre||'')+' '+(t.cedulaRif||'')).toUpperCase().includes(filtro.toUpperCase()))
       .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
-    const movsDe = (tid)=>[...pagosRel].filter(p=>p.terceroId===tid&&(!desde||p.fecha>=desde)&&(!hasta||p.fecha<=hasta)).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const ajustesDeTercero = (t) => {
+      const cod=(t.cuentaContableCod||'').trim(); if(!cod) return [];
+      const out=[];
+      (ajustesContables||[]).forEach(a=>(a.lineas||[]).forEach(l=>{
+        if((l.codigo||'').trim()!==cod) return;
+        out.push({terceroId:t.id, fecha:a.fecha||'', concepto:`Ajuste Contable — ${a.concepto||a.nroComprobante||''}`, referencia:a.nroComprobante||'',
+          origen:null, tipo: l.tipo==='H'?'Ingreso':'Egreso', monto: Math.abs(Number(l.montoUSD||0)), _esAjuste:true});
+      }));
+      return out;
+    };
+    const movsDe = (tid)=>{
+      const t = tercerosRel.find(x=>x.id===tid);
+      if(!t) return pagosRel.filter(p=>p.terceroId===tid).filter(p=>(!desde||p.fecha>=desde)&&(!hasta||p.fecha<=hasta)).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      const reclas = movsReclasificadosDeTercero(t).map(p=>({...p, terceroId:tid, origen:null, _esReclasificado:true}));
+      return [...pagosRel.filter(p=>p.terceroId===tid), ...ajustesDeTercero(t), ...reclas]
+        .filter(p=>(!desde||p.fecha>=desde)&&(!hasta||p.fecha<=hasta)).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    };
     const totalGeneral = filtrados.reduce((s,t)=>s+saldoTercero(t),0);
     const totalMovs = filtrados.reduce((s,t)=>s+movsDe(t.id).length,0);
 
