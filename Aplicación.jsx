@@ -3436,8 +3436,14 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
   const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
   const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
-  const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
-  const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
+  // Si el movimiento de Banco/Caja vinculado no se encuentra (dato roto — visto en datos reales:
+  // p.movimientoId sin match en movBanco), antes esto quedaba con código VACÍO — lo que hacía que
+  // la línea entera desapareciera de cualquier cuenta al agregar (las líneas sin código se
+  // descartan), dejando el asiento descuadrado sin que se notara. Ahora queda marcado visible, con
+  // un código propio, en vez de desaparecer o simular una cuenta bancaria que no existe.
+  const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco)
+    : (p.origen ? `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})` : 'Ajuste manual (sin cuenta bancaria)');
+  const codCtaOrigen = ctaOrigen?.cuentaContableCod || (p.origen && p.movimientoId ? `SIN-MOV-${p.movimientoId}` : '');
   const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
   // El monto en Bs. se toma DIRECTO del movimiento de Banco/Caja vinculado (que ya lo guarda
   // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
