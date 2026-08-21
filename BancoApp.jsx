@@ -66,7 +66,6 @@ const BANCO_LETTERHEAD_CSS = `
   table{width:100%;border-collapse:collapse;margin-top:12px}
   th{background:#000;color:#f97316;border:1px solid #333;padding:7px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:1px}
   td{border:1px solid #e2e8f0;padding:5px 10px;font-size:10px}
-  tr:nth-child(even) td{background:#f8fafc}
   .lh-footer{margin-top:30px;border-top:2px solid #f97316;padding:12px 24px;display:flex;justify-content:space-between;font-size:8px;color:#94a3b8}
   @media print{@page{margin:1cm}}
 `;
@@ -5380,9 +5379,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // ══════════════════════════════════════════════════════════════════════
   // CUENTAS POR PAGAR RELACIONADAS — Terceros (alquileres, servicios, etc.)
   // ══════════════════════════════════════════════════════════════════════
+  // Un pago relacionado puede venir de dos formas: vinculado a un movimiento real de Banco/Caja
+  // (origen+movimientoId, donde el monto ya trae el signo — negativo=Ingreso, positivo=Egreso) o
+  // anotado manualmente (con su propio campo "tipo": 'Ingreso'/'Egreso', monto siempre positivo).
+  // Antes, TODAS las vistas de Relacionadas comparaban solo p.tipo==='Ingreso' — que para los
+  // registros vinculados a Banco/Caja simplemente no existe (undefined), así que siempre caían
+  // en "Egreso" sin importar si en realidad era un préstamo recibido. Esto es lo mismo que ya
+  // resuelve correctamente construirLineasRelacionadaCompartida en Aplicación.jsx.
+  const esIngresoRel = (p) => p.origen ? Number(p.monto||0) < 0 : p.tipo === 'Ingreso';
+  const montoAbsRel = (p) => Math.abs(Number(p.monto||0));
+
   const saldoTercero = (t) => {
     const movs = pagosRel.filter(p=>p.terceroId===t.id);
-    const efecto = movs.reduce((s,p)=>s+(p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)),0);
+    const efecto = movs.reduce((s,p)=>s+(esIngresoRel(p)?montoAbsRel(p):-montoAbsRel(p)),0);
     return Number(t.saldoInicial||0) + efecto;
   };
 
@@ -5630,11 +5639,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                         </tr></thead>
                         <tbody>
                           <tr className="text-slate-500"><td className="py-1">—</td><td className="py-1 font-bold">Saldo Inicial</td><td/><td className="py-1 text-right">—</td><td className="py-1 text-right font-bold">${bancoFmt(corrido)}</td></tr>
-                          {movs.map((p,i)=>{ corrido += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)); return (
+                          {movs.map((p,i)=>{ corrido += (esIngresoRel(p)?montoAbsRel(p):-montoAbsRel(p)); return (
                             <tr key={i} className="border-t border-slate-200">
                               <td className="py-1">{bancoDd(p.fecha)}</td><td className="py-1">{p.concepto}{p.referencia?` · ${p.referencia}`:''}</td>
-                              <td className="py-1"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo}</span></td>
-                              <td className={`py-1 text-right font-mono ${p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</td>
+                              <td className="py-1"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${esIngresoRel(p)?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{esIngresoRel(p)?'Ingreso':'Egreso'}</span></td>
+                              <td className={`py-1 text-right font-mono ${esIngresoRel(p)?'text-emerald-600':'text-red-500'}`}>{esIngresoRel(p)?'+':'-'}${bancoFmt(montoAbsRel(p))}</td>
                               <td className="py-1 text-right font-mono font-bold">${bancoFmt(corrido)}</td>
                             </tr>
                           );})}
@@ -5669,8 +5678,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 const t=tercerosRel.find(x=>x.id===p.terceroId);
                 return (<tr key={i} className="border-t border-slate-100">
                   <BTd>{bancoDd(p.fecha)}</BTd><BTd>{t?.nombre||p.terceroNombre||'—'}</BTd><BTd>{p.concepto||'—'}{p.referencia?` · ${p.referencia}`:''}</BTd>
-                  <BTd><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo||'Egreso'}</span></BTd>
-                  <BTd right mono className={p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</BTd>
+                  <BTd><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${esIngresoRel(p)?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{esIngresoRel(p)?'Ingreso':'Egreso'}</span></BTd>
+                  <BTd right mono className={esIngresoRel(p)?'text-emerald-600':'text-red-500'}>{esIngresoRel(p)?'+':'-'}${bancoFmt(montoAbsRel(p))}</BTd>
                 </tr>);
               })}
             </tbody>
@@ -5712,8 +5721,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const filasHtml=()=>filtrados.map(t=>{
       let c=Number(t.saldoInicial||0);
       const movs=movsDe(t.id);
-      const detalle=movs.map(p=>{ c+=(p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0));
-        return `<tr><td></td><td>${bancoDd(p.fecha)}</td><td>${p.concepto||''}${p.referencia?' · '+p.referencia:''}</td><td>${p.tipo}</td><td style="text-align:right">${p.tipo==='Ingreso'?'+':'-'}$${bancoFmt(p.monto||0)}</td><td style="text-align:right">$${bancoFmt(c)}</td></tr>`;
+      const detalle=movs.map(p=>{ c+=(esIngresoRel(p)?montoAbsRel(p):-montoAbsRel(p));
+        return `<tr><td></td><td>${bancoDd(p.fecha)}</td><td>${p.concepto||''}${p.referencia?' · '+p.referencia:''}</td><td>${esIngresoRel(p)?'Ingreso':'Egreso'}</td><td style="text-align:right">${esIngresoRel(p)?'+':'-'}$${bancoFmt(montoAbsRel(p))}</td><td style="text-align:right">$${bancoFmt(c)}</td></tr>`;
       }).join('');
       const saldo=saldoTercero(t);
       return `<tr style="background:#0f172a;color:#fff"><td colspan="3"><strong>${t.nombre}</strong> · ${t.cedulaRif}</td><td></td><td></td><td style="text-align:right;color:#f97316;font-weight:bold">$${bancoFmt(saldo)}</td></tr>${detalle}`;
@@ -5786,19 +5795,22 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <div className="bg-slate-50 px-5 py-3">
                       <table className="w-full text-[11px]">
                         <thead><tr className="text-slate-400 uppercase text-[9px] font-black">
-                          <td className="py-1">Fecha</td><td className="py-1">Concepto</td><td className="py-1">Tipo</td><td className="py-1 text-right">Monto</td><td className="py-1 text-right">Saldo</td>
+                          <td className="py-1">Fecha</td><td className="py-1">Concepto</td><td className="py-1">Tipo</td><td className="py-1 text-right">Monto</td><td className="py-1 text-right">Saldo</td><td className="py-1"></td>
                         </tr></thead>
                         <tbody>
-                          <tr className="text-slate-500"><td className="py-1">—</td><td className="py-1 font-bold">Saldo Inicial</td><td/><td className="py-1 text-right">—</td><td className="py-1 text-right font-bold">${bancoFmt(corrido)}</td></tr>
-                          {movs.map((p,i)=>{ corrido += (p.tipo==='Ingreso'?Number(p.monto||0):-Number(p.monto||0)); return (
+                          <tr className="text-slate-500"><td className="py-1">—</td><td className="py-1 font-bold">Saldo Inicial</td><td/><td className="py-1 text-right">—</td><td className="py-1 text-right font-bold">${bancoFmt(corrido)}</td><td/></tr>
+                          {movs.map((p,i)=>{ corrido += (esIngresoRel(p)?montoAbsRel(p):-montoAbsRel(p)); return (
                             <tr key={i} className="border-t border-slate-200">
                               <td className="py-1">{bancoDd(p.fecha)}</td><td className="py-1">{p.concepto}{p.referencia?` · ${p.referencia}`:''}</td>
-                              <td className="py-1"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${p.tipo==='Ingreso'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{p.tipo}</span></td>
-                              <td className={`py-1 text-right font-mono ${p.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{p.tipo==='Ingreso'?'+':'-'}${bancoFmt(p.monto||0)}</td>
+                              <td className="py-1"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${esIngresoRel(p)?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>{esIngresoRel(p)?'Ingreso':'Egreso'}</span></td>
+                              <td className={`py-1 text-right font-mono ${esIngresoRel(p)?'text-emerald-600':'text-red-500'}`}>{esIngresoRel(p)?'+':'-'}${bancoFmt(montoAbsRel(p))}</td>
                               <td className="py-1 text-right font-mono font-bold">${bancoFmt(corrido)}</td>
+                              <td className="py-1 text-right">
+                                <button onClick={async()=>{ if(!window.confirm(`¿Eliminar este movimiento?\n\n${bancoDd(p.fecha)} · ${p.concepto||''}${p.referencia?' · '+p.referencia:''} · $${bancoFmt(p.monto||0)}\n\nEsta acción no se puede deshacer — úsalo solo para quitar duplicados confirmados.`)) return; try{ await deleteDoc(getDocRef('cxp_pagos_relacionados', p.id||p._docId)); }catch(e){ alert('Error: '+e.message); } }} className="p-1 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar (usar solo para duplicados)"><Trash2 size={12}/></button>
+                              </td>
                             </tr>
                           );})}
-                          {movs.length===0&&<tr><td colSpan={5} className="py-2 text-center text-slate-400">Sin movimientos en el rango seleccionado</td></tr>}
+                          {movs.length===0&&<tr><td colSpan={6} className="py-2 text-center text-slate-400">Sin movimientos en el rango seleccionado</td></tr>}
                         </tbody>
                       </table>
                     </div>
