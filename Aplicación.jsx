@@ -3439,7 +3439,11 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco) : 'Ajuste manual (sin cuenta bancaria)';
   const codCtaOrigen = ctaOrigen?.cuentaContableCod || '';
   const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
-  const montoBs = montoUSD * tasa;
+  // El monto en Bs. se toma DIRECTO del movimiento de Banco/Caja vinculado (que ya lo guarda
+  // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
+  // no se resuelve bien (movimiento no encontrado, ajuste manual, etc.), el Bs. termine saliendo
+  // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
+  const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : montoUSD*tasa;
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
   const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
   // Antes, si el tercero no tenía cuenta configurada, se adivinaba buscando en TODO el Plan de
