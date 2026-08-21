@@ -12994,6 +12994,84 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
 
   const nuevaLineaAjusteVacia = () => ({codigo:'', cuenta:'', tipo:'D', montoBs:'', montoUSD:'', detalle:''});
 
+  // Importa el ajuste de saldos iniciales "SALDOS JUNIO-2026" (53 cuentas, balance completo al
+  // 30/06/2026) desde el archivo que ya se validó cuadra Debe=Haber=$771.941,00. Con chequeo de
+  // duplicado — si ya existe un comprobante con ese nombre, avisa en vez de crear otro.
+  const importarSaldosIniciales2026 = async () => {
+    const yaExiste = (ajustesC||[]).find(a => (a.nroComprobante||'').trim().toUpperCase() === 'SALDOS JUNIO-2026');
+    if (yaExiste) {
+      setDialog({title:'Ya existe', text:'Ya hay un comprobante "SALDOS JUNIO-2026" registrado — no se creó uno nuevo, para no duplicar. Si necesitas reemplazarlo, bórralo primero desde esta misma pestaña.', type:'alert'});
+      return;
+    }
+    const lineas = [
+      {codigo:'1.1.01.01.001',cuenta:'CAJA PRINCIPAL DIVISAS',tipo:'D',montoUSD:10189.52,montoBs:6348298.19},
+      {codigo:'1.1.01.01.002',cuenta:'CAJA Z1',tipo:'D',montoUSD:766.24,montoBs:477384.61},
+      {codigo:'1.1.01.01.003',cuenta:'CAJA Z2',tipo:'D',montoUSD:1873.75,montoBs:1167388.03},
+      {codigo:'1.1.01.02.001',cuenta:'BANCO PROVINCIAL',tipo:'D',montoUSD:96.18,montoBs:59922.28},
+      {codigo:'1.1.01.02.002',cuenta:'BANCO MERCANTIL',tipo:'D',montoUSD:46.45,montoBs:28939.39},
+      {codigo:'1.1.01.02.003',cuenta:'BANCARIBE',tipo:'D',montoUSD:18342.73,montoBs:11427927.83},
+      {codigo:'1.1.01.02.006',cuenta:'BANCO NACIONAL DE CREDITO 2958',tipo:'D',montoUSD:831.2,montoBs:517856.14},
+      {codigo:'1.1.01.02.009',cuenta:'BANCAMIGA',tipo:'D',montoUSD:1.4,montoBs:872.23},
+      {codigo:'1.1.01.02.010',cuenta:'BANPLUS',tipo:'D',montoUSD:114.31,montoBs:71220.31},
+      {codigo:'1.1.01.02.011',cuenta:'BANESCO',tipo:'D',montoUSD:668.16,montoBs:416279.04},
+      {codigo:'1.1.01.03.001',cuenta:'BANCO PROVINCIAL (ME)',tipo:'D',montoUSD:37.15,montoBs:23145.28},
+      {codigo:'1.1.01.03.002',cuenta:'BANCO MERCANTIL (ME)',tipo:'D',montoUSD:75.0,montoBs:46726.67},
+      {codigo:'1.1.01.04.002',cuenta:'BANCARIBE (ELECTRONICA)',tipo:'D',montoUSD:20025.5,montoBs:12476333.07},
+      {codigo:'1.1.01.03.009',cuenta:'BANCAMIGA (ME)',tipo:'D',montoUSD:8.88,montoBs:5532.44},
+      {codigo:'1.1.01.03.010',cuenta:'BANPLUS (ME)',tipo:'D',montoUSD:3.22,montoBs:2006.13},
+      {codigo:'1.1.01.04.001',cuenta:'BANPLUS (ELECTRONICA)',tipo:'D',montoUSD:3300.0,montoBs:2055973.59},
+      {codigo:'1.1.01.05.001',cuenta:'BANPLUS (TDD INTERNACIONAL)',tipo:'D',montoUSD:430.8,montoBs:268398.01},
+      {codigo:'1.1.01.06.001',cuenta:'AMERANT BANK',tipo:'D',montoUSD:2320.64,montoBs:1445810.47},
+      {codigo:'1.1.02.03.001',cuenta:'CUENTAS POR COBRAR JUAN D. BOHORQUEZ',tipo:'D',montoUSD:22.96,montoBs:14304.59},
+      {codigo:'1.1.02.05.001',cuenta:'ANTICIPO PRESTACIONES SOCIALES',tipo:'D',montoUSD:2096.72,montoBs:1306301.25},
+      {codigo:'1.1.03.01.002',cuenta:'MERCANCIA (INV-INICIAL)',tipo:'D',montoUSD:188858.91,montoBs:117663312.48},
+      {codigo:'1.1.03.01.005',cuenta:'MATERIA PRIMA (INV-INICIAL)',tipo:'D',montoUSD:121545.58,montoBs:75725606.81},
+      {codigo:'1.1.04.01.001',cuenta:'I.V.A CREDITOS FISCALES (COMPRAS)',tipo:'D',montoUSD:18481.88,montoBs:11514622.58},
+      {codigo:'1.1.03.01.005',cuenta:'MATERIA PRIMA (INV-INICIAL)',tipo:'D',montoUSD:32789.48,montoBs:20428580.31},
+      {codigo:'1.1.04.01.008',cuenta:'ANTICIPO DE I.S.L.R (1.% DE VENTAS)',tipo:'D',montoUSD:6797.27,montoBs:4234853.0},
+      {codigo:'1.1.05.01.005',cuenta:'ANTICIPOS A PROVEEDORES ZULIANA DE EMPAQUE',tipo:'D',montoUSD:70949.15,montoBs:44202902.62},
+      {codigo:'2.1.01.01.001',cuenta:'CUENTAS POR PAGAR PROVEEDORES',tipo:'H',montoUSD:5423.74,montoBs:3379110.97},
+      {codigo:'2.1.01.01.003',cuenta:'OTRAS CUENTAS POR PAGAR PROVEEDORES',tipo:'H',montoUSD:9163.44,montoBs:5709027.46},
+      {codigo:'2.1.01.01.004',cuenta:'CUENTAS POR PAGAR SURE PACK',tipo:'H',montoUSD:78408.16,montoBs:48850032.18},
+      {codigo:'2.1.02.01.001',cuenta:'CUENTAS POR PAGAR ZULIANA DE EMPAQUE PRETAMOS',tipo:'H',montoUSD:317.41,montoBs:197753.51},
+      {codigo:'2.1.02.01.003',cuenta:'PRESTAMOS BANCARIOS',tipo:'H',montoUSD:7253.27,montoBs:4518948.96},
+      {codigo:'2.1.02.01.007',cuenta:'INMUEBLE POR PAGAR',tipo:'H',montoUSD:12173.6,montoBs:7584424.27},
+      {codigo:'2.1.02.01.008',cuenta:'VEHÍCULOS POR PAGAR',tipo:'H',montoUSD:8580.98,montoBs:5346141.9},
+      {codigo:'2.1.03.01.001',cuenta:'CUENTAS POR PAGAR JUAN D. BOHORQUEZ',tipo:'H',montoUSD:5000.0,montoBs:3115111.5},
+      {codigo:'2.1.03.01.002',cuenta:'CUENTAS POR PAGAR JUAN CARLOS BOHORQUEZ',tipo:'H',montoUSD:579025.14,montoBs:360745574.48},
+      {codigo:'2.1.03.01.003',cuenta:'CUENTAS POR PAGAR LUIS GUILLERMO BOHORQUEZ',tipo:'H',montoUSD:19770.64,montoBs:12317549.61},
+      {codigo:'2.1.04.01.001',cuenta:'RETENCIONES I.S.L.R. POR PAGAR',tipo:'H',montoUSD:481.25,montoBs:299829.48},
+      {codigo:'2.1.04.01.005',cuenta:'PROTECCION DE PENSIONES (I.D.P.P) POR PAGAR',tipo:'H',montoUSD:302.7,montoBs:188588.85},
+      {codigo:'2.1.04.02.002',cuenta:'RETENCIÓN IVA (100-75%)',tipo:'H',montoUSD:1809.33,montoBs:1127253.53},
+      {codigo:'2.1.04.03.001',cuenta:'I.V.S.S. POR PAGAR',tipo:'H',montoUSD:3.34,montoBs:2080.5},
+      {codigo:'2.1.04.03.002',cuenta:'F.A.O.V. POR PAGAR',tipo:'H',montoUSD:258.96,montoBs:161339.81},
+      {codigo:'2.1.04.03.005',cuenta:'IMPUESTOS SOBRE ACTIVIDADES ECONÓMICAS',tipo:'H',montoUSD:2694.82,montoBs:1678935.38},
+      {codigo:'2.1.06.01.001',cuenta:'HCM POR PAGAR',tipo:'H',montoUSD:288.0,montoBs:179430.42},
+      {codigo:'3.1.01.01.001',cuenta:'CAPITAL SOCIAL',tipo:'H',montoUSD:12038.09,montoBs:7500000.0},
+      {codigo:'3.3.01.01.002',cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA',tipo:'D',montoUSD:11993.82,montoBs:7472414.91},
+      {codigo:'2.1.04.03.012',cuenta:'ANTICIPO DE I.S.L.R (1% DE VENTAS) POR PAGAR',tipo:'H',montoUSD:1363.86,montoBs:849712.52},
+      {codigo:'1.1.02.02.002',cuenta:'CUENTAS POR COBRAR INVERAVICA',tipo:'D',montoUSD:83246.21,montoBs:51864247.52},
+      {codigo:'1.1.08.02.001',cuenta:'MEJORAS A LA PROPIEDAD',tipo:'D',montoUSD:135208.5,montoBs:84237910.65},
+      {codigo:'2.1.03.01.001',cuenta:'CUENTAS POR PAGAR JUAN D. BOHORQUEZ',tipo:'H',montoUSD:2800.0,montoBs:1744462.44},
+      {codigo:'1.1.01.04.003',cuenta:'BANESCO (ELECTRONICA)',tipo:'D',montoUSD:300.0,montoBs:186906.69},
+      {codigo:'1.1.01.03.011',cuenta:'BANESCO (ME)',tipo:'D',montoUSD:60.0,montoBs:37381.34},
+      {codigo:'1.1.02.01.002',cuenta:'PROVISIÓN CUENTAS INCOBRABLES (-)',tipo:'H',montoUSD:24784.27,montoBs:15441152.9},
+      {codigo:'1.1.02.01.001',cuenta:'CUENTAS POR COBRAR CLIENTES',tipo:'D',montoUSD:40459.39,montoBs:25207102.21}
+    ];
+    const totD = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoUSD,0);
+    const totH = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoUSD,0);
+    if (Math.abs(totD-totH) > 0.02) {
+      setDialog({title:'No cuadra', text:`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`, type:'alert'});
+      return;
+    }
+    try {
+      await addDoc(getColRef('comprobantes_ajustes'), {
+        fecha:'2026-06-30', nroComprobante:'SALDOS JUNIO-2026', concepto:'SALDO JUNIO 2026 BALANCE Y EDO RESULTADO',
+        tasa:623.0223, lineas, createdAt:Date.now(), user:appUser?.name||'Import', origen:'saldos_iniciales',
+      });
+      setDialog({title:'✅ Importado', text:`Se creó "SALDOS JUNIO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`, type:'alert'});
+    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+  };
   const abrirNuevoAjuste = () => {
     setAjusteEditando(null);
     setAjusteForm({fecha:getTodayDate(), nroComprobante:'', concepto:'', tasa:String(settingsCC?.tasaBCV||''), lineas:[nuevaLineaAjusteVacia(),nuevaLineaAjusteVacia()]});
@@ -14134,6 +14212,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
+            <button onClick={()=>setDialog({title:'Importar Saldos Iniciales', text:'Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano. ¿Continuar?', type:'confirm', onConfirm:importarSaldosIniciales2026})} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
@@ -15819,6 +15898,59 @@ function App() {
           n++; cur=ymAdd(cur,1);
         }
       }
+    })();
+    // 11b) Alta de Activos Fijos — lleva el costo histórico de cada activo (Relación de Activos
+    // Fijos) a su Cuenta del Activo, en su fecha de adquisición real, sin necesitar un comprobante
+    // manual. Un asiento por activo (no mensual, a diferencia de la depreciación mes a mes) con 3
+    // líneas: Debe Cuenta del Activo (costo completo); Haber Dep. Acumulada (lo ya devengado hasta
+    // el corte de "Inicio de Contabilidad Real" — misma fórmula que usa la depreciación mensual,
+    // para que ambas coincidan); Haber 3.3.01.01.002 — (Utilidad) Pérdida Acumulada por el
+    // remanente (valor neto en libros), igual que se usó para el resto de "Saldos Junio". No hay
+    // doble conteo con la depreciación mensual normal: esos meses anteriores al corte ya los
+    // excluye el filtro de "Inicio de Contabilidad Real" al final de esta función (son módulo
+    // 'Depreciación', no 'Ajustes'), así que solo lo mensual DESDE el corte sigue sumando aparte.
+    // modulo:'Ajustes' para que, igual que "Saldos Junio", nunca lo excluya ese mismo corte — un
+    // activo de 2019 debe seguir sumando al Balance General de hoy sin importar la fecha.
+    (() => {
+      const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
+      const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
+      const fechaCorteAlta = settings?.fechaInicioContabilidad || '';
+      const cortePrevioYM = fechaCorteAlta ? ymAdd(fechaCorteAlta.substring(0,7), -1) : '';
+      (activosFijos||[]).forEach(act=>{
+        try{
+          const costoUSD = parseNum(act.valorCosto||0);
+          const costoBs = parseNum(act.valorCostoBs||0);
+          if (costoUSD<=0 && costoBs<=0) return;
+          const codActivo = (act.cuentaActivoNombre||'').split('—')[0].trim();
+          if (!codActivo) return;
+          // Depreciación ya devengada hasta el corte (misma fórmula que construirLineasDepreciacionCompartida).
+          let acumUSD = 0, acumBs = 0, codAcum = (act.cuentaDeprAcumNombre||'').split('—')[0].trim();
+          const adq = (act.fechaAdquisicion||'').substring(0,7);
+          const vidaMeses = Number(act.vidaUtilAnios||0)*12;
+          if (cortePrevioYM && adq && vidaMeses>0) {
+            const transcurridos = ymDiff(adq, cortePrevioYM);
+            const mesesDevengados = Math.max(0, Math.min(vidaMeses, transcurridos+1));
+            const depMensualUSD = (costoUSD - parseNum(act.valorResidual||0)) / vidaMeses;
+            const depMensualBs = (costoBs - parseNum(act.valorResidual||0)*Number(act.tasaCambio||0)) / vidaMeses;
+            acumUSD = Math.max(0, depMensualUSD*mesesDevengados);
+            acumBs = Math.max(0, depMensualBs*mesesDevengados);
+          }
+          if (!codAcum) acumUSD = acumBs = 0; // sin cuenta configurada, no se puede separar — todo va al remanente
+          const remanenteUSD = costoUSD - acumUSD, remanenteBs = costoBs - acumBs;
+          const lineas = [
+            {codigo:codActivo, cuenta:(act.cuentaActivoNombre||'').split('—').slice(1).join('—').trim(), debeUSD:costoUSD, haberUSD:0, debeBs:costoBs, haberBs:0},
+          ];
+          if (acumUSD>0.005 || acumBs>0.005) {
+            lineas.push({codigo:codAcum, cuenta:(act.cuentaDeprAcumNombre||'').split('—').slice(1).join('—').trim(), debeUSD:0, haberUSD:acumUSD, debeBs:0, haberBs:acumBs});
+          }
+          lineas.push({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', debeUSD:0, haberUSD:remanenteUSD, debeBs:0, haberBs:remanenteBs});
+          out.push({
+            fecha: act.fechaAdquisicion || '', comprobante: `ALTA-${act.id}`, modulo:'Ajustes',
+            concepto: `Alta de activo — ${act.nombre||'—'} (${act.categoria||''} · ${act.centroCosto||''})`,
+            lineas,
+          });
+        }catch(e){}
+      });
     })();
     // 12) Impuestos por Enterar (Actividad Económica + Protección de Pensiones + Anticipo ISLR)
     // — un asiento por cada mes que ya se llenó en Comprobantes Contables → Impuestos (esa
@@ -46327,28 +46459,12 @@ ${resumenHtml}
     };
 
     // Depreciación Acumulada se saca del árbol normal (mismo problema que en Estado de
-    // Resultados) y se muestra aparte, calculada DIRECTO desde cuentasAgg. Se identifica por los
-    // códigos EXACTOS configurados como "Cuenta Dep. Acumulada" en Activo Fijo → Configuración
-    // (mismo criterio que Estado de Resultados) — el nombre de la cuenta queda solo como respaldo,
-    // por si alguna todavía no tiene código resuelto.
-    const codigosDeprecAcumCfg = new Set();
-    Object.values(activoFijoCfgC?.centrosCosto||[]).forEach(cc=>{
-      Object.values(cc?.rubros||{}).forEach(r=>{
-        const cta=r?.deprAcumId?(planDeCuentas||[]).find(p=>p.id===r.deprAcumId):null;
-        if(cta?.codigo) codigosDeprecAcumCfg.add(cta.codigo);
-      });
-    });
-    const esCuentaDeprecAcum = c => codigosDeprecAcumCfg.has(c.codigo) || /dep\.?\s*acum|depreciaci[oó]n\s+acumulad/i.test(c.cuenta||'');
-    const cuentasDeprecAcum = cuentasAgg.filter(esCuentaDeprecAcum);
-    const deprecAcumUSD = cuentasDeprecAcum.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
-    const deprecAcumBs  = cuentasDeprecAcum.reduce((s,c)=>s+(c.debeBs-c.haberBs),0);
-    const cuentasParaActivo = cuentasAgg.filter(c=>!esCuentaDeprecAcum(c));
-    const treeActivo = ccBuildArbol(cuentasParaActivo, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
     const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
-    const totalActivoUSD=sumTree(treeActivo,'u')+deprecAcumUSD, totalActivoBs=sumTree(treeActivo,'b')+deprecAcumBs;
+    const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
     const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
     // Si alguna de las dos no tenía cuenta configurada, esa sí se suma aparte (no había dónde
     // inyectarla) — si ambas se inyectaron, ya están contadas dentro del árbol y no se repiten.
@@ -46370,16 +46486,14 @@ ${resumenHtml}
       return html;
     };
     const exportarExcel = () => {
-      const nodoDeprecAcum = cuentasDeprecAcum.length>0 ? [{n:'DEPRECIACIÓN ACUMULADA', c:cuentasDeprecAcum.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:deprecAcumUSD, b:deprecAcumBs}] : [];
-      const arbolCompleto = [...treeActivo, ...nodoDeprecAcum, ...treePasivo, ...treePatrimonio];
+      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
       const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `BalanceGeneral_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
     };
     const exportarPDF = () => {
-      const nodoDeprecAcum = cuentasDeprecAcum.length>0 ? [{n:'DEPRECIACIÓN ACUMULADA', c:cuentasDeprecAcum.map(c=>({n:`${c.codigo} - ${c.cuenta}`,c:[],u:c.debeUSD-c.haberUSD,b:c.debeBs-c.haberBs})), u:deprecAcumUSD, b:deprecAcumBs}] : [];
-      const arbolCompleto = [...treeActivo, ...nodoDeprecAcum, ...treePasivo, ...treePatrimonio];
+      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
       const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">TOTAL PASIVO + PATRIMONIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(totalPasPatBs)}</td>`:''}</tr>`;
       const html = ccExportPDFHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, filaExtra, baseActivo, getDetalleCuenta, contBGExpandAll);
       ccAbrirVentana(html);
