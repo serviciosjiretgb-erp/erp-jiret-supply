@@ -13000,7 +13000,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const importarSaldosIniciales2026 = async () => {
     const yaExiste = (ajustesC||[]).find(a => (a.nroComprobante||'').trim().toUpperCase() === 'SALDOS JUNIO-2026');
     if (yaExiste) {
-      setDialog({title:'Ya existe', text:'Ya hay un comprobante "SALDOS JUNIO-2026" registrado — no se creó uno nuevo, para no duplicar. Si necesitas reemplazarlo, bórralo primero desde esta misma pestaña.', type:'alert'});
+      alert('Ya hay un comprobante "SALDOS JUNIO-2026" registrado — no se creó uno nuevo, para no duplicar. Si necesitas reemplazarlo, bórralo primero desde esta misma pestaña.');
       return;
     }
     const lineas = [
@@ -13061,7 +13061,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const totD = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoUSD,0);
     const totH = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoUSD,0);
     if (Math.abs(totD-totH) > 0.02) {
-      setDialog({title:'No cuadra', text:`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`, type:'alert'});
+      alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`);
       return;
     }
     try {
@@ -13069,8 +13069,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         fecha:'2026-06-30', nroComprobante:'SALDOS JUNIO-2026', concepto:'SALDO JUNIO 2026 BALANCE Y EDO RESULTADO',
         tasa:623.0223, lineas, createdAt:Date.now(), user:appUser?.name||'Import', origen:'saldos_iniciales',
       });
-      setDialog({title:'✅ Importado', text:`Se creó "SALDOS JUNIO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`, type:'alert'});
-    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+      alert(`✅ Se creó "SALDOS JUNIO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`);
+    } catch(e) { alert('Error: '+e.message); }
   };
   const abrirNuevoAjuste = () => {
     setAjusteEditando(null);
@@ -14212,7 +14212,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
-            <button onClick={()=>setDialog({title:'Importar Saldos Iniciales', text:'Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano. ¿Continuar?', type:'confirm', onConfirm:importarSaldosIniciales2026})} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
+            <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano.\n\n¿Continuar?')) importarSaldosIniciales2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
