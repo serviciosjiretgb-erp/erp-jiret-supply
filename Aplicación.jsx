@@ -13067,7 +13067,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
         fecha:'2026-06-30', nroComprobante:'SALDOS JUNIO-2026', concepto:'SALDO JUNIO 2026 BALANCE Y EDO RESULTADO',
-        tasa:623.0223, lineas, createdAt:Date.now(), user:appUser?.name||'Import', origen:'saldos_iniciales',
+        tasa:623.0223, lineas, createdAt:Date.now(), user:'Importación Saldos Iniciales', origen:'saldos_iniciales',
       });
       alert(`✅ Se creó "SALDOS JUNIO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`);
     } catch(e) { alert('Error: '+e.message); }
