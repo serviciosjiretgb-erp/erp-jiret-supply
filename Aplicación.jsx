@@ -15815,15 +15815,6 @@ function App() {
         tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, settingsTasa:settings?.tasaBCV,
         tabId:'relacionadas', aplicarReclas:aplicarReclasLinea,
       });
-      if (typeof window!=='undefined' && ['3642','3645'].includes(String(p.referencia||p.id))) {
-        const movBuscado = p.origen==='caja' ? (movCajaApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : p.origen==='banco' ? (movBancoApp||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
-        window.__relDebug = window.__relDebug || [];
-        window.__relDebug.push({
-          comprobante: p.referencia||p.id, p_origen: p.origen, p_movimientoId: p.movimientoId, p_monto: p.monto, p_tipo: p.tipo,
-          movEncontrado: !!movBuscado, mov_montoBs: movBuscado?.montoBs, mov_montoUSD: movBuscado?.montoUSD, mov_tasa: movBuscado?.tasa,
-          lineas_resultantes: res.lineas,
-        });
-      }
       out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
         concepto:`${res.esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${res.nombreTercero}`,
         lineas:res.lineas});
@@ -27754,43 +27745,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-1.5 pr-3 text-right font-mono">${formatNum(_totUSD)}</td>
                           <td className="py-1.5 pr-3 text-right font-mono">Bs.{formatNum(_totBs)}</td>
                         </tr></tfoot>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()}
-              {(()=>{
-                const _mesRef=pvFilter&&pvFilter!=='general'&&/^\d{4}-\d{2}$/.test(pvFilter)?pvFilter:null;
-                const _todasNC=(notasVentaCD||[]).filter(nc=>nc.naturaleza!=='NO_FISCAL'); // mostrar TODAS las fiscales, sin filtrar por fecha, para no esconder ninguna con fecha mal capturada
-                if(_todasNC.length===0) return null;
-                return (
-                  <div className="mb-5 bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
-                    <p className="text-[10px] font-black text-blue-700 uppercase mb-1">🔍 Diagnóstico: TODAS las Notas de Crédito/Débito fiscales del sistema ({_todasNC.length})</p>
-                    <p className="text-[9px] text-blue-600 mb-3">Sin filtrar por fecha (para no esconder ninguna con fecha mal capturada). Revisa "Factura Vinculada" y "¿Cuenta en {_mesRef||'este período'}?" para las de junio.</p>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-[9px]">
-                        <thead><tr className="text-blue-700 uppercase font-black text-left">
-                          <th className="py-1 pr-3">Tipo</th><th className="py-1 pr-3">N° Doc.</th><th className="py-1 pr-3">Fecha NC</th><th className="py-1 pr-3">facturaId (guardado)</th><th className="py-1 pr-3">Factura Vinculada</th><th className="py-1 pr-3 text-right">Monto (moneda NC)</th><th className="py-1 pr-3 text-center">¿Cuenta en {_mesRef||'período'}?</th>
-                        </tr></thead>
-                        <tbody>
-                          {_todasNC.map((nc,i)=>{
-                            const inv=(invoices||[]).find(i2=>i2.id===nc.facturaId);
-                            const fechaNC=(nc.fecha||'').substring(0,7);
-                            const fechaFactVinc=(inv?.fechaFactura||inv?.fecha||'').substring(0,7);
-                            const cuenta=!_mesRef||fechaNC===_mesRef||fechaFactVinc===_mesRef;
-                            return (
-                              <tr key={i} className="border-t border-blue-200">
-                                <td className="py-1 pr-3 font-black">{nc.tipo}</td>
-                                <td className="py-1 pr-3">{nc.nroDocumento||'—'}</td>
-                                <td className="py-1 pr-3">{nc.fecha||'—'}</td>
-                                <td className="py-1 pr-3 font-mono text-[8px] text-gray-500">{nc.facturaId||'(vacío)'}</td>
-                                <td className="py-1 pr-3">{inv?`✅ ${inv.nroFiscal||inv.documento} (${inv.fechaFactura||inv.fecha})`:'❌ NO ENCONTRADA'}</td>
-                                <td className="py-1 pr-3 text-right font-mono">{formatNum(parseNum(nc.monto||0))}</td>
-                                <td className={`py-1 pr-3 text-center font-black ${cuenta?'text-green-600':'text-red-600'}`}>{cuenta?'SÍ':'NO'}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
                       </table>
                     </div>
                   </div>
@@ -46030,12 +45984,6 @@ ${resumenHtml}
                   </div>
                 </div>
               )}
-              {typeof window!=='undefined' && window.__relDebug && window.__relDebug.length>0 && (
-                <div className="bg-red-100 border-4 border-red-500 rounded-xl p-4 m-4 text-[10px] font-mono whitespace-pre-wrap">
-                  <div className="font-black text-red-800 mb-1">🔍 DIAGNÓSTICO — Relacionadas 3642/3645</div>
-                  {JSON.stringify(window.__relDebug, null, 2)}
-                </div>
-              )}
               {cuentaInfo && cuentaInfo.codigo==='1.1.02.01.001' && (() => {
                 const corte = contFiltHasta || getTodayDate();
                 // Una NE ya está reflejada en Mayor Analítico si tiene factura fiscal vinculada
@@ -46557,12 +46505,6 @@ ${resumenHtml}
 
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
-        {typeof window!=='undefined' && window.__relDebug && window.__relDebug.length>0 && (
-          <div className="bg-red-100 border-4 border-red-500 rounded-xl p-4 mb-4 text-[10px] font-mono whitespace-pre-wrap">
-            <div className="font-black text-red-800 mb-1">🔍 DIAGNÓSTICO — Relacionadas 3642/3645</div>
-            {JSON.stringify(window.__relDebug, null, 2)}
-          </div>
-        )}
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           <ContNavBar active="balance_general_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
