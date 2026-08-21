@@ -15918,6 +15918,12 @@ function App() {
       const cortePrevioYM = fechaCorteAlta ? ymAdd(fechaCorteAlta.substring(0,7), -1) : '';
       (activosFijos||[]).forEach(act=>{
         try{
+          // El criterio correcto no es la fecha — es si el activo YA tiene su contrapartida real
+          // (Banco/Caja/CxP) contabilizada en Procura al momento de la compra. Si origen==='procura',
+          // ese asiento ya existe y "Alta" no debe tocarlo, sin importar cuándo se compró — evita
+          // duplicar (visto en datos reales: mismo monto exacto contado dos veces, una vez bien en
+          // Procura → cuenta real, y otra de más aquí → código inventado "Sin Clasificar").
+          if ((act.origen||'') === 'procura') return;
           const costoUSD = parseNum(act.valorCosto||0);
           const costoBs = parseNum(act.valorCostoBs||0);
           if (costoUSD<=0 && costoBs<=0) return;
@@ -46444,6 +46450,26 @@ ${resumenHtml}
           fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
         })))
         .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      // La Utilidad del Ejercicio / Acumulada se inyecta como número puro en porCuenta (no como
+      // asiento real, porque es un cálculo — Ingresos-Costos-Gastos — no una transacción), así
+      // que nunca aparecía en este detalle: el saldo de la cuenta se veía "de la nada". Se agrega
+      // aquí como fila sintética, para que quede trazable de dónde sale.
+      const sinteticas = [];
+      if (codigo === cuentaResultadoCfg.codigo) {
+        sinteticas.push({
+          fecha:null, comprobante:'—', modulo:'Cálculo', concepto:`▸ Utilidad del Ejercicio — Ingresos menos Costos y Gastos (${rangoPersonalizado?`${contDd(inicioMesCorte)} al ${contDd(corte)}`:'mes en curso'})`,
+          debeUSD: utilEjUSD<0?-utilEjUSD:0, haberUSD: utilEjUSD>=0?utilEjUSD:0,
+          debeBs: utilEjBs<0?-utilEjBs:0, haberBs: utilEjBs>=0?utilEjBs:0,
+        });
+      }
+      if (codigo === cuentaUtilAcumCfg.codigo) {
+        sinteticas.push({
+          fecha:null, comprobante:'—', modulo:'Cálculo', concepto:`▸ Utilidad Acumulada — Ingresos menos Costos y Gastos de todo lo anterior a ${contDd(inicioMesCorte)}`,
+          debeUSD: utilAcumUSD<0?-utilAcumUSD:0, haberUSD: utilAcumUSD>=0?utilAcumUSD:0,
+          debeBs: utilAcumBs<0?-utilAcumBs:0, haberBs: utilAcumBs>=0?utilAcumBs:0,
+        });
+      }
+      if (sinteticas.length) return [...sinteticas, ...detalleCompleto];
       if (!contFiltDesde) return detalleCompleto;
       const antes = detalleCompleto.filter(d=>(d.fecha||'')<contFiltDesde);
       const dentro = detalleCompleto.filter(d=>(d.fecha||'')>=contFiltDesde);
