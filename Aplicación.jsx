@@ -15785,9 +15785,6 @@ function App() {
       const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
       const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
       const hoyYM = getTodayDate().substring(0,7);
-      if (typeof window !== 'undefined') {
-        window.__depDebug = { getTodayDateRaw: getTodayDate(), hoyYM, primerMesAntes: null, mesesGenerados: [] };
-      }
       // Misma tasa única "del día" que usa la pestaña Depreciaciones (settings/general.tasaDeprecUltima,
       // ver tasaDeprec en ComprobantesContablesApp) — antes cada activo usaba su propia tasaCambio,
       // así que el mismo mes podía salir con montos en Bs. distintos entre Comprobantes Contables y
@@ -15800,13 +15797,11 @@ function App() {
       (activosFijos||[]).forEach(act=>{
         const adq=(act.fechaAdquisicion||'').substring(0,7); if(!adq) return;
         const desde=ymAdd(adq,1);
-        if(!primerMes || ymDiff(desde,primerMes)<0) primerMes=desde;
+        if(!primerMes || ymDiff(desde,primerMes)>0) primerMes=desde;
       });
-      if(typeof window!=='undefined' && window.__depDebug) window.__depDebug.primerMesAntes = primerMes;
       if(primerMes){
         let cur=primerMes, n=0;
         while(ymDiff(cur,hoyYM)>=0 && n<600){
-          if(typeof window!=='undefined' && window.__depDebug) window.__depDebug.mesesGenerados.push(cur);
           const compId=`DEP-${cur}`;
           const r = construirLineasDepreciacionCompartida(cur, {
             activosFijos, activoFijoCfg:activoFijoCfgC, planCuentas:planDeCuentas, tasa,
@@ -46186,12 +46181,6 @@ ${resumenHtml}
 
     return (
       <div className="p-4 md:p-6 bg-gray-50 min-h-screen animate-in fade-in">
-        {typeof window!=='undefined' && window.__depDebug && (
-          <div className="bg-red-100 border-4 border-red-500 rounded-xl p-4 mb-4 text-[11px] font-mono whitespace-pre-wrap">
-            <div className="font-black text-red-800 mb-1">🔍 DIAGNÓSTICO PRECISO — Depreciación</div>
-            {`getTodayDate() crudo: ${window.__depDebug.getTodayDateRaw}\nhoyYM: ${window.__depDebug.hoyYM}\nprimerMes (mes más antiguo con activos): ${window.__depDebug.primerMesAntes}\nTotal meses generados: ${window.__depDebug.mesesGenerados.length}\nPrimeros 3: ${window.__depDebug.mesesGenerados.slice(0,3).join(', ')}\nÚltimos 3: ${window.__depDebug.mesesGenerados.slice(-3).join(', ')}\n¿Incluye 2026-07?: ${window.__depDebug.mesesGenerados.includes('2026-07')}`}
-          </div>
-        )}
         <div className="w-full bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
           <ContNavBar active="estado_resultados_cc"/>
           <div className="px-8 py-6 border-b-2 border-black">
