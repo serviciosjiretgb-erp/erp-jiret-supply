@@ -3442,9 +3442,14 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const montoBs = montoUSD * tasa;
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
   const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
-  const ctaPrestamo = (planCuentas||[]).find(pc=>/(pr[ée]stamo|relacionad)/i.test(pc.nombre||''));
-  const codRelFinal = codRel || (ctaPrestamo?String(ctaPrestamo.codigo||ctaPrestamo.id||''):'');
-  const nomRelFinal = nomRel || (ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas');
+  // Antes, si el tercero no tenía cuenta configurada, se adivinaba buscando en TODO el Plan de
+  // Cuentas la primera cuyo nombre contenga "préstamo" o "relacionad" — eso hacía que caudales de
+  // terceros SIN configurar terminaran mezclados en una cuenta genérica ajena (visto en datos
+  // reales: pagos a Agro-Avícola El Caimito apareciendo en "Préstamos Bancarios", una cuenta que
+  // no le pertenece, solo porque su nombre también dice "préstamo"). Ahora, sin cuenta configurada
+  // para ESE tercero específico, se marca visible en vez de mezclarse con otra cuenta real.
+  const codRelFinal = codRel || `SIN-CTA-${p.terceroId||'?'}`;
+  const nomRelFinal = nomRel || `⚠️ Sin cuenta configurada — ${p.terceroNombre||tercRel?.nombre||'tercero desconocido'}`;
   const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
   const tabOrigen = p.origen==='caja'?'caja':'banco';
   const reclasOrigen = (li,codigo,cuenta) => (aplicarReclas && movLigado) ? aplicarReclas(tabOrigen, movLigado._docId||movLigado.id, li, codigo, cuenta) : {codigo,cuenta};
