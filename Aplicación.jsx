@@ -12939,7 +12939,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       return {
         id: a.id, comprobante: a.nroComprobante||'AJUSTE', fecha: a.fecha, doc: a.nroComprobante||'—',
         tasa: Number(a.tasa||0), conc: a.concepto||'Ajuste manual', _raw:a,
-        lineas: lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})),
+        lineas: lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD, detalle:l.detalle})),
       };
     });
   };
@@ -13314,7 +13314,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (Math.abs(totD-totH) > 0.02) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`); return; }
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha:'2026-01-31', nroComprobante:'HIST-ENERO-2026', concepto:'Reconstrucción histórica detallada — Estado de Resultado 2026-01',
+        fecha:'2026-01-31', nroComprobante:'HIST-ENERO-2026', concepto:'Enero 2026',
         tasa:1, lineas, createdAt:Date.now(), user:'Importación Histórica Detallada', origen:'historico_detallado',
       });
       alert(`✅ Se creó "HIST-ENERO-2026" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)}.`);
@@ -13648,7 +13648,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (Math.abs(totD-totH) > 0.02) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`); return; }
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha:'2026-02-28', nroComprobante:'HIST-FEBRERO-2026', concepto:'Reconstrucción histórica detallada — Estado de Resultado 2026-02',
+        fecha:'2026-02-28', nroComprobante:'HIST-FEBRERO-2026', concepto:'Febrero 2026',
         tasa:1, lineas, createdAt:Date.now(), user:'Importación Histórica Detallada', origen:'historico_detallado',
       });
       alert(`✅ Se creó "HIST-FEBRERO-2026" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)}.`);
@@ -14073,7 +14073,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (Math.abs(totD-totH) > 0.02) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`); return; }
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha:'2026-03-31', nroComprobante:'HIST-MARZO-2026', concepto:'Reconstrucción histórica detallada — Estado de Resultado 2026-03',
+        fecha:'2026-03-31', nroComprobante:'HIST-MARZO-2026', concepto:'Marzo 2026',
         tasa:1, lineas, createdAt:Date.now(), user:'Importación Histórica Detallada', origen:'historico_detallado',
       });
       alert(`✅ Se creó "HIST-MARZO-2026" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)}.`);
@@ -14463,7 +14463,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (Math.abs(totD-totH) > 0.02) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`); return; }
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha:'2026-04-30', nroComprobante:'HIST-ABRIL-2026', concepto:'Reconstrucción histórica detallada — Estado de Resultado 2026-04',
+        fecha:'2026-04-30', nroComprobante:'HIST-ABRIL-2026', concepto:'Abril 2026',
         tasa:1, lineas, createdAt:Date.now(), user:'Importación Histórica Detallada', origen:'historico_detallado',
       });
       alert(`✅ Se creó "HIST-ABRIL-2026" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)}.`);
@@ -14992,7 +14992,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (Math.abs(totD-totH) > 0.02) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`); return; }
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha:'2026-05-31', nroComprobante:'HIST-MAYO-2026', concepto:'Reconstrucción histórica detallada — Estado de Resultado 2026-05',
+        fecha:'2026-05-31', nroComprobante:'HIST-MAYO-2026', concepto:'Mayo 2026',
         tasa:1, lineas, createdAt:Date.now(), user:'Importación Histórica Detallada', origen:'historico_detallado',
       });
       alert(`✅ Se creó "HIST-MAYO-2026" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)}.`);
@@ -15458,7 +15458,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (Math.abs(totD-totH) > 0.02) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} — no se importó, revisa el origen.`); return; }
     try {
       await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha:'2026-06-30', nroComprobante:'HIST-JUNIO-2026', concepto:'Reconstrucción histórica detallada — Estado de Resultado 2026-06',
+        fecha:'2026-06-30', nroComprobante:'HIST-JUNIO-2026', concepto:'Junio 2026',
         tasa:1, lineas, createdAt:Date.now(), user:'Importación Histórica Detallada', origen:'historico_detallado',
       });
       alert(`✅ Se creó "HIST-JUNIO-2026" con ${lineas.length} líneas, cuadrado en $${totD.toFixed(2)}.`);
@@ -16070,7 +16070,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
 
   const encabezadosCC = (cfg) => {
     const valores = cfg.ordenBsPrimero ? ['Debe Bs.','Haber Bs.','Debe $','Haber $'] : ['Debe $','Haber $','Debe Bs.','Haber Bs.'];
-    return [cfg.primeraCol,'Fecha','Código', cfg.cuentaLabel||'Cuenta','T', cfg.docLabel,'Concepto', ...(cfg.tasa?['Tasa']:[]), ...valores];
+    return [cfg.primeraCol,'Fecha','Código', cfg.cuentaLabel||'Cuenta','T', cfg.docLabel,'Concepto','Detalle', ...(cfg.tasa?['Tasa']:[]), ...valores];
   };
 
   // Filas de detalle — un <tr> por línea D/H, agrupadas visualmente por comprobante
@@ -16090,13 +16090,14 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
 <td class="c-tipo${grp}"><span class="${l.tipo==='D'?'t-d':'t-h'}">${l.tipo}</span></td>
 <td class="c-doc2${grp}">${primero?escCC(r.doc):''}</td>
 <td class="c-conc${grp}">${primero?escCC(r.conc):''}</td>
+<td class="c-detalle${grp}">${escCC(l.detalle)||''}</td>
 ${cfg.tasa?`<td class="c-tasa${grp}">${primero?contFmt(r.tasa):''}</td>`:''}
 ${valoresHtml}
 </tr>`;
   }).join('')).join('');
 
   const totalesFilaHtmlCC = (cfg, totales) => {
-    const nCols = 7 + (cfg.tasa?1:0);
+    const nCols = 8 + (cfg.tasa?1:0);
     const valores = cfg.ordenBsPrimero
       ? [['Bs.',totales.dBs],['Bs.',totales.hBs],['$',totales.dUSD],['$',totales.hUSD]]
       : [['$',totales.dUSD],['$',totales.hUSD],['Bs.',totales.dBs],['Bs.',totales.hBs]];
@@ -16137,7 +16138,7 @@ ${valoresHtml}
     const rif     = settingsCC?.empresaRif || settingsCC?.empresaRIF || 'J-412309374';
     const dir     = settingsCC?.empresaDireccion || 'Av. Circunvalación Nro. 02 C.C. El Dividivi Local G-9, Maracaibo.';
     const tel     = settingsCC?.empresaTelefono || '';
-    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:14px;font-weight:900;text-transform:uppercase;color:#111;margin-bottom:10px;letter-spacing:.3px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.resumen{display:flex;flex-wrap:wrap;gap:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:10.5px;}.resumen span{display:block;font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}.resumen b{font-size:12px;}.badge-ok{color:#059669;}.badge-bad{color:#dc2626;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;white-space:nowrap;}td{padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}.grupo-inicio{border-top:2px solid #cbd5e1!important;}tfoot td{background:#0f172a!important;color:#fff;font-weight:900;padding:7px 8px;}.c-doc{font-weight:900;color:#ea580c;}.c-fecha{color:#9ca3af;white-space:nowrap;}.c-cod{color:#2563eb;}.c-cuenta{font-weight:700;text-transform:uppercase;}.c-tipo{text-align:center;}.c-doc2{color:#9ca3af;}.c-conc{text-transform:uppercase;}.c-tasa,.c-dbs,.c-hbs,.c-dusd,.c-husd{text-align:right;font-weight:900;white-space:nowrap;}.c-dbs,.c-dusd{color:#059669;}.c-hbs,.c-husd{color:#dc2626;}.c-tasa{color:#9ca3af;font-weight:400;}.t-d{color:#059669;font-weight:900;}.t-h{color:#dc2626;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}th,tfoot td{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:8px;}th{font-size:7px;padding:4px 5px;}td{padding:4px 5px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:12px;margin-bottom:6px;}.resumen{padding:6px 10px;margin-bottom:8px;gap:10px;}.resumen b{font-size:10px;}}`;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:14px;font-weight:900;text-transform:uppercase;color:#111;margin-bottom:10px;letter-spacing:.3px;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.resumen{display:flex;flex-wrap:wrap;gap:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:10.5px;}.resumen span{display:block;font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}.resumen b{font-size:12px;}.badge-ok{color:#059669;}.badge-bad{color:#dc2626;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;white-space:nowrap;}td{padding:6px 8px;border-bottom:1px solid #e5e7eb;color:#111;vertical-align:top;}tr:nth-child(even) td{background:#f9fafb;}.grupo-inicio{border-top:2px solid #cbd5e1!important;}tfoot td{background:#0f172a!important;color:#fff;font-weight:900;padding:7px 8px;}.c-doc{font-weight:900;color:#ea580c;}.c-fecha{color:#9ca3af;white-space:nowrap;}.c-cod{color:#2563eb;}.c-cuenta{font-weight:700;text-transform:uppercase;}.c-tipo{text-align:center;}.c-doc2{color:#9ca3af;}.c-conc{text-transform:uppercase;}.c-detalle{color:#374151;max-width:220px;white-space:normal;word-break:break-word;}.c-tasa,.c-dbs,.c-hbs,.c-dusd,.c-husd{text-align:right;font-weight:900;white-space:nowrap;}.c-dbs,.c-dusd{color:#059669;}.c-hbs,.c-husd{color:#dc2626;}.c-tasa{color:#9ca3af;font-weight:400;}.t-d{color:#059669;font-weight:900;}.t-h{color:#dc2626;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}th,tfoot td{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:8px;}th{font-size:7px;padding:4px 5px;}td{padding:4px 5px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:12px;margin-bottom:6px;}.resumen{padding:6px 10px;margin-bottom:8px;gap:10px;}.resumen b{font-size:10px;}}`;
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${titulo}</title><style>${css}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${empresa}</h2><p>RIF: ${rif}</p><p>${dir}</p>${tel?`<p>Tel: ${tel}</p>`:''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">${escCC(titulo)}</div>${contenidoHtml}</div></div></body></html>`;
     const w = window.open('', '_blank');
     if(w){ w.document.write(html); w.document.close(); }
@@ -18045,10 +18046,14 @@ function App() {
   const [contERCurrency, setContERCurrency] = useState('both');
   const [contERExpandAll, setContERExpandAll] = useState(true);
   const [contERVistaPlanta, setContERVistaPlanta] = useState(false);
+  const [contERVistaVenta, setContERVistaVenta] = useState(false);
   const [contERExpandKey, setContERExpandKey] = useState(0);
   const [contBGCurrency, setContBGCurrency] = useState('both');
   const [contBGExpandAll, setContBGExpandAll] = useState(true);
   const [contBGExpandKey, setContBGExpandKey] = useState(0);
+  const [contBGRecFecha, setContBGRecFecha] = useState('');
+  const [contBGRecTasa, setContBGRecTasa] = useState(null);
+  const [contBGRecActiva, setContBGRecActiva] = useState(false);
   const [contBCCurrency, setContBCCurrency] = useState('both');
   const [contBCExpandAll, setContBCExpandAll] = useState(true);
   const [contBCExpandKey, setContBCExpandKey] = useState(0);
@@ -48697,17 +48702,31 @@ ${resumenHtml}
       })))
       .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
 
+    // Resultado Planta / Resultado Venta: excepciones confirmadas por el usuario — aunque el
+    // código empiece con 5.1 (que en general es "costo de producción"), estas dos cuentas son
+    // parte del resultado de VENTA, no de planta: Costo de Venta (Mercancía) es mercancía
+    // comprada para reventa (no producción propia), y Muestras Clientes es actividad comercial.
+    const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
+    const CODIGOS_VENTA_DESDE_5_1 = ['5.1.01.01.001','5.1.01.02.001', ...(codCostoMercancia?[codCostoMercancia]:[])];
+    const _esCostoPlanta = (codigo) => (codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo);
+    const _esCostoVenta = (codigo) => codigo.startsWith('5.3') || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
+    // 5.4.x (Costos de Nacionalización — aduana, fletes de contenedor) queda fuera de ambas
+    // vistas a propósito, por decisión explícita del usuario.
+
     const cuentasAggUsar = contERVistaPlanta
       ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || /orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
+      : contERVistaVenta
+      ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || !/orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
       : cuentasAgg;
     const treeIngresos = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-    // Costo vs Gasto: se decide por el Grupo REAL que el usuario configuró en Plan de Cuentas
-    // para esa cuenta (ej. 5.2.xx / 5.3.xx de depreciación operacional, que el usuario clasificó
-    // como "COSTOS", no "GASTOS" — el prefijo numérico por sí solo los mandaría a Gastos). Si la
-    // cuenta no está registrada en el Plan, se cae al criterio anterior por prefijo (5.1 = Costo;
-    // en Vista Planta, 5.2 también). Esto reemplaza el parche que sacaba Depreciación del árbol
-    // normal y la mostraba aparte al final — ahora cada cuenta de depreciación cae en su Grupo/
-    // Sub-grupo/Cuenta/Subcuenta real, igual que cualquier otra cuenta de Costos o Gastos.
+    // Costo vs Gasto (vista general, sin Planta/Venta activa): se decide por el Grupo REAL que
+    // el usuario configuró en Plan de Cuentas para esa cuenta (ej. 5.2.xx / 5.3.xx de
+    // depreciación operacional, que el usuario clasificó como "COSTOS", no "GASTOS" — el
+    // prefijo numérico por sí solo los mandaría a Gastos). Si la cuenta no está registrada en
+    // el Plan, se cae al criterio anterior por prefijo (5.1 = Costo). Esto reemplaza el parche
+    // que sacaba Depreciación del árbol normal y la mostraba aparte al final — ahora cada
+    // cuenta de depreciación cae en su Grupo/Sub-grupo/Cuenta/Subcuenta real, igual que
+    // cualquier otra cuenta de Costos o Gastos.
     const _grupoPlanDeCuenta = (codigo) => {
       const pdc = (planDeCuentas||[]).find(p=>ccNormCodigo(p.codigo)===ccNormCodigo(codigo));
       if (!pdc?.grupo) return null;
@@ -48718,22 +48737,38 @@ ${resumenHtml}
     const _esCuentaDeCosto = (c) => {
       const g = _grupoPlanDeCuenta(c.codigo);
       if (g) return g==='COSTOS';
-      return c.codigo.startsWith('5.1') || (contERVistaPlanta && c.codigo.startsWith('5.2'));
+      return c.codigo.startsWith('5.1');
     };
-    const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
-    const cuentasParaCostos = cuentasAggUsar.filter(c => _esCuentaDeCosto(c) && !(contERVistaPlanta && codCostoMercancia && c.codigo===codCostoMercancia));
+    // Resultado Planta / Resultado Venta usan el split explícito de arriba (línea de negocio),
+    // NO el Grupo Costos/Gastos del Plan de Cuentas (ese es un eje distinto y sigue rigiendo
+    // la vista general de Resultado, sin ningún toggle activo).
+    const cuentasParaCostos = contERVistaPlanta
+      ? cuentasAggUsar.filter(c => _esCostoPlanta(c.codigo))
+      : contERVistaVenta
+      ? cuentasAggUsar.filter(c => _esCostoVenta(c.codigo))
+      : cuentasAggUsar.filter(c => _esCuentaDeCosto(c));
     let treeCostos = ccBuildArbol(cuentasParaCostos, planDeCuentas, ['5'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     if (contERVistaPlanta && treeCostos.length) {
       const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
       treeCostos = [{ n:'COSTO DE PRODUCCIÓN', c: treeCostos, u, b }];
     }
-    const cuentasGastos = contERVistaPlanta ? [] : cuentasAggUsar.filter(c=>!_esCuentaDeCosto(c) && (c.codigo.startsWith('5')||c.codigo.startsWith('6')));
+    if (contERVistaVenta && treeCostos.length) {
+      const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
+      treeCostos = [{ n:'COSTO DE VENTAS', c: treeCostos, u, b }];
+    }
+    // Gastos: se ocultan por completo en Planta y en Venta (ambas son vistas de margen de
+    // contribución por línea de negocio) — solo se muestran en el Resultado General, sin
+    // ningún toggle activo, tal como ya funcionaba para Planta.
+    const contVistaActiva = contERVistaPlanta || contERVistaVenta;
+    const cuentasGastos = contVistaActiva ? [] : cuentasAggUsar.filter(c=>!_esCuentaDeCosto(c) && (c.codigo.startsWith('5')||c.codigo.startsWith('6')));
     const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
     if (treeIngresos[0] && contERVistaPlanta) treeIngresos[0].n = 'INGRESOS POR PRODUCCIÓN';
-    if (treeCostos[0] && !contERVistaPlanta) treeCostos[0].n = 'COSTO DE VENTAS';
+    if (treeIngresos[0] && contERVistaVenta) treeIngresos[0].n = 'INGRESOS POR VENTA';
+    if (treeCostos[0] && !contVistaActiva) treeCostos[0].n = 'COSTO DE VENTAS';
     if (treeGastosReal[0]) treeGastosReal[0].n = 'GASTOS OPERATIVOS';
+
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
     const totalIngresosUSD=sumTree(treeIngresos,'u'), totalIngresosBs=sumTree(treeIngresos,'b');
@@ -48779,7 +48814,8 @@ ${resumenHtml}
                 <button onClick={()=>{setContERExpandAll(true);setContERExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Expandir Todos</button>
                 <button onClick={()=>{setContERExpandAll(false);setContERExpandKey(k=>k+1);}} className="px-2.5 py-1.5 rounded text-[9px] font-black uppercase text-gray-500 hover:bg-gray-100">Contraer Todos</button>
               </div>
-              <button onClick={()=>setContERVistaPlanta(v=>!v)} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaPlanta?'bg-indigo-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><Factory size={13}/> {contERVistaPlanta?'Viendo Resultado Planta':'Resultado Planta'}</button>
+              <button onClick={()=>{setContERVistaPlanta(v=>!v); setContERVistaVenta(false);}} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaPlanta?'bg-indigo-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><Factory size={13}/> {contERVistaPlanta?'Viendo Resultado Planta':'Resultado Planta'}</button>
+              <button onClick={()=>{setContERVistaVenta(v=>!v); setContERVistaPlanta(false);}} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaVenta?'bg-teal-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><ShoppingCart size={13}/> {contERVistaVenta?'Viendo Resultado Venta':'Resultado Venta'}</button>
               <div className="flex gap-2 ml-auto">
                 <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
                 <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
@@ -48879,6 +48915,28 @@ ${resumenHtml}
     const acumuladaInyectada = inyectarEnPorCuenta(cuentaUtilAcumCfg.codigo, cuentaUtilAcumCfg.nombre, utilAcumUSD, utilAcumBs);
     const cuentasAgg = Object.values(porCuenta);
 
+    // Reconversión monetaria por fecha: NO toca cuentasAgg (los datos reales) — solo genera una
+    // copia usada para construir el árbol cuando el usuario activó la vista recalculada. Cada
+    // cuenta mantiene fija su moneda "nativa" (como fue contabilizada) y se recalcula SOLO la
+    // otra columna, a la tasa de cierre de la fecha elegida (confirmado con el usuario):
+    //   Bs. nativo: Bancos Nacionales (1.1.01.02.x), Retenciones y Créditos Fiscales activo
+    //   (1.1.04.01.x — IVA, ISLR), y todo lo que se le debe a organismos por impuestos/aportes
+    //   en Pasivo (2.1.04.x — IVSS, FAOV, INCES, Actividad Económica, etc., ya que el SENIAT/
+    //   IVSS calculan y exigen esos montos en Bs., no en $).
+    //   $ nativo (todo lo demás): Caja, Efectos y Cuentas por Cobrar, Inventarios, Prepagados,
+    //   Propiedad Planta y Equipo, Cargos Diferidos, Cuentas por Pagar/Préstamos, Patrimonio.
+    const _naturalezaCuenta = (codigo) => {
+      if (codigo.startsWith('1.1.01.02')) return 'BS';
+      if (codigo.startsWith('1.1.04.01')) return 'BS';
+      if (codigo.startsWith('2.1.04')) return 'BS';
+      return 'USD';
+    };
+    const cuentasAggParaArbol = (contBGRecActiva && contBGRecTasa>0)
+      ? cuentasAgg.map(c => _naturalezaCuenta(c.codigo)==='BS'
+          ? {...c, debeUSD: c.debeBs/contBGRecTasa, haberUSD: c.haberBs/contBGRecTasa}
+          : {...c, debeBs: c.debeUSD*contBGRecTasa, haberBs: c.haberUSD*contBGRecTasa})
+      : cuentasAgg;
+
     // Si hay "Desde", el detalle expandido de cada cuenta NO debe mostrar todo el historial:
     // todo lo previo a Desde se colapsa en una sola fila "Saldo Anterior" (mismo criterio que
     // ya usa Mayor Analítico), y de ahí para adelante se listan los movimientos uno a uno.
@@ -48926,17 +48984,18 @@ ${resumenHtml}
     };
 
     // Depreciación Acumulada se saca del árbol normal (mismo problema que en Estado de
-    const treeActivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
-    const treePasivo = ccBuildArbol(cuentasAgg, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
-    const treePatrimonio = ccBuildArbol(cuentasAgg, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+    const treeActivo = ccBuildArbol(cuentasAggParaArbol, planDeCuentas, ['1'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const treePasivo = ccBuildArbol(cuentasAggParaArbol, planDeCuentas, ['2'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
+    const treePatrimonio = ccBuildArbol(cuentasAggParaArbol, planDeCuentas, ['3'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
     const totalActivoUSD=sumTree(treeActivo,'u'), totalActivoBs=sumTree(treeActivo,'b');
     const totalPasivoUSD=sumTree(treePasivo,'u'), totalPasivoBs=sumTree(treePasivo,'b');
     // Si alguna de las dos no tenía cuenta configurada, esa sí se suma aparte (no había dónde
     // inyectarla) — si ambas se inyectaron, ya están contadas dentro del árbol y no se repiten.
+    const _recBs = (usd) => (contBGRecActiva && contBGRecTasa>0) ? usd*contBGRecTasa : null;
     const totalPatrimonioUSD=sumTree(treePatrimonio,'u')+(ejercicioInyectado?0:utilEjUSD)+(acumuladaInyectada?0:utilAcumUSD);
-    const totalPatrimonioBs=sumTree(treePatrimonio,'b')+(ejercicioInyectado?0:utilEjBs)+(acumuladaInyectada?0:utilAcumBs);
+    const totalPatrimonioBs=sumTree(treePatrimonio,'b')+(ejercicioInyectado?0:(_recBs(utilEjUSD)??utilEjBs))+(acumuladaInyectada?0:(_recBs(utilAcumUSD)??utilAcumBs));
     const totalPasPatUSD = totalPasivoUSD+totalPatrimonioUSD, totalPasPatBs = totalPasivoBs+totalPatrimonioBs;
     const cuadrado = Math.abs(totalActivoUSD-totalPasPatUSD)<0.5;
     const showUSD = contBGCurrency!=='bs'; const showBS = contBGCurrency!=='usd';
@@ -48989,11 +49048,31 @@ ${resumenHtml}
               </div>
               <span className={`text-[10px] font-black uppercase px-3 py-2 rounded-lg ${cuadrado?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}`}>{cuadrado?'✓ Cuadrado':'⚠ Descuadrado'}</span>
               <button onClick={()=>setShowCuentaResultadoModal(true)} className="flex items-center gap-1.5 bg-white border-2 border-gray-200 hover:border-orange-400 text-gray-600 hover:text-orange-600 px-3 py-2 rounded-lg text-[10px] font-black uppercase"><Settings2 size={13}/> {cuentaResultadoCfg.codigo ? `Cta. Resultado: ${cuentaResultadoCfg.codigo}` : 'Configurar Cta. Resultado'}</button>
+              <div className="flex items-end gap-2 bg-white p-2 rounded-lg border-2 border-purple-200">
+                <div>
+                  <label className="text-[9px] font-black text-purple-600 uppercase block mb-1">Reexpresar a fecha</label>
+                  <input type="date" className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none" value={contBGRecFecha} onChange={e=>{setContBGRecFecha(e.target.value); setContBGRecActiva(false);}}/>
+                </div>
+                <button type="button" disabled={fetchingBCV || !contBGRecFecha} title="Consultar tasa BCV histórica de esa fecha" onClick={async()=>{
+                  const t = await fetchTasaBCV(contBGRecFecha);
+                  if (t) { setContBGRecTasa(t); setContBGRecActiva(true); }
+                }} className="px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5">
+                  <RefreshCw size={12} className={fetchingBCV?'animate-spin':''}/> {fetchingBCV?'Consultando...':'Calcular'}
+                </button>
+                {contBGRecActiva && contBGRecTasa>0 && (
+                  <button type="button" onClick={()=>setContBGRecActiva(false)} title="Volver a los datos reales, tal como se contabilizaron" className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-[9px] font-black uppercase">✕ Quitar</button>
+                )}
+              </div>
               <div className="flex gap-2 ml-auto">
                 <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
                 <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
               </div>
             </div>
+            {contBGRecActiva && contBGRecTasa>0 && (
+              <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-3 text-[10px] font-bold text-purple-800 flex items-center gap-2">
+                <RefreshCw size={13}/> Vista reexpresada a Bs.{ccFmtR(contBGRecTasa)}/$ (tasa del {contDd(contBGRecFecha)}) — recalcula solo la columna que NO es la moneda nativa de cada cuenta. Esto es solo una vista: tus datos reales no cambiaron.
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
