@@ -12205,6 +12205,101 @@ const ccBgPorNivel = (r) => {
   const tonos = ['#d1d5db','#e5e7eb','#eef0f2','#f6f7f8'];
   return tonos[Math.min(r.level, tonos.length-1)];
 };
+// Carga ExcelJS por CDN una sola vez (no viene empaquetado con la app) — necesario porque el
+// truco anterior de HTML-como-.xls no puede escribir formatos de número nativos de Excel
+// (ej. el código de moneda [$USD]/[$Bs-400A] entre corchetes), que es justo lo que el usuario
+// diseñó a mano y pidió replicar exactamente.
+let _ccExcelJSPromise = null;
+const ccLoadExcelJS = () => {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  if (_ccExcelJSPromise) return _ccExcelJSPromise;
+  _ccExcelJSPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+    s.onload = () => resolve(window.ExcelJS);
+    s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel (revisa tu conexión).'));
+    document.head.appendChild(s);
+  });
+  return _ccExcelJSPromise;
+};
+const CC_XLSX_FONT = 'Aptos Display';
+const CC_XLSX_FMT_USD = '_ [$USD]\\ * #,##0.00_ ;_ [$USD]\\ * \\-#,##0.00_ ;_ [$USD]\\ * "-"??_ ;_ @_ ';
+const CC_XLSX_FMT_BS  = '_-[$Bs-400A]* #,##0.00_-;\\-[$Bs-400A]* #,##0.00_-;_-[$Bs-400A]* "-"??_-;_-@_-';
+// Relleno por nivel de indentación (0=Grupo … 4=cuenta hoja). Las filas "Total X" SIEMPRE usan
+// el gris fijo de nivel 1, sin importar su propio nivel — así se ve exactamente en los archivos
+// de referencia del usuario (Total CAJA MONEDA EXTRANJERA, nivel 3, con el mismo gris que
+// Total ACTIVO CIRCULANTE, nivel 1).
+const CC_XLSX_FILL_POR_NIVEL = ['FFD1D5DB','FFE5E7EB','FFEEF0F2','FFF6F7F8','FFFFFFFF'];
+const CC_XLSX_FILL_TOTAL = 'FFE5E7EB';
+const CC_XLSX_FILL_CIERRE = 'FF111827';
+const ccExportXLSX = async (titulo, subtitulo, tree, currency, totalBase, getDetalle, mostrarDetalle, filaExtra, nombreArchivo, sheetName) => {
+  const ExcelJS = await ccLoadExcelJS();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName, { views: [{ showGridLines: false }] });
+  const showUSD = currency!=='bs', showBS = currency!=='usd';
+  const cols = [{width:60}, ...(showUSD?[{width:20}]:[]), ...(showBS?[{width:24}]:[]), {width:12}];
+  ws.columns = cols;
+  const bordeMed = { top:{style:'medium'}, bottom:{style:'medium'} };
+  const setCell = (r, c, val, {bold=false, color='FF111827', fill=null, align=null, numFmt=null, size=13}={}) => {
+    const cell = ws.getCell(r,c);
+    cell.value = val;
+    cell.font = { name: CC_XLSX_FONT, size, bold, color:{argb:color} };
+    if (fill) cell.fill = { type:'pattern', pattern:'solid', fgColor:{argb:fill} };
+    if (align) cell.alignment = { horizontal: align, vertical: 'center' };
+    if (numFmt) cell.numFmt = numFmt;
+    cell.border = bordeMed;
+    return cell;
+  };
+  // Membrete (filas 1-6), igual al de los archivos de referencia del usuario.
+  setCell(1,1,'Supply G&B', {bold:true, color:'FFE8541A'}); ws.getRow(1).getCell(1).border=null;
+  setCell(1,2,'SERVICIOS JIRET G&B, C.A.', {bold:true, color:'FF111827', align:'right'}); ws.getRow(1).getCell(2).border=null;
+  setCell(2,1,'RIF: J-412309374', {color:'FF555555'}); ws.getRow(2).getCell(1).border=null;
+  setCell(3,1,'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB', {color:'FF555555'}); ws.getRow(3).getCell(1).border=null;
+  setCell(4,1,'SECTOR EL TREBOL MARACAIBO-ZULIA', {color:'FF555555'}); ws.getRow(4).getCell(1).border=null;
+  setCell(5,1,titulo, {bold:true, color:'FF111827'}); ws.getRow(5).getCell(1).border=null;
+  setCell(6,1,subtitulo, {color:'FF666666'}); ws.getRow(6).getCell(1).border=null;
+  for (let r=1;r<=4;r++) ws.getRow(r).height = 14.4;
+  // Encabezado de columnas (fila 7).
+  let colIdx = 1;
+  setCell(7, colIdx++, 'Cuenta', {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE, align:'right'});
+  if (showUSD) setCell(7, colIdx++, 'USD', {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE, align:'right'});
+  if (showBS) setCell(7, colIdx++, 'Bs.', {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE, align:'right'});
+  setCell(7, colIdx++, '%', {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE, align:'right'});
+  // Filas de datos: reutiliza ccFlattenArbol, la misma fuente que ya usan el PDF y el HTML.
+  const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
+  let r = 8;
+  rows.forEach(row => {
+    const nivel = Math.min(row.level, CC_XLSX_FILL_POR_NIVEL.length-1);
+    const esHoja = !row.isSection && !row.isTotal && !row.isDetalle;
+    const fill = row.isTotal ? CC_XLSX_FILL_TOTAL : CC_XLSX_FILL_POR_NIVEL[nivel];
+    const bold = row.isTotal || (!esHoja && !row.isDetalle);
+    const indent = '\u00a0'.repeat(row.level*4);
+    let c = 1;
+    if (row.isDetalle) {
+      setCell(r, c++, indent+row.label, {bold:false, color:'FF6B7280', size:10});
+    } else {
+      setCell(r, c++, indent+row.label, {bold, fill, color:'FF111827'});
+    }
+    if (showUSD) setCell(r, c++, row.u!=null?row.u:null, {bold, fill: row.isDetalle?null:fill, align:'right', numFmt:CC_XLSX_FMT_USD, color: row.isDetalle?'FF6B7280':'FF111827', size: row.isDetalle?10:13});
+    if (showBS) setCell(r, c++, row.b!=null?row.b:null, {bold, fill: row.isDetalle?null:fill, align:'right', numFmt:CC_XLSX_FMT_BS, color: row.isDetalle?'FF6B7280':'FF111827', size: row.isDetalle?10:13});
+    setCell(r, c++, row.pct||'', {bold, fill: row.isDetalle?null:fill, align:'right', color: row.isDetalle?'FF6B7280':'FF111827', size: row.isDetalle?10:13});
+    r++;
+  });
+  // Fila de cierre (Resultado del Ejercicio / Total Pasivo + Patrimonio) — fondo oscuro, igual al encabezado.
+  if (filaExtra) {
+    let c = 1;
+    setCell(r, c++, filaExtra.label, {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE});
+    if (showUSD) setCell(r, c++, filaExtra.usd, {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE, align:'right', numFmt:CC_XLSX_FMT_USD});
+    if (showBS) setCell(r, c++, filaExtra.bs, {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE, align:'right', numFmt:CC_XLSX_FMT_BS});
+    setCell(r, c++, '', {bold:true, color:'FFFFFFFF', fill:CC_XLSX_FILL_CIERRE});
+  }
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a'); link.href = url; link.download = nombreArchivo;
+  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
@@ -48799,13 +48894,11 @@ ${resumenHtml}
     const showUSD = contERCurrency!=='bs'; const showBS = contERCurrency!=='usd';
     const baseVentas = totalIngresosUSD||1;
 
-    const exportarExcel = () => {
-      const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
-      const filaExtraExcel = `<tr style="background:#111827;color:#fff;font-weight:bold"><td>RESULTADO DEL EJERCICIO</td>${showUSD?`<td class="num" style="color:#fff">${utilidadNetaUSD.toFixed(2)}</td>`:''}${showBS?`<td class="num" style="color:#fff">${utilidadNetaBs.toFixed(2)}</td>`:''}<td></td></tr>`;
-      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll, filaExtraExcel);
-      const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
-      const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
-      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    const exportarExcel = async () => {
+      const filaExtra = { label:'RESULTADO DEL EJERCICIO', usd: utilidadNetaUSD, bs: utilidadNetaBs };
+      try {
+        await ccExportXLSX('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, [...treeIngresos, ...treeCostos, ...treeGastosReal], contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll, filaExtra, `EstadoResultados_${getTodayDate()}.xlsx`, `EstadoResultados_${(contFiltHasta||getTodayDate()).slice(0,7)}`);
+      } catch(e) { alert('No se pudo generar el Excel: '+e.message); }
     };
     const exportarPDF = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
@@ -49032,13 +49125,11 @@ ${resumenHtml}
       if (!acumuladaInyectada) html += `<tr><td style="padding:6px 8px;padding-left:24px;font-style:italic;color:#666">${labelAc}</td><td style="padding:6px 8px;text-align:right;font-family:monospace">${ccFmtR(vAc)}</td></tr>`;
       return html;
     };
-    const exportarExcel = () => {
-      const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
-      const filaExtraExcel = `<tr style="background:#111827;color:#fff;font-weight:bold"><td>TOTAL PASIVO + PATRIMONIO</td>${showUSD?`<td class="num" style="color:#fff">${totalPasPatUSD.toFixed(2)}</td>`:''}${showBS?`<td class="num" style="color:#fff">${totalPasPatBs.toFixed(2)}</td>`:''}<td></td></tr>`;
-      const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll, filaExtraExcel);
-      const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
-      const link = document.createElement('a'); link.href = url; link.download = `BalanceGeneral_${getTodayDate()}.xls`;
-      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    const exportarExcel = async () => {
+      const filaExtra = { label:'TOTAL PASIVO + PATRIMONIO', usd: totalPasPatUSD, bs: totalPasPatBs };
+      try {
+        await ccExportXLSX('Balance General', `Al ${contDd(corte)}`, [...treeActivo, ...treePasivo, ...treePatrimonio], contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll, filaExtra, `BalanceGeneral_${getTodayDate()}.xlsx`, `BalanceGeneral_${corte.slice(0,7)}`);
+      } catch(e) { alert('No se pudo generar el Excel: '+e.message); }
     };
     const exportarPDF = () => {
       const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
