@@ -12205,18 +12205,38 @@ const ccBgPorNivel = (r) => {
   const tonos = ['#d1d5db','#e5e7eb','#eef0f2','#f6f7f8'];
   return tonos[Math.min(r.level, tonos.length-1)];
 };
-const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false) => {
+const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
   const ths = ['Cuenta', ...(showUSD?['USD']:[]), ...(showBS?['Bs.']:[]), '%'];
-  let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>table{border-collapse:collapse;width:100%;font-family:Arial;font-size:11px;}th,td{border:1px solid #999;padding:5px 7px;}th{background:#111827;color:#fff;text-align:right;}th:first-child,td:first-child{text-align:left;}</style></head><body><h2>SERVICIOS JIRET G&B, C.A. - RIF: J-412309374</h2><h3>${titulo}</h3><p>${subtitulo}</p><br/><table><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+  let html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>
+body{font-family:Calibri,Arial,sans-serif;}
+table.data{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;font-size:11px;}
+table.data th,table.data td{border:1px solid #cbd5e1;padding:6px 8px;}
+table.data th{background:#111827;color:#fff;text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.03em;}
+table.data th:first-child,table.data td:first-child{text-align:left;}
+.num{mso-number-format:"#,##0.00";text-align:right;font-family:"Courier New",monospace;}
+.lh-title{font-size:22px;font-weight:900;color:#E8541A;}
+.lh-name{font-weight:900;font-size:13px;color:#111827;}
+.lh-sub{font-size:9.5px;color:#555;line-height:1.4;}
+.rep-title{font-size:16px;font-weight:900;text-transform:uppercase;color:#111827;margin:14px 0 2px;}
+.rep-sub{font-size:11px;color:#666;margin-bottom:12px;}
+</style></head><body>
+<table style="border:none;width:100%;margin-bottom:6px;"><tr>
+<td style="border:none;padding:0;vertical-align:top;"><div class="lh-title">Supply G&amp;B</div></td>
+<td style="border:none;padding:0;text-align:right;vertical-align:top;"><div class="lh-name">SERVICIOS JIRET G&amp;B, C.A.</div><div class="lh-sub">RIF: J-412309374<br/>AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB<br/>SECTOR EL TREBOL MARACAIBO-ZULIA</div></td>
+</tr></table>
+<div style="border-bottom:3px solid #E8541A;margin-bottom:10px;"></div>
+<div class="rep-title">${titulo}</div><div class="rep-sub">${subtitulo}</div>
+<table class="data"><thead><tr>${ths.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>`;
   rows.forEach(r=>{
     const indent='&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(r.level);
     const bg = r.isDetalle ? '#ffffff' : ccBgPorNivel(r);
     const bold = r.isSection||r.isTotal?'font-weight:bold;':'';
     const detStyle = r.isDetalle?'font-style:italic;color:#666;font-size:9px;':'';
-    html += `<tr style="background:${bg};${bold}${detStyle}"><td>${indent}${r.label}</td>${showUSD?`<td>${r.u!=null?ccFmtR(r.u):''}</td>`:''}${showBS?`<td>${r.b!=null?ccFmtR(r.b):''}</td>`:''}<td style="text-align:right">${r.pct||''}</td></tr>`;
+    html += `<tr style="background:${bg};${bold}${detStyle}"><td>${indent}${r.label}</td>${showUSD?`<td class="num">${r.u!=null?r.u.toFixed(2):''}</td>`:''}${showBS?`<td class="num">${r.b!=null?r.b.toFixed(2):''}</td>`:''}<td style="text-align:right">${r.pct||''}</td></tr>`;
   });
+  if (filaExtra) html += filaExtra;
   html += `</tbody></table></body></html>`;
   return html;
 };
@@ -48716,7 +48736,7 @@ ${resumenHtml}
     const cuentasAggUsar = contERVistaPlanta
       ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || /orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
       : contERVistaVenta
-      ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || !/orden\s+de\s+producci[oó]n/i.test(c.cuenta||''))
+      ? cuentasAgg.filter(c=>!c.codigo.startsWith('4') || (c.codigo.startsWith('4.1') && !/orden\s+de\s+producci[oó]n/i.test(c.cuenta||'')))
       : cuentasAgg;
     const treeIngresos = ccBuildArbol(cuentasAggUsar, planDeCuentas, ['4'], c=>({usd:c.haberUSD-c.debeUSD, bs:c.haberBs-c.debeBs}));
     // Costo vs Gasto (vista general, sin Planta/Venta activa): se decide por el Grupo REAL que
@@ -48781,7 +48801,8 @@ ${resumenHtml}
 
     const exportarExcel = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
-      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll);
+      const filaExtraExcel = `<tr style="background:#111827;color:#fff;font-weight:bold"><td>RESULTADO DEL EJERCICIO</td>${showUSD?`<td class="num" style="color:#fff">${utilidadNetaUSD.toFixed(2)}</td>`:''}${showBS?`<td class="num" style="color:#fff">${utilidadNetaBs.toFixed(2)}</td>`:''}<td></td></tr>`;
+      const html = ccExportExcelHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll, filaExtraExcel);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `EstadoResultados_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
@@ -49013,7 +49034,8 @@ ${resumenHtml}
     };
     const exportarExcel = () => {
       const arbolCompleto = [...treeActivo, ...treePasivo, ...treePatrimonio];
-      const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll);
+      const filaExtraExcel = `<tr style="background:#111827;color:#fff;font-weight:bold"><td>TOTAL PASIVO + PATRIMONIO</td>${showUSD?`<td class="num" style="color:#fff">${totalPasPatUSD.toFixed(2)}</td>`:''}${showBS?`<td class="num" style="color:#fff">${totalPasPatBs.toFixed(2)}</td>`:''}<td></td></tr>`;
+      const html = ccExportExcelHTML('Balance General', `Al ${contDd(corte)}`, arbolCompleto, contBGCurrency, baseActivo, getDetalleCuenta, contBGExpandAll, filaExtraExcel);
       const blob = new Blob([html], { type: 'application/vnd.ms-excel' }); const url = URL.createObjectURL(blob);
       const link = document.createElement('a'); link.href = url; link.download = `BalanceGeneral_${getTodayDate()}.xls`;
       document.body.appendChild(link); link.click(); document.body.removeChild(link);
