@@ -49314,15 +49314,17 @@ ${resumenHtml}
     // cuenta mantiene fija su moneda "nativa" (como fue contabilizada) y se recalcula SOLO la
     // otra columna, a la tasa de cierre de la fecha elegida (confirmado con el usuario):
     //   Bs. nativo: Bancos Nacionales (1.1.01.02.x), Retenciones y Créditos Fiscales activo
-    //   (1.1.04.01.x — IVA, ISLR), y todo lo que se le debe a organismos por impuestos/aportes
+    //   (1.1.04.01.x — IVA, ISLR), todo lo que se le debe a organismos por impuestos/aportes
     //   en Pasivo (2.1.04.x — IVSS, FAOV, INCES, Actividad Económica, etc., ya que el SENIAT/
-    //   IVSS calculan y exigen esos montos en Bs., no en $).
+    //   IVSS calculan y exigen esos montos en Bs., no en $), y Capital Social (3.1.01.01.001 —
+    //   monto legal fijo registrado en Bs. al constituir la empresa).
     //   $ nativo (todo lo demás): Caja, Efectos y Cuentas por Cobrar, Inventarios, Prepagados,
     //   Propiedad Planta y Equipo, Cargos Diferidos, Cuentas por Pagar/Préstamos, Patrimonio.
     const _naturalezaCuenta = (codigo) => {
       if (codigo.startsWith('1.1.01.02')) return 'BS';
       if (codigo.startsWith('1.1.04.01')) return 'BS';
       if (codigo.startsWith('2.1.04')) return 'BS';
+      if (codigo.startsWith('3.1.01.01.001')) return 'BS'; // Capital Social — monto legal fijo en Bs.
       return 'USD';
     };
     const cuentasAggParaArbol = (contBGRecActiva && contBGRecTasa>0)
