@@ -7528,7 +7528,7 @@ const CxPView = ({
       }));
       batch.set(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'), {
         fecha:reclasAntCxpFecha, nroComprobante:'RECLAS-ANTICIPOS-ABIERTOS-CXP',
-        concepto:'Reclas. Anticipos Abiertos CxP',
+        concepto:'Reclas. (aún abiertos, sin aplicar) — Anticipos CxP',
         lineas:[...lineasPreviasLimpias, ...lineasNuevas],
         createdAt:reclasAbiertosCxpDoc?.createdAt||Date.now(), updatedAt:Date.now(), user:appUser?.name||'Sistema', origen:'reclas_anticipos_abiertos',
       });
@@ -7902,7 +7902,7 @@ ${body}
           {cxpFechaRef&&<button onClick={()=>setCxpFechaRef('')} className="text-xs text-red-500 font-bold hover:underline">✕ Hoy</button>}
           <button onClick={()=>setCxpExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{cxpExpandAll?'▲ Contraer':'▼ Expandir'} todo</button>
           <button onClick={()=>{
-              const abiertosAhora=(pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
+              const abiertosAhora=(pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && !/zuliana de empaque/i.test(p.proveedor||'') && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
               setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,'proveedores'])));
               setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
             }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores/Importación" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
@@ -7911,8 +7911,12 @@ ${body}
               title="Borra la reclasificación anterior (tenía el Debe/Haber invertido) y deja los anticipos listos para redo" className="px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100">↩ Deshacer Reclasificación</button>
           )}
           {showReclasAntCxpModal && (() => {
-            const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
-              .map(p=>({...p, _saldo:pN(p.monto||0)-pN(p.montoAplicado||0)}))
+            const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && !/zuliana de empaque/i.test(p.proveedor||'') && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
+              .map(p=>{
+                const prov = (proveedores||[]).find(x=>x.id===p.proveedorId);
+                const cuentaOrigen = prov?.cuentaContableNombre || '2.1.01.01.001 — CUENTAS POR PAGAR PROVEEDORES';
+                return {...p, _saldo:pN(p.monto||0)-pN(p.montoAplicado||0), _cuentaOrigen:cuentaOrigen};
+              })
               .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
             const seleccionados = abiertosPreview.filter(p=>reclasAntCxpSel[p.id]);
             const totalAbiertoPreview = seleccionados.reduce((s,p)=>s+p._saldo,0);
@@ -7931,6 +7935,7 @@ ${body}
                       <thead className="bg-gray-100"><tr>
                         <th className="px-2 py-1.5"><input type="checkbox" checked={todoMarcado} onChange={toggleTodos} title="Marcar/desmarcar todos como Proveedores"/></th>
                         <th className="text-left px-2 py-1.5">Fecha</th><th className="text-left px-2 py-1.5">Proveedor</th>
+                        <th className="text-left px-2 py-1.5">Cuenta origen</th>
                         <th className="text-right px-2 py-1.5">Monto</th><th className="text-right px-2 py-1.5">Aplicado</th>
                         <th className="text-right px-2 py-1.5">Saldo abierto</th><th className="text-left px-2 py-1.5">Cuenta destino</th>
                       </tr></thead>
@@ -7940,6 +7945,7 @@ ${body}
                             <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={!!reclasAntCxpSel[p.id]} onChange={()=>setReclasAntCxpSel(s=>({...s,[p.id]:s[p.id]?'':'proveedores'}))}/></td>
                             <td className="px-2 py-1.5 text-gray-500">{p.fecha}</td>
                             <td className="px-2 py-1.5 font-bold">{p.proveedor||'—'}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{p._cuentaOrigen}</td>
                             <td className="px-2 py-1.5 text-right font-mono">${fN(pN(p.monto))}</td>
                             <td className="px-2 py-1.5 text-right font-mono text-gray-400">${fN(pN(p.montoAplicado||0))}</td>
                             <td className="px-2 py-1.5 text-right font-mono font-black text-purple-700">${fN(p._saldo)}</td>
@@ -7953,7 +7959,7 @@ ${body}
                         ))}
                       </tbody>
                       <tfoot><tr className="border-t-2 bg-purple-50 font-black">
-                        <td colSpan={6} className="px-2 py-1.5 text-right">Total seleccionado ({seleccionados.length} de {abiertosPreview.length}):</td>
+                        <td colSpan={7} className="px-2 py-1.5 text-right">Total seleccionado ({seleccionados.length} de {abiertosPreview.length}):</td>
                         <td className="px-2 py-1.5 text-right font-mono text-purple-700">${fN(totalAbiertoPreview)}</td>
                       </tr></tfoot>
                     </table>
