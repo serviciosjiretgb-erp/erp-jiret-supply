@@ -7475,6 +7475,50 @@ const CxPView = ({
   // corregido) hacia "Anticipos a Proveedores", en un solo comprobante de ajuste con la fecha
   // que el usuario elija (ej. cierre de julio). No toca los anticipos ya aplicados por
   // completo — esos no tienen saldo abierto, así que no se les crea línea.
+  const [reparandoRaiz, setReparandoRaiz] = useState(false);
+  const repararAnticiposBancoRaiz = async () => {
+    setReparandoRaiz(true);
+    try{
+      // 1) Deshacer cualquier reclasificación previa (compensatoria) para no duplicar el efecto
+      //    una vez que el movimiento de banco original quede corregido en la raíz.
+      const afectadosReclas = (pagosCxP||[]).filter(p=>p.reclasificado);
+      if (afectadosReclas.length){
+        const batchUndo = writeBatch(db);
+        afectadosReclas.forEach(p=>batchUndo.update(getDocRef('procura_pagos_cxp',p.id),{reclasificado:false,fechaReclasificacion:null,cuentaReclasificada:null}));
+        batchUndo.delete(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'));
+        await batchUndo.commit();
+      }
+      // 2) Cruzar por grupoPagoId: cada anticipo real (procura_pagos_cxp con esAnticipo:true)
+      //    tiene un banco_movimientos hermano creado con el mismo grupoPagoId — a ese hermano
+      //    le falta esAnticipo:true, por eso el motor de reportes lo mandaba a Cuentas por Pagar.
+      const [pagosSnap, movsSnap] = await Promise.all([
+        getDocs(getColRef('procura_pagos_cxp')),
+        getDocs(getColRef('banco_movimientos')),
+      ]);
+      const anticiposReales = pagosSnap.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.esAnticipo && p.grupoPagoId);
+      const grupoPagoIdsAnticipo = new Set(anticiposReales.map(p=>p.grupoPagoId));
+      const proveedorPorGrupo = new Map(anticiposReales.map(p=>[p.grupoPagoId, p.proveedorId]));
+      const movsAReparar = movsSnap.docs.filter(d=>{
+        const mv = d.data();
+        return mv.grupoPagoId && grupoPagoIdsAnticipo.has(mv.grupoPagoId) && !mv.esAnticipo;
+      });
+      if (!movsAReparar.length && !afectadosReclas.length){
+        setDialog({title:'Nada que reparar',text:'No se encontraron movimientos de banco de anticipos sin marcar, ni reclasificaciones que deshacer.',type:'alert'});
+        setReparandoRaiz(false); return;
+      }
+      const BATCH_LIMIT=450;
+      let batch=writeBatch(db); let ops=0; const batches=[batch];
+      movsAReparar.forEach(d=>{
+        if(ops>=BATCH_LIMIT){ batch=writeBatch(db); batches.push(batch); ops=0; }
+        const mv = d.data();
+        batch.update(getDocRef('banco_movimientos',d.id),{esAnticipo:true, terceroId:proveedorPorGrupo.get(mv.grupoPagoId)||mv.terceroId||''});
+        ops++;
+      });
+      for(const b of batches) await b.commit();
+      setDialog({title:'✅ Reparado en la raíz',text:`${movsAReparar.length} movimiento(s) de banco corregidos${afectadosReclas.length?`, y ${afectadosReclas.length} reclasificación(es) anterior(es) deshecha(s) para no duplicar`:''}. Revisa el Mayor Analítico de Cuentas por Pagar — ya no debería tener rastro de estos anticipos.`,type:'alert'});
+    } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setReparandoRaiz(false);
+  };
   const deshacerReclasAnticiposAbiertosCxp = async () => {
     setReclasAntCxpBusy(true);
     try{
@@ -7906,9 +7950,11 @@ ${body}
               setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,'proveedores'])));
               setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
             }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores/Importación" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+          <button onClick={()=>setDialog({title:'¿Reparar anticipos en la raíz?',text:'Corrige directamente los movimientos de banco históricos que les faltaba la marca de anticipo (por eso caían en Cuentas por Pagar). Si ya usaste "Reclasificar Anticipos Abiertos" antes, esto lo deshace automáticamente primero para no duplicar. No crea comprobantes nuevos — corrige el dato de origen.',type:'confirm',onConfirm:repararAnticiposBancoRaiz})}
+            disabled={reparandoRaiz} title="Corrige los banco_movimientos históricos que les falta esAnticipo:true — arreglo de raíz, sin comprobantes de compensación" className="px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 disabled:opacity-50">{reparandoRaiz?'Reparando...':'🔧 Reparar Anticipos en la Raíz'}</button>
           {(pagosCxP||[]).some(p=>p.reclasificado) && (
-            <button onClick={()=>setDialog({title:'¿Deshacer reclasificación?',text:'Esto borra el comprobante RECLAS-ANTICIPOS-ABIERTOS-CXP y deja todos los anticipos ya reclasificados como abiertos otra vez, listos para volver a correrlos con la dirección correcta.',type:'confirm',onConfirm:deshacerReclasAnticiposAbiertosCxp})}
-              title="Borra la reclasificación anterior (tenía el Debe/Haber invertido) y deja los anticipos listos para redo" className="px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100">↩ Deshacer Reclasificación</button>
+            <button onClick={()=>setDialog({title:'¿Deshacer reclasificación?',text:'Esto borra el comprobante RECLAS-ANTICIPOS-ABIERTOS-CXP y deja todos los anticipos ya reclasificados como abiertos otra vez.',type:'confirm',onConfirm:deshacerReclasAnticiposAbiertosCxp})}
+              title="Solo deshace, sin reparar la raíz" className="px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100">↩ Deshacer Reclasificación (solo)</button>
           )}
           {showReclasAntCxpModal && (() => {
             const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && !/zuliana de empaque/i.test(p.proveedor||'') && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
@@ -8278,7 +8324,7 @@ ${body}
                     id:movId,cuentaId:l.cuentaId,cuentaNombre:ctaNombreAnt?.banco||l.cuentaNombre||'',tipo:'Egreso',montoBs,montoUSD:montoUsdLinea,tasa,fecha:l.fecha||hoy,grupoPagoId,
                     concepto:`ANTICIPO CxP · ${provSel?.nombre||'—'}${l.concepto?` · ${l.concepto}`:''}`,
                     referencia:l.referencia||'',metodo:l.metodo||'Transferencia',
-                    proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',
+                    proveedor:provSel?.nombre||'—',provRif:provSel?.rif||'',esAnticipo:true,terceroId:provSel?.id||pm.provId,
                     timestamp:Date.now(),user:appUser?.name||'Sistema',origen:'CxP'
                   });
                   saldoAcumPorCtaAnt[l.cuentaId]=(saldoAcumPorCtaAnt[l.cuentaId]||0)+montoUsdLinea;
