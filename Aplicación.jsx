@@ -16002,6 +16002,47 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // Fecha | Código | Cuenta de movimiento | Nro Documento | Detalle | Tasa | Debe Bs | Haber Bs
   // Cada combinación única de Fecha+Nro Documento se agrupa en UN solo comprobante, con todas
   // sus filas como líneas D/H — así una nómina con muchas cuentas queda en un solo asiento.
+  const descargarFormatoNominaExcel = async () => {
+    try {
+      const ExcelJS = await ccLoadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Formato Nómina', { views:[{showGridLines:true}] });
+      ws.columns = [
+        {header:'Fecha', key:'fecha', width:14},
+        {header:'Código', key:'codigo', width:16},
+        {header:'Cuenta de movimiento', key:'cuenta', width:34},
+        {header:'Nro Documento', key:'nroDoc', width:16},
+        {header:'Detalle', key:'detalle', width:34},
+        {header:'Tasa', key:'tasa', width:10},
+        {header:'Debe Bs', key:'debe', width:16},
+        {header:'Haber Bs', key:'haber', width:16},
+      ];
+      const headerRow = ws.getRow(1);
+      headerRow.eachCell(c=>{ c.font={name:'Aptos Display',size:12,bold:true,color:{argb:'FFFFFFFF'}}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111827'}}; c.alignment={horizontal:'center',vertical:'center'}; });
+      headerRow.height = 20;
+      // Ejemplo: UN comprobante (misma Fecha + mismo Nro Documento) con 2 líneas que suman
+      // igual en Debe y en Haber — así se ve cómo debe quedar balanceado cada grupo.
+      const ejemplo = [
+        {fecha:'2026-08-01', codigo:'6.2.01.01.001', cuenta:'SUELDOS Y SALARIOS', nroDoc:'NOM-0001', detalle:'Quincena 1 Agosto — Juan Pérez', tasa:200, debe:50000, haber:0},
+        {fecha:'2026-08-01', codigo:'1.1.01.02.001', cuenta:'BANCO NACIONAL', nroDoc:'NOM-0001', detalle:'Quincena 1 Agosto — Juan Pérez', tasa:200, debe:0, haber:50000},
+      ];
+      ejemplo.forEach(r=>{
+        const row = ws.addRow(r);
+        row.eachCell(c=>{ c.font={name:'Aptos Display',size:11,color:{argb:'FF6B7280'}}; c.alignment={horizontal:c.col>5?'right':'left'}; });
+      });
+      ws.getCell('G2').numFmt = ws.getCell('G3').numFmt = ws.getCell('H2').numFmt = ws.getCell('H3').numFmt = '#,##0.00';
+      const nota = ws.addRow(['Borra estas 2 filas de ejemplo y escribe tus datos debajo del encabezado. Cada Fecha+Nro Documento se agrupa en un solo comprobante — sus líneas deben sumar igual en Debe y en Haber.']);
+      ws.mergeCells(`A${nota.number}:H${nota.number}`);
+      nota.getCell(1).font = {name:'Aptos Display', size:10, italic:true, color:{argb:'FFB45309'}};
+      nota.getCell(1).alignment = {wrapText:true};
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href=url; link.download='Formato_Importar_Nomina.xlsx';
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch(e) { alert('No se pudo generar el formato: '+e.message); }
+  };
   const importarNominaExcel = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -17217,6 +17258,7 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={importarNominaExcel} disabled={nominaImportando} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5 disabled:opacity-50"><Download size={14}/> {nominaImportando?'Importando...':'Importar Excel'}</button>
+            <button onClick={descargarFormatoNominaExcel} className="bg-white border-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50 px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><FileSpreadsheet size={14}/> Descargar Formato</button>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar</label>
               <input value={buscarCC} onChange={e=>setBuscarCC(e.target.value)} placeholder="Comprobante, código, cuenta, doc., concepto o monto..." className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-64"/></div>
             <p className="text-[10px] text-gray-400 ml-auto">{lineasNom.length} nómina(s) · Total ${contFmt(totalNomUSD)}</p>
