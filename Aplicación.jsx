@@ -7475,6 +7475,20 @@ const CxPView = ({
   // corregido) hacia "Anticipos a Proveedores", en un solo comprobante de ajuste con la fecha
   // que el usuario elija (ej. cierre de julio). No toca los anticipos ya aplicados por
   // completo — esos no tienen saldo abierto, así que no se les crea línea.
+  const deshacerReclasAnticiposAbiertosCxp = async () => {
+    setReclasAntCxpBusy(true);
+    try{
+      const afectados = (pagosCxP||[]).filter(p=>p.reclasificado);
+      const batch = writeBatch(db);
+      afectados.forEach(p=>{
+        batch.update(getDocRef('procura_pagos_cxp',p.id),{reclasificado:false, fechaReclasificacion:null, cuentaReclasificada:null});
+      });
+      batch.delete(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'));
+      await batch.commit();
+      setDialog({title:'✅ Deshecho',text:`Se borró el comprobante de reclasificación y ${afectados.length} anticipo(s) volvieron a quedar disponibles para reclasificar. Ábre el botón de nuevo para corregirlos con la dirección correcta.`,type:'alert'});
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setReclasAntCxpBusy(false);
+  };
   const ejecutarReclasAnticiposAbiertosCxp = async () => {
     if(!reclasAntCxpFecha) return setDialog({title:'Falta la fecha',text:'Elige la fecha de cierre para el ajuste.',type:'alert'});
     setReclasAntCxpBusy(true);
@@ -7502,8 +7516,8 @@ const CxPView = ({
         const esImportacion = reclasAntCxpSel[p.id]==='importacion';
         const [codDestino,nomDestino] = esImportacion ? [codAntImp,nomAntImp] : [codAntP,nomAntP];
         const detalle = p.proveedor||'Proveedor';
-        lineasNuevas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
-        lineasNuevas.push({codigo:codDestino, cuenta:nomDestino, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+        lineasNuevas.push({codigo:codDestino, cuenta:nomDestino, tipo:'D', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+        lineasNuevas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
         // Marca este anticipo como ya reclasificado — si no, al reabrir el modal sigue viéndose
         // "abierto" (monto-montoAplicado no cambia, esto es un ajuste contable, no una aplicación
         // real a factura) y se podría reclasificar dos veces por error.
@@ -7892,6 +7906,10 @@ ${body}
               setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,'proveedores'])));
               setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
             }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores/Importación" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+          {(pagosCxP||[]).some(p=>p.reclasificado) && (
+            <button onClick={()=>setDialog({title:'¿Deshacer reclasificación?',text:'Esto borra el comprobante RECLAS-ANTICIPOS-ABIERTOS-CXP y deja todos los anticipos ya reclasificados como abiertos otra vez, listos para volver a correrlos con la dirección correcta.',type:'confirm',onConfirm:deshacerReclasAnticiposAbiertosCxp})}
+              title="Borra la reclasificación anterior (tenía el Debe/Haber invertido) y deja los anticipos listos para redo" className="px-3 py-2 bg-red-50 text-red-700 border border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-100">↩ Deshacer Reclasificación</button>
+          )}
           {showReclasAntCxpModal && (() => {
             const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
               .map(p=>({...p, _saldo:pN(p.monto||0)-pN(p.montoAplicado||0)}))
