@@ -7462,6 +7462,7 @@ const CxPView = ({
     return ()=>u();
   },[]);
   const [showReclasAntCxpModal, setShowReclasAntCxpModal] = useState(false);
+  const [reclasAntCxpSel, setReclasAntCxpSel] = useState({});
   const [reclasAntCxpFecha, setReclasAntCxpFecha] = useState('');
   const [reclasAntCxpBusy, setReclasAntCxpBusy] = useState(false);
   // Limpieza retroactiva — mueve SOLO el saldo aún abierto (monto - montoAplicado) de cada
@@ -7473,8 +7474,8 @@ const CxPView = ({
     if(!reclasAntCxpFecha) return setDialog({title:'Falta la fecha',text:'Elige la fecha de cierre para el ajuste.',type:'alert'});
     setReclasAntCxpBusy(true);
     try{
-      const abiertos = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
-      if(!abiertos.length){ setDialog({title:'Nada que ajustar',text:'No hay anticipos a proveedores con saldo abierto.',type:'alert'}); setReclasAntCxpBusy(false); return; }
+      const abiertos = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01 && reclasAntCxpSel[p.id]);
+      if(!abiertos.length){ setDialog({title:'Nada seleccionado',text:'Marca al menos un anticipo de la lista.',type:'alert'}); setReclasAntCxpBusy(false); return; }
       const [codAntP,nomAntP] = cuentasAnticipoCfg?.anticipoProveedoresNombre
         ? cuentasAnticipoCfg.anticipoProveedoresNombre.split('—').map(s=>s.trim())
         : ['1.1.05.01.002','ANTICIPOS A PROVEEDORES'];
@@ -7864,30 +7865,39 @@ ${body}
           <input type="date" value={cxpFechaRef} onChange={e=>setCxpFechaRef(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" title="Corte"/>
           {cxpFechaRef&&<button onClick={()=>setCxpFechaRef('')} className="text-xs text-red-500 font-bold hover:underline">✕ Hoy</button>}
           <button onClick={()=>setCxpExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{cxpExpandAll?'▲ Contraer':'▼ Expandir'} todo</button>
-          <button onClick={()=>{setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);}} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+          <button onClick={()=>{
+              const abiertosAhora=(pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
+              setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,true])));
+              setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
+            }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
           {showReclasAntCxpModal && (() => {
             const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
               .map(p=>({...p, _saldo:pN(p.monto||0)-pN(p.montoAplicado||0)}))
               .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
-            const totalAbiertoPreview = abiertosPreview.reduce((s,p)=>s+p._saldo,0);
+            const seleccionados = abiertosPreview.filter(p=>reclasAntCxpSel[p.id]);
+            const totalAbiertoPreview = seleccionados.reduce((s,p)=>s+p._saldo,0);
+            const todoMarcado = abiertosPreview.length>0 && abiertosPreview.every(p=>reclasAntCxpSel[p.id]);
+            const toggleTodos = () => setReclasAntCxpSel(todoMarcado ? {} : Object.fromEntries(abiertosPreview.map(p=>[p.id,true])));
             return (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!reclasAntCxpBusy&&setShowReclasAntCxpModal(false)}>
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
                 <h3 className="font-black text-gray-800">🔧 Reclasificar Anticipos Abiertos (CxP)</h3>
-                <p className="text-[11px] text-gray-500">Estos son TODOS los anticipos a proveedores con saldo sin aplicar hoy — revísalos antes de tocar nada. Al ejecutar, se mueve solo esto de Cuentas por Pagar Proveedores a {cuentasAnticipoCfg?.anticipoProveedoresNombre||'Anticipos a Proveedores'}.</p>
+                <p className="text-[11px] text-gray-500">Estos son TODOS los anticipos a proveedores con saldo sin aplicar hoy — desmarca los que NO quieras tocar (ej. cuentas intercompañía que ya están donde corresponden). Al ejecutar, se mueve solo lo marcado de Cuentas por Pagar Proveedores a {cuentasAnticipoCfg?.anticipoProveedoresNombre||'Anticipos a Proveedores'}.</p>
                 {abiertosPreview.length===0 ? (
                   <p className="text-xs font-bold text-gray-400 py-4 text-center">No hay anticipos con saldo abierto — nada que reclasificar.</p>
                 ) : (
                   <div className="border rounded-xl overflow-hidden">
                     <table className="w-full text-[10px]">
                       <thead className="bg-gray-100"><tr>
+                        <th className="px-2 py-1.5"><input type="checkbox" checked={todoMarcado} onChange={toggleTodos}/></th>
                         <th className="text-left px-2 py-1.5">Fecha</th><th className="text-left px-2 py-1.5">Proveedor</th>
                         <th className="text-right px-2 py-1.5">Monto</th><th className="text-right px-2 py-1.5">Aplicado</th>
                         <th className="text-right px-2 py-1.5">Saldo abierto</th>
                       </tr></thead>
                       <tbody>
                         {abiertosPreview.map(p=>(
-                          <tr key={p.id} className="border-t">
+                          <tr key={p.id} className={`border-t ${reclasAntCxpSel[p.id]?'':'opacity-40'}`}>
+                            <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={!!reclasAntCxpSel[p.id]} onChange={()=>setReclasAntCxpSel(s=>({...s,[p.id]:!s[p.id]}))}/></td>
                             <td className="px-2 py-1.5 text-gray-500">{p.fecha}</td>
                             <td className="px-2 py-1.5 font-bold">{p.proveedor||'—'}</td>
                             <td className="px-2 py-1.5 text-right font-mono">${fN(pN(p.monto))}</td>
@@ -7897,7 +7907,7 @@ ${body}
                         ))}
                       </tbody>
                       <tfoot><tr className="border-t-2 bg-purple-50 font-black">
-                        <td colSpan={4} className="px-2 py-1.5 text-right">Total a reclasificar:</td>
+                        <td colSpan={5} className="px-2 py-1.5 text-right">Total seleccionado ({seleccionados.length} de {abiertosPreview.length}):</td>
                         <td className="px-2 py-1.5 text-right font-mono text-purple-700">${fN(totalAbiertoPreview)}</td>
                       </tr></tfoot>
                     </table>
@@ -7909,7 +7919,7 @@ ${body}
                 </div>
                 <div className="flex gap-2 pt-1">
                   <button disabled={reclasAntCxpBusy} onClick={()=>setShowReclasAntCxpModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
-                  <button disabled={reclasAntCxpBusy||abiertosPreview.length===0} onClick={ejecutarReclasAnticiposAbiertosCxp} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasAntCxpBusy?'Procesando...':`Ejecutar (${abiertosPreview.length})`}</button>
+                  <button disabled={reclasAntCxpBusy||seleccionados.length===0} onClick={ejecutarReclasAnticiposAbiertosCxp} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasAntCxpBusy?'Procesando...':`Ejecutar (${seleccionados.length})`}</button>
                 </div>
               </div>
             </div>
