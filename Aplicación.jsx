@@ -3134,6 +3134,17 @@ const CATEGORIA_A_BALDE_SHARED = {
   'Tintas':'MATERIA_PRIMA', 'Químicos':'MATERIA_PRIMA', 'Herramientas':'MATERIA_PRIMA',
   'Seguridad Industrial':'MATERIA_PRIMA', 'Otros':'MATERIA_PRIMA',
   'Consumibles':'CONSUMIBLES', 'Productos Terminados':'TERMINADOS',
+  // Categorías de mercancía comprada para reventa (no producción propia) — el sistema no tiene
+  // un balde de Mercancía separado (ver hint en Configuración de Cuentas Contables: "usa
+  // Productos Terminados para lo que ya está listo para vender"), así que van al mismo balde
+  // TERMINADOS. PENDIENTE DE CONFIRMAR con el usuario cuáles de estas 5 son reventa real y
+  // cuáles son producción propia (ya se confirmó que Bolsas Plásticas y Termoencogibles SÍ son
+  // producción, no reventa — están abajo en MATERIA_PRIMA, no aquí).
+  'Stretch Film':'TERMINADOS', 'Cintas':'TERMINADOS', 'Papel Kraft':'TERMINADOS',
+  'Dispensadores':'TERMINADOS', 'Empaques Flexibles':'TERMINADOS',
+  // Producción propia vía Orden de Producción (confirmado por el usuario) — usan el mismo balde
+  // que Materia Prima, no el de Mercancía/Terminados.
+  'Bolsas Plásticas':'MATERIA_PRIMA', 'Termoencogibles':'MATERIA_PRIMA',
 };
 const construirLineasCostoProduccionCompartido = (f, ctx) => {
   const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas} = ctx;
