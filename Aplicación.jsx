@@ -34576,7 +34576,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const t=parseNum(n.tasaFactura||0)||tasaBCV;
               if(!t||t<2) return s;
               const baseBs=parseNum(n.monto||0);
-              return s+((n.tieneIva===false?baseBs:baseBs*1.16)/t);
+              const u=(n.tieneIva===false?baseBs:baseBs*1.16)/t;
+              // NC resta del saldo (reduce lo que debe el cliente) → contribuye positivo aquí,
+              // ya que getSaldoNEAtFecha hace total - getNCUSDNEAtFecha(...).
+              // ND SUMA al saldo (aumenta lo que debe el cliente) → contribuye NEGATIVO aquí,
+              // para que esa resta termine sumando la ND a la deuda en vez de restarla.
+              return s+(n.tipo==='ND'?-u:u);
             },0);
             _ncCache.set(cacheKey,result); return result;
           };
