@@ -7451,7 +7451,7 @@ const CxPView = ({
   const [cxpExpanded, setCxpExpanded] = useState({});
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [cajasCuentasCxp, setCajasCuentasCxp] = useState([]);
-  const [cuentasAnticipoCfg, setCuentasAnticipoCfg] = useState({anticipoProveedoresNombre:'1.1.05.01.002 — ANTICIPOS A PROVEEDORES'});
+  const [cuentasAnticipoCfg, setCuentasAnticipoCfg] = useState({anticipoProveedoresNombre:'1.1.05.01.002 — ANTICIPOS A PROVEEDORES', anticipoImportacionNombre:'1.1.05.01.004 — ANTICIPOS POR IMPORTACION'});
   useEffect(()=>{
     const u=onSnapshot(doc(db,'settings','anticiposCuentasContables'),d=>d.exists()&&setCuentasAnticipoCfg(x=>({...x,...d.data()})));
     return ()=>u();
@@ -7459,6 +7459,11 @@ const CxPView = ({
   const [antAplicadosProvDoc, setAntAplicadosProvDoc] = useState(null);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('comprobantes_ajustes','ANTICIPOS-APLICADOS-PROVEEDORES'),d=>setAntAplicadosProvDoc(d.exists()?d.data():null));
+    return ()=>u();
+  },[]);
+  const [reclasAbiertosCxpDoc, setReclasAbiertosCxpDoc] = useState(null);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'),d=>setReclasAbiertosCxpDoc(d.exists()?d.data():null));
     return ()=>u();
   },[]);
   const [showReclasAntCxpModal, setShowReclasAntCxpModal] = useState(false);
@@ -7474,12 +7479,18 @@ const CxPView = ({
     if(!reclasAntCxpFecha) return setDialog({title:'Falta la fecha',text:'Elige la fecha de cierre para el ajuste.',type:'alert'});
     setReclasAntCxpBusy(true);
     try{
-      const abiertos = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01 && reclasAntCxpSel[p.id]);
+      // reclasAntCxpSel[id] ahora guarda la CUENTA DESTINO elegida para esa fila ('proveedores' |
+      // 'importacion'), no un simple true/false — vacío/undefined = no incluir esa fila.
+      const abiertos = (pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01 && reclasAntCxpSel[p.id]);
       if(!abiertos.length){ setDialog({title:'Nada seleccionado',text:'Marca al menos un anticipo de la lista.',type:'alert'}); setReclasAntCxpBusy(false); return; }
       const [codAntP,nomAntP] = cuentasAnticipoCfg?.anticipoProveedoresNombre
         ? cuentasAnticipoCfg.anticipoProveedoresNombre.split('—').map(s=>s.trim())
         : ['1.1.05.01.002','ANTICIPOS A PROVEEDORES'];
+      const [codAntImp,nomAntImp] = cuentasAnticipoCfg?.anticipoImportacionNombre
+        ? cuentasAnticipoCfg.anticipoImportacionNombre.split('—').map(s=>s.trim())
+        : ['1.1.05.01.004','ANTICIPOS POR IMPORTACION'];
       const lineasNuevas = [];
+      const batch = writeBatch(db);
       abiertos.forEach(p=>{
         const saldoUSD = pN(p.monto||0)-pN(p.montoAplicado||0);
         const tasa = pN(p.tasa||tasaBCV||1);
@@ -7488,16 +7499,27 @@ const CxPView = ({
         const [codCxpTerc,nomCxpTerc] = prov?.cuentaContableNombre
           ? prov.cuentaContableNombre.split('—').map(s=>s.trim())
           : ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES'];
-        const detalle = `${p.proveedor||'Proveedor'} · Reclasificación anticipo abierto (${p.fecha||'—'})${p.referencia?' · Ref.'+p.referencia:''}`;
+        const esImportacion = reclasAntCxpSel[p.id]==='importacion';
+        const [codDestino,nomDestino] = esImportacion ? [codAntImp,nomAntImp] : [codAntP,nomAntP];
+        const detalle = p.proveedor||'Proveedor';
         lineasNuevas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
-        lineasNuevas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+        lineasNuevas.push({codigo:codDestino, cuenta:nomDestino, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+        // Marca este anticipo como ya reclasificado — si no, al reabrir el modal sigue viéndose
+        // "abierto" (monto-montoAplicado no cambia, esto es un ajuste contable, no una aplicación
+        // real a factura) y se podría reclasificar dos veces por error.
+        batch.update(getDocRef('procura_pagos_cxp',p.id),{reclasificado:true, fechaReclasificacion:reclasAntCxpFecha, cuentaReclasificada:esImportacion?'importacion':'proveedores'});
       });
-      await setDoc(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'), {
+      const lineasPreviasLimpias = (reclasAbiertosCxpDoc?.lineas||[]).map(l=>({
+        ...l, detalle: (l.detalle||'').split(' · Reclasificación')[0].split(' · Aplicación')[0],
+      }));
+      batch.set(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'), {
         fecha:reclasAntCxpFecha, nroComprobante:'RECLAS-ANTICIPOS-ABIERTOS-CXP',
-        concepto:'Reclasificación única — anticipos a proveedores aún abiertos, de Cuentas por Pagar a Anticipos a Proveedores',
-        lineas:lineasNuevas, createdAt:Date.now(), user:appUser?.name||'Sistema', origen:'reclas_anticipos_abiertos',
+        concepto:'Reclas. Anticipos Abiertos CxP',
+        lineas:[...lineasPreviasLimpias, ...lineasNuevas],
+        createdAt:reclasAbiertosCxpDoc?.createdAt||Date.now(), updatedAt:Date.now(), user:appUser?.name||'Sistema', origen:'reclas_anticipos_abiertos',
       });
-      setDialog({title:'✅ Reclasificado',text:`${abiertos.length} anticipo(s) abierto(s) movidos de Cuentas por Pagar a Anticipos a Proveedores, con fecha ${reclasAntCxpFecha}. Revisa Balance General / Mayor Analítico para confirmar.`,type:'alert'});
+      await batch.commit();
+      setDialog({title:'✅ Reclasificado',text:`${abiertos.length} anticipo(s) abierto(s) movidos de Cuentas por Pagar a su cuenta de Anticipo correspondiente, con fecha ${reclasAntCxpFecha}. Revisa Balance General / Mayor Analítico para confirmar.`,type:'alert'});
       setShowReclasAntCxpModal(false);
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
     setReclasAntCxpBusy(false);
@@ -7866,48 +7888,54 @@ ${body}
           {cxpFechaRef&&<button onClick={()=>setCxpFechaRef('')} className="text-xs text-red-500 font-bold hover:underline">✕ Hoy</button>}
           <button onClick={()=>setCxpExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{cxpExpandAll?'▲ Contraer':'▼ Expandir'} todo</button>
           <button onClick={()=>{
-              const abiertosAhora=(pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
-              setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,true])));
+              const abiertosAhora=(pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
+              setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,'proveedores'])));
               setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
-            }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+            }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores/Importación" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
           {showReclasAntCxpModal && (() => {
-            const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
+            const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && !p.reclasificado && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
               .map(p=>({...p, _saldo:pN(p.monto||0)-pN(p.montoAplicado||0)}))
               .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
             const seleccionados = abiertosPreview.filter(p=>reclasAntCxpSel[p.id]);
             const totalAbiertoPreview = seleccionados.reduce((s,p)=>s+p._saldo,0);
             const todoMarcado = abiertosPreview.length>0 && abiertosPreview.every(p=>reclasAntCxpSel[p.id]);
-            const toggleTodos = () => setReclasAntCxpSel(todoMarcado ? {} : Object.fromEntries(abiertosPreview.map(p=>[p.id,true])));
+            const toggleTodos = () => setReclasAntCxpSel(todoMarcado ? {} : Object.fromEntries(abiertosPreview.map(p=>[p.id,'proveedores'])));
             return (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!reclasAntCxpBusy&&setShowReclasAntCxpModal(false)}>
-              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
                 <h3 className="font-black text-gray-800">🔧 Reclasificar Anticipos Abiertos (CxP)</h3>
-                <p className="text-[11px] text-gray-500">Estos son TODOS los anticipos a proveedores con saldo sin aplicar hoy — desmarca los que NO quieras tocar (ej. cuentas intercompañía que ya están donde corresponden). Al ejecutar, se mueve solo lo marcado de Cuentas por Pagar Proveedores a {cuentasAnticipoCfg?.anticipoProveedoresNombre||'Anticipos a Proveedores'}.</p>
+                <p className="text-[11px] text-gray-500">Elige, por fila, a cuál cuenta va cada anticipo — la mayoría a Anticipos a Proveedores, pero los que son por importación (van con ODC) elígelos como "Importación". "No incluir" lo deja fuera de esta corrida.</p>
                 {abiertosPreview.length===0 ? (
-                  <p className="text-xs font-bold text-gray-400 py-4 text-center">No hay anticipos con saldo abierto — nada que reclasificar.</p>
+                  <p className="text-xs font-bold text-gray-400 py-4 text-center">No hay anticipos con saldo abierto sin reclasificar — nada pendiente.</p>
                 ) : (
                   <div className="border rounded-xl overflow-hidden">
                     <table className="w-full text-[10px]">
                       <thead className="bg-gray-100"><tr>
-                        <th className="px-2 py-1.5"><input type="checkbox" checked={todoMarcado} onChange={toggleTodos}/></th>
+                        <th className="px-2 py-1.5"><input type="checkbox" checked={todoMarcado} onChange={toggleTodos} title="Marcar/desmarcar todos como Proveedores"/></th>
                         <th className="text-left px-2 py-1.5">Fecha</th><th className="text-left px-2 py-1.5">Proveedor</th>
                         <th className="text-right px-2 py-1.5">Monto</th><th className="text-right px-2 py-1.5">Aplicado</th>
-                        <th className="text-right px-2 py-1.5">Saldo abierto</th>
+                        <th className="text-right px-2 py-1.5">Saldo abierto</th><th className="text-left px-2 py-1.5">Cuenta destino</th>
                       </tr></thead>
                       <tbody>
                         {abiertosPreview.map(p=>(
                           <tr key={p.id} className={`border-t ${reclasAntCxpSel[p.id]?'':'opacity-40'}`}>
-                            <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={!!reclasAntCxpSel[p.id]} onChange={()=>setReclasAntCxpSel(s=>({...s,[p.id]:!s[p.id]}))}/></td>
+                            <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={!!reclasAntCxpSel[p.id]} onChange={()=>setReclasAntCxpSel(s=>({...s,[p.id]:s[p.id]?'':'proveedores'}))}/></td>
                             <td className="px-2 py-1.5 text-gray-500">{p.fecha}</td>
                             <td className="px-2 py-1.5 font-bold">{p.proveedor||'—'}</td>
                             <td className="px-2 py-1.5 text-right font-mono">${fN(pN(p.monto))}</td>
                             <td className="px-2 py-1.5 text-right font-mono text-gray-400">${fN(pN(p.montoAplicado||0))}</td>
                             <td className="px-2 py-1.5 text-right font-mono font-black text-purple-700">${fN(p._saldo)}</td>
+                            <td className="px-2 py-1.5">
+                              <select disabled={!reclasAntCxpSel[p.id]} value={reclasAntCxpSel[p.id]||'proveedores'} onChange={e=>setReclasAntCxpSel(s=>({...s,[p.id]:e.target.value}))} className="border border-gray-200 rounded-lg px-1.5 py-1 text-[9px] font-bold outline-none disabled:opacity-40">
+                                <option value="proveedores">Anticipos a Proveedores</option>
+                                <option value="importacion">Anticipos por Importación</option>
+                              </select>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot><tr className="border-t-2 bg-purple-50 font-black">
-                        <td colSpan={5} className="px-2 py-1.5 text-right">Total seleccionado ({seleccionados.length} de {abiertosPreview.length}):</td>
+                        <td colSpan={6} className="px-2 py-1.5 text-right">Total seleccionado ({seleccionados.length} de {abiertosPreview.length}):</td>
                         <td className="px-2 py-1.5 text-right font-mono text-purple-700">${fN(totalAbiertoPreview)}</td>
                       </tr></tfoot>
                     </table>
