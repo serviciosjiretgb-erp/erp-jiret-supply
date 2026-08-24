@@ -50655,6 +50655,9 @@ const ActualizarCostosView = ({settings, appUser}) => {
   const [acBusy, setAcBusy] = useState(false);
   const [acMsg, setAcMsg] = useState(null);
   const [acPreview, setAcPreview] = useState(null);
+  const [acDesde, setAcDesde] = useState('');
+  const [acHasta, setAcHasta] = useState('');
+  const [acSel, setAcSel] = useState({});
 
   const acAnalizar = async () => {
     setAcBusy(true); setAcMsg(null); setAcPreview(null);
@@ -50751,12 +50754,14 @@ const ActualizarCostosView = ({settings, appUser}) => {
           if (!actual || fecha > actual.fecha) ultimoCostoPorCodigo.set(code, {costo, fecha});
         });
       }
+      const dentroDelRango = (fecha) => (!acDesde || fecha>=acDesde) && (!acHasta || fecha<=acHasta);
       const cambios=[];
       const procesar=(docs,coleccion)=>{
         const campo = coleccion==='maquilaInvoices' ? 'itemsFacturados' : 'items';
         for(const d of docs){
           const data={_id:d.id,...d.data()};
           if(data.status==='ANULADA') continue;
+          if(!dentroDelRango(data.fecha||'')) continue;
           const items=data[campo]||data.items||data.itemsFacturados||[];
           let modificado=false;
           const nuevos=items.map(it=>{
@@ -50767,11 +50772,12 @@ const ActualizarCostosView = ({settings, appUser}) => {
             }
             return it;
           });
-          if(modificado) cambios.push({coleccion,campo,docId:data._id,docRef:data.id||data._id,items:nuevos,detalle:nuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode,antes:it._costoAnterior,ahora:it.costoUnit}))});
+          if(modificado) cambios.push({coleccion,campo,docId:data._id,docRef:data.id||data._id,fecha:data.fecha||'',items:nuevos,detalle:nuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode,antes:it._costoAnterior,ahora:it.costoUnit}))});
         }
       };
       procesar(neSnap.docs,'notasEntrega');
       procesar(invSnap.docs,'maquilaInvoices');
+      setAcSel(Object.fromEntries(cambios.map(c=>[c.docId,true])));
       setAcPreview(cambios);
       if(cambios.length===0) setAcMsg({type:'ok',text:'Todos los costos ya coinciden con el inventario. Nada que corregir.'});
     } catch(err) { setAcMsg({type:'error', text: err.message}); }
@@ -50779,20 +50785,21 @@ const ActualizarCostosView = ({settings, appUser}) => {
   };
 
   const acEjecutar = async () => {
-    if(!acPreview||acPreview.length===0) return;
+    const seleccionados = (acPreview||[]).filter(c=>acSel[c.docId]);
+    if(!seleccionados.length) return;
     setAcBusy(true);
     try {
       const BATCH_LIMIT=450;
       let batch=writeBatch(db); let ops=0; const batches=[batch];
-      for(const c of acPreview){
+      for(const c of seleccionados){
         if(ops>=BATCH_LIMIT){ batch=writeBatch(db); batches.push(batch); ops=0; }
         const itemsLimpios=c.items.map(({_costoAnterior,...it})=>it);
         batch.update(getDocRef(c.coleccion, c.docId), { [c.campo]: itemsLimpios, updatedAt: Date.now() });
         ops++;
       }
       for(const b of batches) await b.commit();
-      setAcMsg({type:'ok', text:`✅ ${acPreview.length} documento(s) actualizados con los costos del inventario.`});
-      setAcPreview(null);
+      setAcMsg({type:'ok', text:`✅ ${seleccionados.length} documento(s) actualizados con los costos del inventario.`});
+      setAcPreview(prev=>prev.filter(c=>!acSel[c.docId]));
     } catch(err) { setAcMsg({type:'error', text: err.message}); }
     setAcBusy(false);
   };
@@ -50804,16 +50811,27 @@ const ActualizarCostosView = ({settings, appUser}) => {
       <h3 className="text-lg font-black uppercase mb-1 text-teal-700 flex items-center gap-2">💲 Actualizar Costos desde Inventario PT</h3>
       <p className="text-xs text-gray-500 mb-4">Solo Master. Corrige el costo unitario guardado en cada ítem de Notas de Entrega y Facturas, usando el costo actual del producto en Inventario. No toca precios de venta, cantidades ni montos — solo el costo (afecta utilidad en reportes).</p>
 
-      <div className="flex gap-3 mb-4">
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label>
+          <input type="date" value={acDesde} onChange={e=>setAcDesde(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-teal-500"/>
+        </div>
+        <div>
+          <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label>
+          <input type="date" value={acHasta} onChange={e=>setAcHasta(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-teal-500"/>
+        </div>
         <button onClick={acAnalizar} disabled={acBusy} className="bg-teal-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
           {acBusy?<Loader2 size={14} className="animate-spin"/>:<Search size={14}/>} Analizar
         </button>
         {acPreview && acPreview.length>0 && (
-          <button onClick={acEjecutar} disabled={acBusy} className="bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
-            {acBusy?<Loader2 size={14} className="animate-spin"/>:<CheckCircle size={14}/>} Corregir {acPreview.length} documento(s)
+          <button onClick={acEjecutar} disabled={acBusy||!Object.values(acSel).some(Boolean)} className="bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+            {acBusy?<Loader2 size={14} className="animate-spin"/>:<CheckCircle size={14}/>} Corregir {Object.values(acSel).filter(Boolean).length} documento(s)
           </button>
         )}
       </div>
+      {!acDesde && !acHasta && (
+        <div className="mb-4 p-3 rounded-xl text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">⚠ Sin rango de fechas, esto va a corregir TODOS los documentos con costo distinto, de cualquier período — el costo actual de Inventario puede no aplicar a facturas viejas. Recomendado: elige un "Desde" al menos.</div>
+      )}
 
       {acMsg && (
         <div className={`mb-4 p-3 rounded-xl text-xs font-bold ${acMsg.type==='error'?'bg-red-50 text-red-700 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}`}>{acMsg.text}</div>
@@ -50821,10 +50839,18 @@ const ActualizarCostosView = ({settings, appUser}) => {
 
       {acPreview && acPreview.length>0 && (
         <div>
-          <p className="text-[10px] font-black text-teal-600 uppercase mb-2">Vista previa — {acPreview.length} documento(s) con costos distintos al inventario:</p>
+          <p className="text-[10px] font-black text-teal-600 uppercase mb-2 flex items-center gap-2">
+            <input type="checkbox" checked={acPreview.length>0 && acPreview.every(c=>acSel[c.docId])} onChange={()=>{
+              const todo = acPreview.every(c=>acSel[c.docId]);
+              setAcSel(todo ? {} : Object.fromEntries(acPreview.map(c=>[c.docId,true])));
+            }}/>
+            Vista previa — {acPreview.length} documento(s) con costos distintos al inventario (desmarca los que no quieras tocar):
+          </p>
           <div className="max-h-72 overflow-y-auto border border-teal-200 rounded-xl">
             <table className="w-full text-[10px]">
               <thead className="bg-teal-50 sticky top-0"><tr>
+                <th className="px-2 py-1.5"></th>
+                <th className="px-2 py-1.5 text-left font-black text-teal-700">Fecha</th>
                 <th className="px-2 py-1.5 text-left font-black text-teal-700">Documento</th>
                 <th className="px-2 py-1.5 text-left font-black text-teal-700">Producto</th>
                 <th className="px-2 py-1.5 text-right font-black text-teal-700">Costo actual</th>
@@ -50832,7 +50858,9 @@ const ActualizarCostosView = ({settings, appUser}) => {
               </tr></thead>
               <tbody>
                 {acPreview.flatMap(c=>c.detalle.map((d,di)=>(
-                  <tr key={`${c.docId}-${di}`} className="border-t border-teal-100">
+                  <tr key={`${c.docId}-${di}`} className={`border-t border-teal-100 ${acSel[c.docId]?'':'opacity-40'}`}>
+                    <td className="px-2 py-1.5 text-center">{di===0 && <input type="checkbox" checked={!!acSel[c.docId]} onChange={()=>setAcSel(s=>({...s,[c.docId]:!s[c.docId]}))}/>}</td>
+                    <td className="px-2 py-1.5 text-gray-500">{c.fecha}</td>
                     <td className="px-2 py-1.5 font-bold">{c.docRef}</td>
                     <td className="px-2 py-1.5">{d.code}</td>
                     <td className="px-2 py-1.5 text-right text-red-600 font-bold">${formatNum(d.antes)}</td>
