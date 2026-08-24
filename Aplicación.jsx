@@ -3073,7 +3073,7 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
 // se vea en Comprobantes Contables (incluida cualquier reclasificación) es exactamente lo que
 // viaja a los reportes financieros.
 const construirLineasMovimientoBancoCaja = (m, ctx) => {
-  const {cuentas, idField, nombreCta, asientos, provs, clientes, tercerosRel, planCuentas, tabId, aplicarReclas} = ctx;
+  const {cuentas, idField, nombreCta, asientos, provs, clientes, tercerosRel, planCuentas, tabId, aplicarReclas, cuentasAnticipoCfg} = ctx;
   const cta = (cuentas||[]).find(c=>c.id===m[idField]);
   const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
   const montoBs = Number(m.montoBs||0), montoUSD = Number(m.montoUSD||0);
@@ -3107,6 +3107,10 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
     contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
   } else if(tercero && (codTercero||nomTercero)){
     contra = {codigo:codTercero||tercero.cuentaContableId||'', cuenta:nomTercero||tercero.razonSocial||tercero.nombre||''};
+  } else if(m.esAnticipo){
+    const cfgN = isIng ? cuentasAnticipoCfg?.anticipoClientesNombre : cuentasAnticipoCfg?.anticipoProveedoresNombre;
+    const [codAnt,nomAnt] = cfgN ? cfgN.split('—').map(s=>s.trim()) : ['', isIng?'ANTICIPO CLIENTES':'ANTICIPOS A PROVEEDORES'];
+    contra = {codigo:codAnt, cuenta:nomAnt};
   } else if(m.lineasContra && m.lineasContra.length>0){
     const l=m.lineasContra[0];
     contra = {codigo:l.ctaNom?l.ctaNom.split('·')[0].trim():'', cuenta:l.ctaNom?(l.ctaNom.split('·')[1]?.trim()||l.ctaNom):''};
@@ -3505,7 +3509,7 @@ const construirLineasManualCompartida = (a, ctx) => {
   const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, a.id, li, codigo, cuenta) : {codigo,cuenta};
   return (a.lineas||[]).map((l,li) => {
     const r = reclas(li, l.codigo||'', l.cuenta||'—');
-    return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'',
+    return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', fecha:l.fecha||null,
       debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0,
       debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
   });
@@ -3533,7 +3537,7 @@ const derivarMovsCajaDesdeCxcCxp = (cobrosCxc, pagosCxp, movCaja, tasaFallback) 
       id:c.id, _docId:c.id, fecha:c.fecha||'', tipo:'Ingreso', cajaId:(c.cuentaBancariaId||'').replace('CAJA::',''),
       montoUSD, montoBs, tasa, terceroNombre:c.clientName||'', clientName:c.clientName||'', tipoTercero:'Cliente',
       referencia:c.referencia||'', concepto:c.concepto||`Cobro ${c.metodo||''} · ${c.neDocumento||''} · ${c.clientName||''}`,
-      grupoCobroId:c.grupoCobroId||'', _origenDerivado:'cobros_cxc',
+      grupoCobroId:c.grupoCobroId||'', _origenDerivado:'cobros_cxc', esAnticipo:!!c.esAnticipo,
     };
   });
   const desdePagos = pagosCaja.map(p=>{
@@ -3544,7 +3548,7 @@ const derivarMovsCajaDesdeCxcCxp = (cobrosCxc, pagosCxp, movCaja, tasaFallback) 
       id:p.id, _docId:p.id, fecha:p.fecha||'', tipo:'Egreso', cajaId:(p.cuentaId||'').replace('CAJA::',''),
       montoUSD, montoBs, tasa, terceroNombre:p.proveedor||'', proveedor:p.proveedor||'', tipoTercero:'Proveedor', terceroId:p.proveedorId||'',
       referencia:p.referencia||'', concepto:p.concepto||`Pago ${p.proveedor||''} · ${p.referencia||''}`,
-      grupoPagoId:p.grupoPagoId||'', _origenDerivado:'procura_pagos_cxp',
+      grupoPagoId:p.grupoPagoId||'', _origenDerivado:'procura_pagos_cxp', esAnticipo:!!p.esAnticipo,
     };
   });
   return [...desdeCobros, ...desdePagos];
@@ -7447,6 +7451,56 @@ const CxPView = ({
   const [cxpExpanded, setCxpExpanded] = useState({});
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
   const [cajasCuentasCxp, setCajasCuentasCxp] = useState([]);
+  const [cuentasAnticipoCfg, setCuentasAnticipoCfg] = useState({anticipoProveedoresNombre:'1.1.05.01.002 — ANTICIPOS A PROVEEDORES'});
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','anticiposCuentasContables'),d=>d.exists()&&setCuentasAnticipoCfg(x=>({...x,...d.data()})));
+    return ()=>u();
+  },[]);
+  const [antAplicadosProvDoc, setAntAplicadosProvDoc] = useState(null);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('comprobantes_ajustes','ANTICIPOS-APLICADOS-PROVEEDORES'),d=>setAntAplicadosProvDoc(d.exists()?d.data():null));
+    return ()=>u();
+  },[]);
+  const [showReclasAntCxpModal, setShowReclasAntCxpModal] = useState(false);
+  const [reclasAntCxpFecha, setReclasAntCxpFecha] = useState('');
+  const [reclasAntCxpBusy, setReclasAntCxpBusy] = useState(false);
+  // Limpieza retroactiva — mueve SOLO el saldo aún abierto (monto - montoAplicado) de cada
+  // anticipo ya registrado desde "Cuentas por Pagar Proveedores" (donde cayó por el bug ya
+  // corregido) hacia "Anticipos a Proveedores", en un solo comprobante de ajuste con la fecha
+  // que el usuario elija (ej. cierre de julio). No toca los anticipos ya aplicados por
+  // completo — esos no tienen saldo abierto, así que no se les crea línea.
+  const ejecutarReclasAnticiposAbiertosCxp = async () => {
+    if(!reclasAntCxpFecha) return setDialog({title:'Falta la fecha',text:'Elige la fecha de cierre para el ajuste.',type:'alert'});
+    setReclasAntCxpBusy(true);
+    try{
+      const abiertos = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01);
+      if(!abiertos.length){ setDialog({title:'Nada que ajustar',text:'No hay anticipos a proveedores con saldo abierto.',type:'alert'}); setReclasAntCxpBusy(false); return; }
+      const [codAntP,nomAntP] = cuentasAnticipoCfg?.anticipoProveedoresNombre
+        ? cuentasAnticipoCfg.anticipoProveedoresNombre.split('—').map(s=>s.trim())
+        : ['1.1.05.01.002','ANTICIPOS A PROVEEDORES'];
+      const lineasNuevas = [];
+      abiertos.forEach(p=>{
+        const saldoUSD = pN(p.monto||0)-pN(p.montoAplicado||0);
+        const tasa = pN(p.tasa||tasaBCV||1);
+        const saldoBs = parseFloat((saldoUSD*tasa).toFixed(2));
+        const prov = (proveedores||[]).find(x=>x.id===p.proveedorId);
+        const [codCxpTerc,nomCxpTerc] = prov?.cuentaContableNombre
+          ? prov.cuentaContableNombre.split('—').map(s=>s.trim())
+          : ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES'];
+        const detalle = `${p.proveedor||'Proveedor'} · Reclasificación anticipo abierto (${p.fecha||'—'})${p.referencia?' · Ref.'+p.referencia:''}`;
+        lineasNuevas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+        lineasNuevas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+      });
+      await setDoc(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'), {
+        fecha:reclasAntCxpFecha, nroComprobante:'RECLAS-ANTICIPOS-ABIERTOS-CXP',
+        concepto:'Reclasificación única — anticipos a proveedores aún abiertos, de Cuentas por Pagar a Anticipos a Proveedores',
+        lineas:lineasNuevas, createdAt:Date.now(), user:appUser?.name||'Sistema', origen:'reclas_anticipos_abiertos',
+      });
+      setDialog({title:'✅ Reclasificado',text:`${abiertos.length} anticipo(s) abierto(s) movidos de Cuentas por Pagar a Anticipos a Proveedores, con fecha ${reclasAntCxpFecha}. Revisa Balance General / Mayor Analítico para confirmar.`,type:'alert'});
+      setShowReclasAntCxpModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setReclasAntCxpBusy(false);
+  };
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
@@ -7810,6 +7864,57 @@ ${body}
           <input type="date" value={cxpFechaRef} onChange={e=>setCxpFechaRef(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400" title="Corte"/>
           {cxpFechaRef&&<button onClick={()=>setCxpFechaRef('')} className="text-xs text-red-500 font-bold hover:underline">✕ Hoy</button>}
           <button onClick={()=>setCxpExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{cxpExpandAll?'▲ Contraer':'▼ Expandir'} todo</button>
+          <button onClick={()=>{setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);}} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+          {showReclasAntCxpModal && (() => {
+            const abiertosPreview = (pagosCxP||[]).filter(p=>p.esAnticipo && (pN(p.monto||0)-pN(p.montoAplicado||0))>0.01)
+              .map(p=>({...p, _saldo:pN(p.monto||0)-pN(p.montoAplicado||0)}))
+              .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+            const totalAbiertoPreview = abiertosPreview.reduce((s,p)=>s+p._saldo,0);
+            return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!reclasAntCxpBusy&&setShowReclasAntCxpModal(false)}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <h3 className="font-black text-gray-800">🔧 Reclasificar Anticipos Abiertos (CxP)</h3>
+                <p className="text-[11px] text-gray-500">Estos son TODOS los anticipos a proveedores con saldo sin aplicar hoy — revísalos antes de tocar nada. Al ejecutar, se mueve solo esto de Cuentas por Pagar Proveedores a {cuentasAnticipoCfg?.anticipoProveedoresNombre||'Anticipos a Proveedores'}.</p>
+                {abiertosPreview.length===0 ? (
+                  <p className="text-xs font-bold text-gray-400 py-4 text-center">No hay anticipos con saldo abierto — nada que reclasificar.</p>
+                ) : (
+                  <div className="border rounded-xl overflow-hidden">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-gray-100"><tr>
+                        <th className="text-left px-2 py-1.5">Fecha</th><th className="text-left px-2 py-1.5">Proveedor</th>
+                        <th className="text-right px-2 py-1.5">Monto</th><th className="text-right px-2 py-1.5">Aplicado</th>
+                        <th className="text-right px-2 py-1.5">Saldo abierto</th>
+                      </tr></thead>
+                      <tbody>
+                        {abiertosPreview.map(p=>(
+                          <tr key={p.id} className="border-t">
+                            <td className="px-2 py-1.5 text-gray-500">{p.fecha}</td>
+                            <td className="px-2 py-1.5 font-bold">{p.proveedor||'—'}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">${fN(pN(p.monto))}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-400">${fN(pN(p.montoAplicado||0))}</td>
+                            <td className="px-2 py-1.5 text-right font-mono font-black text-purple-700">${fN(p._saldo)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot><tr className="border-t-2 bg-purple-50 font-black">
+                        <td colSpan={4} className="px-2 py-1.5 text-right">Total a reclasificar:</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-purple-700">${fN(totalAbiertoPreview)}</td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )}
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha del ajuste (ej. cierre de julio)</label>
+                  <input type="date" value={reclasAntCxpFecha} onChange={e=>setReclasAntCxpFecha(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button disabled={reclasAntCxpBusy} onClick={()=>setShowReclasAntCxpModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                  <button disabled={reclasAntCxpBusy||abiertosPreview.length===0} onClick={ejecutarReclasAnticiposAbiertosCxp} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasAntCxpBusy?'Procesando...':`Ejecutar (${abiertosPreview.length})`}</button>
+                </div>
+              </div>
+            </div>
+            );
+          })()}
           <button onClick={()=>setCxpPagoModal({provSearch:'',provId:'',nombre:'',lineasPago:[],lineaActual:{moneda:'USD',monto:'',tasa:String(tasaBCV||1),metodo:'Transferencia',cuentaId:'',cuentaNombre:'',referencia:'',fecha:hoy}})}
             className="flex items-center gap-2 px-4 py-2.5 text-white rounded-xl text-[10px] font-black uppercase shadow-lg hover:shadow-xl transition-all" style={{background:'linear-gradient(135deg,#ea580c,#c2410c)'}}>
             <DollarSign size={13}/> 💸 Registrar Pago
@@ -8200,6 +8305,34 @@ ${body}
               const ant=(pagosCxP||[]).find(a=>a.id===antId);
               if(ant) batch.update(getDocRef('procura_pagos_cxp',antId),{montoAplicado:parseFloat((pN(ant.montoAplicado||0)+aplicado).toFixed(2)),fechaUltimaAplicacion:hoy});
             });
+            // Asiento de reclasificación Anticipo → Cuentas por Pagar, por cada anticipo aplicado
+            // en esta operación — un solo comprobante que va creciendo, cada línea con su propia
+            // fecha (la de HOY, que es cuando se aplica, no la fecha original del anticipo).
+            const aplicacionesCxpEsteLote = Object.entries(antAplicadoCxp).filter(([,ap])=>ap>0.005);
+            if (aplicacionesCxpEsteLote.length){
+              const [codAntP,nomAntP] = cuentasAnticipoCfg?.anticipoProveedoresNombre
+                ? cuentasAnticipoCfg.anticipoProveedoresNombre.split('—').map(s=>s.trim())
+                : ['1.1.05.01.002','ANTICIPOS A PROVEEDORES'];
+              const [codCxpTerc,nomCxpTerc] = provSel?.cuentaContableNombre
+                ? provSel.cuentaContableNombre.split('—').map(s=>s.trim())
+                : ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES'];
+              const refDoc = getDocRef('comprobantes_ajustes','ANTICIPOS-APLICADOS-PROVEEDORES');
+              const lineasPrevias = antAplicadosProvDoc?.lineas || [];
+              const nuevasLineas = [];
+              aplicacionesCxpEsteLote.forEach(([antId,aplicado])=>{
+                const ant=(pagosCxP||[]).find(a=>a.id===antId);
+                const tasaAnt = pN(ant?.tasa||tasaBCV||1);
+                const montoBsAp = parseFloat((aplicado*tasaAnt).toFixed(2));
+                const montoUSDAp = parseFloat(aplicado.toFixed(2));
+                const detalleAp = `${provSel?.nombre||ant?.proveedor||'Proveedor'} · Aplicación de anticipo${ant?.referencia?' · Ref.'+ant.referencia:''}`;
+                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, fecha:hoy});
+                nuevasLineas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, fecha:hoy});
+              });
+              batch.set(refDoc, {
+                fecha:hoy, nroComprobante:'ANTICIPOS-APLICADOS-PROVEEDORES', concepto:'Aplicación de Anticipos a Proveedores (Anticipo ↔ Cuentas por Pagar)',
+                lineas:[...lineasPrevias, ...nuevasLineas], updatedAt:Date.now(), origen:'anticipos_aplicados',
+              }, {merge:true});
+            }
             const saldoAcumPorCtaCxp={};
             (pm.lineasPago||[]).forEach((l,li)=>{
               if(!l.cuentaId) return;
@@ -18454,7 +18587,7 @@ function App() {
         if((pagosRelApp||[]).some(p=>p.movimientoId===m.id||p.movimientoId===m._docId)) return;
         const lineasRaw = construirLineasMovimientoBancoCaja(m, {
           cuentas, idField, nombreCta, asientos:asientosApp, provs:proveedoresApp, clientes:clients,
-          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea,
+          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg,
         });
         out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—',
           lineas: lineasRaw.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeBs:l.debeBs, haberBs:l.haberBs, debeUSD:l.debeUSD, haberUSD:l.haberUSD}))});
@@ -18475,8 +18608,24 @@ function App() {
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
-      out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual',
-        lineas: construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea})});
+      const lineas = construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea});
+      const tieneFechaPropia = lineas.some(l=>l.fecha);
+      if (!tieneFechaPropia) {
+        out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual', lineas});
+        return;
+      }
+      // Agrupa por fecha efectiva (la de la línea si la trae, si no la del comprobante) y emite
+      // un sub-asiento por fecha — mismo comprobante/concepto, pero cada uno solo con SUS líneas,
+      // para que el filtro por fecha (que opera por asiento completo) las vea en el período correcto.
+      const porFecha = new Map();
+      lineas.forEach(l=>{
+        const f = l.fecha || a.fecha || '';
+        if(!porFecha.has(f)) porFecha.set(f,[]);
+        porFecha.get(f).push(l);
+      });
+      porFecha.forEach((lns,f)=>{
+        out.push({fecha:f, comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual', lineas:lns});
+      });
     });
     // 8) Nómina — comprobantes importados desde Excel (Fecha/Código/Cuenta/Nro Doc/Detalle/
     // Tasa/Debe Bs/Haber Bs), agrupados por Fecha+Nro Documento al importar.
@@ -21541,6 +21690,23 @@ function App() {
     muestrasClientesId:'', muestrasClientesNombre:'',
     perdidaId:'', perdidaNombre:'',
   });
+  // ── Configuración de Cuentas Contables — Anticipos (Clientes/Proveedores) ────────────────
+  // Configurable por si se modifica el Plan de Cuentas, mismo patrón que arriba. Se usa en dos
+  // momentos: (1) al REGISTRAR un anticipo sin factura, como contrapartida en vez de CxC/CxP
+  // directo; (2) al APLICARLO a una factura, para el asiento de reclasificación Anticipo↔CxC/CxP.
+  const [cuentasAnticipoCfg, setCuentasAnticipoCfg] = useState({
+    anticipoClientesId:'', anticipoClientesNombre:'2.1.01.01.002 — ANTICIPO CLIENTES',
+    anticipoProveedoresId:'', anticipoProveedoresNombre:'1.1.05.01.002 — ANTICIPOS A PROVEEDORES',
+  });
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'settings','anticiposCuentasContables'),d=>d.exists()&&setCuentasAnticipoCfg(x=>({...x,...d.data()})));
+    return ()=>u();
+  },[]);
+  const guardarCuentasAnticipo = async () => {
+    try { await setDoc(doc(db,'settings','anticiposCuentasContables'),cuentasAnticipoCfg,{merge:true}); setShowCuentasAnticipoModal(false); }
+    catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+  };
+  const [showCuentasAnticipoModal, setShowCuentasAnticipoModal] = useState(false);
   useEffect(()=>{
     const u=onSnapshot(doc(db,'settings','produccionCuentasContables'),d=>d.exists()&&setCuentasProduccionCfg(x=>({...x,...d.data()})));
     return()=>u();
