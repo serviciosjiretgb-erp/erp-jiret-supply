@@ -50766,9 +50766,13 @@ const ActualizarCostosView = ({settings, appUser}) => {
           let modificado=false;
           const nuevos=items.map(it=>{
             const nuevo = buscarCostoActual(it) || ultimoCostoPorCodigo.get(extraerCodigoDeItem(it))?.costo || null;
-            if(nuevo&&Math.abs(parseNum(it.costoUnit||0)-nuevo)>0.005){
+            const qty = parseNum(it.cantidad||1)||1;
+            const costoTotalEsperado = nuevo!=null ? parseFloat((nuevo*qty).toFixed(2)) : null;
+            const difiereCostoUnit = nuevo && Math.abs(parseNum(it.costoUnit||0)-nuevo)>0.005;
+            const difiereCostoTotal = costoTotalEsperado!=null && Math.abs(parseNum(it.costoTotal||0)-costoTotalEsperado)>0.01;
+            if(difiereCostoUnit || difiereCostoTotal){
               modificado=true;
-              return {...it,costoUnit:nuevo,_costoAnterior:parseNum(it.costoUnit||0)};
+              return {...it,costoUnit:nuevo,costoTotal:costoTotalEsperado,_costoAnterior:parseNum(it.costoUnit||0)};
             }
             return it;
           });
