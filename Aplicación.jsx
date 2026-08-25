@@ -16513,6 +16513,32 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     } : {codigo, cuenta};
   };
   const [reclasFormExtra, setReclasFormExtra] = useState({fecha:'', nroDoc:'', concepto:'', tasa:'', montoUSD:'', montoBs:''});
+  const [editandoCampoReclas, setEditandoCampoReclas] = useState(null); // {tabId, compId, lineIdx, campo, label, tipo, valor, ctx}
+  const abrirEditarCampoReclas = (tabId, compId, lineIdx, campo, label, tipo, valorActual, ctx) => {
+    setEditandoCampoReclas({tabId, compId, lineIdx, campo, label, tipo, valor: valorActual!=null?String(valorActual):'', ctx});
+  };
+  const guardarCampoReclas = async () => {
+    if (!editandoCampoReclas) return;
+    setReclasSaving(true);
+    try{
+      const {tabId, compId, lineIdx, campo, valor, ctx} = editandoCampoReclas;
+      const key = claveReclas(tabId, compId, lineIdx);
+      const existente = reclasificacionesC[key] || {};
+      const overrideKey = {fecha:'fechaOverride', nroDoc:'nroDocOverride', concepto:'conceptoOverride', tasa:'tasaOverride', montoUSD:'montoUSDOverride', montoBs:'montoBsOverride'}[campo];
+      const valorGuardar = (campo==='tasa'||campo==='montoUSD'||campo==='montoBs') ? (parseFloat(valor)||0) : (valor||'');
+      await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
+        ...existente,
+        codigo: existente.codigo??ctx.codigoActual??'', cuenta: existente.cuenta??ctx.cuentaActual??'',
+        tabId, compId, lineIdx, timestamp: Date.now(),
+        codigoOriginal: ctx.codigoActual||'', cuentaOriginal: ctx.cuentaActual||'',
+        fechaComprobante: ctx.fechaComprobante||'', nroComprobante: ctx.nroComprobante||'',
+        conceptoComprobante: ctx.conceptoComprobante||'', montoBs: ctx.montoBs||0, montoUSD: ctx.montoUSD||0,
+        [overrideKey]: valorGuardar,
+      });
+      setEditandoCampoReclas(null);
+    }catch(e){ alert('Error al guardar: '+e.message); }
+    finally{ setReclasSaving(false); }
+  };
   const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual, ctxComprobante) => {
     setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual, ...(ctxComprobante||{})});
     setReclasBusq('');
@@ -16535,14 +16561,16 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     try{
       const key = claveReclas(reclasificando.tabId, reclasificando.compId, reclasificando.lineIdx);
       const extra = camposExtra || {};
+      const existente = reclasificacionesC[key] || {};
       await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
-        codigo: cta?cta.codigo||'':(extra.codigo??reclasificando.codigoActual)||'', cuenta: cta?cta.nombre||'':(extra.cuenta??reclasificando.cuentaActual)||'',
+        ...existente,
+        codigo: cta?cta.codigo||'':(extra.codigo??existente.codigo??reclasificando.codigoActual)||'', cuenta: cta?cta.nombre||'':(extra.cuenta??existente.cuenta??reclasificando.cuentaActual)||'',
         tabId:reclasificando.tabId, compId:reclasificando.compId, lineIdx:reclasificando.lineIdx,
         codigoOriginal: reclasificando.codigoActual||'', cuentaOriginal: reclasificando.cuentaActual||'', timestamp: Date.now(),
         fechaComprobante: reclasificando.fechaComprobante||'', nroComprobante: reclasificando.nroComprobante||'',
         conceptoComprobante: reclasificando.conceptoComprobante||'', montoBs: reclasificando.montoBs||0, montoUSD: reclasificando.montoUSD||0,
-        // Overrides adicionales — cuando vienen null/undefined, NO se guardan (así "codigo"/"cuenta" pueden
-        // seguir editándose desde el flujo viejo sin pisar estos campos con vacío por accidente).
+        // Overrides adicionales — se fusionan con lo que ya existía; si este guardado no toca un
+        // campo, se conserva el override anterior tal cual (no se borra por editar otra cosa).
         ...(extra.fecha!==undefined?{fechaOverride:extra.fecha}:{}),
         ...(extra.nroDoc!==undefined?{nroDocOverride:extra.nroDoc}:{}),
         ...(extra.concepto!==undefined?{conceptoOverride:extra.concepto}:{}),
@@ -16939,20 +16967,22 @@ ${valoresHtml}
                   <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
-                  {lineasProc.flatMap((r,ri)=>r.lineas.map((l,li)=>(
+                  {lineasProc.flatMap((r,ri)=>r.lineas.map((l,li)=>{
+                    const ctx = {codigoActual:l.codigo, cuentaActual:l.cuenta, fechaComprobante:r.fecha, nroComprobante:r.doc, conceptoComprobante:r.conc, montoBs:l.dBs||l.hBs||0, montoUSD:l.dUSD||l.hUSD||0};
+                    return (
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
-                      <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                      <td className={`px-3 py-2 text-gray-400 font-mono whitespace-nowrap ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoReclas('procura',r.id,li,'fecha','Fecha','date',r.fecha,ctx)} title={li===0?'Clic para editar la fecha':''}>{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='procura' compId={r.id} li={li} l={l} r={r}/>
                       <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
-                      <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
-                      <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
-                      <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                      <td className={`px-3 py-2 font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoReclas('procura',r.id,li,'nroDoc','Nro Fact.','text',r.doc,ctx)} title={li===0?'Clic para editar el nro. de factura':''}>{li===0?r.doc:''}</td>
+                      <td className={`px-3 py-2 text-gray-600 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoReclas('procura',r.id,li,'concepto','Concepto','text',r.conc,ctx)} title={li===0?'Clic para editar el concepto':''}>{li===0?r.conc:''}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-black text-emerald-600 ${l.dUSD>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>l.dUSD>0&&abrirEditarCampoReclas('procura',r.id,li,'montoUSD','Monto $','number',l.dUSD,ctx)} title={l.dUSD>0?'Clic para editar el monto en $':''}>{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-black text-red-500 ${l.hUSD>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>l.hUSD>0&&abrirEditarCampoReclas('procura',r.id,li,'montoUSD','Monto $','number',l.hUSD,ctx)} title={l.hUSD>0?'Clic para editar el monto en $':''}>{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-black text-emerald-600 ${l.dBs>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>l.dBs>0&&abrirEditarCampoReclas('procura',r.id,li,'montoBs','Monto Bs.','number',l.dBs,ctx)} title={l.dBs>0?'Clic para editar el monto en Bs.':''}>{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-black text-red-500 ${l.hBs>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>l.hBs>0&&abrirEditarCampoReclas('procura',r.id,li,'montoBs','Monto Bs.','number',l.hBs,ctx)} title={l.hBs>0?'Clic para editar el monto en Bs.':''}>{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                     </tr>
-                  )))}
+                  );}))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
                   <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProc.length} factura(s)</td>
@@ -18496,6 +18526,26 @@ ${valoresHtml}
           </div>
         );
       })()}
+      {editandoCampoReclas && (
+        <div className="fixed inset-0 bg-black/60 z-[500] flex items-center justify-center p-4" onClick={()=>!reclasSaving&&setEditandoCampoReclas(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+            <h3 className="font-black text-gray-800">✏️ Editar {editandoCampoReclas.label}</h3>
+            <input
+              type={editandoCampoReclas.tipo}
+              step={editandoCampoReclas.tipo==='number'?'0.01':undefined}
+              autoFocus
+              value={editandoCampoReclas.valor}
+              onChange={e=>setEditandoCampoReclas(c=>({...c, valor:e.target.value}))}
+              className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+            />
+            <p className="text-[9px] text-gray-400">Se guarda directo donde ya lee Mayor Analítico, Balance General y Estado de Resultados.</p>
+            <div className="flex gap-2 pt-1">
+              <button disabled={reclasSaving} onClick={()=>setEditandoCampoReclas(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+              <button disabled={reclasSaving} onClick={guardarCampoReclas} className="flex-1 bg-orange-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 disabled:opacity-40">{reclasSaving?'Guardando...':'Guardar'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {reclasificando && (()=>{
         const filtradas = (planCuentasC||[]).filter(c=>{
           const q=reclasBusq.toUpperCase();
