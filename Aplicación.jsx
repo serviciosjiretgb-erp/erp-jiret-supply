@@ -12707,6 +12707,40 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [filtHasta, setFiltHasta] = useState(getTodayDate());
   const [filtCuenta, setFiltCuenta] = useState('');
+  const [editandoMovCC, setEditandoMovCC] = useState(null);
+  const [formMovCC, setFormMovCC] = useState({fecha:'', referencia:'', concepto:'', tasa:'', montoUSD:'', montoBs:''});
+  const [guardandoMovCC, setGuardandoMovCC] = useState(false);
+  const abrirEditarMovCC = (r, esBanco) => {
+    setEditandoMovCC({id:r.id, esBanco});
+    const totUSD = r.lineas.reduce((s,l)=>s+l.dUSD+l.hUSD,0);
+    const totBs = r.lineas.reduce((s,l)=>s+l.dBs+l.hBs,0);
+    setFormMovCC({
+      fecha:r.fecha||'', referencia:r.doc||'', concepto:r.conc||'',
+      tasa:r.tasa?String(r.tasa):'', montoUSD:totUSD?String(totUSD.toFixed(2)):'', montoBs:totBs?String(totBs.toFixed(2)):'',
+    });
+  };
+  const actualizarFormMovCC = (campo, valor) => setFormMovCC(f=>{
+    const tasaNum = parseFloat(f.tasa)||0;
+    const n = {...f, [campo]:valor};
+    if (campo==='montoUSD' && tasaNum>0) n.montoBs = valor?(parseFloat(valor)*tasaNum).toFixed(2):'';
+    if (campo==='montoBs' && tasaNum>0) n.montoUSD = valor?(parseFloat(valor)/tasaNum).toFixed(2):'';
+    return n;
+  });
+  const guardarEditarMovCC = async () => {
+    if (!editandoMovCC) return;
+    setGuardandoMovCC(true);
+    try {
+      const coleccion = editandoMovCC.esBanco ? 'banco_movimientos' : 'caja_movimientos';
+      await updateDoc(getDocRef(coleccion, editandoMovCC.id), {
+        fecha: formMovCC.fecha||'', referencia: formMovCC.referencia||'', concepto: formMovCC.concepto||'',
+        tasa: parseFloat(formMovCC.tasa)||0,
+        montoUSD: parseFloat(formMovCC.montoUSD)||0,
+        montoBs: parseFloat(formMovCC.montoBs)||0,
+      });
+      setEditandoMovCC(null);
+    } catch(e) { alert('Error al guardar: '+e.message); }
+    setGuardandoMovCC(false);
+  };
   // Buscador compartido por las 9 pestañas — filtra por Comprobante, Fecha, Código, Cuenta, Nro Doc o Concepto.
   const [buscarCC, setBuscarCC] = useState('');
   const [mayorCuentaSel, setMayorCuentaSel] = useState('');
@@ -12933,6 +12967,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [asignarMasivaModalCC, setAsignarMasivaModalCC] = useState(null);
   const [claveReclasMasivaInput, setClaveReclasMasivaInput] = useState('');
   const [reclasBusq, setReclasBusq] = useState('');
+  const [reclasCuentaElegida, setReclasCuentaElegida] = useState(null);
   const [reclasSaving, setReclasSaving] = useState(false);
   // La tasa de Depreciación se guarda en settings/general (campo tasaDeprecUltima) — antes vivía
   // solo en memoria, así que cada vez que se recargaba la pantalla volvía a estar vacía y los Bs.
@@ -13034,14 +13069,21 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       const retISLRLista = calcRetISLRLista(f, tot);
       const neto = calcNeto(tot, retIVA, retISLRLista, f.tasa);
       const asiento = generarAsientoFC(f, tot, retIVA, retISLRLista, neto, serviciosC, planCuentasC, provsC, cuentasRetProvCfgC);
-      const lineas = asiento.lineas.map(l => ({
-        codigo: (l.cuenta||'').split('—')[0].trim(),
-        cuenta: (l.cuenta||'').split('—').slice(1).join('—').trim() || l.cuenta,
-        tipo: l.tipo==='DEBITO'?'D':'H',
-        dBs: l.tipo==='DEBITO'?l.montoBs:0, hBs: l.tipo==='CREDITO'?l.montoBs:0,
-        dUSD: l.tipo==='DEBITO'?l.montoUSD:0, hUSD: l.tipo==='CREDITO'?l.montoUSD:0,
-      }));
-      return { id: f.id, comprobante: f.proveedor||'—', fecha: f.fecha, doc: f.nroFactura||'—', conc: `Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, tasa: Number(f.tasa||0), lineas, cuadrado: asiento.cuadrado };
+      const lineas = asiento.lineas.map((l,li) => {
+        const codigo0 = (l.cuenta||'').split('—')[0].trim();
+        const cuenta0 = (l.cuenta||'').split('—').slice(1).join('—').trim() || l.cuenta;
+        const r = aplicarReclasLinea('procura', f.id, li, codigo0, cuenta0);
+        const esDeb = l.tipo==='DEBITO';
+        const montoUSD = r.montoUSDOverride!=null?r.montoUSDOverride:l.montoUSD;
+        const montoBs = r.montoBsOverride!=null?r.montoBsOverride:l.montoBs;
+        return {
+          codigo:r.codigo, cuenta:r.cuenta, tipo:esDeb?'D':'H',
+          dBs: esDeb?montoBs:0, hBs: !esDeb?montoBs:0, dUSD: esDeb?montoUSD:0, hUSD: !esDeb?montoUSD:0,
+          _fechaOverride:r.fechaOverride, _nroDocOverride:r.nroDocOverride, _conceptoOverride:r.conceptoOverride,
+        };
+      });
+      const ovComp = lineas.find(l=>l._fechaOverride||l._nroDocOverride||l._conceptoOverride);
+      return { id: f.id, comprobante: f.proveedor||'—', fecha: ovComp?._fechaOverride||f.fecha, doc: ovComp?._nroDocOverride||f.nroFactura||'—', conc: ovComp?._conceptoOverride||`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, tasa: Number(f.tasa||0), lineas, cuadrado: asiento.cuadrado };
     });
   };
 
@@ -16469,22 +16511,48 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // siempre la misma firma de función, sin importar desde qué componente se llame.
   const aplicarReclasLinea = (tabId, compId, lineIdx, codigo, cuenta) => {
     const ov = cuentaReclas(tabId, compId, lineIdx);
-    return ov ? {codigo: ov.codigo||codigo, cuenta: ov.cuenta||cuenta} : {codigo, cuenta};
+    return ov ? {codigo: ov.codigo||codigo, cuenta: ov.cuenta||cuenta,
+      montoUSDOverride:ov.montoUSDOverride, montoBsOverride:ov.montoBsOverride,
+      fechaOverride:ov.fechaOverride, nroDocOverride:ov.nroDocOverride, conceptoOverride:ov.conceptoOverride,
+    } : {codigo, cuenta};
   };
+  const [reclasFormExtra, setReclasFormExtra] = useState({fecha:'', nroDoc:'', concepto:'', tasa:'', montoUSD:'', montoBs:''});
   const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual, ctxComprobante) => {
     setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual, ...(ctxComprobante||{})});
     setReclasBusq('');
+    setReclasFormExtra({
+      fecha: ctxComprobante?.fechaComprobante||'', nroDoc: ctxComprobante?.nroDoc||'',
+      concepto: ctxComprobante?.conceptoComprobante||'', tasa: ctxComprobante?.tasa?String(ctxComprobante.tasa):'',
+      montoUSD: ctxComprobante?.montoUSD?String(ctxComprobante.montoUSD):'', montoBs: ctxComprobante?.montoBs?String(ctxComprobante.montoBs):'',
+    });
   };
-  const guardarReclasificacion = async (cta) => {
+  const actualizarReclasFormExtra = (campo, valor) => setReclasFormExtra(f=>{
+    const tasaNum = parseFloat(f.tasa)||0;
+    const n = {...f, [campo]:valor};
+    if (campo==='montoUSD' && tasaNum>0) n.montoBs = valor?(parseFloat(valor)*tasaNum).toFixed(2):'';
+    if (campo==='montoBs' && tasaNum>0) n.montoUSD = valor?(parseFloat(valor)/tasaNum).toFixed(2):'';
+    return n;
+  });
+  const guardarReclasificacion = async (cta, camposExtra) => {
     if(!reclasificando) return;
     setReclasSaving(true);
     try{
       const key = claveReclas(reclasificando.tabId, reclasificando.compId, reclasificando.lineIdx);
+      const extra = camposExtra || {};
       await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
-        codigo: cta.codigo||'', cuenta: cta.nombre||'', tabId:reclasificando.tabId, compId:reclasificando.compId, lineIdx:reclasificando.lineIdx,
+        codigo: cta?cta.codigo||'':(extra.codigo??reclasificando.codigoActual)||'', cuenta: cta?cta.nombre||'':(extra.cuenta??reclasificando.cuentaActual)||'',
+        tabId:reclasificando.tabId, compId:reclasificando.compId, lineIdx:reclasificando.lineIdx,
         codigoOriginal: reclasificando.codigoActual||'', cuentaOriginal: reclasificando.cuentaActual||'', timestamp: Date.now(),
         fechaComprobante: reclasificando.fechaComprobante||'', nroComprobante: reclasificando.nroComprobante||'',
         conceptoComprobante: reclasificando.conceptoComprobante||'', montoBs: reclasificando.montoBs||0, montoUSD: reclasificando.montoUSD||0,
+        // Overrides adicionales — cuando vienen null/undefined, NO se guardan (así "codigo"/"cuenta" pueden
+        // seguir editándose desde el flujo viejo sin pisar estos campos con vacío por accidente).
+        ...(extra.fecha!==undefined?{fechaOverride:extra.fecha}:{}),
+        ...(extra.nroDoc!==undefined?{nroDocOverride:extra.nroDoc}:{}),
+        ...(extra.concepto!==undefined?{conceptoOverride:extra.concepto}:{}),
+        ...(extra.tasa!==undefined?{tasaOverride:extra.tasa}:{}),
+        ...(extra.montoUSD!==undefined?{montoUSDOverride:extra.montoUSD}:{}),
+        ...(extra.montoBs!==undefined?{montoBsOverride:extra.montoBs}:{}),
       });
       setReclasificando(null);
     }catch(e){ alert('Error al reclasificar: '+e.message); }
@@ -16512,8 +16580,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         <td className="px-3 py-2 font-bold text-gray-700 uppercase group relative cursor-pointer hover:bg-orange-50"
           style={{paddingLeft:l.tipo==='H'?'20px':'12px'}}
           onClick={()=>abrirReclasificar(tabId, compId, li, codigo, cuenta, {
-            fechaComprobante: r?.fecha||'', nroComprobante: r?.comprobante||r?.id||'',
-            conceptoComprobante: r?.conc||'', montoBs: l.dBs||l.hBs||0, montoUSD: l.dUSD||l.hUSD||0,
+            fechaComprobante: r?.fecha||'', nroComprobante: r?.comprobante||r?.id||'', nroDoc: r?.doc||'',
+            conceptoComprobante: r?.conc||'', montoBs: l.dBs||l.hBs||0, montoUSD: l.dUSD||l.hUSD||0, tasa: r?.tasa||'',
           })}
           title="Clic para reclasificar esta cuenta">
           {cuenta||'—'}{ov && <span className="ml-1 text-[8px] font-black text-purple-500 uppercase">● reclasificada</span>}
@@ -18133,8 +18201,8 @@ ${valoresHtml}
         ):(
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acción'].map((h,i)=>(
+                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7&&i<=11?'text-right':i===4||i===12?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>
                 {lineasPorComprobante.flatMap((r,ri)=>r.lineas.map((l,li)=>(
@@ -18150,6 +18218,7 @@ ${valoresHtml}
                     <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                     <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
                     <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                    <td className="px-3 py-2 text-center">{li===0 && <button onClick={()=>abrirEditarMovCC(r,esBanco)} className="p-1 text-blue-400 hover:text-blue-600" title="Editar tasa y montos de este movimiento"><Edit size={13}/></button>}</td>
                   </tr>
                 )))}
               </tbody>
@@ -18159,8 +18228,49 @@ ${valoresHtml}
                 <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasPorComprobante.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                 <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasPorComprobante.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                 <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasPorComprobante.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                <td></td>
               </tr></tfoot>
             </table></div>
+          </div>
+        )}
+        {editandoMovCC && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!guardandoMovCC&&setEditandoMovCC(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+              <h3 className="font-black text-gray-800">✏️ Editar Movimiento</h3>
+              <p className="text-[10px] text-gray-500">Cambia lo que necesites — el otro monto se recalcula solo si cambias la tasa. Al guardar, se actualiza donde ya lee Mayor Analítico, Balance General y Estado de Resultados; no hace falta nada más.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                  <input type="date" value={formMovCC.fecha} onChange={e=>actualizarFormMovCC('fecha',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nro Doc / Referencia</label>
+                  <input value={formMovCC.referencia} onChange={e=>actualizarFormMovCC('referencia',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                </div>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label>
+                <input value={formMovCC.concepto} onChange={e=>actualizarFormMovCC('concepto',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                <input type="number" step="0.0001" value={formMovCC.tasa} onChange={e=>actualizarFormMovCC('tasa',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto $</label>
+                  <input type="number" step="0.01" value={formMovCC.montoUSD} onChange={e=>actualizarFormMovCC('montoUSD',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                </div>
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto Bs.</label>
+                  <input type="number" step="0.01" value={formMovCC.montoBs} onChange={e=>actualizarFormMovCC('montoBs',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button disabled={guardandoMovCC} onClick={()=>setEditandoMovCC(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                <button disabled={guardandoMovCC} onClick={guardarEditarMovCC} className="flex-1 bg-blue-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-blue-700 disabled:opacity-40">{guardandoMovCC?'Guardando...':'Guardar'}</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -18417,36 +18527,66 @@ ${valoresHtml}
           const q=reclasBusq.toUpperCase();
           return !q || (c.codigo||'').toUpperCase().includes(q) || (c.nombre||'').toUpperCase().includes(q);
         }).slice(0,30);
+        const cuentaElegida = reclasCuentaElegida || (reclasificando.codigoActual?{codigo:reclasificando.codigoActual,nombre:reclasificando.cuentaActual}:null);
         return (
           <div className="fixed inset-0 z-[500] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-              <div className="px-6 py-4 flex justify-between items-center" style={{background:'#581c87',borderBottom:'3px solid #a855f7'}}>
-                <h3 className="font-black text-white text-sm uppercase tracking-wide">🔀 Reclasificar Cuenta</h3>
-                <button onClick={()=>setReclasificando(null)} className="text-purple-200 hover:text-white"><X size={18}/></button>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden max-h-[90vh] overflow-y-auto">
+              <div className="px-6 py-4 flex justify-between items-center sticky top-0 z-10" style={{background:'#581c87',borderBottom:'3px solid #a855f7'}}>
+                <h3 className="font-black text-white text-sm uppercase tracking-wide">✏️ Editar Línea</h3>
+                <button onClick={()=>{setReclasificando(null);setReclasCuentaElegida(null);}} className="text-purple-200 hover:text-white"><X size={18}/></button>
               </div>
               <div className="p-5 space-y-3">
                 <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-[11px]">
-                  <span className="text-purple-500 font-black uppercase text-[9px] block mb-0.5">Cuenta actual</span>
-                  <span className="font-mono text-purple-700 font-black">{reclasificando.codigoActual||'—'}</span> <span className="text-gray-700 font-bold">{reclasificando.cuentaActual||'—'}</span>
+                  <span className="text-purple-500 font-black uppercase text-[9px] block mb-0.5">Cuenta {cuentaElegida!==reclasificando.codigoActual?'(nueva)':'actual'}</span>
+                  <span className="font-mono text-purple-700 font-black">{cuentaElegida?.codigo||'—'}</span> <span className="text-gray-700 font-bold">{cuentaElegida?.nombre||'—'}</span>
                 </div>
                 <div>
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nueva cuenta contable</label>
-                  <input value={reclasBusq} onChange={e=>setReclasBusq(e.target.value)} placeholder="Buscar por código o nombre..." autoFocus
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cambiar cuenta contable (opcional)</label>
+                  <input value={reclasBusq} onChange={e=>setReclasBusq(e.target.value)} placeholder="Buscar por código o nombre..."
                     className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/>
                 </div>
-                <div className="border-2 border-gray-100 rounded-xl max-h-56 overflow-y-auto">
-                  {filtradas.length===0?(
-                    <div className="p-4 text-center text-[10px] text-gray-400 font-bold">Sin cuentas que coincidan</div>
-                  ):filtradas.map(c=>(
-                    <div key={c.id} onClick={()=>guardarReclasificacion(c)} className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
-                      <span className="font-mono font-black text-purple-700">{c.codigo}</span> <span className="text-gray-700 font-bold uppercase">{c.nombre}</span>
-                    </div>
-                  ))}
+                {reclasBusq && (
+                  <div className="border-2 border-gray-100 rounded-xl max-h-40 overflow-y-auto">
+                    {filtradas.length===0?(
+                      <div className="p-4 text-center text-[10px] text-gray-400 font-bold">Sin cuentas que coincidan</div>
+                    ):filtradas.map(c=>(
+                      <div key={c.id} onClick={()=>{setReclasCuentaElegida({codigo:c.codigo,nombre:c.nombre});setReclasBusq('');}} className="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
+                        <span className="font-mono font-black text-purple-700">{c.codigo}</span> <span className="text-gray-700 font-bold uppercase">{c.nombre}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
+                    <input type="date" value={reclasFormExtra.fecha} onChange={e=>actualizarReclasFormExtra('fecha',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nro Doc</label>
+                    <input value={reclasFormExtra.nroDoc} onChange={e=>actualizarReclasFormExtra('nroDoc',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/></div>
                 </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label>
+                  <input value={reclasFormExtra.concepto} onChange={e=>actualizarReclasFormExtra('concepto',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/></div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
+                    <input type="number" step="0.0001" value={reclasFormExtra.tasa} onChange={e=>actualizarReclasFormExtra('tasa',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto $</label>
+                    <input type="number" step="0.01" value={reclasFormExtra.montoUSD} onChange={e=>actualizarReclasFormExtra('montoUSD',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto Bs.</label>
+                    <input type="number" step="0.01" value={reclasFormExtra.montoBs} onChange={e=>actualizarReclasFormExtra('montoBs',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/></div>
+                </div>
+                <p className="text-[9px] text-gray-400">El tipo (Debe/Haber) de esta línea no cambia aquí — el monto que edites se aplica al lado que ya tenía.</p>
               </div>
-              <div className="px-5 pb-5 flex justify-between gap-3">
-                <button onClick={quitarReclasificacion} disabled={reclasSaving} className="px-4 py-2.5 text-red-500 hover:bg-red-50 rounded-xl text-xs font-black uppercase disabled:opacity-50">Quitar reclasificación</button>
-                <button onClick={()=>setReclasificando(null)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+              <div className="px-5 pb-5 flex justify-between gap-3 sticky bottom-0 bg-white pt-2">
+                <button onClick={quitarReclasificacion} disabled={reclasSaving} className="px-4 py-2.5 text-red-500 hover:bg-red-50 rounded-xl text-xs font-black uppercase disabled:opacity-50">Quitar todo</button>
+                <div className="flex gap-2">
+                  <button onClick={()=>{setReclasificando(null);setReclasCuentaElegida(null);}} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+                  <button disabled={reclasSaving} onClick={()=>{
+                      guardarReclasificacion(reclasCuentaElegida, {
+                        fecha: reclasFormExtra.fecha||undefined, nroDoc: reclasFormExtra.nroDoc||undefined,
+                        concepto: reclasFormExtra.concepto||undefined, tasa: reclasFormExtra.tasa?parseFloat(reclasFormExtra.tasa):undefined,
+                        montoUSD: reclasFormExtra.montoUSD?parseFloat(reclasFormExtra.montoUSD):undefined, montoBs: reclasFormExtra.montoBs?parseFloat(reclasFormExtra.montoBs):undefined,
+                      });
+                      setReclasCuentaElegida(null);
+                    }} className="px-5 py-2.5 bg-purple-600 text-white rounded-xl text-xs font-black uppercase hover:bg-purple-700 disabled:opacity-50">{reclasSaving?'Guardando...':'Guardar Cambios'}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -18627,16 +18767,23 @@ function App() {
     // sistemas quedan sincronizados y Estado de Resultados / Balance General no muestran el código viejo.
     const aplicarReclasLinea = (tabId, compId, lineIdx, codigo, cuenta) => {
       const ov = reclasificacionesApp[`${tabId}__${compId}__${lineIdx}`];
-      return ov ? {codigo:ov.codigo||codigo, cuenta:ov.cuenta||cuenta} : {codigo, cuenta};
+      return ov ? {codigo:ov.codigo||codigo, cuenta:ov.cuenta||cuenta,
+        montoUSDOverride:ov.montoUSDOverride, montoBsOverride:ov.montoBsOverride,
+        fechaOverride:ov.fechaOverride, nroDocOverride:ov.nroDocOverride, conceptoOverride:ov.conceptoOverride,
+      } : {codigo, cuenta};
     };
     const mapLineas = (lineas, tabId, compId) => lineas.map((l,li)=>{
       const codigo=(l.cuenta||'').split('—')[0].trim();
       const cuenta=(l.cuenta||'').split('—').slice(1).join('—').trim()||l.cuenta;
       const r = tabId ? aplicarReclasLinea(tabId, compId, li, codigo, cuenta) : {codigo, cuenta};
+      const esDeb = l.tipo==='DEBITO';
+      const montoUSD = r.montoUSDOverride!=null ? r.montoUSDOverride : (l.montoUSD||0);
+      const montoBs = r.montoBsOverride!=null ? r.montoBsOverride : (l.montoBs||0);
       return {
         codigo:r.codigo, cuenta:r.cuenta,
-        debeBs: l.tipo==='DEBITO'?(l.montoBs||0):0, haberBs: l.tipo==='CREDITO'?(l.montoBs||0):0,
-        debeUSD: l.tipo==='DEBITO'?(l.montoUSD||0):0, haberUSD: l.tipo==='CREDITO'?(l.montoUSD||0):0,
+        debeBs: esDeb?montoBs:0, haberBs: !esDeb?montoBs:0,
+        debeUSD: esDeb?montoUSD:0, haberUSD: !esDeb?montoUSD:0,
+        _fechaOverride:r.fechaOverride, _nroDocOverride:r.nroDocOverride, _conceptoOverride:r.conceptoOverride,
       };
     });
     // 1) Procura — ya incluye retenciones IVA/ISLR dentro del mismo asiento
@@ -18647,7 +18794,12 @@ function App() {
         const retISLRLista=calcRetISLRLista(f,tot);
         const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
         const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp,cuentasRetProvCfg);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, proveedor:f.proveedor||'', lineas:mapLineas(asiento.lineas,'procura',f.id)});
+        const lineasProc = mapLineas(asiento.lineas,'procura',f.id);
+        const ovProc = lineasProc.find(l=>l._fechaOverride||l._conceptoOverride);
+        out.push({
+          fecha: ovProc?._fechaOverride||f.fecha||'', comprobante: ovProc?._nroDocOverride||f.nroFactura||f.id, modulo:'Procura',
+          concepto: ovProc?._conceptoOverride||`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, proveedor:f.proveedor||'', lineas:lineasProc,
+        });
       }catch(e){}
     });
     // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
