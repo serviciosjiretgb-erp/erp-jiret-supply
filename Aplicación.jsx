@@ -18268,14 +18268,42 @@ ${valoresHtml}
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!guardandoCampoCC&&setEditandoCampoCC(null)}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-5 space-y-3" onClick={e=>e.stopPropagation()}>
               <h3 className="font-black text-gray-800">✏️ Editar {editandoCampoCC.label}</h3>
-              <input
-                type={editandoCampoCC.tipo}
-                step={editandoCampoCC.tipo==='number'?'0.0001':undefined}
-                autoFocus
-                value={editandoCampoCC.valor}
-                onChange={e=>setEditandoCampoCC(c=>({...c, valor:e.target.value}))}
-                className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
-              />
+              {editandoCampoCC.campo==='proveedor' ? (
+                <>
+                  <input
+                    autoFocus
+                    placeholder="Escribe para buscar..."
+                    value={editandoCampoCC.valor}
+                    onChange={e=>setEditandoCampoCC(c=>({...c, valor:e.target.value}))}
+                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  />
+                  {editandoCampoCC.valor && (
+                    <div className="border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto">
+                      {[
+                        ...(provsC||[]).filter(p=>(p.nombre||'').toUpperCase().includes(editandoCampoCC.valor.toUpperCase())).map(p=>({id:'prov-'+p.id, nombre:p.nombre, tipo:'Proveedor'})),
+                        ...(clientesC||[]).filter(c=>(c.name||'').toUpperCase().includes(editandoCampoCC.valor.toUpperCase())).map(c=>({id:'cli-'+c.id, nombre:c.name, tipo:'Cliente'})),
+                      ].slice(0,25).map(p=>(
+                        <div key={p.id} onClick={()=>setEditandoCampoCC(c=>({...c, valor:p.nombre}))} className={`px-3 py-2 cursor-pointer border-b border-gray-50 last:border-0 text-[11px] font-bold uppercase flex items-center justify-between gap-2 ${editandoCampoCC.valor===p.nombre?'bg-orange-50 text-orange-700':'text-gray-700 hover:bg-gray-50'}`}>
+                          <span className="truncate">{p.nombre}</span>
+                          <span className={`text-[8px] font-black shrink-0 px-1.5 py-0.5 rounded ${p.tipo==='Cliente'?'bg-blue-100 text-blue-600':'bg-amber-100 text-amber-600'}`}>{p.tipo}</span>
+                        </div>
+                      ))}
+                      {(provsC||[]).filter(p=>(p.nombre||'').toUpperCase().includes(editandoCampoCC.valor.toUpperCase())).length===0 && (clientesC||[]).filter(c=>(c.name||'').toUpperCase().includes(editandoCampoCC.valor.toUpperCase())).length===0 && (
+                        <div className="px-3 py-3 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias — puedes guardar el texto tal cual</div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <input
+                  type={editandoCampoCC.tipo}
+                  step={editandoCampoCC.tipo==='number'?'0.0001':undefined}
+                  autoFocus
+                  value={editandoCampoCC.valor}
+                  onChange={e=>setEditandoCampoCC(c=>({...c, valor:e.target.value}))}
+                  className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                />
+              )}
               <p className="text-[9px] text-gray-400">Se guarda directo donde ya lee Mayor Analítico, Balance General y Estado de Resultados.</p>
               <div className="flex gap-2 pt-1">
                 <button disabled={guardandoCampoCC} onClick={()=>setEditandoCampoCC(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
@@ -18685,6 +18713,23 @@ function App() {
   const [contERExpandAll, setContERExpandAll] = useState(true);
   const [contERVistaPlanta, setContERVistaPlanta] = useState(false);
   const [contERVistaVenta, setContERVistaVenta] = useState(false);
+  // Simulación de costo real por producto (Estado de Resultados) — declarado aquí, a nivel de
+  // App(), no dentro de renderEstadoResultadosModule(), porque esa función solo se invoca cuando
+  // esa pestaña está activa; poner hooks ahí violaba las Reglas de los Hooks (cantidad de hooks
+  // debe ser igual en cada render) y causaba pantalla en blanco (React error #310).
+  const [simCostosActiva, setSimCostosActiva] = useState(false);
+  const [simCostosLista, setSimCostosLista] = useState([]);
+  const [simCostosBusq, setSimCostosBusq] = useState('');
+  const [simCostosValorNuevo, setSimCostosValorNuevo] = useState('');
+  const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
+    return ()=>u();
+  },[]);
+  const guardarSimCostosLista = async (nuevaLista) => {
+    setSimCostosLista(nuevaLista);
+    await setDoc(getDocRef('settings','simulacionCostosReales'), {items:nuevaLista, updatedAt:Date.now()});
+  };
   const [contERExpandKey, setContERExpandKey] = useState(0);
   const [contBGCurrency, setContBGCurrency] = useState('both');
   const [contBGExpandAll, setContBGExpandAll] = useState(true);
@@ -49363,19 +49408,6 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
-    const [simCostosActiva, setSimCostosActiva] = useState(false);
-    const [simCostosLista, setSimCostosLista] = useState([]);
-    const [simCostosBusq, setSimCostosBusq] = useState('');
-    const [simCostosValorNuevo, setSimCostosValorNuevo] = useState('');
-    const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
-    useEffect(()=>{
-      const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
-      return ()=>u();
-    },[]);
-    const guardarSimCostosLista = async (nuevaLista) => {
-      setSimCostosLista(nuevaLista);
-      await setDoc(getDocRef('settings','simulacionCostosReales'), {items:nuevaLista, updatedAt:Date.now()});
-    };
     const simCostosMap = Object.fromEntries(simCostosLista.map(x=>[x.invCode, x.costoReal]));
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
