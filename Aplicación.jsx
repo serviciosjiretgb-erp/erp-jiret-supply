@@ -18723,6 +18723,7 @@ function App() {
   const [simCostosBusq, setSimCostosBusq] = useState('');
   const [simCostosValorNuevo, setSimCostosValorNuevo] = useState('');
   const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
+  const [showDiagOpReventa, setShowDiagOpReventa] = useState(false);
   const [verFacturasProducto, setVerFacturasProducto] = useState(null);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
@@ -32651,7 +32652,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
             // IMPORTANTE: la fecha de la factura es HOY (fecha de emisión de la factura),
             // NO la fecha de la NE. La NE conserva su fecha original intacta.
-            setNewInvoiceForm(f=>({...f,fecha:ne.fecha||getTodayDate(),fechaFactura:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
+            setNewInvoiceForm(f=>({...f,fecha:ne.fecha||getTodayDate(),fechaFactura:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opId||ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
             setVentasView('facturacion');
           };
           const neAnios=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse();
@@ -33534,10 +33535,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const items = nesObj.flatMap(ne=>(ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true,_neOrigenItem:ne.id})));
                         setFgItems(items);
                         const primera = nesObj[0];
-                        const opsUnicas = [...new Set(nesObj.map(ne=>ne.opRelacionada).filter(Boolean))];
+                        const opsUnicas = [...new Set(nesObj.map(ne=>ne.opId||ne.opRelacionada).filter(Boolean))];
                         setNewInvoiceForm(f=>({...f,neOrigen:idsSeleccionados[0]||'',nesAdicionales:idsSeleccionados.slice(1),
                           fecha:primera.fecha||f.fecha,clientRif:primera.clientRif||'',clientName:primera.clientName||'',clientAddress:primera.clientAddress||'',
-                          vendedor:primera.vendedor||'',opAsignada:primera.opRelacionada||'',opsAsignadas:opsUnicas,aplicaIva:primera.aplicaIva||'SI'}));
+                          vendedor:primera.vendedor||'',opAsignada:primera.opId||primera.opRelacionada||'',opsAsignadas:opsUnicas,aplicaIva:primera.aplicaIva||'SI'}));
                       };
                       const toggleNE = (neId) => {
                         const ne = (notasEntrega||[]).find(n=>n.id===neId);
@@ -49552,6 +49553,62 @@ ${resumenHtml}
               <button onClick={()=>{setContERVistaPlanta(v=>!v); setContERVistaVenta(false);}} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaPlanta?'bg-indigo-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><Factory size={13}/> {contERVistaPlanta?'Viendo Resultado Planta':'Resultado Planta'}</button>
               <button onClick={()=>{setContERVistaVenta(v=>!v); setContERVistaPlanta(false);}} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaVenta?'bg-teal-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><ShoppingCart size={13}/> {contERVistaVenta?'Viendo Resultado Venta':'Resultado Venta'}</button>
               <button onClick={()=>setShowSimCostosPanel(v=>!v)} title="Ver el resultado con el costo real de productos específicos, sin tocar tus datos" className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${simCostosActiva?'bg-purple-600 text-white':'bg-white border border-purple-200 text-purple-500 hover:bg-purple-50'}`}><RefreshCw size={13}/> {simCostosActiva?`Costo Real Activo (${simCostosLista.length})`:'Simular Costo Real'}</button>
+              <button onClick={()=>setShowDiagOpReventa(true)} title="Facturas con OP asignada que incluyen productos de reventa (Stretch Film, Cintas, Papel Kraft, Dispensadores, Empaques Flexibles)" className="px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 bg-white border border-amber-300 text-amber-600 hover:bg-amber-50">⚠️ OP en Productos de Reventa</button>
+              {showDiagOpReventa && (()=>{
+                const CATEGORIAS_REVENTA_A_CONFIRMAR = ['Stretch Film','Cintas','Papel Kraft','Dispensadores','Empaques Flexibles'];
+                const hallazgos = [];
+                (invoices||[]).forEach(f=>{
+                  const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+                  if (!tieneOp) return;
+                  (f.itemsFacturados||[]).forEach(it=>{
+                    const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode||i.id===it.invCode) : null;
+                    if (!CATEGORIAS_REVENTA_A_CONFIRMAR.includes(invItem?.category)) return;
+                    hallazgos.push({
+                      factura: f.nroFiscal||f.documento||f.id, fecha: f.fecha, cliente: f.clientName||'—',
+                      op: f.opAsignada||(f.opsAsignadas&&f.opsAsignadas[0])||'', producto: it.desc||it.descripcion||'—',
+                      categoria: invItem?.category, cantidad: it.cantidad||0,
+                    });
+                  });
+                });
+                return (
+                <div className="fixed inset-0 bg-black/60 z-[500] flex items-center justify-center p-4" onClick={()=>setShowDiagOpReventa(false)}>
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                    <h3 className="font-black text-gray-800">⚠️ Facturas con OP en Productos de Reventa</h3>
+                    <p className="text-[10px] text-gray-500">Facturas con Orden de Producción asignada que incluyen productos de categorías aún sin confirmar si son producción propia o reventa (Stretch Film, Cintas, Papel Kraft, Dispensadores, Empaques Flexibles). Revísalas — si el producto es de reventa, esa OP probablemente está mal puesta.</p>
+                    {hallazgos.length===0 ? (
+                      <p className="text-xs font-bold text-gray-400 py-6 text-center">No se encontraron facturas con OP en estas categorías.</p>
+                    ) : (
+                      <div className="border-2 border-gray-100 rounded-xl overflow-hidden">
+                        <table className="w-full text-[10px]">
+                          <thead className="bg-amber-50"><tr>
+                            <th className="text-left px-2 py-1.5">Factura</th><th className="text-left px-2 py-1.5">Fecha</th>
+                            <th className="text-left px-2 py-1.5">Cliente</th><th className="text-left px-2 py-1.5">OP</th>
+                            <th className="text-left px-2 py-1.5">Producto</th><th className="text-left px-2 py-1.5">Categoría</th>
+                            <th className="text-right px-2 py-1.5">Cant.</th>
+                          </tr></thead>
+                          <tbody>
+                            {hallazgos.map((h,i)=>(
+                              <tr key={i} className="border-t border-gray-100">
+                                <td className="px-2 py-1.5 font-mono font-bold">{h.factura}</td>
+                                <td className="px-2 py-1.5 text-gray-500">{contDd(h.fecha)}</td>
+                                <td className="px-2 py-1.5 text-gray-600 uppercase truncate max-w-[140px]">{h.cliente}</td>
+                                <td className="px-2 py-1.5 font-black text-amber-600">{h.op}</td>
+                                <td className="px-2 py-1.5 text-gray-700 uppercase truncate max-w-[180px]" title={h.producto}>{h.producto}</td>
+                                <td className="px-2 py-1.5 text-gray-500">{h.categoria}</td>
+                                <td className="px-2 py-1.5 text-right font-mono">{h.cantidad.toLocaleString('es-VE')}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="flex justify-end pt-1">
+                      <button onClick={()=>setShowDiagOpReventa(false)} className="px-5 py-2.5 bg-gray-800 text-white rounded-xl text-xs font-black uppercase hover:bg-gray-900">Cerrar</button>
+                    </div>
+                  </div>
+                </div>
+                );
+              })()}
               {showSimCostosPanel && (
                 <div className="fixed inset-0 bg-black/60 z-[500] flex items-center justify-center p-4" onClick={()=>setShowSimCostosPanel(false)}>
                   <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
