@@ -3509,7 +3509,7 @@ const construirLineasManualCompartida = (a, ctx) => {
   const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, a.id, li, codigo, cuenta) : {codigo,cuenta};
   return (a.lineas||[]).map((l,li) => {
     const r = reclas(li, l.codigo||'', l.cuenta||'—');
-    return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', fecha:l.fecha||null,
+    return {codigo:r.codigo, cuenta:r.cuenta, detalle:l.detalle||'', fecha:l.fecha||null, proveedor:l.proveedor||'',
       debeBs:l.tipo==='D'?Number(l.montoBs||0):0, haberBs:l.tipo==='H'?Number(l.montoBs||0):0,
       debeUSD:l.tipo==='D'?Number(l.montoUSD||0):0, haberUSD:l.tipo==='H'?Number(l.montoUSD||0):0};
   });
@@ -7560,8 +7560,8 @@ const CxPView = ({
         const esImportacion = reclasAntCxpSel[p.id]==='importacion';
         const [codDestino,nomDestino] = esImportacion ? [codAntImp,nomAntImp] : [codAntP,nomAntP];
         const detalle = p.proveedor||'Proveedor';
-        lineasNuevas.push({codigo:codDestino, cuenta:nomDestino, tipo:'D', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
-        lineasNuevas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, fecha:reclasAntCxpFecha});
+        lineasNuevas.push({codigo:codDestino, cuenta:nomDestino, tipo:'D', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, proveedor:p.proveedor||'', fecha:reclasAntCxpFecha});
+        lineasNuevas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'H', montoUSD:parseFloat(saldoUSD.toFixed(2)), montoBs:saldoBs, detalle, proveedor:p.proveedor||'', fecha:reclasAntCxpFecha});
         // Marca este anticipo como ya reclasificado — si no, al reabrir el modal sigue viéndose
         // "abierto" (monto-montoAplicado no cambia, esto es un ajuste contable, no una aplicación
         // real a factura) y se podría reclasificar dos veces por error.
@@ -8432,9 +8432,10 @@ ${body}
                 const tasaAnt = pN(ant?.tasa||tasaBCV||1);
                 const montoBsAp = parseFloat((aplicado*tasaAnt).toFixed(2));
                 const montoUSDAp = parseFloat(aplicado.toFixed(2));
-                const detalleAp = `${provSel?.nombre||ant?.proveedor||'Proveedor'} · Aplicación de anticipo${ant?.referencia?' · Ref.'+ant.referencia:''}`;
-                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, fecha:hoy});
-                nuevasLineas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, fecha:hoy});
+                const provNombre = provSel?.nombre||ant?.proveedor||'Proveedor';
+                const detalleAp = `${provNombre} · Aplicación de anticipo${ant?.referencia?' · Ref.'+ant.referencia:''}`;
+                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:hoy});
+                nuevasLineas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:hoy});
               });
               batch.set(refDoc, {
                 fecha:hoy, nroComprobante:'ANTICIPOS-APLICADOS-PROVEEDORES', concepto:'Aplicación de Anticipos a Proveedores (Anticipo ↔ Cuentas por Pagar)',
@@ -12127,6 +12128,28 @@ const ccBuildArbolNav = (cuentasAgregadas, planDeCuentasArr, gruposIncluir) => {
   root.forEach(cat=>{ if(cat.c&&cat.c.length) ccSortTreeNodes(cat.c); });
   return root;
 };
+// Extrae el nombre del proveedor/cliente del texto de concepto para agrupar el detalle de una
+// cuenta por proveedor — no hay un campo estructurado limpio en todos los orígenes históricos
+// (Procura, Banco, Ajustes manuales), así que se infiere del texto según los patrones que ya
+// usa la app: "ANTICIPO CxP · Proveedor · detalle", "algo — Proveedor — Fact.XXX", "algo — Proveedor".
+const extraerProveedorDeConcepto = (concepto) => {
+  if (!concepto) return 'Sin identificar';
+  if (concepto.includes(' · ')) {
+    const partes = concepto.split(' · ').map(s=>s.trim());
+    if (partes.length >= 2 && /^(ANTICIPO|PAGO|ABONO)/i.test(partes[0])) return partes[1];
+  }
+  if (concepto.includes(' — ')) {
+    const partes = concepto.split(' — ').map(s=>s.trim());
+    if (partes.length >= 2 && /^Fact\.?\s*[\w./-]+$/i.test(partes[partes.length-1])) {
+      return partes[partes.length-2];
+    }
+    return partes[partes.length-1];
+  }
+  return concepto.trim();
+};
+// Cuentas cuyo detalle en Balance General se muestra agrupado por proveedor en vez de la lista
+// cronológica plana — pedido explícito del usuario para poder auditar anticipos por proveedor.
+const CC_CUENTAS_AGRUPAR_POR_PROVEEDOR = ['1.1.05.01.002', '1.1.05.01.004', '2.1.01.01.001'];
 const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, expandSignal, favoritas, onToggleFavorito }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
@@ -12143,6 +12166,21 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
 
   if (isLeaf) {
     const detalle = detalleAbierto && getDetalle ? getDetalle(node.codigo) : null;
+    const agruparPorProveedor = CC_CUENTAS_AGRUPAR_POR_PROVEEDOR.includes(node.codigo);
+    let grupos = null;
+    if (agruparPorProveedor && detalle && detalle.length) {
+      const mapa = new Map();
+      detalle.forEach(d => {
+        const prov = (d.proveedor && d.proveedor.trim()) || extraerProveedorDeConcepto(d.concepto);
+        if (!mapa.has(prov)) mapa.set(prov, []);
+        mapa.get(prov).push(d);
+      });
+      grupos = [...mapa.entries()].map(([proveedor, filas]) => ({
+        proveedor, filas,
+        subUSD: filas.reduce((s,f)=>s+parseNum(f.debeUSD||0)-parseNum(f.haberUSD||0),0),
+        subBs: filas.reduce((s,f)=>s+parseNum(f.debeBs||0)-parseNum(f.haberBs||0),0),
+      })).sort((a,b)=>Math.abs(b.subUSD)-Math.abs(a.subUSD));
+    }
     return (
       <>
         <tr onClick={()=>getDetalle&&setDetalleAbierto(!detalleAbierto)} className={`border-b border-gray-100 ${resaltado?'bg-amber-100 hover:bg-amber-200':'bg-white hover:bg-gray-50'} ${getDetalle?'cursor-pointer':''}`}>
@@ -12166,7 +12204,27 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
                     <tr><th className="px-2 py-1 text-left" style={{paddingLeft:level*16+34}}>Fecha</th><th className="px-2 py-1 text-left">Módulo</th><th className="px-2 py-1 text-left">Comprobante</th><th className="px-2 py-1 text-left">Concepto</th>{showUSD&&<th className="px-2 py-1 text-right">Debe USD</th>}{showUSD&&<th className="px-2 py-1 text-right">Haber USD</th>}{showBS&&<th className="px-2 py-1 text-right">Debe Bs.</th>}{showBS&&<th className="px-2 py-1 text-right">Haber Bs.</th>}</tr>
                   </thead>
                   <tbody>
-                    {detalle.map((d,i)=>(
+                    {grupos ? grupos.flatMap((g,gi) => ([
+                      <tr key={`g${gi}`} className="border-t-2 border-slate-300 bg-slate-100">
+                        <td colSpan={4} className="px-2 py-1.5 font-black text-gray-700" style={{paddingLeft:level*16+34}}>{g.proveedor} <span className="font-normal text-gray-400">({g.filas.length} mov.)</span></td>
+                        {showUSD && <td className="px-2 py-1.5 text-right font-mono font-black text-gray-700">{ccFmtR(g.subUSD)}</td>}
+                        {showUSD && <td></td>}
+                        {showBS && <td className="px-2 py-1.5 text-right font-mono font-black text-gray-700">{ccFmtR(g.subBs)}</td>}
+                        {showBS && <td></td>}
+                      </tr>,
+                      ...g.filas.map((d,i)=>(
+                        <tr key={`g${gi}-${i}`} className="border-t border-slate-200">
+                          <td className="px-2 py-1 text-gray-500" style={{paddingLeft:level*16+50}}>{contDd(d.fecha)}</td>
+                          <td className="px-2 py-1 text-gray-500">{d.modulo}</td>
+                          <td className="px-2 py-1 text-gray-500 font-mono">{d.comprobante}</td>
+                          <td className="px-2 py-1 text-gray-600 truncate max-w-[240px]">{d.concepto}</td>
+                          {showUSD && <td className="px-2 py-1 text-right font-mono text-emerald-700">{d.debeUSD?ccFmtR(d.debeUSD):''}</td>}
+                          {showUSD && <td className="px-2 py-1 text-right font-mono text-red-600">{d.haberUSD?ccFmtR(d.haberUSD):''}</td>}
+                          {showBS && <td className="px-2 py-1 text-right font-mono text-emerald-700">{d.debeBs?ccFmtR(d.debeBs):''}</td>}
+                          {showBS && <td className="px-2 py-1 text-right font-mono text-red-600">{d.haberBs?ccFmtR(d.haberBs):''}</td>}
+                        </tr>
+                      ))
+                    ])) : detalle.map((d,i)=>(
                       <tr key={i} className="border-t border-slate-200">
                         <td className="px-2 py-1 text-gray-500" style={{paddingLeft:level*16+34}}>{contDd(d.fecha)}</td>
                         <td className="px-2 py-1 text-gray-500">{d.modulo}</td>
@@ -18589,7 +18647,7 @@ function App() {
         const retISLRLista=calcRetISLRLista(f,tot);
         const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
         const asiento=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,serviciosApp,planDeCuentas,proveedoresApp,cuentasRetProvCfg);
-        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, lineas:mapLineas(asiento.lineas,'procura',f.id)});
+        out.push({fecha:f.fecha||'', comprobante:f.nroFactura||f.id, modulo:'Procura', concepto:`Factura ${f.nroFactura||''} — ${f.proveedor||'—'}`, proveedor:f.proveedor||'', lineas:mapLineas(asiento.lineas,'procura',f.id)});
       }catch(e){}
     });
     // 2) Ventas (excluye anulaciones fiscales, que no son una venta real)
@@ -18739,7 +18797,7 @@ function App() {
           cuentas, idField, nombreCta, asientos:asientosApp, provs:proveedoresApp, clientes:clients,
           tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg,
         });
-        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—',
+        out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', proveedor:m.proveedor||m.terceroNombre||m.clientName||'',
           lineas: lineasRaw.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeBs:l.debeBs, haberBs:l.haberBs, debeUSD:l.debeUSD, haberUSD:l.haberUSD}))});
       });
     });
@@ -49394,7 +49452,7 @@ ${resumenHtml}
     const getDetalleCuenta = (codigo) => {
       const detalleCompleto = asientosHastaCorte
         .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
-          fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
+          fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, proveedor:linea.proveedor||a.proveedor||'', debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
         })))
         .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
       // La Utilidad del Ejercicio / Acumulada se inyecta como número puro en porCuenta (no como
