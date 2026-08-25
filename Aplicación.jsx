@@ -3157,11 +3157,12 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   let totalMP=0, totalCons=0, totalTerm=0;
   (f.itemsFacturados||[]).forEach(it=>{
     const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
-    // Simulación de costo real (solo vista de Estado de Resultados, opt-in por producto) — si
-    // este ítem específico tiene un costo real cargado, se usa ESE en vez del costoTotal/costoUnit
-    // guardado. No escribe nada — es puramente para esta corrida de cálculo.
-    const claveSim = invItem?.invCode || invItem?.id;
-    const costoRealUnit = simulacionCostos && claveSim ? simulacionCostos[claveSim] : null;
+    // Simulación de costo real (solo vista de Estado de Resultados, opt-in por producto) — se
+    // empareja por el NOMBRE del producto (guardado directo en cada línea de venta como it.desc),
+    // no por el código de inventario: el inventario puede tener varios registros duplicados con
+    // el mismo nombre y código distinto, y la venta pudo haber quedado asociada a cualquiera.
+    const nombreItemVendido = (it.desc||it.descripcion||'').trim().toUpperCase();
+    const costoRealUnit = simulacionCostos && nombreItemVendido ? simulacionCostos[nombreItemVendido] : null;
     const val = costoRealUnit!=null ? costoRealUnit*Number(it.cantidad||0) : (Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0));
     if (val<=0) return;
     const balde = CATEGORIA_A_BALDE_SHARED[invItem?.category] || 'MATERIA_PRIMA';
@@ -18722,6 +18723,7 @@ function App() {
   const [simCostosBusq, setSimCostosBusq] = useState('');
   const [simCostosValorNuevo, setSimCostosValorNuevo] = useState('');
   const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
+  const [verFacturasProducto, setVerFacturasProducto] = useState(null);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
     return ()=>u();
@@ -49408,7 +49410,7 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
-    const simCostosMap = Object.fromEntries(simCostosLista.map(x=>[x.invCode, x.costoReal]));
+    const simCostosMap = Object.fromEntries(simCostosLista.map(x=>[x.nombre.trim().toUpperCase(), x.costoReal]));
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
     const asientosPeriodo = getAsientosReales(simCostosActiva?simCostosMap:null).filter(a=>{
@@ -49587,6 +49589,7 @@ ${resumenHtml}
                     {simCostosLista.length>0 && (()=>{
                       const impactoPorProducto = simCostosLista.map(x=>{
                         let cantTotal=0, costoTotalOriginal=0;
+                        const facturasDetalle = [];
                         [...(invoices||[])].forEach(f=>{
                           if (contFiltDesde && (f.fecha||'')<contFiltDesde) return;
                           if (contFiltHasta && (f.fecha||'')>contFiltHasta) return;
@@ -49596,14 +49599,36 @@ ${resumenHtml}
                             const cant = Number(it.cantidad||0);
                             const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
                             cantTotal += cant; costoTotalOriginal += costoOrig;
+                            const op = f.opAsignada || (f.opsAsignadas&&f.opsAsignadas[0]) || '';
+                            facturasDetalle.push({factura:f.nroFiscal||f.documento||f.id, fecha:f.fecha, op, cant, costoOrig});
                           });
                         });
                         const costoActualUnit = cantTotal>0 ? costoTotalOriginal/cantTotal : 0;
                         const totalCostoReal = x.costoReal * cantTotal;
                         const impacto = totalCostoReal - costoTotalOriginal;
-                        return {...x, costoActualUnit, cantTotal, costoTotalOriginal, totalCostoReal, impacto};
+                        return {...x, costoActualUnit, cantTotal, costoTotalOriginal, totalCostoReal, impacto, facturasDetalle};
                       });
                       const impactoTotal = impactoPorProducto.reduce((s,x)=>s+x.impacto,0);
+                      const totalCostoActualSuma = impactoPorProducto.reduce((s,x)=>s+x.costoTotalOriginal,0);
+                      const totalCostoRealSuma = impactoPorProducto.reduce((s,x)=>s+x.totalCostoReal,0);
+                      // Utilidad con y sin el simulador, para el comparativo del comentario — se
+                      // recalcula aparte (no reemplaza la corrida principal de la tabla de arriba).
+                      const _sumUtil = (mapa) => {
+                        const asientos = getAsientosReales(mapa).filter(a=>{
+                          const fNum = _fNum(a.fecha);
+                          if (fNum===null) return true;
+                          return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
+                        });
+                        let ing=0, cos=0, gas=0;
+                        asientos.forEach(a=>(a.lineas||[]).forEach(l=>{
+                          if((l.codigo||'').startsWith('4')) ing += parseNum(l.haberUSD||0)-parseNum(l.debeUSD||0);
+                          else if((l.codigo||'').startsWith('5')) cos += parseNum(l.debeUSD||0)-parseNum(l.haberUSD||0);
+                          else if((l.codigo||'').startsWith('6')) gas += parseNum(l.debeUSD||0)-parseNum(l.haberUSD||0);
+                        }));
+                        return ing-cos-gas;
+                      };
+                      const utilidadSinSim = _sumUtil(null);
+                      const utilidadConSim = _sumUtil(simCostosMap);
                       return (
                       <>
                       <p className="text-[9px] text-gray-400">Cantidad vendida en el período que estás consultando ({contDd(contFiltDesde)||'inicio'} al {contDd(contFiltHasta)||'hoy'}) — solo Facturas registradas, igual que usa hoy el Estado de Resultados.</p>
@@ -49612,8 +49637,9 @@ ${resumenHtml}
                           <span>Producto</span><span className="text-right">Cant.</span><span className="text-right">Costo/Und Actual</span><span className="text-right">Total Actual</span><span className="text-right">Costo/Und Real</span><span className="text-right">Total Real</span><span></span>
                         </div>
                         {impactoPorProducto.map((x,i)=>(
-                          <div key={x.invCode} className="grid gap-1 px-3 py-2 border-t border-gray-50 items-center" style={{gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.9fr 0.9fr 0.4fr'}}>
-                            <span className="text-[10px] text-gray-700 font-bold uppercase truncate" title={x.nombre}>{x.nombre}</span>
+                          <React.Fragment key={x.invCode}>
+                          <div className="grid gap-1 px-3 py-2 border-t border-gray-50 items-center" style={{gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.9fr 0.9fr 0.4fr'}}>
+                            <span className="text-[10px] text-gray-700 font-bold uppercase truncate cursor-pointer hover:text-purple-600 hover:underline" title={x.nombre+' — clic para ver sus facturas'} onClick={()=>setVerFacturasProducto(p=>p===x.invCode?null:x.invCode)}>{x.nombre}</span>
                             <span className="text-right text-[10px] font-mono text-gray-500 font-black">{x.cantTotal.toLocaleString('es-VE')}</span>
                             <span className="text-right text-[10px] font-mono text-gray-400">${x.costoActualUnit.toFixed(2)}</span>
                             <span className="text-right text-[10px] font-mono text-gray-600 font-bold">${x.costoTotalOriginal.toFixed(2)}</span>
@@ -49625,12 +49651,33 @@ ${resumenHtml}
                             <span className={`text-right text-[10px] font-mono font-black ${x.impacto>0?'text-red-500':x.impacto<0?'text-emerald-600':'text-gray-600'}`}>${x.totalCostoReal.toFixed(2)}</span>
                             <span className="text-right"><button onClick={()=>guardarSimCostosLista(simCostosLista.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button></span>
                           </div>
+                          {verFacturasProducto===x.invCode && (
+                            <div className="bg-gray-50 px-4 py-2 border-t border-gray-100">
+                              <table className="w-full text-[9px]">
+                                <thead><tr className="text-gray-400 font-black uppercase"><th className="text-left pb-1">Factura</th><th className="text-left pb-1">Fecha</th><th className="text-left pb-1">OP Asignada</th><th className="text-right pb-1">Cant.</th><th className="text-right pb-1">Costo</th></tr></thead>
+                                <tbody>
+                                  {x.facturasDetalle.map((f,fi)=>(
+                                    <tr key={fi} className="border-t border-gray-200">
+                                      <td className="py-1 font-mono text-gray-600">{f.factura}</td>
+                                      <td className="py-1 text-gray-500">{contDd(f.fecha)}</td>
+                                      <td className="py-1">{f.op ? <span className="font-black text-amber-600">{f.op}</span> : <span className="text-gray-300 italic">Sin OP</span>}</td>
+                                      <td className="py-1 text-right font-mono">{f.cant.toLocaleString('es-VE')}</td>
+                                      <td className="py-1 text-right font-mono">${f.costoOrig.toFixed(2)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          </React.Fragment>
                         ))}
                       </div>
-                      <div className={`rounded-xl p-3 text-[11px] font-bold ${impactoTotal>0?'bg-red-50 text-red-700':impactoTotal<0?'bg-emerald-50 text-emerald-700':'bg-gray-50 text-gray-500'}`}>
-                        💬 {impactoTotal===0 ? 'Sin diferencia en costo todavía — pon el costo real de cada producto arriba.' :
-                          impactoTotal>0 ? `El costo real es más alto: tu costo total sube $${impactoTotal.toFixed(2)}, así que tu utilidad del ejercicio BAJA $${impactoTotal.toFixed(2)} frente a lo que ves ahora sin activar la simulación.` :
-                          `El costo real es más bajo: tu costo total baja $${Math.abs(impactoTotal).toFixed(2)}, así que tu utilidad del ejercicio SUBE $${Math.abs(impactoTotal).toFixed(2)} frente a lo que ves ahora sin activar la simulación.`}
+                      <div className={`rounded-xl p-3 text-[11px] font-bold space-y-1 ${impactoTotal>0?'bg-red-50 text-red-700':impactoTotal<0?'bg-emerald-50 text-emerald-700':'bg-gray-50 text-gray-500'}`}>
+                        <p>💬 {impactoTotal===0 ? 'Sin diferencia en costo todavía — pon el costo real de cada producto arriba.' :
+                          impactoTotal>0 ? `El costo real es más alto: tu costo total sube $${impactoTotal.toFixed(2)}.` :
+                          `El costo real es más bajo: tu costo total baja $${Math.abs(impactoTotal).toFixed(2)}.`}</p>
+                        <p className="text-[10px] font-normal opacity-90">Costo total actual: <b>${totalCostoActualSuma.toFixed(2)}</b> → Costo total simulado: <b>${totalCostoRealSuma.toFixed(2)}</b></p>
+                        <p className="text-[10px] font-normal opacity-90">Utilidad del ejercicio actual: <b>${utilidadSinSim.toFixed(2)}</b> → Utilidad simulada: <b>${utilidadConSim.toFixed(2)}</b></p>
                       </div>
                       </>
                       );
