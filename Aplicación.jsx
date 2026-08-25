@@ -12707,39 +12707,35 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   const [filtDesde, setFiltDesde] = useState(getTodayDate().substring(0,7)+'-01');
   const [filtHasta, setFiltHasta] = useState(getTodayDate());
   const [filtCuenta, setFiltCuenta] = useState('');
-  const [editandoMovCC, setEditandoMovCC] = useState(null);
-  const [formMovCC, setFormMovCC] = useState({fecha:'', referencia:'', concepto:'', tasa:'', montoUSD:'', montoBs:''});
-  const [guardandoMovCC, setGuardandoMovCC] = useState(false);
-  const abrirEditarMovCC = (r, esBanco) => {
-    setEditandoMovCC({id:r.id, esBanco});
-    const totUSD = r.lineas.reduce((s,l)=>s+l.dUSD+l.hUSD,0);
-    const totBs = r.lineas.reduce((s,l)=>s+l.dBs+l.hBs,0);
-    setFormMovCC({
-      fecha:r.fecha||'', referencia:r.doc||'', concepto:r.conc||'',
-      tasa:r.tasa?String(r.tasa):'', montoUSD:totUSD?String(totUSD.toFixed(2)):'', montoBs:totBs?String(totBs.toFixed(2)):'',
-    });
+  // Edición campo por campo — clic en el valor específico (igual que editar la cuenta contable),
+  // no un formulario grande con todo junto. Cada campo se guarda solo, directo sobre el
+  // documento real de banco_movimientos/caja_movimientos.
+  const [editandoCampoCC, setEditandoCampoCC] = useState(null); // {id, esBanco, campo, label, tipo, valor}
+  const [guardandoCampoCC, setGuardandoCampoCC] = useState(false);
+  const abrirEditarCampoCC = (r, esBanco, campo, label, tipo) => {
+    // OJO: el monto real de la transacción es UNO solo (está reflejado en ambas líneas del
+    // asiento, una vez en Debe y otra en Haber) — se lee de la línea 0, nunca sumando las 2
+    // líneas entre sí, o quedaría doble.
+    let valor = '';
+    if (campo==='fecha') valor = r.fecha||'';
+    else if (campo==='referencia') valor = r.doc||'';
+    else if (campo==='concepto') valor = r.conc||'';
+    else if (campo==='tasa') valor = r.tasa?String(r.tasa):'';
+    else if (campo==='montoUSD') valor = String((r.lineas[0].dUSD||r.lineas[0].hUSD||0).toFixed(2));
+    else if (campo==='montoBs') valor = String((r.lineas[0].dBs||r.lineas[0].hBs||0).toFixed(2));
+    setEditandoCampoCC({id:r.id, esBanco, campo, label, tipo, valor});
   };
-  const actualizarFormMovCC = (campo, valor) => setFormMovCC(f=>{
-    const tasaNum = parseFloat(f.tasa)||0;
-    const n = {...f, [campo]:valor};
-    if (campo==='montoUSD' && tasaNum>0) n.montoBs = valor?(parseFloat(valor)*tasaNum).toFixed(2):'';
-    if (campo==='montoBs' && tasaNum>0) n.montoUSD = valor?(parseFloat(valor)/tasaNum).toFixed(2):'';
-    return n;
-  });
-  const guardarEditarMovCC = async () => {
-    if (!editandoMovCC) return;
-    setGuardandoMovCC(true);
+  const guardarCampoCC = async () => {
+    if (!editandoCampoCC) return;
+    setGuardandoCampoCC(true);
     try {
-      const coleccion = editandoMovCC.esBanco ? 'banco_movimientos' : 'caja_movimientos';
-      await updateDoc(getDocRef(coleccion, editandoMovCC.id), {
-        fecha: formMovCC.fecha||'', referencia: formMovCC.referencia||'', concepto: formMovCC.concepto||'',
-        tasa: parseFloat(formMovCC.tasa)||0,
-        montoUSD: parseFloat(formMovCC.montoUSD)||0,
-        montoBs: parseFloat(formMovCC.montoBs)||0,
-      });
-      setEditandoMovCC(null);
+      const coleccion = editandoCampoCC.esBanco ? 'banco_movimientos' : 'caja_movimientos';
+      const {campo, valor} = editandoCampoCC;
+      const patch = (campo==='montoUSD'||campo==='montoBs'||campo==='tasa') ? {[campo]: parseFloat(valor)||0} : {[campo]: valor||''};
+      await updateDoc(getDocRef(coleccion, editandoCampoCC.id), patch);
+      setEditandoCampoCC(null);
     } catch(e) { alert('Error al guardar: '+e.message); }
-    setGuardandoMovCC(false);
+    setGuardandoCampoCC(false);
   };
   // Buscador compartido por las 9 pestañas — filtra por Comprobante, Fecha, Código, Cuenta, Nro Doc o Concepto.
   const [buscarCC, setBuscarCC] = useState('');
@@ -18201,24 +18197,23 @@ ${valoresHtml}
         ):(
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acción'].map((h,i)=>(
-                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7&&i<=11?'text-right':i===4||i===12?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>
                 {lineasPorComprobante.flatMap((r,ri)=>r.lineas.map((l,li)=>(
                   <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
                     <td className="px-3 py-2 font-mono font-black text-blue-600">{li===0?r.comprobante:''}</td>
-                    <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
+                    <td className={`px-3 py-2 text-gray-400 font-mono whitespace-nowrap ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'fecha','Fecha','date')} title={li===0?'Clic para editar la fecha':''}>{li===0?contDd(r.fecha):''}</td>
                     <CeldaCuentaCC tabId={esBanco?'banco':'caja'} compId={r.id} li={li} l={l} r={r}/>
                     <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
-                    <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
-                    <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
-                    <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
-                    <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
-                    <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
-                    <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
-                    <td className="px-3 py-2 text-center">{li===0 && <button onClick={()=>abrirEditarMovCC(r,esBanco)} className="p-1 text-blue-400 hover:text-blue-600" title="Editar tasa y montos de este movimiento"><Edit size={13}/></button>}</td>
+                    <td className={`px-3 py-2 font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'referencia','Nro Doc / Referencia','text')} title={li===0?'Clic para editar el nro. de documento':''}>{li===0?r.doc:''}</td>
+                    <td className={`px-3 py-2 text-gray-600 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'concepto','Concepto','text')} title={li===0?'Clic para editar el concepto':''}>{li===0?r.conc:''}</td>
+                    <td className={`px-3 py-2 text-right font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'tasa','Tasa Bs/$','number')} title={li===0?'Clic para editar la tasa':''}>{li===0?contFmt(r.tasa):''}</td>
+                    <td className={`px-3 py-2 text-right font-mono font-black text-emerald-600 ${li===0&&l.dBs>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>li===0&&l.dBs>0&&abrirEditarCampoCC(r,esBanco,'montoBs','Monto Bs.','number')} title={li===0&&l.dBs>0?'Clic para editar el monto en Bs.':''}>{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
+                    <td className={`px-3 py-2 text-right font-mono font-black text-red-500 ${li===0&&l.hBs>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>li===0&&l.hBs>0&&abrirEditarCampoCC(r,esBanco,'montoBs','Monto Bs.','number')} title={li===0&&l.hBs>0?'Clic para editar el monto en Bs.':''}>{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
+                    <td className={`px-3 py-2 text-right font-mono font-black text-emerald-600 ${li===0&&l.dUSD>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>li===0&&l.dUSD>0&&abrirEditarCampoCC(r,esBanco,'montoUSD','Monto $','number')} title={li===0&&l.dUSD>0?'Clic para editar el monto en $':''}>{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
+                    <td className={`px-3 py-2 text-right font-mono font-black text-red-500 ${li===0&&l.hUSD>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>li===0&&l.hUSD>0&&abrirEditarCampoCC(r,esBanco,'montoUSD','Monto $','number')} title={li===0&&l.hUSD>0?'Clic para editar el monto en $':''}>{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
                   </tr>
                 )))}
               </tbody>
@@ -18228,47 +18223,26 @@ ${valoresHtml}
                 <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasPorComprobante.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                 <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasPorComprobante.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                 <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasPorComprobante.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
-                <td></td>
               </tr></tfoot>
             </table></div>
           </div>
         )}
-        {editandoMovCC && (
-          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!guardandoMovCC&&setEditandoMovCC(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e=>e.stopPropagation()}>
-              <h3 className="font-black text-gray-800">✏️ Editar Movimiento</h3>
-              <p className="text-[10px] text-gray-500">Cambia lo que necesites — el otro monto se recalcula solo si cambias la tasa. Al guardar, se actualiza donde ya lee Mayor Analítico, Balance General y Estado de Resultados; no hace falta nada más.</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha</label>
-                  <input type="date" value={formMovCC.fecha} onChange={e=>actualizarFormMovCC('fecha',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-                </div>
-                <div>
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nro Doc / Referencia</label>
-                  <input value={formMovCC.referencia} onChange={e=>actualizarFormMovCC('referencia',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-                </div>
-              </div>
-              <div>
-                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Concepto</label>
-                <input value={formMovCC.concepto} onChange={e=>actualizarFormMovCC('concepto',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-              </div>
-              <div>
-                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tasa Bs/$</label>
-                <input type="number" step="0.0001" value={formMovCC.tasa} onChange={e=>actualizarFormMovCC('tasa',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto $</label>
-                  <input type="number" step="0.01" value={formMovCC.montoUSD} onChange={e=>actualizarFormMovCC('montoUSD',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-                </div>
-                <div>
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Monto Bs.</label>
-                  <input type="number" step="0.01" value={formMovCC.montoBs} onChange={e=>actualizarFormMovCC('montoBs',e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-                </div>
-              </div>
+        {editandoCampoCC && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!guardandoCampoCC&&setEditandoCampoCC(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+              <h3 className="font-black text-gray-800">✏️ Editar {editandoCampoCC.label}</h3>
+              <input
+                type={editandoCampoCC.tipo}
+                step={editandoCampoCC.tipo==='number'?'0.0001':undefined}
+                autoFocus
+                value={editandoCampoCC.valor}
+                onChange={e=>setEditandoCampoCC(c=>({...c, valor:e.target.value}))}
+                className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+              />
+              <p className="text-[9px] text-gray-400">Se guarda directo donde ya lee Mayor Analítico, Balance General y Estado de Resultados.</p>
               <div className="flex gap-2 pt-1">
-                <button disabled={guardandoMovCC} onClick={()=>setEditandoMovCC(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
-                <button disabled={guardandoMovCC} onClick={guardarEditarMovCC} className="flex-1 bg-blue-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-blue-700 disabled:opacity-40">{guardandoMovCC?'Guardando...':'Guardar'}</button>
+                <button disabled={guardandoCampoCC} onClick={()=>setEditandoCampoCC(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                <button disabled={guardandoCampoCC} onClick={guardarCampoCC} className="flex-1 bg-orange-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 disabled:opacity-40">{guardandoCampoCC?'Guardando...':'Guardar'}</button>
               </div>
             </div>
           </div>
