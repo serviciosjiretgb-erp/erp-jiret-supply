@@ -49565,13 +49565,19 @@ ${resumenHtml}
                     </div>
                     {simCostosBusq && (
                       <div className="border-2 border-gray-100 rounded-xl max-h-40 overflow-y-auto">
-                        {(inventory||[]).filter(it=>(it.desc||it.descripcion||it.nombre||'').toUpperCase().includes(simCostosBusq.toUpperCase())).slice(0,15).map(it=>{
-                          const yaEsta = simCostosLista.some(x=>x.invCode===(it.invCode||it.id));
+                        {(()=>{ const vistos=new Set(); return (inventory||[]).filter(it=>{
+                          const nombre=(it.desc||it.descripcion||it.nombre||'').toUpperCase();
+                          if(!nombre.includes(simCostosBusq.toUpperCase())) return false;
+                          if(vistos.has(nombre)) return false;
+                          vistos.add(nombre); return true;
+                        }); })().slice(0,15).map(it=>{
+                          const nombreIt = it.desc||it.descripcion||it.nombre;
+                          const yaEsta = simCostosLista.some(x=>x.nombre===nombreIt);
                           return (
                             <div key={it.id} className="px-3 py-2 border-b border-gray-50 last:border-0 flex items-center justify-between gap-2 text-[11px]">
-                              <span className="text-gray-700 font-bold uppercase truncate">{it.desc||it.descripcion||it.nombre}</span>
+                              <span className="text-gray-700 font-bold uppercase truncate">{nombreIt}</span>
                               {yaEsta ? <span className="text-[9px] text-emerald-600 font-black uppercase shrink-0">✓ En la lista</span> : (
-                                <button onClick={()=>{setSimCostosBusq(''); guardarSimCostosLista([...simCostosLista, {invCode:it.invCode||it.id, nombre:it.desc||it.descripcion||it.nombre, costoReal:0}]);}} className="text-[9px] bg-purple-100 text-purple-700 font-black uppercase px-2 py-1 rounded-lg shrink-0 hover:bg-purple-200">+ Agregar</button>
+                                <button onClick={()=>{setSimCostosBusq(''); guardarSimCostosLista([...simCostosLista, {invCode:it.invCode||it.id, nombre:nombreIt, costoReal:0}]);}} className="text-[9px] bg-purple-100 text-purple-700 font-black uppercase px-2 py-1 rounded-lg shrink-0 hover:bg-purple-200">+ Agregar</button>
                               )}
                             </div>
                           );
@@ -49585,8 +49591,8 @@ ${resumenHtml}
                           if (contFiltDesde && (f.fecha||'')<contFiltDesde) return;
                           if (contFiltHasta && (f.fecha||'')>contFiltHasta) return;
                           (f.itemsFacturados||[]).forEach(it=>{
-                            const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode||i.id===it.invCode) : null;
-                            if ((it.invCode||invItem?.id)!==x.invCode) return;
+                            const nombreIt = (it.desc||it.descripcion||'').trim().toUpperCase();
+                            if (nombreIt!==x.nombre.trim().toUpperCase()) return;
                             const cant = Number(it.cantidad||0);
                             const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
                             cantTotal += cant; costoTotalOriginal += costoOrig;
