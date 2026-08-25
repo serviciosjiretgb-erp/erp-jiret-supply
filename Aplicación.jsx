@@ -49581,36 +49581,43 @@ ${resumenHtml}
                     {simCostosLista.length>0 && (()=>{
                       const impactoPorProducto = simCostosLista.map(x=>{
                         let cantTotal=0, costoTotalOriginal=0;
-                        (invoices||[]).forEach(f=>(f.itemsFacturados||[]).forEach(it=>{
-                          const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode||i.id===it.invCode) : null;
-                          if ((it.invCode||invItem?.id)!==x.invCode) return;
-                          const cant = Number(it.cantidad||0);
-                          const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
-                          cantTotal += cant; costoTotalOriginal += costoOrig;
-                        }));
+                        [...(invoices||[])].forEach(f=>{
+                          if (contFiltDesde && (f.fecha||'')<contFiltDesde) return;
+                          if (contFiltHasta && (f.fecha||'')>contFiltHasta) return;
+                          (f.itemsFacturados||[]).forEach(it=>{
+                            const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode||i.id===it.invCode) : null;
+                            if ((it.invCode||invItem?.id)!==x.invCode) return;
+                            const cant = Number(it.cantidad||0);
+                            const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
+                            cantTotal += cant; costoTotalOriginal += costoOrig;
+                          });
+                        });
                         const costoActualUnit = cantTotal>0 ? costoTotalOriginal/cantTotal : 0;
-                        const diferenciaUnit = x.costoReal - costoActualUnit;
-                        const impacto = diferenciaUnit * cantTotal;
-                        return {...x, costoActualUnit, diferenciaUnit, cantTotal, impacto};
+                        const totalCostoReal = x.costoReal * cantTotal;
+                        const impacto = totalCostoReal - costoTotalOriginal;
+                        return {...x, costoActualUnit, cantTotal, costoTotalOriginal, totalCostoReal, impacto};
                       });
                       const impactoTotal = impactoPorProducto.reduce((s,x)=>s+x.impacto,0);
                       return (
                       <>
-                      <div className="border-2 border-gray-100 rounded-xl overflow-hidden">
-                        <div className="grid grid-cols-12 gap-1 px-3 py-1.5 bg-gray-50 text-[8px] font-black uppercase text-gray-400">
-                          <span className="col-span-4">Producto</span><span className="col-span-2 text-right">Costo Actual</span><span className="col-span-2 text-right">Costo Real</span><span className="col-span-2 text-right">Diferencia</span><span className="col-span-2"></span>
+                      <p className="text-[9px] text-gray-400">Cantidad vendida en el período que estás consultando ({contDd(contFiltDesde)||'inicio'} al {contDd(contFiltHasta)||'hoy'}) — solo Facturas registradas, igual que usa hoy el Estado de Resultados.</p>
+                      <div className="border-2 border-gray-100 rounded-xl overflow-x-auto">
+                        <div className="grid gap-1 px-3 py-1.5 bg-gray-50 text-[8px] font-black uppercase text-gray-400" style={{gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.9fr 0.9fr 0.4fr'}}>
+                          <span>Producto</span><span className="text-right">Cant.</span><span className="text-right">Costo/Und Actual</span><span className="text-right">Total Actual</span><span className="text-right">Costo/Und Real</span><span className="text-right">Total Real</span><span></span>
                         </div>
                         {impactoPorProducto.map((x,i)=>(
-                          <div key={x.invCode} className="grid grid-cols-12 gap-1 px-3 py-2 border-t border-gray-50 items-center">
-                            <span className="col-span-4 text-[10px] text-gray-700 font-bold uppercase truncate" title={x.nombre}>{x.nombre}</span>
-                            <span className="col-span-2 text-right text-[10px] font-mono text-gray-400">${x.costoActualUnit.toFixed(2)}</span>
-                            <span className="col-span-2 text-right">
+                          <div key={x.invCode} className="grid gap-1 px-3 py-2 border-t border-gray-50 items-center" style={{gridTemplateColumns:'2fr 0.7fr 0.9fr 0.9fr 0.9fr 0.9fr 0.4fr'}}>
+                            <span className="text-[10px] text-gray-700 font-bold uppercase truncate" title={x.nombre}>{x.nombre}</span>
+                            <span className="text-right text-[10px] font-mono text-gray-500 font-black">{x.cantTotal.toLocaleString('es-VE')}</span>
+                            <span className="text-right text-[10px] font-mono text-gray-400">${x.costoActualUnit.toFixed(2)}</span>
+                            <span className="text-right text-[10px] font-mono text-gray-600 font-bold">${x.costoTotalOriginal.toFixed(2)}</span>
+                            <span className="text-right">
                               <input type="number" step="0.01" defaultValue={x.costoReal} onBlur={e=>{
                                 const nueva = [...simCostosLista]; nueva[i] = {...nueva[i], costoReal: parseFloat(e.target.value)||0}; guardarSimCostosLista(nueva);
                               }} className="w-full border-2 border-gray-200 rounded-lg px-1.5 py-1 text-[10px] font-bold outline-none focus:border-purple-500 text-right"/>
                             </span>
-                            <span className={`col-span-2 text-right text-[10px] font-mono font-black ${x.diferenciaUnit>0?'text-red-500':x.diferenciaUnit<0?'text-emerald-600':'text-gray-400'}`}>{x.diferenciaUnit>0?'+':''}{x.diferenciaUnit.toFixed(2)}</span>
-                            <span className="col-span-2 text-right"><button onClick={()=>guardarSimCostosLista(simCostosLista.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button></span>
+                            <span className={`text-right text-[10px] font-mono font-black ${x.impacto>0?'text-red-500':x.impacto<0?'text-emerald-600':'text-gray-600'}`}>${x.totalCostoReal.toFixed(2)}</span>
+                            <span className="text-right"><button onClick={()=>guardarSimCostosLista(simCostosLista.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button></span>
                           </div>
                         ))}
                       </div>
