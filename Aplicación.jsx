@@ -49565,13 +49565,13 @@ ${resumenHtml}
                     </div>
                     {simCostosBusq && (
                       <div className="border-2 border-gray-100 rounded-xl max-h-40 overflow-y-auto">
-                        {(inventory||[]).filter(it=>(it.name||it.nombre||'').toUpperCase().includes(simCostosBusq.toUpperCase())).slice(0,15).map(it=>{
+                        {(inventory||[]).filter(it=>(it.desc||it.descripcion||it.nombre||'').toUpperCase().includes(simCostosBusq.toUpperCase())).slice(0,15).map(it=>{
                           const yaEsta = simCostosLista.some(x=>x.invCode===(it.invCode||it.id));
                           return (
                             <div key={it.id} className="px-3 py-2 border-b border-gray-50 last:border-0 flex items-center justify-between gap-2 text-[11px]">
-                              <span className="text-gray-700 font-bold uppercase truncate">{it.name||it.nombre}</span>
+                              <span className="text-gray-700 font-bold uppercase truncate">{it.desc||it.descripcion||it.nombre}</span>
                               {yaEsta ? <span className="text-[9px] text-emerald-600 font-black uppercase shrink-0">✓ En la lista</span> : (
-                                <button onClick={()=>{setSimCostosBusq(''); guardarSimCostosLista([...simCostosLista, {invCode:it.invCode||it.id, nombre:it.name||it.nombre, costoReal:0}]);}} className="text-[9px] bg-purple-100 text-purple-700 font-black uppercase px-2 py-1 rounded-lg shrink-0 hover:bg-purple-200">+ Agregar</button>
+                                <button onClick={()=>{setSimCostosBusq(''); guardarSimCostosLista([...simCostosLista, {invCode:it.invCode||it.id, nombre:it.desc||it.descripcion||it.nombre, costoReal:0}]);}} className="text-[9px] bg-purple-100 text-purple-700 font-black uppercase px-2 py-1 rounded-lg shrink-0 hover:bg-purple-200">+ Agregar</button>
                               )}
                             </div>
                           );
