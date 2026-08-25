@@ -3151,14 +3151,19 @@ const CATEGORIA_A_BALDE_SHARED = {
   'Bolsas Plásticas':'MATERIA_PRIMA', 'Termoencogibles':'MATERIA_PRIMA',
 };
 const construirLineasCostoProduccionCompartido = (f, ctx) => {
-  const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas} = ctx;
+  const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas, simulacionCostos} = ctx;
   const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
   const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
   let totalMP=0, totalCons=0, totalTerm=0;
   (f.itemsFacturados||[]).forEach(it=>{
-    const val = Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0);
-    if (val<=0) return;
     const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
+    // Simulación de costo real (solo vista de Estado de Resultados, opt-in por producto) — si
+    // este ítem específico tiene un costo real cargado, se usa ESE en vez del costoTotal/costoUnit
+    // guardado. No escribe nada — es puramente para esta corrida de cálculo.
+    const claveSim = invItem?.invCode || invItem?.id;
+    const costoRealUnit = simulacionCostos && claveSim ? simulacionCostos[claveSim] : null;
+    const val = costoRealUnit!=null ? costoRealUnit*Number(it.cantidad||0) : (Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0));
+    if (val<=0) return;
     const balde = CATEGORIA_A_BALDE_SHARED[invItem?.category] || 'MATERIA_PRIMA';
     if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
   });
@@ -18786,7 +18791,7 @@ function App() {
   // lineas:[{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}]}. A propósito NO incluye
   // Retenciones a Proveedores: esa información ya viene completa dentro de cada asiento
   // de Procura (confirmado en generarAsientoFC), y sumarla aparte duplicaría los montos.
-  const getAsientosReales = () => {
+  const getAsientosReales = (simulacionCostos) => {
     const out = [];
     // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
     // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
@@ -19026,7 +19031,7 @@ function App() {
     // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
     // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
-      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea});
+      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos});
       if(!r) return;
       out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
     });
@@ -49358,9 +49363,23 @@ ${resumenHtml}
   // MÓDULO ESTADO DE RESULTADOS (independiente)
   // ============================================================================
   const renderEstadoResultadosModule = () => {
+    const [simCostosActiva, setSimCostosActiva] = useState(false);
+    const [simCostosLista, setSimCostosLista] = useState([]);
+    const [simCostosBusq, setSimCostosBusq] = useState('');
+    const [simCostosValorNuevo, setSimCostosValorNuevo] = useState('');
+    const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
+    useEffect(()=>{
+      const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
+      return ()=>u();
+    },[]);
+    const guardarSimCostosLista = async (nuevaLista) => {
+      setSimCostosLista(nuevaLista);
+      await setDoc(getDocRef('settings','simulacionCostosReales'), {items:nuevaLista, updatedAt:Date.now()});
+    };
+    const simCostosMap = Object.fromEntries(simCostosLista.map(x=>[x.invCode, x.costoReal]));
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
-    const asientosPeriodo = getAsientosReales().filter(a=>{
+    const asientosPeriodo = getAsientosReales(simCostosActiva?simCostosMap:null).filter(a=>{
       const fNum = _fNum(a.fecha);
       if (fNum===null) return true;
       return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
@@ -49498,11 +49517,65 @@ ${resumenHtml}
               </div>
               <button onClick={()=>{setContERVistaPlanta(v=>!v); setContERVistaVenta(false);}} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaPlanta?'bg-indigo-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><Factory size={13}/> {contERVistaPlanta?'Viendo Resultado Planta':'Resultado Planta'}</button>
               <button onClick={()=>{setContERVistaVenta(v=>!v); setContERVistaPlanta(false);}} className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${contERVistaVenta?'bg-teal-600 text-white':'bg-white border border-gray-200 text-gray-500 hover:bg-gray-100'}`}><ShoppingCart size={13}/> {contERVistaVenta?'Viendo Resultado Venta':'Resultado Venta'}</button>
+              <button onClick={()=>setShowSimCostosPanel(v=>!v)} title="Ver el resultado con el costo real de productos específicos, sin tocar tus datos" className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 transition-colors ${simCostosActiva?'bg-purple-600 text-white':'bg-white border border-purple-200 text-purple-500 hover:bg-purple-50'}`}><RefreshCw size={13}/> {simCostosActiva?`Costo Real Activo (${simCostosLista.length})`:'Simular Costo Real'}</button>
+              {showSimCostosPanel && (
+                <div className="fixed inset-0 bg-black/60 z-[500] flex items-center justify-center p-4" onClick={()=>setShowSimCostosPanel(false)}>
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                    <h3 className="font-black text-gray-800">🔄 Simular Costo Real por Producto</h3>
+                    <p className="text-[10px] text-gray-500">Solo para ver el resultado del ejercicio — no toca tus facturas ni el costo guardado. Se aplica a TODAS las facturas que incluyan el producto, en cualquier fecha que consultes aquí.</p>
+                    <label className="flex items-center gap-2 bg-purple-50 border border-purple-100 rounded-xl p-3">
+                      <input type="checkbox" checked={simCostosActiva} onChange={e=>setSimCostosActiva(e.target.checked)}/>
+                      <span className="text-[11px] font-black text-purple-700 uppercase">Activar vista con costo real</span>
+                    </label>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Buscar producto en inventario</label>
+                      <input value={simCostosBusq} onChange={e=>setSimCostosBusq(e.target.value)} placeholder="Ej: Stretch Film, Cinta..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"/>
+                    </div>
+                    {simCostosBusq && (
+                      <div className="border-2 border-gray-100 rounded-xl max-h-40 overflow-y-auto">
+                        {(inventory||[]).filter(it=>(it.name||it.nombre||'').toUpperCase().includes(simCostosBusq.toUpperCase())).slice(0,15).map(it=>{
+                          const yaEsta = simCostosLista.some(x=>x.invCode===(it.invCode||it.id));
+                          return (
+                            <div key={it.id} className="px-3 py-2 border-b border-gray-50 last:border-0 flex items-center justify-between gap-2 text-[11px]">
+                              <span className="text-gray-700 font-bold uppercase truncate">{it.name||it.nombre}</span>
+                              {yaEsta ? <span className="text-[9px] text-emerald-600 font-black uppercase shrink-0">✓ En la lista</span> : (
+                                <button onClick={()=>{setSimCostosBusq(''); guardarSimCostosLista([...simCostosLista, {invCode:it.invCode||it.id, nombre:it.name||it.nombre, costoReal:0}]);}} className="text-[9px] bg-purple-100 text-purple-700 font-black uppercase px-2 py-1 rounded-lg shrink-0 hover:bg-purple-200">+ Agregar</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {simCostosLista.length>0 && (
+                      <div className="border-2 border-gray-100 rounded-xl overflow-hidden">
+                        {simCostosLista.map((x,i)=>(
+                          <div key={x.invCode} className="px-3 py-2 border-b border-gray-50 last:border-0 flex items-center gap-2">
+                            <span className="text-[11px] text-gray-700 font-bold uppercase flex-1 truncate">{x.nombre}</span>
+                            <span className="text-[9px] text-gray-400 font-black">$</span>
+                            <input type="number" step="0.01" defaultValue={x.costoReal} onBlur={e=>{
+                              const nueva = [...simCostosLista]; nueva[i] = {...nueva[i], costoReal: parseFloat(e.target.value)||0}; guardarSimCostosLista(nueva);
+                            }} className="w-24 border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-purple-500 text-right"/>
+                            <button onClick={()=>guardarSimCostosLista(simCostosLista.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600 shrink-0"><X size={14}/></button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex justify-end pt-1">
+                      <button onClick={()=>setShowSimCostosPanel(false)} className="px-5 py-2.5 bg-gray-800 text-white rounded-xl text-xs font-black uppercase hover:bg-gray-900">Cerrar</button>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2 ml-auto">
                 <button onClick={exportarExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileSpreadsheet size={13}/> Excel</button>
                 <button onClick={exportarPDF} className="flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg font-black text-[10px] uppercase"><FileText size={13}/> PDF</button>
               </div>
             </div>
+            {simCostosActiva && simCostosLista.length>0 && (
+              <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-3 text-[10px] font-bold text-purple-800 flex items-center gap-2">
+                <RefreshCw size={13}/> Vista con costo real simulado para {simCostosLista.length} producto(s) ({simCostosLista.map(x=>x.nombre).join(', ')}) — no afecta tus datos reales ni otros reportes.
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
