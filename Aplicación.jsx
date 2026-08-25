@@ -12720,6 +12720,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if (campo==='fecha') valor = r.fecha||'';
     else if (campo==='referencia') valor = r.doc||'';
     else if (campo==='concepto') valor = r.conc||'';
+    else if (campo==='proveedor') valor = r.proveedor||'';
     else if (campo==='tasa') valor = r.tasa?String(r.tasa):'';
     else if (campo==='montoUSD') valor = String((r.lineas[0].dUSD||r.lineas[0].hUSD||0).toFixed(2));
     else if (campo==='montoBs') valor = String((r.lineas[0].dBs||r.lineas[0].hBs||0).toFixed(2));
@@ -13245,7 +13246,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         aplicarReclas:aplicarReclasLinea,
       });
       const lineas = lineasRaw.map(l => ({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0||l.debeUSD>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD}));
-      return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', tasa, lineas };
+      return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', proveedor: m.proveedor||m.terceroNombre||m.clientName||'', tasa, lineas };
     }).filter(Boolean);
   };
 
@@ -18227,8 +18228,8 @@ ${valoresHtml}
         ):(
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=7?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+              <thead><tr style={{background:'#0f172a'}}>{['Comprobante','Fecha','Código','Cuenta de Movimiento','T','Nro Doc','Concepto','Proveedor/Cliente','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
+                <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
               ))}</tr></thead>
               <tbody>
                 {lineasPorComprobante.flatMap((r,ri)=>r.lineas.map((l,li)=>(
@@ -18239,6 +18240,7 @@ ${valoresHtml}
                     <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
                     <td className={`px-3 py-2 font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'referencia','Nro Doc / Referencia','text')} title={li===0?'Clic para editar el nro. de documento':''}>{li===0?r.doc:''}</td>
                     <td className={`px-3 py-2 text-gray-600 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'concepto','Concepto','text')} title={li===0?'Clic para editar el concepto':''}>{li===0?r.conc:''}</td>
+                    <td className={`px-3 py-2 text-gray-500 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'proveedor','Proveedor/Cliente','text')} title={li===0?'Clic para asignar a qué proveedor/cliente pertenece este movimiento':''}>{li===0?(r.proveedor||'—'):''}</td>
                     <td className={`px-3 py-2 text-right font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'tasa','Tasa Bs/$','number')} title={li===0?'Clic para editar la tasa':''}>{li===0?contFmt(r.tasa):''}</td>
                     <td className={`px-3 py-2 text-right font-mono font-black text-emerald-600 ${li===0&&l.dBs>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>li===0&&l.dBs>0&&abrirEditarCampoCC(r,esBanco,'montoBs','Monto Bs.','number')} title={li===0&&l.dBs>0?'Clic para editar el monto en Bs.':''}>{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
                     <td className={`px-3 py-2 text-right font-mono font-black text-red-500 ${li===0&&l.hBs>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>li===0&&l.hBs>0&&abrirEditarCampoCC(r,esBanco,'montoBs','Monto Bs.','number')} title={li===0&&l.hBs>0?'Clic para editar el monto en Bs.':''}>{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
