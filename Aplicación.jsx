@@ -49578,20 +49578,50 @@ ${resumenHtml}
                         })}
                       </div>
                     )}
-                    {simCostosLista.length>0 && (
+                    {simCostosLista.length>0 && (()=>{
+                      const impactoPorProducto = simCostosLista.map(x=>{
+                        let cantTotal=0, costoTotalOriginal=0;
+                        (invoices||[]).forEach(f=>(f.itemsFacturados||[]).forEach(it=>{
+                          const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode||i.id===it.invCode) : null;
+                          if ((it.invCode||invItem?.id)!==x.invCode) return;
+                          const cant = Number(it.cantidad||0);
+                          const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
+                          cantTotal += cant; costoTotalOriginal += costoOrig;
+                        }));
+                        const costoActualUnit = cantTotal>0 ? costoTotalOriginal/cantTotal : 0;
+                        const diferenciaUnit = x.costoReal - costoActualUnit;
+                        const impacto = diferenciaUnit * cantTotal;
+                        return {...x, costoActualUnit, diferenciaUnit, cantTotal, impacto};
+                      });
+                      const impactoTotal = impactoPorProducto.reduce((s,x)=>s+x.impacto,0);
+                      return (
+                      <>
                       <div className="border-2 border-gray-100 rounded-xl overflow-hidden">
-                        {simCostosLista.map((x,i)=>(
-                          <div key={x.invCode} className="px-3 py-2 border-b border-gray-50 last:border-0 flex items-center gap-2">
-                            <span className="text-[11px] text-gray-700 font-bold uppercase flex-1 truncate">{x.nombre}</span>
-                            <span className="text-[9px] text-gray-400 font-black">$</span>
-                            <input type="number" step="0.01" defaultValue={x.costoReal} onBlur={e=>{
-                              const nueva = [...simCostosLista]; nueva[i] = {...nueva[i], costoReal: parseFloat(e.target.value)||0}; guardarSimCostosLista(nueva);
-                            }} className="w-24 border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-purple-500 text-right"/>
-                            <button onClick={()=>guardarSimCostosLista(simCostosLista.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600 shrink-0"><X size={14}/></button>
+                        <div className="grid grid-cols-12 gap-1 px-3 py-1.5 bg-gray-50 text-[8px] font-black uppercase text-gray-400">
+                          <span className="col-span-4">Producto</span><span className="col-span-2 text-right">Costo Actual</span><span className="col-span-2 text-right">Costo Real</span><span className="col-span-2 text-right">Diferencia</span><span className="col-span-2"></span>
+                        </div>
+                        {impactoPorProducto.map((x,i)=>(
+                          <div key={x.invCode} className="grid grid-cols-12 gap-1 px-3 py-2 border-t border-gray-50 items-center">
+                            <span className="col-span-4 text-[10px] text-gray-700 font-bold uppercase truncate" title={x.nombre}>{x.nombre}</span>
+                            <span className="col-span-2 text-right text-[10px] font-mono text-gray-400">${x.costoActualUnit.toFixed(2)}</span>
+                            <span className="col-span-2 text-right">
+                              <input type="number" step="0.01" defaultValue={x.costoReal} onBlur={e=>{
+                                const nueva = [...simCostosLista]; nueva[i] = {...nueva[i], costoReal: parseFloat(e.target.value)||0}; guardarSimCostosLista(nueva);
+                              }} className="w-full border-2 border-gray-200 rounded-lg px-1.5 py-1 text-[10px] font-bold outline-none focus:border-purple-500 text-right"/>
+                            </span>
+                            <span className={`col-span-2 text-right text-[10px] font-mono font-black ${x.diferenciaUnit>0?'text-red-500':x.diferenciaUnit<0?'text-emerald-600':'text-gray-400'}`}>{x.diferenciaUnit>0?'+':''}{x.diferenciaUnit.toFixed(2)}</span>
+                            <span className="col-span-2 text-right"><button onClick={()=>guardarSimCostosLista(simCostosLista.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600"><X size={14}/></button></span>
                           </div>
                         ))}
                       </div>
-                    )}
+                      <div className={`rounded-xl p-3 text-[11px] font-bold ${impactoTotal>0?'bg-red-50 text-red-700':impactoTotal<0?'bg-emerald-50 text-emerald-700':'bg-gray-50 text-gray-500'}`}>
+                        💬 {impactoTotal===0 ? 'Sin diferencia en costo todavía — pon el costo real de cada producto arriba.' :
+                          impactoTotal>0 ? `El costo real es más alto: tu costo total sube $${impactoTotal.toFixed(2)}, así que tu utilidad del ejercicio BAJA $${impactoTotal.toFixed(2)} frente a lo que ves ahora sin activar la simulación.` :
+                          `El costo real es más bajo: tu costo total baja $${Math.abs(impactoTotal).toFixed(2)}, así que tu utilidad del ejercicio SUBE $${Math.abs(impactoTotal).toFixed(2)} frente a lo que ves ahora sin activar la simulación.`}
+                      </div>
+                      </>
+                      );
+                    })()}
                     <div className="flex justify-end pt-1">
                       <button onClick={()=>setShowSimCostosPanel(false)} className="px-5 py-2.5 bg-gray-800 text-white rounded-xl text-xs font-black uppercase hover:bg-gray-900">Cerrar</button>
                     </div>
