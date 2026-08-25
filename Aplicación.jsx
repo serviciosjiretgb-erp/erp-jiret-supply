@@ -49561,7 +49561,8 @@ ${resumenHtml}
                   const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
                   if (!tieneOp) return;
                   (f.itemsFacturados||[]).forEach(it=>{
-                    const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode||i.id===it.invCode) : null;
+                    const nombreIt = (it.desc||it.descripcion||'').trim().toUpperCase();
+                    const invItem = nombreIt ? (inventory||[]).find(i=>(i.desc||i.descripcion||'').trim().toUpperCase()===nombreIt) : null;
                     if (!CATEGORIAS_REVENTA_A_CONFIRMAR.includes(invItem?.category)) return;
                     hallazgos.push({
                       factura: f.nroFiscal||f.documento||f.id, fecha: f.fecha, cliente: f.clientName||'—',
