@@ -22299,9 +22299,15 @@ function App() {
         costoCapturado = esTermo ? parseNum(fg?.costoUnitario||0) : parseNum(fg?.costoUnitarioMillar||0);
       }
       if(!costoCapturado && it.invCode) {
-        // Look up cost from inventory PT
-        const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
-        costoCapturado = parseNum(invItem?.cost||it._cost||0);
+        // Preferir el costo histórico propio de esta NE — el campo real es costoUnit (así llega
+        // desde ambos flujos de selección de NE, individual y múltiple), con _cost como respaldo
+        // por si algún otro origen lo trae así. Solo si NINGUNO de los dos existe, se cae al
+        // costo actual de Inventario PT como último recurso.
+        costoCapturado = parseNum(it.costoUnit||it._cost||0);
+        if(!costoCapturado){
+          const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
+          costoCapturado = parseNum(invItem?.cost||0);
+        }
       }
       if(!costoCapturado && it._cost) costoCapturado = parseNum(it._cost);
       const cantNum = parseNum(it.cantidad)||1;
@@ -51191,6 +51197,64 @@ const ActualizarCostosView = ({settings, appUser}) => {
   const [acDesde, setAcDesde] = useState('');
   const [acHasta, setAcHasta] = useState('');
   const [acSel, setAcSel] = useState({});
+  const [ncBusy, setNcBusy] = useState(false);
+  const [ncMsg, setNcMsg] = useState(null);
+  const [ncPreview, setNcPreview] = useState(null);
+  const [ncSel, setNcSel] = useState({});
+
+  // Corrige facturas YA creadas que consolidaron varias NE y les quedó el costo actual de
+  // inventario en vez del costo histórico real de cada NE de origen (la causa raíz que ya se
+  // corrigió para facturas nuevas). Empareja cada línea de la factura con su NE de origen por
+  // código + cantidad — si hay más de una NE candidata con el mismo código y cantidad, la deja
+  // fuera del arreglo automático (ambigua) para que se revise a mano.
+  const ncAnalizar = async () => {
+    setNcBusy(true); setNcMsg(null); setNcPreview(null);
+    try {
+      const [neSnap, invSnap] = await Promise.all([
+        getDocs(getColRef('notasEntrega')),
+        getDocs(getColRef('maquilaInvoices')),
+      ]);
+      const nesPorId = {}; neSnap.docs.forEach(d=>{ nesPorId[d.id] = {id:d.id, ...d.data()}; });
+      const cambios = [];
+      invSnap.docs.forEach(d=>{
+        const f = {id:d.id, ...d.data()};
+        if (f.status==='ANULADA') return;
+        const nesLigadas = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean).map(id=>nesPorId[id]).filter(Boolean);
+        if (!nesLigadas.length) return;
+        let modificado=false;
+        const itemsNuevos = (f.itemsFacturados||[]).map(it=>{
+          const candidatas = nesLigadas.filter(ne=>(ne.items||[]).some(nit=>(nit.invCode||'')===it.invCode && Number(nit.cantidad||0)===Number(it.cantidad||0)));
+          if (candidatas.length!==1) return it; // sin match o ambiguo — no se toca
+          const nit = candidatas[0].items.find(x=>(x.invCode||'')===it.invCode && Number(x.cantidad||0)===Number(it.cantidad||0));
+          const costoReal = parseNum(nit.costoUnit||0);
+          if (!costoReal || Math.abs(costoReal-parseNum(it.costoUnit||0))<0.005) return it;
+          modificado = true;
+          return {...it, _costoAnterior:parseNum(it.costoUnit||0), costoUnit:costoReal, costoTotal:parseFloat((costoReal*parseNum(it.cantidad||0)).toFixed(2)), _neOrigenDetectada:candidatas[0].id};
+        });
+        if (modificado) cambios.push({docId:f.id, docRef:f.nroFiscal||f.documento||f.id, fecha:f.fecha||'', cliente:f.clientName||'', items:itemsNuevos, detalle:itemsNuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode, desc:it.desc, ne:it._neOrigenDetectada, antes:it._costoAnterior, ahora:it.costoUnit}))});
+      });
+      setNcSel(Object.fromEntries(cambios.map(c=>[c.docId,true])));
+      setNcPreview(cambios);
+      if (!cambios.length) setNcMsg({type:'ok', text:'No se encontraron facturas con costo distinto al de su NE de origen.'});
+    } catch(err) { setNcMsg({type:'error', text: err.message}); }
+    setNcBusy(false);
+  };
+  const ncEjecutar = async () => {
+    const seleccionados = (ncPreview||[]).filter(c=>ncSel[c.docId]);
+    if (!seleccionados.length) return;
+    setNcBusy(true);
+    try {
+      const batch = writeBatch(db);
+      seleccionados.forEach(c=>{
+        const itemsLimpios = c.items.map(({_costoAnterior,_neOrigenDetectada,...it})=>it);
+        batch.update(getDocRef('maquilaInvoices', c.docId), {itemsFacturados:itemsLimpios, updatedAt:Date.now()});
+      });
+      await batch.commit();
+      setNcMsg({type:'ok', text:`✅ ${seleccionados.length} factura(s) corregida(s) con el costo real de su NE de origen.`});
+      setNcPreview(prev=>prev.filter(c=>!ncSel[c.docId]));
+    } catch(err) { setNcMsg({type:'error', text: err.message}); }
+    setNcBusy(false);
+  };
 
   const acAnalizar = async () => {
     setAcBusy(true); setAcMsg(null); setAcPreview(null);
@@ -51409,6 +51473,63 @@ const ActualizarCostosView = ({settings, appUser}) => {
           </div>
         </div>
       )}
+
+      <div className="border-t-2 border-gray-100 mt-6 pt-5">
+        <h3 className="text-lg font-black uppercase mb-1 text-orange-700 flex items-center gap-2">🧾 Corregir Costo de Facturas ya Creadas (por NE de Origen)</h3>
+        <p className="text-xs text-gray-500 mb-4">Corrige facturas que consolidaron varias Notas de Entrega y les quedó el costo actual de inventario en vez del costo histórico real de cada NE (la causa raíz ya se corrigió para facturas nuevas — esto es solo para las que ya existían). Empareja cada línea con su NE de origen por código + cantidad; si es ambigua, la deja fuera para revisar a mano.</p>
+        <div className="flex gap-3 mb-4">
+          <button onClick={ncAnalizar} disabled={ncBusy} className="bg-orange-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+            {ncBusy?<Loader2 size={14} className="animate-spin"/>:<Search size={14}/>} Analizar
+          </button>
+          {ncPreview && ncPreview.length>0 && (
+            <button onClick={ncEjecutar} disabled={ncBusy||!Object.values(ncSel).some(Boolean)} className="bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase disabled:opacity-50 flex items-center gap-2">
+              {ncBusy?<Loader2 size={14} className="animate-spin"/>:<CheckCircle size={14}/>} Corregir {Object.values(ncSel).filter(Boolean).length} factura(s)
+            </button>
+          )}
+        </div>
+        {ncMsg && (
+          <div className={`mb-4 p-3 rounded-xl text-xs font-bold ${ncMsg.type==='error'?'bg-red-50 text-red-700 border border-red-200':'bg-green-50 text-green-700 border border-green-200'}`}>{ncMsg.text}</div>
+        )}
+        {ncPreview && ncPreview.length>0 && (
+          <div>
+            <p className="text-[10px] font-black text-orange-600 uppercase mb-2 flex items-center gap-2">
+              <input type="checkbox" checked={ncPreview.length>0 && ncPreview.every(c=>ncSel[c.docId])} onChange={()=>{
+                const todo = ncPreview.every(c=>ncSel[c.docId]);
+                setNcSel(todo ? {} : Object.fromEntries(ncPreview.map(c=>[c.docId,true])));
+              }}/>
+              Vista previa — {ncPreview.length} factura(s) con costo distinto al de su NE de origen:
+            </p>
+            <div className="max-h-72 overflow-y-auto border border-orange-200 rounded-xl">
+              <table className="w-full text-[10px]">
+                <thead className="bg-orange-50 sticky top-0"><tr>
+                  <th className="px-2 py-1.5"></th>
+                  <th className="px-2 py-1.5 text-left font-black text-orange-700">Fecha</th>
+                  <th className="px-2 py-1.5 text-left font-black text-orange-700">Factura</th>
+                  <th className="px-2 py-1.5 text-left font-black text-orange-700">Cliente</th>
+                  <th className="px-2 py-1.5 text-left font-black text-orange-700">Producto</th>
+                  <th className="px-2 py-1.5 text-left font-black text-orange-700">NE Origen</th>
+                  <th className="px-2 py-1.5 text-right font-black text-orange-700">Costo actual</th>
+                  <th className="px-2 py-1.5 text-right font-black text-orange-700">Costo real (NE)</th>
+                </tr></thead>
+                <tbody>
+                  {ncPreview.flatMap(c=>c.detalle.map((d,di)=>(
+                    <tr key={`${c.docId}-${di}`} className={`border-t border-orange-100 ${ncSel[c.docId]?'':'opacity-40'}`}>
+                      <td className="px-2 py-1.5 text-center">{di===0 && <input type="checkbox" checked={!!ncSel[c.docId]} onChange={()=>setNcSel(s=>({...s,[c.docId]:!s[c.docId]}))}/>}</td>
+                      <td className="px-2 py-1.5 text-gray-500">{di===0?c.fecha:''}</td>
+                      <td className="px-2 py-1.5 font-bold">{di===0?c.docRef:''}</td>
+                      <td className="px-2 py-1.5 text-gray-600 uppercase">{di===0?c.cliente:''}</td>
+                      <td className="px-2 py-1.5">{d.desc||d.code}</td>
+                      <td className="px-2 py-1.5 font-mono text-gray-500">{d.ne}</td>
+                      <td className="px-2 py-1.5 text-right text-red-600 font-bold">${formatNum(d.antes)}</td>
+                      <td className="px-2 py-1.5 text-right text-green-700 font-bold">${formatNum(d.ahora)}</td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
