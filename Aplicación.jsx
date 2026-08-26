@@ -20567,16 +20567,6 @@ function App() {
       const data = s.docs.map(d => { const dt=d.data(); return { id: d.id, ...dt, category:normCatVal(dt.category), subcategory:normCatVal(dt.subcategory) }; }); setInventory(data);
     });
     const unsubMovs = onSnapshot(getColRef('inventoryMovements'), (s) => setInvMovements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    // ── Limpieza única: borrar historial de traslados ya procesados ─────────────
-    if(!localStorage.getItem('jiret_traslados_v3')){
-      getDocs(getColRef('inventoryMovements')).then(snap=>{
-        const toDelete=snap.docs.filter(d=>d.data().type==='SALIDA_TRASLADO');
-        if(!toDelete.length){localStorage.setItem('jiret_traslados_v3','1');return;}
-        const bat=writeBatch(db);
-        toDelete.forEach(d=>bat.delete(d.ref));
-        bat.commit().then(()=>localStorage.setItem('jiret_traslados_v3','1')).catch(e=>console.warn('traslados cleanup:',e));
-      }).catch(()=>{});
-    }
     const unsubCli = onSnapshot(getColRef('clientes'), (s) => setClients(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubCotiz = onSnapshot(getColRef('cotizaciones'), (s) => setCotizaciones(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubActas = onSnapshot(getColRef('actasReclamo'), (s) => setActasReclamo(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
