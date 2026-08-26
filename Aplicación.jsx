@@ -18724,6 +18724,7 @@ function App() {
   const [simCostosValorNuevo, setSimCostosValorNuevo] = useState('');
   const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
   const [showDiagOpReventa, setShowDiagOpReventa] = useState(false);
+  const [showCierreOpModal, setShowCierreOpModal] = useState(null); // {req, fecha} — modal de cierre de OP con fecha elegible
   const [verFacturasProducto, setVerFacturasProducto] = useState(null);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
@@ -42267,60 +42268,60 @@ ${resumenHtml}
 
   const handleCloseOP = (req) => {
     if (!req) return;
-    setDialog({
-      title: 'Cierre de OP ' + String(req.id).replace('OP-', '').padStart(5, '0'),
-      text: `¿Cerrar definitivamente la OP?\n\nNota: el inventario de Productos Terminados ya fue actualizado al cerrar cada lote. Este cierre solo finaliza la orden y genera el registro de finiquito.`,
-      type: 'confirm',
-      onConfirm: async () => {
-        try {
-          const allLotes = getLotes(req);
-          const fbBatch = writeBatch(db);
+    setShowCierreOpModal({req, fecha: getTodayDate()});
+  };
+  const confirmarCierreOP = async () => {
+    if (!showCierreOpModal) return;
+    const {req, fecha} = showCierreOpModal;
+    const fechaCierreElegida = fecha || getTodayDate();
+    try {
+      const allLotes = getLotes(req);
+      const fbBatch = writeBatch(db);
 
-          // ── Cerrar todos los lotes y fases pendientes ──
-          if (allLotes.length > 0) {
-            const updatedLotes = allLotes.map(l => ({
-              ...l,
-              extrusion: {...(l.extrusion||{}), isClosed: true},
-              impresion: {...(l.impresion||{}), isClosed: true},
-              sellado:   {...(l.sellado||{}),   isClosed: true},
-              cerrado: true, fechaCierre: getTodayDate()
-            }));
-            fbBatch.update(getDocRef('requirements', req.id), {
-              'production.lotes': updatedLotes,
-              status: 'COMPLETADO', fechaCierre: getTodayDate()
-            });
-          } else {
-            fbBatch.update(getDocRef('requirements', req.id), {
-              status: 'COMPLETADO', fechaCierre: getTodayDate()
-            });
-          }
-
-          // ── Kardex: nota de finiquito (sin sumar stock — ya lo hicieron los lotes) ──
-          const movFiniquito = `CIERRE-OP-${req.id}-${Date.now()}`;
-          fbBatch.set(getDocRef('inventoryMovements', movFiniquito), {
-            id: movFiniquito,
-            type: 'NOTA_CIERRE',
-            date: getTodayDate(),
-            timestamp: Date.now(),
-            reference: req.id,
-            notes: `✅ FINIQUITO OP #${String(req.id).replace('OP-','').padStart(5,'0')} — ${req.desc||req.categoria||''} — ${req.client||''}`,
-            user: appUser?.name||'Sistema',
-            isFG: false
-          });
-
-          await fbBatch.commit();
-
-          setSelectedPhaseReqId(null);
-          setDialog({
-            title: '✅ OP Cerrada',
-            text: `OP #${String(req.id).replace('OP-','').padStart(5,'0')} cerrada exitosamente.\n\nTodos los lotes han sido finiquitados. El inventario de Productos Terminados fue actualizado al cerrar cada lote.`,
-            type: 'alert'
-          });
-        } catch (err) {
-          setDialog({ title: 'Error al cerrar OP', text: err.message, type: 'alert' });
-        }
+      // ── Cerrar todos los lotes y fases pendientes ──
+      if (allLotes.length > 0) {
+        const updatedLotes = allLotes.map(l => ({
+          ...l,
+          extrusion: {...(l.extrusion||{}), isClosed: true},
+          impresion: {...(l.impresion||{}), isClosed: true},
+          sellado:   {...(l.sellado||{}),   isClosed: true},
+          cerrado: true, fechaCierre: fechaCierreElegida
+        }));
+        fbBatch.update(getDocRef('requirements', req.id), {
+          'production.lotes': updatedLotes,
+          status: 'COMPLETADO', fechaCierre: fechaCierreElegida
+        });
+      } else {
+        fbBatch.update(getDocRef('requirements', req.id), {
+          status: 'COMPLETADO', fechaCierre: fechaCierreElegida
+        });
       }
-    });
+
+      // ── Kardex: nota de finiquito (sin sumar stock — ya lo hicieron los lotes) ──
+      const movFiniquito = `CIERRE-OP-${req.id}-${Date.now()}`;
+      fbBatch.set(getDocRef('inventoryMovements', movFiniquito), {
+        id: movFiniquito,
+        type: 'NOTA_CIERRE',
+        date: fechaCierreElegida,
+        timestamp: Date.now(),
+        reference: req.id,
+        notes: `✅ FINIQUITO OP #${String(req.id).replace('OP-','').padStart(5,'0')} — ${req.desc||req.categoria||''} — ${req.client||''}`,
+        user: appUser?.name||'Sistema',
+        isFG: false
+      });
+
+      await fbBatch.commit();
+
+      setSelectedPhaseReqId(null);
+      setShowCierreOpModal(null);
+      setDialog({
+        title: '✅ OP Cerrada',
+        text: `OP #${String(req.id).replace('OP-','').padStart(5,'0')} cerrada exitosamente, con fecha de cierre ${fechaCierreElegida}.\n\nTodos los lotes han sido finiquitados. El inventario de Productos Terminados fue actualizado al cerrar cada lote.`,
+        type: 'alert'
+      });
+    } catch (err) {
+      setDialog({ title: 'Error al cerrar OP', text: err.message, type: 'alert' });
+    }
   };
 
   // ── HELPER: Panel de insumos filtrado por requisiciones aprobadas ──────────
@@ -44139,6 +44140,22 @@ ${resumenHtml}
                             </div>
                           </div>
                         </div>
+                        {showCierreOpModal?.req?.id===req.id && (
+                          <div className="fixed inset-0 bg-black/60 z-[600] flex items-center justify-center p-4" onClick={()=>setShowCierreOpModal(null)}>
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+                              <h3 className="font-black text-gray-800">Cierre de OP {String(req.id).replace('OP-','').padStart(5,'0')}</h3>
+                              <p className="text-[11px] text-gray-500">El inventario de Productos Terminados ya fue actualizado al cerrar cada lote. Este cierre solo finaliza la orden y genera el registro de finiquito.</p>
+                              <div>
+                                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha de cierre (mes al que corresponde)</label>
+                                <input type="date" value={showCierreOpModal.fecha} onChange={e=>setShowCierreOpModal(s=>({...s, fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-red-500"/>
+                              </div>
+                              <div className="flex gap-2 pt-1">
+                                <button onClick={()=>setShowCierreOpModal(null)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                                <button onClick={confirmarCierreOP} className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-700">Cerrar OP</button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* ── PHASE PROGRESS BAR ── */}
                         <div className="px-6 pb-5">
@@ -46032,7 +46049,7 @@ ${resumenHtml}
                   ...(prod.impresion?.batches||[]),
                   ...(prod.sellado?.batches||[]),
                 ].filter(b => b.operator !== 'ALMACÉN (DESPACHO)');
-                const lastDate = allB.map(b=>b.date||'').filter(Boolean).sort().pop() || r.fecha || '';
+                const lastDate = r.fechaCierre || allB.map(b=>b.date||'').filter(Boolean).sort().pop() || r.fecha || '';
                 return lastDate.startsWith(selMonth);
               });
 
@@ -46155,8 +46172,8 @@ ${resumenHtml}
                     <table className="w-full text-xs text-left">
                       <thead className="bg-gray-100 border-b-2 border-gray-200"><tr className="uppercase font-black text-[10px]"><th className="py-3 px-4 border-r">OP / Fecha</th><th className="py-3 px-4 border-r">Cliente</th><th className="py-3 px-4 border-r">Prod. Asignado</th><th className="py-3 px-4 border-r text-right">Millares</th><th className="py-3 px-4 border-r text-right">Costo MP</th><th className="py-3 px-4 text-center">Finiquito</th></tr></thead>
                       <tbody className="divide-y divide-gray-100">
-                        {(requirements||[]).filter(r=>r.status==='COMPLETADO').length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-gray-400 font-bold uppercase">No hay órdenes completadas</td></tr> :
-                          (requirements||[]).filter(r=>r.status==='COMPLETADO').map(req => {
+                        {(requirements||[]).filter(r=>r.status==='COMPLETADO' && ((r.fechaCierre||r.fecha||'')).startsWith(selMonth)).length === 0 ? <tr><td colSpan="8" className="p-8 text-center text-gray-400 font-bold uppercase">No hay órdenes completadas en este mes</td></tr> :
+                          (requirements||[]).filter(r=>r.status==='COMPLETADO' && ((r.fechaCierre||r.fecha||'')).startsWith(selMonth)).map(req => {
                             const fin = getOPFinancials(req);
                             const searchStr = `${req.id} ${req.client} ${req.desc} ${req.fecha}`.toUpperCase();
                             return (
