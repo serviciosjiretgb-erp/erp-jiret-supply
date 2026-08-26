@@ -51222,14 +51222,23 @@ const ActualizarCostosView = ({settings, appUser}) => {
         const nesLigadas = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean).map(id=>nesPorId[id]).filter(Boolean);
         if (!nesLigadas.length) return;
         let modificado=false;
+        // Reconstruye la lista "esperada" en el MISMO orden en que se arma una factura al
+        // consolidar NEs (NE por NE, en su orden de origen) — así se puede emparejar por
+        // POSICIÓN en vez de por código+cantidad, que falla cuando dos NEs tienen la misma
+        // cantidad para el mismo producto (ej. dos veces "50" de la misma bolsa).
+        const itemsEsperados = nesLigadas.flatMap(ne=>(ne.items||[]).map(nit=>({invCode:nit.invCode||'', cantidad:Number(nit.cantidad||0), costoUnit:parseNum(nit.costoUnit||0), neId:ne.id})));
+        const usados = new Array(itemsEsperados.length).fill(false);
         const itemsNuevos = (f.itemsFacturados||[]).map(it=>{
-          const candidatas = nesLigadas.filter(ne=>(ne.items||[]).some(nit=>(nit.invCode||'')===it.invCode && Number(nit.cantidad||0)===Number(it.cantidad||0)));
-          if (candidatas.length!==1) return it; // sin match o ambiguo — no se toca
-          const nit = candidatas[0].items.find(x=>(x.invCode||'')===it.invCode && Number(x.cantidad||0)===Number(it.cantidad||0));
-          const costoReal = parseNum(nit.costoUnit||0);
+          // Primero intenta la posición equivalente sin usar; si no calza (código/cantidad
+          // distintos, orden alterado a mano), busca la primera coincidencia libre por código+cantidad.
+          let idx = itemsEsperados.findIndex((e,i)=>!usados[i] && e.invCode===it.invCode && e.cantidad===Number(it.cantidad||0));
+          if (idx===-1) return it;
+          usados[idx]=true;
+          const esperado = itemsEsperados[idx];
+          const costoReal = esperado.costoUnit;
           if (!costoReal || Math.abs(costoReal-parseNum(it.costoUnit||0))<0.005) return it;
           modificado = true;
-          return {...it, _costoAnterior:parseNum(it.costoUnit||0), costoUnit:costoReal, costoTotal:parseFloat((costoReal*parseNum(it.cantidad||0)).toFixed(2)), _neOrigenDetectada:candidatas[0].id};
+          return {...it, _costoAnterior:parseNum(it.costoUnit||0), costoUnit:costoReal, costoTotal:parseFloat((costoReal*parseNum(it.cantidad||0)).toFixed(2)), _neOrigenDetectada:esperado.neId};
         });
         if (modificado) cambios.push({docId:f.id, docRef:f.nroFiscal||f.documento||f.id, fecha:f.fecha||'', cliente:f.clientName||'', items:itemsNuevos, detalle:itemsNuevos.filter(it=>it._costoAnterior!==undefined).map(it=>({code:it.invCode, desc:it.desc, ne:it._neOrigenDetectada, antes:it._costoAnterior, ahora:it.costoUnit}))});
       });
