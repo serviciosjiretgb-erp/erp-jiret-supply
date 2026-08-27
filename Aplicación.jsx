@@ -115,34 +115,40 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(!nuevoCentro.trim()) return;
     setBusy(true);
     try{ await addDoc(getColRef('rrhh_centros_costo'),{nombre:nuevoCentro.trim().toUpperCase(),createdAt:Date.now()}); setNuevoCentro(''); }
+    catch(e){ alert('Error al crear el centro de costo: '+e.message); }
     finally{ setBusy(false); }
   };
   const eliminarCentro = async (c) => {
     const deps = departamentos.filter(d=>d.centroCostoId===c.id);
     if(!window.confirm(`¿Eliminar "${c.nombre}"?${deps.length?`\n\nTiene ${deps.length} departamento(s) asociado(s) — también se eliminarán, junto con sus cuentas de nómina.`:''}\n\nEsta acción no se puede deshacer.`)) return;
-    const batch=writeBatch(db);
-    deps.forEach(d=>{
-      cuentasNomina.filter(cu=>cu.departamentoId===d.id).forEach(cu=>batch.delete(getDocRef('rrhh_cuentas_nomina',cu.id)));
-      batch.delete(getDocRef('rrhh_departamentos',d.id));
-    });
-    batch.delete(getDocRef('rrhh_centros_costo',c.id));
-    await batch.commit();
-    if(centroSel?.id===c.id){setCentroSel(null);setDeptoSel(null);}
+    try{
+      const batch=writeBatch(db);
+      deps.forEach(d=>{
+        cuentasNomina.filter(cu=>cu.departamentoId===d.id).forEach(cu=>batch.delete(getDocRef('rrhh_cuentas_nomina',cu.id)));
+        batch.delete(getDocRef('rrhh_departamentos',d.id));
+      });
+      batch.delete(getDocRef('rrhh_centros_costo',c.id));
+      await batch.commit();
+      if(centroSel?.id===c.id){setCentroSel(null);setDeptoSel(null);}
+    } catch(e){ alert('Error al eliminar: '+e.message); }
   };
   const crearDepto = async () => {
     if(!nuevoDepto.trim()||!centroSel) return;
     setBusy(true);
     try{ await addDoc(getColRef('rrhh_departamentos'),{centroCostoId:centroSel.id,nombre:nuevoDepto.trim().toUpperCase(),createdAt:Date.now()}); setNuevoDepto(''); }
+    catch(e){ alert('Error al crear el departamento: '+e.message); }
     finally{ setBusy(false); }
   };
   const eliminarDepto = async (d) => {
     const cuentas = cuentasNomina.filter(c=>c.departamentoId===d.id);
     if(!window.confirm(`¿Eliminar "${d.nombre}"?${cuentas.length?`\n\nTiene ${cuentas.length} cuenta(s) de nómina asociada(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
-    const batch=writeBatch(db);
-    cuentas.forEach(c=>batch.delete(getDocRef('rrhh_cuentas_nomina',c.id)));
-    batch.delete(getDocRef('rrhh_departamentos',d.id));
-    await batch.commit();
-    if(deptoSel?.id===d.id) setDeptoSel(null);
+    try{
+      const batch=writeBatch(db);
+      cuentas.forEach(c=>batch.delete(getDocRef('rrhh_cuentas_nomina',c.id)));
+      batch.delete(getDocRef('rrhh_departamentos',d.id));
+      await batch.commit();
+      if(deptoSel?.id===d.id) setDeptoSel(null);
+    } catch(e){ alert('Error al eliminar: '+e.message); }
   };
   const asociarCuenta = async (cuentaContable) => {
     if(!nuevaLinea.concepto.trim()||!deptoSel) return alert('Escribe el concepto (ej. Sueldo Básico, IVSS...)');
@@ -153,11 +159,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         codigoCuenta:cuentaContable.codigo, nombreCuenta:cuentaContable.nombre, createdAt:Date.now()
       });
       setNuevaLinea({tipo:nuevaLinea.tipo,concepto:'',codigo:'',nombre:''}); setBusqCuenta('');
-    } finally { setBusy(false); }
+    } catch(e){ alert('Error al asociar la cuenta: '+e.message); }
+    finally { setBusy(false); }
   };
   const eliminarLinea = async (c) => {
     if(!window.confirm(`¿Quitar "${c.concepto}" de este departamento?`)) return;
-    await deleteDoc(getDocRef('rrhh_cuentas_nomina',c.id));
+    try{ await deleteDoc(getDocRef('rrhh_cuentas_nomina',c.id)); }
+    catch(e){ alert('Error al eliminar: '+e.message); }
   };
 
   return (
@@ -24128,7 +24136,7 @@ function App() {
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
-      administracion:      ['ventas','banco','procura','impuestos'],
+      administracion:      ['ventas','banco','procura','impuestos','rrhh'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
       contabilidad:        ['comprobantes_contables','plan_cuentas','mayor_analitico_cc','balance_comprobacion_cc','estado_resultados_cc','balance_general_cc','ajuste_inflacion_cc','activos_fijos_cc'],
       resena_portal:       ['resena'],
