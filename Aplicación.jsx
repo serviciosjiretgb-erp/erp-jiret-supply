@@ -10258,6 +10258,7 @@ ${body}
             const ncNDs=_ncPorProv.get(g.rif)||[];
             const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
             const ajustesG=getAjustesCxpProv(g);
+            const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
             const pagado=g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0);
             const retIVAtot=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
             return(
@@ -19747,7 +19748,7 @@ function App() {
   const [showRetModal, setShowRetModal] = useState(false);
   const [showAnulFiscalModal, setShowAnulFiscalModal] = useState(false);
   const [showAnulHistorial, setShowAnulHistorial] = useState(false);
-  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:'',tipoAnulacion:'NC',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena,editingAnulInvId:null,editingAnulNcId:null});
+  const initAnulFiscal = () => ({fecha:getTodayDate(),nroFiscal:'',nroControl:'',clientRif:'',clientName:'',baseImponible:'',iva:'',tasa:'',tipoAnulacion:'NC',ncNroControl:'',ncNroCredito:'',ncFecha:getTodayDate(),periodoAnio:libroAnio,periodoMes:libroMes,quincena:libroQuincena,ncPeriodoAnio:libroAnio,ncPeriodoMes:libroMes,ncQuincena:libroQuincena,editingAnulInvId:null,editingAnulNcId:null});
   const [anulFiscalForm, setAnulFiscalForm] = useState(initAnulFiscal());
   const [anulCliQuery, setAnulCliQuery] = useState('');
   const [retBusqFact, setRetBusqFact] = useState('');
@@ -39348,6 +39349,23 @@ ${resumenHtml}
                         </div>
                         <div className="mt-3"><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha {anulFiscalForm.tipoAnulacion==='ND'?'ND':'NC'}</label>
                           <input type="date" value={anulFiscalForm.ncFecha} onChange={e=>setAnulFiscalForm(f=>({...f,ncFecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/></div>
+                        <div className="mt-3 bg-orange-50 rounded-xl p-3">
+                          <p className="text-[9px] font-black text-orange-600 uppercase mb-2">Período fiscal de la {anulFiscalForm.tipoAnulacion==='ND'?'ND':'NC'} (puede ser distinto al de la factura)</p>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Año</label>
+                              <select value={anulFiscalForm.ncPeriodoAnio} onChange={e=>setAnulFiscalForm(f=>({...f,ncPeriodoAnio:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                                {(()=>{const cy=new Date().getFullYear();return Array.from({length:cy-2023+1},(_,i)=>String(2024+i)).map(y=>(<option key={y} value={y}>{y}</option>));})()}
+                              </select></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mes</label>
+                              <select value={anulFiscalForm.ncPeriodoMes} onChange={e=>setAnulFiscalForm(f=>({...f,ncPeriodoMes:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                                {mesesLabel.map((m,i)=>(<option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>))}
+                              </select></div>
+                            <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Quincena</label>
+                              <select value={anulFiscalForm.ncQuincena} onChange={e=>setAnulFiscalForm(f=>({...f,ncQuincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400">
+                                <option value="AMBAS">Ambas</option><option value="1">I Quincena</option><option value="2">II Quincena</option>
+                              </select></div>
+                          </div>
+                        </div>
                         <p className="text-[9px] text-gray-400 mt-2">N° Control y N° de {anulFiscalForm.tipoAnulacion==='ND'?'Débito':'Crédito'} son obligatorios (mantienen el correlativo).</p>
                       </div>
                     </div>
@@ -39385,7 +39403,7 @@ ${resumenHtml}
                           clientRif:anulFiscalForm.clientRif,clientName:anulFiscalForm.clientName,
                           monto:baseBs,ivaBs:ivaBsVal,totalBs,tasaFactura:tasaVal,
                           esAnulacionFiscal:true,motivo:'Anulación por error de impresión fiscal',
-                          periodoAnio:anulFiscalForm.periodoAnio,periodoMes:anulFiscalForm.periodoMes,quincena:anulFiscalForm.quincena,
+                          periodoAnio:anulFiscalForm.ncPeriodoAnio,periodoMes:anulFiscalForm.ncPeriodoMes,quincena:anulFiscalForm.ncQuincena,
                           timestamp:origTs||Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
                         });
                         await batch.commit();
@@ -39415,6 +39433,7 @@ ${resumenHtml}
                             tipoAnulacion:nc?.tipo||'NC',
                             ncNroControl:nc?.nroControl||nc?.nroDocumento||'',ncNroCredito:nc?.nroCredito||'',ncFecha:nc?.fecha||getTodayDate(),
                             periodoAnio:f.periodoAnio||libroAnio,periodoMes:f.periodoMes||libroMes,quincena:f.quincena||libroQuincena,
+                            ncPeriodoAnio:nc?.periodoAnio||f.periodoAnio||libroAnio,ncPeriodoMes:nc?.periodoMes||f.periodoMes||libroMes,ncQuincena:nc?.quincena||f.quincena||libroQuincena,
                             editingAnulInvId:f.id,editingAnulNcId:nc?.id||null
                           });
                           setAnulCliQuery('');
