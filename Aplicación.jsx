@@ -103,8 +103,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [nuevoCentro,setNuevoCentro]=useState('');
   const [nuevoDepto,setNuevoDepto]=useState('');
   const [busqCuenta,setBusqCuenta]=useState('');
-  const [nuevaLinea,setNuevaLinea]=useState({tipo:'asignacion',concepto:'',codigo:'',nombre:''});
+  const [nuevaLinea,setNuevaLinea]=useState({tipo:'asignacion',concepto:'',conceptoOtro:'',codigo:'',nombre:''});
   const [busy,setBusy]=useState(false);
+  const CONCEPTOS_NOMINA = {
+    asignacion: ['Sueldo Básico','Bono Nocturno','Horas Extra Diurnas','Horas Extra Nocturnas','Comisiones','Bono de Producción','Bono Vacacional','Utilidades','Días Feriados Trabajados','Otro (escribir)'],
+    deduccion: ['IVSS (Seguro Social)','RPE / Paro Forzoso','FAOV (Ley de Vivienda)','ISLR','INCES','Préstamo / Anticipo','Otro (escribir)'],
+  };
 
   const deptosDelCentro = departamentos.filter(d=>d.centroCostoId===centroSel?.id);
   const cuentasDelDepto = cuentasNomina.filter(c=>c.departamentoId===deptoSel?.id);
@@ -151,14 +155,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     } catch(e){ alert('Error al eliminar: '+e.message); }
   };
   const asociarCuenta = async (cuentaContable) => {
-    if(!nuevaLinea.concepto.trim()||!deptoSel) return alert('Escribe el concepto (ej. Sueldo Básico, IVSS...)');
+    const conceptoFinal = nuevaLinea.concepto==='Otro (escribir)' ? nuevaLinea.conceptoOtro.trim() : nuevaLinea.concepto;
+    if(!conceptoFinal||!deptoSel) return alert('Elige o escribe un concepto primero');
     setBusy(true);
     try{
       await addDoc(getColRef('rrhh_cuentas_nomina'),{
-        departamentoId:deptoSel.id, tipo:nuevaLinea.tipo, concepto:nuevaLinea.concepto.trim(),
+        departamentoId:deptoSel.id, tipo:nuevaLinea.tipo, concepto:conceptoFinal,
         codigoCuenta:cuentaContable.codigo, nombreCuenta:cuentaContable.nombre, createdAt:Date.now()
       });
-      setNuevaLinea({tipo:nuevaLinea.tipo,concepto:'',codigo:'',nombre:''}); setBusqCuenta('');
+      setNuevaLinea({tipo:nuevaLinea.tipo,concepto:'',conceptoOtro:'',codigo:'',nombre:''}); setBusqCuenta('');
     } catch(e){ alert('Error al asociar la cuenta: '+e.message); }
     finally { setBusy(false); }
   };
@@ -256,10 +261,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="border-t border-gray-100 pt-3 space-y-2">
                   <div className="flex gap-1">
                     {['asignacion','deduccion'].map(t=>(
-                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':'Deducción'}</button>
+                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t,concepto:'',conceptoOtro:''}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':'Deducción'}</button>
                     ))}
                   </div>
-                  <input value={nuevaLinea.concepto} onChange={e=>setNuevaLinea(l=>({...l,concepto:e.target.value}))} placeholder="Concepto: Sueldo Básico, IVSS..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <select value={nuevaLinea.concepto} onChange={e=>setNuevaLinea(l=>({...l,concepto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                    <option value="">— Elige un concepto —</option>
+                    {CONCEPTOS_NOMINA[nuevaLinea.tipo].map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                  {nuevaLinea.concepto==='Otro (escribir)' && (
+                    <input value={nuevaLinea.conceptoOtro} onChange={e=>setNuevaLinea(l=>({...l,conceptoOtro:e.target.value}))} placeholder="Escribe el concepto..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  )}
                   <input value={busqCuenta} onChange={e=>setBusqCuenta(e.target.value)} placeholder="Buscar cuenta contable a asociar..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
                   {busqCuenta && (
                     <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto">
@@ -10024,6 +10035,33 @@ const EstadoCuentaProvView = ({
   const [ecHasta, setEcHasta] = useState('');
   const [ecExpanded, setEcExpanded] = useState({});
   const [ecExpandAll, setEcExpandAll] = useState(false);
+  const [_ajustesBanco, setAjustesBanco] = useState([]);
+  const [_ajustesCaja, setAjustesCaja] = useState([]);
+  useEffect(()=>{
+    const u1=onSnapshot(getColRef('banco_movimientos'), s=>setAjustesBanco(s.docs.map(d=>({_docId:d.id,...d.data()})).filter(m=>m.esAjusteCxP)));
+    const u2=onSnapshot(getColRef('caja_movimientos'), s=>setAjustesCaja(s.docs.map(d=>({_docId:d.id,...d.data()})).filter(m=>m.esAjusteCxP)));
+    return ()=>{u1();u2();};
+  },[]);
+  // Ajustes a CxP (Banco/Caja marcados como "esAjusteCxP") agrupados por proveedor — movimientos
+  // que NO son pago de factura ni anticipo formal (ej. reintegro de retención), pero sí afectan
+  // lo que se le debe a ese proveedor. Se muestran como línea aparte para no duplicar lo que ya
+  // se cuenta vía pagosCxP.
+  const _ajustesCxpPorProv = useMemo(()=>{
+    const m = new Map();
+    [..._ajustesBanco, ..._ajustesCaja].filter(a=>a.tipoTercero==='Proveedor' && a.terceroId).forEach(a=>{
+      const key = a.terceroId;
+      if(!m.has(key)) m.set(key,[]);
+      const esIngreso = a.tipo==='Ingreso';
+      // Ingreso con tercero-proveedor marcado como ajuste = a favor del proveedor (le debemos más,
+      // ej. nos devolvieron una retención que le corresponde). Egreso = le pagamos algo fuera de
+      // factura, reduce lo que le debemos.
+      const montoUSD = Number(a.montoUSD||0) * (esIngreso?1:-1);
+      m.get(key).push({...a, _montoUSD:montoUSD});
+    });
+    return m;
+  },[_ajustesBanco,_ajustesCaja]);
+  const getAjustesCxpProv = (g) => (_ajustesCxpPorProv.get(g.provId)||_ajustesCxpPorProv.get(g.rif)||[]);
+  const getAjustesCxpProvTotal = (g) => getAjustesCxpProv(g).reduce((s,a)=>s+a._montoUSD,0);
 
   const pN = v => { if(!v&&v!==0)return 0; const n=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
   const fN = n => { if(!n&&n!==0)return'0,00'; const a=Math.abs(pN(n)); const p=a.toFixed(2).split('.'); return(pN(n)<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1]; };
@@ -10090,8 +10128,14 @@ const EstadoCuentaProvView = ({
       const key=prov?.id||rif;
       if(!m[key]) m[key]={provId:key,nombre:prov?.nombre||rif,rif:prov?.rif||rif,facts:[]};
     });
+    _ajustesCxpPorProv.forEach((ajustes,provId)=>{
+      if(!m[provId]){
+        const prov=(proveedores||[]).find(p=>p.id===provId);
+        m[provId]={provId, nombre:prov?.nombre||ajustes[0]?.terceroNombre||provId, rif:prov?.rif||'', facts:[]};
+      }
+    });
     return Object.values(m).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es'));
-  },[allFacts,proveedores,_ncPorProv,_anticiposPorProv]);
+  },[allFacts,proveedores,_ncPorProv,_anticiposPorProv,_ajustesCxpPorProv]);
 
   const filtrados = ecSearch ? porProveedor.filter(g=>(g.nombre||'').toLowerCase().includes(ecSearch.toLowerCase())||(g.rif||'').includes(ecSearch)) : porProveedor;
 
@@ -10100,7 +10144,7 @@ const EstadoCuentaProvView = ({
   const getSaldoProv = (g) => {
     const s = g.facts.reduce((acc,f)=>acc+getSaldoFact(f),0);
     const ncNet = (_ncPorProv.get(g.rif)||[]).reduce((acc,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return acc+(n.tipo==='ND'?u:-u);},0);
-    return s + ncNet - getAnticipoProv(g);
+    return s + ncNet - getAnticipoProv(g) + getAjustesCxpProvTotal(g);
   };
 
   const totalSaldo = filtrados.reduce((s,g)=>s+getSaldoProv(g),0);
@@ -10213,7 +10257,7 @@ ${body}
             const isExp=ecExpandAll||!!ecExpanded[g.provId];
             const ncNDs=_ncPorProv.get(g.rif)||[];
             const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
-            const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
+            const ajustesG=getAjustesCxpProv(g);
             const pagado=g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0);
             const retIVAtot=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
             return(
@@ -10232,6 +10276,7 @@ ${body}
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Pagado</div><div className="font-mono font-black text-green-700">${fN(pagado)}</div></div>
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Retención IVA</div><div className="font-mono font-black text-red-600">{retIVAtot>0.001?'$'+fN(retIVAtot):'—'}</div></div>
                   {getAnticipoProv(g)>0.01&&<div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">💰 Anticipo</div><div className="font-mono font-black text-teal-600">${fN(getAnticipoProv(g))}</div></div>}
+                  {Math.abs(getAjustesCxpProvTotal(g))>0.01&&<div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">🔧 Ajustes</div><div className={`font-mono font-black ${getAjustesCxpProvTotal(g)>=0?'text-teal-600':'text-orange-600'}`}>{getAjustesCxpProvTotal(g)>=0?'+':''}${fN(getAjustesCxpProvTotal(g))}</div></div>}
                   <div className="text-center"><div className="text-gray-400 text-[8px] uppercase font-bold">Saldo</div>
                     <div className={`font-mono font-black text-base ${saldoG<-0.01?'text-teal-700':saldoG>0?'text-orange-700':'text-green-700'}`}>{saldoG<-0.01?'-$'+fN(Math.abs(saldoG)):'$'+fN(saldoG)}</div>
                     {saldoG<-0.01&&<div className="text-[7px] text-teal-600 font-bold uppercase">a favor</div>}
@@ -10345,10 +10390,23 @@ ${body}
                           <td colSpan={2}></td>
                         </tr>
                       ))}
+                      {ajustesG.map((a,gi)=>(
+                        <tr key={'ajg'+gi} className="bg-amber-50/80 border-b border-amber-100">
+                          <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-amber-700">↳ 🔧 Ajuste</td>
+                          <td className="py-1.5 px-3 text-[8px] text-amber-600">{fD(a.fecha)}</td>
+                          <td className="py-1.5 px-3"><span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black">{a.tipo}</span></td>
+                          <td className="py-1.5 px-3 text-[8px] text-amber-600">{a.cuentaNombre||a.cajaNombre||'—'}</td>
+                          <td className="py-1.5 px-3 text-[8px] text-gray-500">{`${a.concepto||'Ajuste a Cuenta por Pagar'}${a.referencia?' · #'+a.referencia:''}`}</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
+                          <td className="py-1.5 px-3 text-right font-mono text-[8px]">—</td>
+                          <td className={`py-1.5 px-3 text-right font-mono font-black text-[8px] ${a._montoUSD>=0?'text-teal-700':'text-orange-700'}`}>{a._montoUSD>=0?'+':'-'}${fN(Math.abs(a._montoUSD))}</td>
+                          <td colSpan={2}></td>
+                        </tr>
+                      ))}
                     </tbody>
                     <tfoot>
                       <tr className="bg-slate-900 text-white font-black">
-                        <td colSpan={4} className="py-2 px-3 text-[9px]">SUBTOTAL · {g.facts.length} doc(s){ncNDs.length>0?` + ${ncNDs.length} NC/ND directa`:''}{anticiposG.length>0?` + ${anticiposG.length} anticipo(s)`:''}</td>
+                        <td colSpan={4} className="py-2 px-3 text-[9px]">SUBTOTAL · {g.facts.length} doc(s){ncNDs.length>0?` + ${ncNDs.length} NC/ND directa`:''}{anticiposG.length>0?` + ${anticiposG.length} anticipo(s)`:''}{ajustesG.length>0?` + ${ajustesG.length} ajuste(s)`:''}</td>
                         <td></td>
                         <td className="py-2 px-3 text-right font-mono">${fN(g.facts.reduce((s,f)=>s+pN(f.total||0),0))}</td>
                         <td className="py-2 px-3 text-right font-mono text-red-300">${fN(retIVAtot)}</td>
