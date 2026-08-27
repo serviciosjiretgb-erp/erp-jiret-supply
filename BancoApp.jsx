@@ -8425,7 +8425,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
         {/* Historial de vales aplicados */}
         {cobrados.length>0&&<BCard title={`Vales Aplicados (${cobrados.length})`} subtitle="Historial">
-          <table className="w-full text-[11px]"><thead><tr><BTh>Fecha</BTh><BTh>Titular</BTh><BTh>Concepto</BTh><BTh>Moneda</BTh><BTh right>Monto</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
+          <table className="w-full text-[11px]"><thead><tr><BTh>Fecha</BTh><BTh>Titular</BTh><BTh>Concepto</BTh><BTh>Moneda</BTh><BTh right>Monto</BTh><BTh>Estado</BTh><BTh></BTh><BTh></BTh></tr></thead>
             <tbody>{cobrados.map(v=><tr key={v.id} className="hover:bg-slate-50">
               <BTd>{bancoDd(v.fecha)}</BTd><BTd className="font-black uppercase">{v.titular}</BTd>
               <BTd className="max-w-[150px] truncate">{v.concepto}</BTd>
@@ -8433,6 +8433,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <BTd right mono className="font-black">{v.moneda==='USD'?'$':'Bs.'}{bancoFmt(v.monto)}</BTd>
               <BTd><BBadge v="green">{v.estado}</BBadge></BTd>
               <BTd>{(v.historial||[]).length>0 && <button onClick={()=>setDetalleVale(v)} title="Ver detalle de bajas" className="p-1 text-slate-400 hover:text-slate-700"><Search size={13}/></button>}</BTd>
+              <BTd><button onClick={()=>eliminarVale(v)} title="Eliminar vale" className="p-1 text-red-400 hover:text-red-600"><Trash2 size={13}/></button></BTd>
             </tr>)}</tbody>
           </table>
         </BCard>}
