@@ -86,16 +86,19 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function RRHHApp({fbUser,onBack,settings,appUser}) {
+  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores'
   const [centros,setCentros]=useState([]);
   const [departamentos,setDepartamentos]=useState([]);
   const [cuentasNomina,setCuentasNomina]=useState([]);
   const [planCuentasRH,setPlanCuentasRH]=useState([]);
+  const [trabajadores,setTrabajadores]=useState([]);
   useEffect(()=>{
     const s1=onSnapshot(getColRef('rrhh_centros_costo'),s=>setCentros(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s2=onSnapshot(getColRef('rrhh_departamentos'),s=>setDepartamentos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s3=onSnapshot(getColRef('rrhh_cuentas_nomina'),s=>setCuentasNomina(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s4=onSnapshot(getColRef('planDeCuentas'),s=>setPlanCuentasRH(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();};
+    const s5=onSnapshot(getColRef('rrhh_trabajadores'),s=>setTrabajadores(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{s1();s2();s3();s4();s5();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -173,18 +176,117 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     catch(e){ alert('Error al eliminar: '+e.message); }
   };
 
+  // ── Trabajadores (ficha completa) ────────────────────────────────────────
+  const initTrabajador = () => ({
+    nombre:'', cedula:'', sexo:'Masculino', fechaNacimiento:'', estadoCivil:'Soltero', nivelEducativo:'Bachiller',
+    nacionalidad:'Venezolano', tipoSangre:'',
+    telefono:'', correo:'', direccion:'', contactoEmergenciaNombre:'', contactoEmergenciaTelefono:'',
+    centroCostoId:'', departamentoId:'', cargo:'', fechaIngreso:'', tipoContrato:'Indefinido', turno:'Diurno',
+    salarioBase:'', formaPago:'Quincenal', cuentaBancaria:'', supervisor:'',
+    ivss:'', rpe:'', faov:'', rif:'',
+    alergias:'', certificadoMedicoFecha:'', eppAsignado:'', eppFechaEntrega:'',
+    polizaHCMAseguradora:'', polizaHCMNumero:'', cestaTicketTipo:'Tarjeta digital', cestaTicketNumero:'',
+    tallaCamisa:'', tallaPantalon:'', tallaZapatos:'',
+    vehiculoAsignado:false, vehiculoMarca:'', vehiculoModelo:'', vehiculoAnio:'', vehiculoColor:'',
+    vacacionesAcumuladas:'', vacacionesDisfrutadas:'',
+    documentoCedula:false, documentoContrato:false, documentoCV:false, documentoCertificados:false,
+    cargasFamiliares:[], evaluaciones:[], amonestaciones:[], historialAumentos:[],
+    estado:'Activo', fechaEgreso:'', motivoEgreso:'',
+  });
+  const [trabajadorForm,setTrabajadorForm]=useState(null); // ficha en edición/creación, o null
+  const [trabajadorVer,setTrabajadorVer]=useState(null); // ficha en modo solo lectura
+  const [busyTrab,setBusyTrab]=useState(false);
+  const [buscarTrab,setBuscarTrab]=useState('');
+  const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',edad:''});
+  const [nuevaEval,setNuevaEval]=useState({mes:'',resultado:'Satisfactorio'});
+  const [nuevaAmon,setNuevaAmon]=useState({fecha:getTodayDate(),tipo:'Verbal',motivo:''});
+
+  const guardarTrabajador = async () => {
+    if(!trabajadorForm.nombre.trim()) return alert('El nombre es obligatorio');
+    if(!trabajadorForm.cedula.trim()) return alert('La cédula es obligatoria');
+    setBusyTrab(true);
+    try{
+      const {id,...datos} = trabajadorForm;
+      if(id) await updateDoc(getDocRef('rrhh_trabajadores',id),datos);
+      else await addDoc(getColRef('rrhh_trabajadores'),{...datos,createdAt:Date.now()});
+      setTrabajadorForm(null);
+    } catch(e){ alert('Error al guardar: '+e.message); }
+    finally{ setBusyTrab(false); }
+  };
+  const eliminarTrabajador = async (t) => {
+    if(!window.confirm(`¿Eliminar la ficha de "${t.nombre}"? Esta acción no se puede deshacer.`)) return;
+    try{ await deleteDoc(getDocRef('rrhh_trabajadores',t.id)); if(trabajadorVer?.id===t.id) setTrabajadorVer(null); }
+    catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+  const agregarCarga = () => {
+    if(!nuevaCarga.nombre.trim()) return;
+    setTrabajadorForm(f=>({...f,cargasFamiliares:[...f.cargasFamiliares,{...nuevaCarga}]}));
+    setNuevaCarga({nombre:'',parentesco:'Hijo(a)',edad:''});
+  };
+  const quitarCarga = (i) => setTrabajadorForm(f=>({...f,cargasFamiliares:f.cargasFamiliares.filter((_,j)=>j!==i)}));
+  const agregarEval = async (t) => {
+    if(!nuevaEval.mes) return alert('Elige el mes de la evaluación');
+    try{
+      await updateDoc(getDocRef('rrhh_trabajadores',t.id),{evaluaciones:arrayUnion({...nuevaEval})});
+      setNuevaEval({mes:'',resultado:'Satisfactorio'});
+    } catch(e){ alert('Error: '+e.message); }
+  };
+  const agregarAmon = async (t) => {
+    if(!nuevaAmon.motivo.trim()) return alert('Escribe el motivo');
+    try{
+      await updateDoc(getDocRef('rrhh_trabajadores',t.id),{amonestaciones:arrayUnion({...nuevaAmon})});
+      setNuevaAmon({fecha:getTodayDate(),tipo:'Verbal',motivo:''});
+    } catch(e){ alert('Error: '+e.message); }
+  };
+  const [nuevoAumento,setNuevoAumento]=useState({fecha:getTodayDate(),salarioAnterior:'',salarioNuevo:''});
+  const agregarAumento = async (t) => {
+    if(!nuevoAumento.salarioNuevo||Number(nuevoAumento.salarioNuevo)<=0) return alert('Escribe el nuevo salario');
+    try{
+      await updateDoc(getDocRef('rrhh_trabajadores',t.id),{
+        historialAumentos:arrayUnion({...nuevoAumento, salarioAnterior:nuevoAumento.salarioAnterior||t.salarioBase}),
+        salarioBase:nuevoAumento.salarioNuevo,
+      });
+      setNuevoAumento({fecha:getTodayDate(),salarioAnterior:'',salarioNuevo:''});
+      setTrabajadorVer(v=>v?({...v,salarioBase:nuevoAumento.salarioNuevo}):v);
+    } catch(e){ alert('Error: '+e.message); }
+  };
+  const nombreCentro = (id) => centros.find(c=>c.id===id)?.nombre||'—';
+  const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
+  const trabajadoresFiltrados = trabajadores.filter(t=>!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab));
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-gray-900 px-6 py-5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-gray-400 hover:text-white"><ArrowLeft size={20}/></button>
-          <div>
-            <h1 className="text-white font-black text-lg uppercase flex items-center gap-2"><Users size={20}/> Recursos Humanos</h1>
-            <p className="text-gray-400 text-xs">Configuración de nómina — centros de costo, departamentos y cuentas contables</p>
-          </div>
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Top bar — mismo patrón que Módulo de Impuestos */}
+      <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2.5" style={{background:'#111827',borderBottom:'2px solid #0891b2'}}>
+        <button onClick={onBack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase text-gray-400 hover:text-white hover:bg-white/10 transition-all">
+          <ArrowLeft size={13}/> Volver
+        </button>
+        <div className="w-px h-5 bg-white/20"/>
+        <Users size={15} className="text-cyan-500"/>
+        <span className="font-black text-white text-[11px] uppercase tracking-widest">Recursos Humanos</span>
+        <div className="flex-1"/>
+        <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg px-3 py-1 flex items-center gap-2">
+          <span className="text-[10px] text-cyan-400 font-black uppercase">Trabajadores activos:</span>
+          <span className="text-cyan-300 font-black text-[11px]">{trabajadores.filter(t=>t.estado!=='Egresado').length}</span>
         </div>
       </div>
+      {/* Sub-nav */}
+      <div className="flex-shrink-0" style={{background:'#111827',borderBottom:'2px solid #0891b2'}}>
+        <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
+          {[
+            {id:'config', label:'Configuración', icon:<Settings size={13}/>},
+            {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null},
+          ].map(t=>(
+            <button key={t.id} onClick={()=>setRhTab(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${rhTab===t.id?'border-cyan-500 text-cyan-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
+              {t.icon} {t.label}
+              {t.badge>0&&<span className="ml-1 bg-cyan-500 text-white text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center">{t.badge}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto bg-gray-50">
 
+      {rhTab==='config' && (
       <div className="p-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
@@ -198,6 +300,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <span className="text-xs font-bold uppercase">{c.nombre}</span>
                   <button onClick={e=>{e.stopPropagation();eliminarCentro(c);}} className={`opacity-0 group-hover:opacity-100 ${centroSel?.id===c.id?'text-cyan-200 hover:text-white':'text-red-400 hover:text-red-600'}`}><Trash2 size={13}/></button>
                 </div>
+
               ))}
             </div>
             <div className="flex gap-2">
@@ -287,6 +390,310 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </div>
 
         </div>
+      </div>
+      )}
+
+      {rhTab==='trabajadores' && (
+      <div className="p-6">
+        {/* ═══ LISTA ═══ */}
+        {!trabajadorForm && !trabajadorVer && (
+          <>
+            <div className="flex gap-3 mb-4">
+              <input value={buscarTrab} onChange={e=>setBuscarTrab(e.target.value)} placeholder="Buscar por nombre o cédula..." className="flex-1 border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold outline-none focus:border-cyan-500"/>
+              <button onClick={()=>setTrabajadorForm(initTrabajador())} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 flex items-center gap-2"><UserPlus size={15}/> Nuevo Trabajador</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {trabajadores.filter(t=>!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab)).map(t=>(
+                <div key={t.id} onClick={()=>setTrabajadorVer(t)} className="bg-white rounded-2xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 hover:shadow-md transition-all">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-full bg-cyan-100 flex items-center justify-center font-black text-cyan-600 text-xs flex-shrink-0">{(t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}</div>
+                    <div className="min-w-0">
+                      <p className="font-black text-sm text-gray-800 truncate">{t.nombre}</p>
+                      <p className="text-[10px] text-gray-400 truncate">{t.cargo||'—'}</p>
+                    </div>
+                    <span className={`ml-auto text-[8px] font-black uppercase px-2 py-1 rounded-full flex-shrink-0 ${t.estado==='Egresado'?'bg-red-100 text-red-600':'bg-green-100 text-green-600'}`}>{t.estado}</span>
+                  </div>
+                  <p className="text-[10px] text-gray-500">{nombreCentro(t.centroCostoId)} / {nombreDepto(t.departamentoId)}</p>
+                </div>
+              ))}
+              {trabajadores.length===0 && <p className="col-span-3 text-center text-gray-400 text-sm py-12">Sin trabajadores registrados aún.</p>}
+            </div>
+          </>
+        )}
+
+        {/* ═══ FORMULARIO (crear / editar) ═══ */}
+        {trabajadorForm && (()=>{
+          const f=trabajadorForm, set=(patch)=>setTrabajadorForm(x=>({...x,...patch}));
+          const deptosDisponibles = departamentos.filter(d=>d.centroCostoId===f.centroCostoId);
+          return (
+          <div className="max-w-4xl mx-auto space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-black text-lg text-gray-800">{f.id?'Editar Trabajador':'Nuevo Trabajador'}</h2>
+              <button onClick={()=>setTrabajadorForm(null)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Datos Personales</h3>
+                <div className="space-y-2">
+                  <input value={f.nombre} onChange={e=>set({nombre:e.target.value})} placeholder="Nombre completo *" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.cedula} onChange={e=>set({cedula:e.target.value})} placeholder="Cédula * (V-12345678)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select value={f.sexo} onChange={e=>set({sexo:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Masculino</option><option>Femenino</option></select>
+                    <input type="date" value={f.fechaNacimiento} onChange={e=>set({fechaNacimiento:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select value={f.estadoCivil} onChange={e=>set({estadoCivil:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Soltero</option><option>Casado</option><option>Divorciado</option><option>Viudo</option><option>Concubinato</option></select>
+                    <select value={f.nivelEducativo} onChange={e=>set({nivelEducativo:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Primaria</option><option>Bachiller</option><option>TSU</option><option>Universitario</option><option>Postgrado</option></select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={f.nacionalidad} onChange={e=>set({nacionalidad:e.target.value})} placeholder="Nacionalidad" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <input value={f.tipoSangre} onChange={e=>set({tipoSangre:e.target.value})} placeholder="Tipo de sangre" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                  <input value={f.telefono} onChange={e=>set({telefono:e.target.value})} placeholder="Teléfono" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.correo} onChange={e=>set({correo:e.target.value})} placeholder="Correo" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.direccion} onChange={e=>set({direccion:e.target.value})} placeholder="Dirección" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={f.contactoEmergenciaNombre} onChange={e=>set({contactoEmergenciaNombre:e.target.value})} placeholder="Contacto emergencia" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <input value={f.contactoEmergenciaTelefono} onChange={e=>set({contactoEmergenciaTelefono:e.target.value})} placeholder="Tel. emergencia" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Datos Laborales</h3>
+                <div className="space-y-2">
+                  <select value={f.centroCostoId} onChange={e=>set({centroCostoId:e.target.value,departamentoId:''})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                    <option value="">— Centro de Costo —</option>
+                    {centros.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                  <select value={f.departamentoId} onChange={e=>set({departamentoId:e.target.value})} disabled={!f.centroCostoId} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white disabled:bg-gray-50">
+                    <option value="">— Departamento —</option>
+                    {deptosDisponibles.map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
+                  </select>
+                  <input value={f.cargo} onChange={e=>set({cargo:e.target.value})} placeholder="Cargo" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="date" value={f.fechaIngreso} onChange={e=>set({fechaIngreso:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <select value={f.tipoContrato} onChange={e=>set({tipoContrato:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Indefinido</option><option>Determinado</option><option>Obra o labor</option></select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select value={f.turno} onChange={e=>set({turno:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Diurno</option><option>Nocturno</option><option>Mixto</option></select>
+                    <select value={f.formaPago} onChange={e=>set({formaPago:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincenal</option><option>Mensual</option><option>Semanal</option></select>
+                  </div>
+                  <input type="number" value={f.salarioBase} onChange={e=>set({salarioBase:e.target.value})} placeholder="Salario base ($)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.cuentaBancaria} onChange={e=>set({cuentaBancaria:e.target.value})} placeholder="Cuenta bancaria" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.supervisor} onChange={e=>set({supervisor:e.target.value})} placeholder="Supervisor" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Seguridad Social</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={f.ivss} onChange={e=>set({ivss:e.target.value})} placeholder="IVSS" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.rpe} onChange={e=>set({rpe:e.target.value})} placeholder="RPE" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.faov} onChange={e=>set({faov:e.target.value})} placeholder="FAOV" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.rif} onChange={e=>set({rif:e.target.value})} placeholder="RIF" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Salud y Seguridad</h3>
+                <div className="space-y-2">
+                  <input value={f.alergias} onChange={e=>set({alergias:e.target.value})} placeholder="Alergias / condiciones" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input type="date" value={f.certificadoMedicoFecha} onChange={e=>set({certificadoMedicoFecha:e.target.value})} placeholder="Cert. médico ingreso" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input value={f.eppAsignado} onChange={e=>set({eppAsignado:e.target.value})} placeholder="EPP asignado" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <input type="date" value={f.eppFechaEntrega} onChange={e=>set({eppFechaEntrega:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Beneficios de Ley</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={f.polizaHCMAseguradora} onChange={e=>set({polizaHCMAseguradora:e.target.value})} placeholder="Aseguradora HCM" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.polizaHCMNumero} onChange={e=>set({polizaHCMNumero:e.target.value})} placeholder="N° póliza HCM" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <select value={f.cestaTicketTipo} onChange={e=>set({cestaTicketTipo:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Tarjeta digital</option><option>Tarjeta física</option></select>
+                  <input value={f.cestaTicketNumero} onChange={e=>set({cestaTicketNumero:e.target.value})} placeholder="N° cesta ticket" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Tallas (Uniforme)</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  <input value={f.tallaCamisa} onChange={e=>set({tallaCamisa:e.target.value})} placeholder="Camisa" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.tallaPantalon} onChange={e=>set({tallaPantalon:e.target.value})} placeholder="Pantalón" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={f.tallaZapatos} onChange={e=>set({tallaZapatos:e.target.value})} placeholder="Zapatos" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 md:col-span-2">
+                <label className="flex items-center gap-2 mb-3 cursor-pointer">
+                  <input type="checkbox" checked={f.vehiculoAsignado} onChange={e=>set({vehiculoAsignado:e.target.checked})}/>
+                  <h3 className="text-[10px] font-black text-cyan-600 uppercase">Vehículo Asignado (si aplica)</h3>
+                </label>
+                {f.vehiculoAsignado && (
+                  <div className="grid grid-cols-4 gap-2">
+                    <input value={f.vehiculoMarca} onChange={e=>set({vehiculoMarca:e.target.value})} placeholder="Marca" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <input value={f.vehiculoModelo} onChange={e=>set({vehiculoModelo:e.target.value})} placeholder="Modelo" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <input value={f.vehiculoAnio} onChange={e=>set({vehiculoAnio:e.target.value})} placeholder="Año" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <input value={f.vehiculoColor} onChange={e=>set({vehiculoColor:e.target.value})} placeholder="Color" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Cargas Familiares ({f.cargasFamiliares.length})</h3>
+                <div className="space-y-1 mb-2">
+                  {f.cargasFamiliares.map((cg,i)=>(
+                    <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
+                      <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{cg.edad?' · '+cg.edad+' años':''}</span></span>
+                      <button onClick={()=>quitarCarga(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  <input value={nuevaCarga.nombre} onChange={e=>setNuevaCarga(c=>({...c,nombre:e.target.value}))} placeholder="Nombre" className="col-span-2 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                  <select value={nuevaCarga.parentesco} onChange={e=>setNuevaCarga(c=>({...c,parentesco:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-1 py-1.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"><option>Cónyuge</option><option>Hijo(a)</option><option>Padre/Madre</option></select>
+                  <input value={nuevaCarga.edad} onChange={e=>setNuevaCarga(c=>({...c,edad:e.target.value}))} placeholder="Edad" className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                </div>
+                <button onClick={agregarCarga} className="mt-1.5 w-full bg-gray-100 text-gray-600 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-gray-200">+ Agregar carga</button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Documentos</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {[['documentoCedula','Cédula'],['documentoContrato','Contrato firmado'],['documentoCV','Currículum'],['documentoCertificados','Certificados']].map(([k,l])=>(
+                    <label key={k} className="flex items-center gap-2 text-xs font-bold cursor-pointer"><input type="checkbox" checked={f[k]} onChange={e=>set({[k]:e.target.checked})}/> {l}</label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 md:col-span-2">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Estado</h3>
+                <div className="flex gap-2 mb-3">
+                  <button onClick={()=>set({estado:'Activo'})} className={`flex-1 py-2 rounded-xl text-xs font-black uppercase ${f.estado==='Activo'?'bg-green-600 text-white':'bg-gray-100 text-gray-500'}`}>Activo</button>
+                  <button onClick={()=>set({estado:'Egresado'})} className={`flex-1 py-2 rounded-xl text-xs font-black uppercase ${f.estado==='Egresado'?'bg-red-600 text-white':'bg-gray-100 text-gray-500'}`}>Egresado</button>
+                </div>
+                {f.estado==='Egresado' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="date" value={f.fechaEgreso} onChange={e=>set({fechaEgreso:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-red-400"/>
+                    <input value={f.motivoEgreso} onChange={e=>set({motivoEgreso:e.target.value})} placeholder="Motivo del egreso" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-red-400"/>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2 sticky bottom-0 bg-gray-50 py-3">
+              <button onClick={()=>setTrabajadorForm(null)} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-xl text-xs font-black uppercase hover:bg-gray-300">Cancelar</button>
+              <button onClick={guardarTrabajador} disabled={busyTrab} className="flex-1 bg-cyan-600 text-white py-3 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyTrab?'Guardando...':'Guardar Ficha'}</button>
+            </div>
+          </div>
+          );
+        })()}
+
+        {/* ═══ VISTA (solo lectura) ═══ */}
+        {trabajadorVer && !trabajadorForm && (()=>{
+          const t=trabajadorVer;
+          return (
+          <div className="max-w-4xl mx-auto space-y-4">
+            <div className="flex items-center justify-between">
+              <button onClick={()=>setTrabajadorVer(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a la lista</button>
+              <div className="flex gap-2">
+                <button onClick={()=>setTrabajadorForm({...t})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit3 size={13}/> Editar</button>
+                <button onClick={()=>eliminarTrabajador(t)} className="flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-red-100"><Trash2 size={13}/> Eliminar</button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-5">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="w-14 h-14 rounded-full bg-cyan-100 flex items-center justify-center font-black text-cyan-600 text-lg flex-shrink-0">{(t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}</div>
+                <div className="flex-1">
+                  <p className="font-black text-lg text-gray-800">{t.nombre}</p>
+                  <p className="text-xs text-gray-500">{t.cargo||'—'} · {nombreCentro(t.centroCostoId)} / {nombreDepto(t.departamentoId)}</p>
+                </div>
+                <span className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-full ${t.estado==='Egresado'?'bg-red-100 text-red-600':'bg-green-100 text-green-600'}`}>{t.estado}</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
+                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
+                  ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
+                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>[`${cg.parentesco}${cg.edad?' ('+cg.edad+' años)':''}`,cg.nombre])],
+                  ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
+                  ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
+                  ['Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]]],
+                  ...(t.vehiculoAsignado?[['Vehículo Asignado',[['Marca/Modelo',`${t.vehiculoMarca||''} ${t.vehiculoModelo||''}`],['Año',t.vehiculoAnio],['Color',t.vehiculoColor]]]]:[]),
+                  ['Vacaciones',[['Acumulados',t.vacacionesAcumuladas||0],['Disfrutados',t.vacacionesDisfrutadas||0],['Pendientes',(Number(t.vacacionesAcumuladas||0)-Number(t.vacacionesDisfrutadas||0))]]],
+                ].map(([titulo,items],si)=>(
+                  <div key={si} className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">{titulo}</p>
+                    {items.length===0 ? <p className="text-[10px] text-gray-400">Ninguna registrada</p> : items.map(([l,v],i)=>(
+                      <div key={i} className="flex justify-between text-[11px] py-0.5"><span className="text-gray-400">{l}</span><span className="font-bold text-gray-700">{v||'—'}</span></div>
+                    ))}
+                  </div>
+                ))}
+
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">Documentos</p>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[['documentoCedula','Cédula'],['documentoContrato','Contrato'],['documentoCV','Currículum'],['documentoCertificados','Certificados']].map(([k,l])=>(
+                      <span key={k} className={`text-[9px] font-black px-2 py-1 rounded-lg ${t[k]?'bg-green-100 text-green-600':'bg-white border border-gray-200 text-gray-400'}`}>{l}</span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">Historial de Aumentos</p>
+                  {(t.historialAumentos||[]).length===0 ? <p className="text-[10px] text-gray-400 mb-2">Ninguno registrado</p> : (t.historialAumentos||[]).map((a,i)=>(
+                    <div key={i} className="flex justify-between text-[11px] py-0.5"><span className="text-gray-400">{contDd(a.fecha)}</span><span className="font-bold text-gray-700">${formatNum(a.salarioAnterior)} → ${formatNum(a.salarioNuevo)}</span></div>
+                  ))}
+                  <div className="flex gap-1 mt-2">
+                    <input type="date" value={nuevoAumento.fecha} onChange={e=>setNuevoAumento(a=>({...a,fecha:e.target.value}))} className="w-24 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-cyan-500"/>
+                    <input type="number" value={nuevoAumento.salarioNuevo} onChange={e=>setNuevoAumento(a=>({...a,salarioNuevo:e.target.value}))} placeholder="Nuevo $" className="flex-1 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-cyan-500"/>
+                    <button onClick={()=>agregarAumento(t)} className="bg-cyan-600 text-white px-2 rounded-lg"><Plus size={12}/></button>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">Evaluaciones (Mensual, {(t.evaluaciones||[]).length})</p>
+                  {(t.evaluaciones||[]).slice(-4).reverse().map((e,i)=>(
+                    <div key={i} className="flex justify-between text-[11px] py-0.5"><span className="text-gray-400">{e.mes}</span><span className={`font-bold ${e.resultado==='Mejorable'?'text-amber-600':'text-gray-700'}`}>{e.resultado}</span></div>
+                  ))}
+                  <div className="flex gap-1 mt-2">
+                    <input type="month" value={nuevaEval.mes} onChange={e=>setNuevaEval(v=>({...v,mes:e.target.value}))} className="flex-1 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-cyan-500"/>
+                    <select value={nuevaEval.resultado} onChange={e=>setNuevaEval(v=>({...v,resultado:e.target.value}))} className="border border-gray-200 rounded-lg px-1 py-1 text-[10px] outline-none focus:border-cyan-500 bg-white"><option>Satisfactorio</option><option>Mejorable</option><option>Insatisfactorio</option></select>
+                    <button onClick={()=>agregarEval(t)} className="bg-cyan-600 text-white px-2 rounded-lg"><Plus size={12}/></button>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-cyan-600 uppercase mb-2">Amonestaciones ({(t.amonestaciones||[]).length})</p>
+                  {(t.amonestaciones||[]).length===0 ? <p className="text-[10px] text-gray-400 mb-2">Sin registros — historial limpio.</p> : (t.amonestaciones||[]).map((a,i)=>(
+                    <div key={i} className="flex justify-between text-[11px] py-0.5"><span className="text-gray-400">{contDd(a.fecha)}</span><span className="font-bold text-amber-600">{a.tipo} · {a.motivo}</span></div>
+                  ))}
+                  <div className="flex gap-1 mt-2">
+                    <select value={nuevaAmon.tipo} onChange={e=>setNuevaAmon(v=>({...v,tipo:e.target.value}))} className="border border-gray-200 rounded-lg px-1 py-1 text-[10px] outline-none focus:border-cyan-500 bg-white"><option>Verbal</option><option>Escrita</option></select>
+                    <input value={nuevaAmon.motivo} onChange={e=>setNuevaAmon(v=>({...v,motivo:e.target.value}))} placeholder="Motivo" className="flex-1 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-cyan-500"/>
+                    <button onClick={()=>agregarAmon(t)} className="bg-cyan-600 text-white px-2 rounded-lg"><Plus size={12}/></button>
+                  </div>
+                </div>
+              </div>
+
+              {t.estado==='Egresado' && (
+                <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3">
+                  <p className="text-[9px] font-black text-red-600 uppercase mb-2">Datos de Egreso</p>
+                  <div className="flex justify-between text-[11px]"><span className="text-gray-500">Fecha de egreso</span><span className="font-bold text-red-600">{contDd(t.fechaEgreso)}</span></div>
+                  <div className="flex justify-between text-[11px]"><span className="text-gray-500">Motivo</span><span className="font-bold text-red-600">{t.motivoEgreso}</span></div>
+                </div>
+              )}
+            </div>
+          </div>
+          );
+        })()}
+      </div>
+      )}
       </div>
     </div>
   );
