@@ -8411,7 +8411,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {(v.historial||[]).length>0 && <button onClick={()=>setDetalleVale(v)} title="Ver detalle de bajas" className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"><Search size={13}/></button>}
-                    <button onClick={()=>setEditModal({...v,monto:String(v.monto)})} title="Editar vale" className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Edit size={13}/></button>
+                    <button onClick={()=>setEditModal({...v,monto:String(v.monto)})} title="Editar vale" className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Edit3 size={13}/></button>
                     <button onClick={()=>eliminarVale(v)} title="Eliminar vale" className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={13}/></button>
                     <button onClick={()=>abrirAccion(v)}
                       className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-500 transition-colors">
