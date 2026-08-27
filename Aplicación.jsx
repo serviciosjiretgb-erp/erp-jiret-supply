@@ -86,19 +86,25 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function RRHHApp({fbUser,onBack,settings,appUser}) {
-  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores'
+  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina'
   const [centros,setCentros]=useState([]);
   const [departamentos,setDepartamentos]=useState([]);
   const [cuentasNomina,setCuentasNomina]=useState([]);
   const [planCuentasRH,setPlanCuentasRH]=useState([]);
   const [trabajadores,setTrabajadores]=useState([]);
+  const [configParafiscal,setConfigParafiscal]=useState({ivssPct:4,ivssBase:'basico',rpePct:0.5,rpeBase:'basico',faovPct:1,faovBase:'basico'});
+  const [nominas,setNominas]=useState([]);
+  const [nominaDetalles,setNominaDetalles]=useState([]);
   useEffect(()=>{
     const s1=onSnapshot(getColRef('rrhh_centros_costo'),s=>setCentros(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s2=onSnapshot(getColRef('rrhh_departamentos'),s=>setDepartamentos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s3=onSnapshot(getColRef('rrhh_cuentas_nomina'),s=>setCuentasNomina(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s4=onSnapshot(getColRef('planDeCuentas'),s=>setPlanCuentasRH(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s5=onSnapshot(getColRef('rrhh_trabajadores'),s=>setTrabajadores(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();};
+    const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{ if(d.exists()) setConfigParafiscal(d.data()); });
+    const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
+    const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -253,6 +259,191 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const nombreCentro = (id) => centros.find(c=>c.id===id)?.nombre||'—';
   const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
   const [subiendoFoto,setSubiendoFoto]=useState(false);
+  // ── Registro de Nómina ────────────────────────────────────────────────────
+  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||'')});
+  const [nominaForm,setNominaForm]=useState(initNominaForm());
+  const [nominaActiva,setNominaActiva]=useState(null);
+  const [busyNomina,setBusyNomina]=useState(false);
+  const crearNomina = async () => {
+    if(!nominaForm.concepto.trim()) return alert('Escribe el concepto de este pago');
+    if(!nominaForm.tasa||Number(nominaForm.tasa)<=0) return alert('Ingresa la tasa de cambio a usar');
+    setBusyNomina(true);
+    try{
+      const ref = await addDoc(getColRef('rrhh_nominas'),{...nominaForm, tasa:Number(nominaForm.tasa), estado:'abierta', createdAt:Date.now()});
+      setNominaActiva({id:ref.id, ...nominaForm, tasa:Number(nominaForm.tasa), estado:'abierta'});
+      setNominaForm(initNominaForm());
+    } catch(e){ alert('Error al crear: '+e.message); }
+    finally{ setBusyNomina(false); }
+  };
+  const cerrarNomina = async (n) => {
+    if(!window.confirm(`¿Cerrar "${n.concepto}"? Ya no se podrán cargar ni editar trabajadores en este pago.`)) return;
+    try{ await updateDoc(getDocRef('rrhh_nominas',n.id),{estado:'cerrada'}); if(nominaActiva?.id===n.id) setNominaActiva(v=>({...v,estado:'cerrada'})); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  const eliminarNomina = async (n) => {
+    const detalles = nominaDetalles.filter(d=>d.nominaId===n.id);
+    if(!window.confirm(`¿Eliminar "${n.concepto}"?${detalles.length?`\n\nTiene ${detalles.length} trabajador(es) cargado(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    try{
+      const batch=writeBatch(db);
+      detalles.forEach(d=>batch.delete(getDocRef('rrhh_nomina_detalles',d.id)));
+      batch.delete(getDocRef('rrhh_nominas',n.id));
+      await batch.commit();
+      if(nominaActiva?.id===n.id) setNominaActiva(null);
+    } catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+
+  // Calcula IVSS/RPE/FAOV según la config (% sobre sueldo básico o sobre total de asignaciones)
+  const calcularDeduccionesLegales = (asignaciones, tasa) => {
+    const totalAsig = asignaciones.reduce((s,a)=>s+Number(a.montoUSD||0),0);
+    const basico = asignaciones.find(a=>/sueldo b[aá]sico/i.test(a.concepto))?.montoUSD || totalAsig;
+    const baseDe = (b) => b==='total' ? totalAsig : Number(basico||0);
+    const mk = (concepto, pct, base, cuenta) => {
+      const montoUSD = parseFloat((base*pct/100).toFixed(2));
+      return {concepto, montoUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||'', esLegal:true};
+    };
+    return {totalAsig, basico, mk, baseDe};
+  };
+
+  const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
+  const abrirCargarTrabajador = (trabajador) => {
+    const cuentasDepto = cuentasNomina.filter(c=>c.departamentoId===trabajador.departamentoId);
+    const asignacionesCfg = cuentasDepto.filter(c=>c.tipo==='asignacion');
+    const deduccionesCfgManual = cuentasDepto.filter(c=>c.tipo==='deduccion' && !/ivss|rpe|paro forzoso|faov/i.test(c.concepto));
+    const asignaciones = asignacionesCfg.map(c=>({concepto:c.concepto, montoUSD:c.concepto==='Sueldo Básico'?Number(trabajador.salarioBase||0):0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}));
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual: deduccionesCfgManual.map(c=>({concepto:c.concepto, montoUSD:0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}))});
+  };
+  const actualizarMontoAsignacion = (idx, montoUSD) => {
+    setCargarTrabModal(m=>{
+      const tasa = Number(nominaActiva?.tasa||0);
+      const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasa).toFixed(2))}:a);
+      return {...m, asignaciones};
+    });
+  };
+  const actualizarMontoDeduccionManual = (idx, montoUSD) => {
+    setCargarTrabModal(m=>{
+      const tasa = Number(nominaActiva?.tasa||0);
+      const deduccionesManual = m.deduccionesManual.map((d,i)=>i===idx?{...d, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasa).toFixed(2))}:d);
+      return {...m, deduccionesManual};
+    });
+  };
+  const guardarDetalleNomina = async () => {
+    if(!cargarTrabModal || !nominaActiva) return;
+    const tasa = Number(nominaActiva.tasa||0);
+    const cuentasDepto = cuentasNomina.filter(c=>c.departamentoId===cargarTrabModal.trabajador.departamentoId);
+    const cIVSS = cuentasDepto.find(c=>c.tipo==='deduccion' && /ivss/i.test(c.concepto));
+    const cRPE = cuentasDepto.find(c=>c.tipo==='deduccion' && /rpe|paro forzoso/i.test(c.concepto));
+    const cFAOV = cuentasDepto.find(c=>c.tipo==='deduccion' && /faov/i.test(c.concepto));
+    const {mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa);
+    const deduccionesLegales = [
+      mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase), cIVSS),
+      mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase), cRPE),
+      mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase), cFAOV),
+    ];
+    const deduccionesManual = cargarTrabModal.deduccionesManual.map(d=>({...d, esLegal:false}));
+    const asignaciones = cargarTrabModal.asignaciones.map(a=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
+    const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
+    const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual].reduce((s,d)=>s+d.montoUSD,0);
+    setBusyNomina(true);
+    try{
+      const t = cargarTrabModal.trabajador;
+      const key = `${nominaActiva.id}_${t.id}`;
+      await setDoc(getDocRef('rrhh_nomina_detalles',key),{
+        nominaId:nominaActiva.id, trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula,
+        centroCostoId:t.centroCostoId, departamentoId:t.departamentoId,
+        asignaciones, deducciones:[...deduccionesLegales,...deduccionesManual],
+        totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
+        netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
+        tasa, updatedAt:Date.now(),
+      });
+      setCargarTrabModal(null);
+    } catch(e){ alert('Error al guardar: '+e.message); }
+    finally{ setBusyNomina(false); }
+  };
+  const eliminarDetalleNomina = async (d) => {
+    if(!window.confirm(`¿Quitar a "${d.trabajadorNombre}" de esta nómina?`)) return;
+    try{ await deleteDoc(getDocRef('rrhh_nomina_detalles',d.id)); } catch(e){ alert('Error: '+e.message); }
+  };
+
+  // Asiento agrupado por departamento — suma todas las líneas de todos los trabajadores del
+  // mismo departamento en un solo bloque de Debe/Haber por cuenta contable.
+  const calcularAsientoPorDepartamento = (nominaId) => {
+    const detalles = nominaDetalles.filter(d=>d.nominaId===nominaId);
+    const porDepto = {};
+    detalles.forEach(d=>{
+      const key = d.departamentoId;
+      if(!porDepto[key]) porDepto[key]={departamentoId:key, nombreDepto:nombreDepto(key), trabajadores:0, cuentas:{}};
+      porDepto[key].trabajadores++;
+      const addCuenta = (codigo, nombre, tipo, monto) => {
+        const ck = codigo||nombre;
+        if(!porDepto[key].cuentas[ck]) porDepto[key].cuentas[ck]={codigo, nombre, debe:0, haber:0};
+        if(tipo==='debe') porDepto[key].cuentas[ck].debe += monto; else porDepto[key].cuentas[ck].haber += monto;
+      };
+      d.asignaciones.forEach(a=>addCuenta(a.codigoCuenta, a.nombreCuenta||a.concepto, 'debe', a.montoUSD));
+      d.deducciones.forEach(ded=>addCuenta(ded.codigoCuenta, ded.nombreCuenta||ded.concepto, 'haber', ded.montoUSD));
+      addCuenta('', 'Nómina por Pagar (Banco)', 'haber', d.netoUSD);
+    });
+    return Object.values(porDepto);
+  };
+
+  const [detalleVerModal,setDetalleVerModal]=useState(null);
+
+  const _empresaDatos = () => ({
+    empresa: settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.',
+    rif: settings?.empresaRif || settings?.empresaRIF || 'J-412309374',
+    dir: settings?.empresaDireccion || 'Av. Circunvalación Nro 02, C.C. El Dividivi, Local G-9, Nivel PB, Sector El Trébol, Maracaibo - Zulia',
+  });
+  const _escRH = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const _reciboCss = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:520px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:14px;text-transform:uppercase;}.membrete p{font-size:9px;opacity:.9;margin-top:1px;}.membrete .tit{font-size:11px;font-weight:900;text-transform:uppercase;text-align:right;}.btn-print{display:block;margin:14px 16px;padding:10px 0;background:#0891b2;color:#fff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 32px);}.contenido{padding:0 16px 16px;}.fila-top{display:flex;justify-content:space-between;margin-bottom:10px;}.fila-top p{font-size:10px;color:#6b7280;margin:1px 0 0;}.fila-top .nom{font-size:13px;font-weight:900;}table{width:100%;font-size:11px;border-collapse:collapse;}td{padding:3px 0;}.lbl{color:#6b7280;}.neg{color:#dc2626;}tr.tot td{border-top:1px solid #e5e7eb;padding-top:6px;font-weight:900;}.firma{font-size:9px;color:#9ca3af;margin-top:14px;padding-top:8px;border-top:1px solid #e5e7eb;}@media print{@page{margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+
+  const exportarReciboPDF = (d, nomina, tipo) => {
+    const {empresa, rif, dir} = _empresaDatos();
+    const esEmpresa = tipo==='empresa';
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Recibo - ${_escRH(d.trabajadorNombre)}</title><style>${_reciboCss}</style></head><body><div class="wrap">
+      <div class="membrete"><div><h1>${_escRH(empresa)}</h1><p>RIF: ${_escRH(rif)}</p></div><div class="tit">Recibo de pago<br/>${esEmpresa?'Copia empresa':'Copia trabajador'}</div></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        <p style="font-size:9px;color:#9ca3af;margin-bottom:8px">${_escRH(dir)}</p>
+        <div class="fila-top">
+          <div><p class="nom">${_escRH(d.trabajadorNombre)}</p><p>${_escRH(d.trabajadorCedula||'')} · ${_escRH(nombreDepto(d.departamentoId))}</p></div>
+          <div style="text-align:right"><p>${_escRH(nomina.mes)} · ${_escRH(nomina.quincena)}</p><p>Emitido ${_escRH(contDd(nomina.fechaPago))}${esEmpresa?' · Tasa '+_escRH(nomina.tasa):''}</p></div>
+        </div>
+        <table>
+          <tr><td class="lbl">Concepto</td>${esEmpresa?'<td style="text-align:right" class="lbl">USD</td>':''}<td style="text-align:right" class="lbl">Bs.</td></tr>
+          ${d.asignaciones.map(a=>`<tr><td>${_escRH(a.concepto)}</td>${esEmpresa?`<td style="text-align:right">$${formatNum(a.montoUSD)}</td>`:''}<td style="text-align:right">${formatNum(a.montoBs)}</td></tr>`).join('')}
+          ${d.deducciones.map(ded=>`<tr><td class="neg">(-) ${_escRH(ded.concepto)}</td>${esEmpresa?`<td style="text-align:right" class="neg">-$${formatNum(ded.montoUSD)}</td>`:''}<td style="text-align:right" class="neg">-${formatNum(ded.montoBs)}</td></tr>`).join('')}
+          <tr class="tot"><td>Neto a pagar</td>${esEmpresa?`<td style="text-align:right">$${formatNum(d.netoUSD)}</td>`:''}<td style="text-align:right">${esEmpresa?'':'Bs. '}${formatNum(d.netoBs)}</td></tr>
+        </table>
+        <p class="firma">${esEmpresa?'Firma del trabajador (recibí conforme): ________________________':'Sello y firma de recursos humanos: ________________________'}</p>
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+  };
+
+  const exportarReporteNominaPDF = (nomina) => {
+    const {empresa, rif, dir} = _empresaDatos();
+    const detalles = nominaDetalles.filter(d=>d.nominaId===nomina.id);
+    const totAsigUSD = detalles.reduce((s,d)=>s+d.totalAsignacionesUSD,0);
+    const totDedUSD = detalles.reduce((s,d)=>s+d.totalDeduccionesUSD,0);
+    const totNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+    const totNetoBs = detalles.reduce((s,d)=>s+d.netoBs,0);
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}th:first-child,th:nth-child(2){text-align:left;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}td:first-child,td:nth-child(2){text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Reporte Nómina - ${_escRH(nomina.concepto)}</title><style>${css}</style></head><body><div class="wrap">
+      <div class="membrete"><div><h1>${_escRH(empresa)}</h1><p>RIF: ${_escRH(rif)} · ${_escRH(dir)}</p></div></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        <h2 style="font-size:14px;margin-bottom:4px">Reporte de Nómina — ${_escRH(nomina.concepto)}</h2>
+        <p style="font-size:10px;color:#6b7280;margin-bottom:12px">${_escRH(nomina.mes)} · ${_escRH(nomina.quincena)} · Fecha de pago ${_escRH(contDd(nomina.fechaPago))} · Tasa ${_escRH(nomina.tasa)}</p>
+        <table>
+          <thead><tr><th>Trabajador</th><th>Departamento</th><th>Asignaciones $</th><th>Deducciones $</th><th>Neto $</th><th>Neto Bs.</th></tr></thead>
+          <tbody>${detalles.map(d=>`<tr><td>${_escRH(d.trabajadorNombre)}</td><td>${_escRH(nombreDepto(d.departamentoId))}</td><td>$${formatNum(d.totalAsignacionesUSD)}</td><td>-$${formatNum(d.totalDeduccionesUSD)}</td><td>$${formatNum(d.netoUSD)}</td><td>${formatNum(d.netoBs)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td colspan="2">TOTALES · ${detalles.length} trabajador(es)</td><td>$${formatNum(totAsigUSD)}</td><td>-$${formatNum(totDedUSD)}</td><td>$${formatNum(totNetoUSD)}</td><td>${formatNum(totNetoBs)}</td></tr></tfoot>
+        </table>
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+  };
   const exportarFichaPDF = (t) => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -332,6 +523,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
           {[
             {id:'config', label:'Configuración', icon:<Settings size={13}/>},
+            {id:'nomina', label:'Registro de Nómina', icon:<DollarSign size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null},
             {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null},
           ].map(t=>(
             <button key={t.id} onClick={()=>setRhTab(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${rhTab===t.id?'border-cyan-500 text-cyan-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
@@ -447,6 +639,251 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </div>
 
         </div>
+
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
+          <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">4. Deducciones Parafiscales (editable)</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+            {[['ivssPct','ivssBase','IVSS'],['rpePct','rpeBase','RPE (Paro Forzoso)'],['faovPct','faovBase','FAOV (Vivienda)']].map(([pctKey,baseKey,label])=>(
+              <div key={pctKey} className="bg-gray-50 rounded-xl p-3">
+                <p className="text-[10px] font-black text-gray-600 uppercase mb-2">{label}</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <input type="number" step="0.1" value={configParafiscal[pctKey]} onChange={e=>setConfigParafiscal(c=>({...c,[pctKey]:parseFloat(e.target.value)||0}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                  <span className="text-xs font-black text-gray-400">%</span>
+                </div>
+                <select value={configParafiscal[baseKey]} onChange={e=>setConfigParafiscal(c=>({...c,[baseKey]:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500 bg-white">
+                  <option value="basico">Sobre Sueldo Básico</option>
+                  <option value="total">Sobre Total Asignaciones</option>
+                </select>
+              </div>
+            ))}
+          </div>
+          <button onClick={()=>setDoc(getDocRef('rrhh_config','parafiscal'),configParafiscal).then(()=>alert('Configuración parafiscal guardada.')).catch(e=>alert('Error: '+e.message))} className="bg-cyan-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración Parafiscal</button>
+          <p className="text-[10px] text-gray-400 mt-2">Valores de referencia legal venezolana — cámbialos aquí si algún día varían; se aplican a toda nómina que registres de aquí en adelante.</p>
+        </div>
+      </div>
+      )}
+
+      {rhTab==='nomina' && (
+      <div className="p-6">
+        {!nominaActiva && (
+          <>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Iniciar Nuevo Pago</h3>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <input type="month" value={nominaForm.mes} onChange={e=>setNominaForm(f=>({...f,mes:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                <select value={nominaForm.quincena} onChange={e=>setNominaForm(f=>({...f,quincena:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincena 1</option><option>Quincena 2</option></select>
+              </div>
+              <input value={nominaForm.concepto} onChange={e=>setNominaForm(f=>({...f,concepto:e.target.value}))} placeholder="Concepto: Nómina Quincena 2, Bonificación, Utilidades..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 mb-3"/>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <input type="date" value={nominaForm.fechaPago} onChange={e=>setNominaForm(f=>({...f,fechaPago:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                <input type="number" step="0.01" value={nominaForm.tasa} onChange={e=>setNominaForm(f=>({...f,tasa:e.target.value}))} placeholder="Tasa de cambio a usar" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+              </div>
+              <p className="text-[10px] text-gray-400 mb-3">Esta tasa la fijas tú — igual para todos los trabajadores de este pago, no se vuelve a pedir por cada uno.</p>
+              <button onClick={crearNomina} disabled={busyNomina} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Creando...':'Comenzar a Cargar Trabajadores →'}</button>
+            </div>
+
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Pagos Registrados</h3>
+            <div className="space-y-2">
+              {nominas.map(n=>{
+                const detalles = nominaDetalles.filter(d=>d.nominaId===n.id);
+                const totalUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+                return (
+                  <div key={n.id} onClick={()=>setNominaActiva(n)} className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-sm text-gray-800">{n.concepto}</p>
+                      <p className="text-[10px] text-gray-400">{n.mes} · {n.quincena} · {detalles.length} trabajador(es) · Tasa {n.tasa}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-black text-cyan-600">${formatNum(totalUSD)}</span>
+                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${n.estado==='cerrada'?'bg-gray-100 text-gray-500':'bg-green-100 text-green-600'}`}>{n.estado}</span>
+                      <button onClick={e=>{e.stopPropagation();eliminarNomina(n);}} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
+                    </div>
+                  </div>
+                );
+              })}
+              {nominas.length===0 && <p className="text-center text-gray-400 text-sm py-12">Sin pagos registrados aún.</p>}
+            </div>
+          </>
+        )}
+
+        {nominaActiva && (()=>{
+          const detalles = nominaDetalles.filter(d=>d.nominaId===nominaActiva.id);
+          const trabajadoresActivos = trabajadores.filter(t=>t.estado!=='Egresado' && t.departamentoId);
+          const trabajadoresPendientes = trabajadoresActivos.filter(t=>!detalles.some(d=>d.trabajadorId===t.id));
+          const asientoPorDepto = calcularAsientoPorDepartamento(nominaActiva.id);
+          const totalNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+          return (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <button onClick={()=>setNominaActiva(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a Pagos</button>
+              <div className="flex gap-2">
+                <button onClick={()=>exportarReporteNominaPDF(nominaActiva)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><FileText size={13}/> Reporte de Nómina</button>
+                {nominaActiva.estado==='abierta' && <button onClick={()=>cerrarNomina(nominaActiva)} className="bg-amber-50 text-amber-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-amber-100">Cerrar Pago</button>}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-1">
+                <p className="font-black text-lg text-gray-800">{nominaActiva.concepto}</p>
+                <span className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-full ${nominaActiva.estado==='cerrada'?'bg-gray-100 text-gray-500':'bg-green-100 text-green-600'}`}>{nominaActiva.estado}</span>
+              </div>
+              <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · Tasa {nominaActiva.tasa}</p>
+            </div>
+
+            {nominaActiva.estado==='abierta' && trabajadoresPendientes.length>0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Cargar Trabajador</h3>
+                <div className="flex flex-wrap gap-2">
+                  {trabajadoresPendientes.map(t=>(
+                    <button key={t.id} onClick={()=>abrirCargarTrabajador(t)} className="flex items-center gap-2 bg-gray-50 hover:bg-cyan-50 border border-gray-200 hover:border-cyan-300 rounded-xl px-3 py-2 text-xs font-bold">
+                      <UserPlus size={13}/> {t.nombre} <span className="text-gray-400">· {nombreDepto(t.departamentoId)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-4">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Trabajadores Cargados ({detalles.length}) — Total ${formatNum(totalNetoUSD)}</h3>
+              <div className="space-y-1.5">
+                {detalles.map(d=>(
+                  <div key={d.id} className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2.5">
+                    <div>
+                      <p className="text-xs font-black text-gray-800">{d.trabajadorNombre}</p>
+                      <p className="text-[10px] text-gray-400">{nombreDepto(d.departamentoId)} · Asig. ${formatNum(d.totalAsignacionesUSD)} − Ded. ${formatNum(d.totalDeduccionesUSD)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-cyan-600 text-sm">${formatNum(d.netoUSD)}</span>
+                      <button onClick={()=>exportarReciboPDF(d,nominaActiva,'empresa')} title="Recibo copia empresa (multimoneda)" className="text-orange-400 hover:text-orange-600"><FileText size={14}/></button>
+                      <button onClick={()=>exportarReciboPDF(d,nominaActiva,'trabajador')} title="Recibo copia trabajador (solo Bs.)" className="text-blue-400 hover:text-blue-600"><Printer size={14}/></button>
+                      <button onClick={()=>setDetalleVerModal(d)} className="text-gray-400 hover:text-gray-600"><Eye size={14}/></button>
+                      {nominaActiva.estado==='abierta' && <button onClick={()=>eliminarDetalleNomina(d)} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>}
+                    </div>
+                  </div>
+                ))}
+                {detalles.length===0 && <p className="text-center text-gray-400 text-sm py-8">Ningún trabajador cargado todavía.</p>}
+              </div>
+            </div>
+
+            {asientoPorDepto.length>0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Asiento Contable — Agrupado por Departamento</h3>
+                <div className="space-y-4">
+                  {asientoPorDepto.map(dep=>(
+                    <div key={dep.departamentoId}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="bg-cyan-100 text-cyan-700 text-[10px] font-black uppercase px-2.5 py-1 rounded-lg">{dep.nombreDepto}</span>
+                        <span className="text-[10px] text-gray-400">{dep.trabajadores} trabajador(es) sumados en estas líneas</span>
+                      </div>
+                      <table className="w-full text-xs">
+                        <thead><tr className="text-[9px] text-gray-400 uppercase"><th className="text-left pb-1">Cuenta</th><th className="text-right pb-1">Debe</th><th className="text-right pb-1">Haber</th></tr></thead>
+                        <tbody>
+                          {Object.values(dep.cuentas).map((c,i)=>(
+                            <tr key={i} className="border-t border-gray-100">
+                              <td className="py-1.5 text-gray-700 font-bold">{c.codigo?<span className="font-mono text-cyan-600 mr-1">{c.codigo}</span>:null}{c.nombre}</td>
+                              <td className="py-1.5 text-right font-mono font-black text-emerald-600">{c.debe>0?'$'+formatNum(c.debe):''}</td>
+                              <td className="py-1.5 text-right font-mono font-black text-red-500">{c.haber>0?'$'+formatNum(c.haber):''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          );
+        })()}
+
+        {/* Modal: cargar trabajador (asignación manual + deducción legal automática) */}
+        {cargarTrabModal && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setCargarTrabModal(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <div><p className="font-black text-gray-800">{cargarTrabModal.trabajador.nombre}</p><p className="text-[10px] text-gray-400">{nombreDepto(cargarTrabModal.trabajador.departamentoId)} · Tasa {nominaActiva?.tasa}</p></div>
+                <button onClick={()=>setCargarTrabModal(null)} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black text-cyan-600 uppercase mb-2">Asignaciones — se cargan a mano, en dólares</p>
+                {cargarTrabModal.asignaciones.length===0 && <p className="text-[11px] text-gray-400">Este departamento no tiene asignaciones configuradas. Ve a Configuración para agregarlas.</p>}
+                {cargarTrabModal.asignaciones.map((a,i)=>(
+                  <div key={i} className="grid grid-cols-[1fr_90px_100px] gap-2 items-center mb-1.5">
+                    <span className="text-xs font-bold text-gray-700">{a.concepto}</span>
+                    <input type="number" step="0.01" value={a.montoUSD} onChange={e=>actualizarMontoAsignacion(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                    <span className="text-[11px] text-gray-400 text-right">Bs.{formatNum(a.montoBs)}</span>
+                  </div>
+                ))}
+              </div>
+
+              {cargarTrabModal.deduccionesManual.length>0 && (
+                <div>
+                  <p className="text-[10px] font-black text-orange-600 uppercase mb-2">Otras Deducciones — también manuales</p>
+                  {cargarTrabModal.deduccionesManual.map((d,i)=>(
+                    <div key={i} className="grid grid-cols-[1fr_90px_100px] gap-2 items-center mb-1.5">
+                      <span className="text-xs font-bold text-gray-700">{d.concepto}</span>
+                      <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                      <span className="text-[11px] text-gray-400 text-right">Bs.{formatNum(d.montoBs)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(()=>{
+                const tasa = Number(nominaActiva?.tasa||0);
+                const {mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa);
+                const legales = [
+                  mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase)),
+                  mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase)),
+                  mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase)),
+                ];
+                const totalAsig = cargarTrabModal.asignaciones.reduce((s,a)=>s+Number(a.montoUSD||0),0);
+                const totalDedManual = cargarTrabModal.deduccionesManual.reduce((s,d)=>s+Number(d.montoUSD||0),0);
+                const totalDedLegal = legales.reduce((s,d)=>s+d.montoUSD,0);
+                const neto = totalAsig - totalDedManual - totalDedLegal;
+                return (
+                <>
+                  <div>
+                    <p className="text-[10px] font-black text-green-600 uppercase mb-2">Deducciones Legales — calculadas solas</p>
+                    {legales.map((d,i)=>(
+                      <div key={i} className="flex justify-between text-xs py-0.5"><span className="text-gray-500">{d.concepto} ({i===0?configParafiscal.ivssPct:i===1?configParafiscal.rpePct:configParafiscal.faovPct}%)</span><span className="font-bold text-red-500">-${formatNum(d.montoUSD)}</span></div>
+                    ))}
+                  </div>
+                  <div className="border-t border-gray-100 pt-3 flex justify-between items-center">
+                    <span className="text-xs font-black text-gray-600 uppercase">Neto a Pagar</span>
+                    <span className="font-mono font-black text-cyan-600 text-lg">${formatNum(neto)}</span>
+                  </div>
+                </>
+                );
+              })()}
+
+              <div className="flex gap-2 pt-2">
+                <button onClick={()=>setCargarTrabModal(null)} className="flex-1 bg-gray-200 text-gray-700 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-gray-300">Cancelar</button>
+                <button onClick={guardarDetalleNomina} disabled={busyNomina} className="flex-1 bg-cyan-600 text-white py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Guardando...':'Confirmar Trabajador'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: ver detalle de un trabajador ya cargado */}
+        {detalleVerModal && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setDetalleVerModal(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <p className="font-black text-gray-800">{detalleVerModal.trabajadorNombre}</p>
+                <button onClick={()=>setDetalleVerModal(null)} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
+              </div>
+              <table className="w-full text-xs">
+                <tbody>
+                  {detalleVerModal.asignaciones.map((a,i)=>(<tr key={'a'+i}><td className="py-1 text-gray-600">{a.concepto}</td><td className="py-1 text-right font-bold">${formatNum(a.montoUSD)}</td></tr>))}
+                  {detalleVerModal.deducciones.map((d,i)=>(<tr key={'d'+i}><td className="py-1 text-red-500">(-) {d.concepto}</td><td className="py-1 text-right font-bold text-red-500">-${formatNum(d.montoUSD)}</td></tr>))}
+                  <tr className="border-t border-gray-200"><td className="py-1.5 font-black">Neto</td><td className="py-1.5 text-right font-mono font-black text-cyan-600">${formatNum(detalleVerModal.netoUSD)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
       )}
 
