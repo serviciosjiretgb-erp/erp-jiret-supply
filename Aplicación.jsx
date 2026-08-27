@@ -179,7 +179,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // ── Trabajadores (ficha completa) ────────────────────────────────────────
   const initTrabajador = () => ({
     nombre:'', cedula:'', sexo:'Masculino', fechaNacimiento:'', estadoCivil:'Soltero', nivelEducativo:'Bachiller',
-    nacionalidad:'Venezolano', tipoSangre:'',
+    nacionalidad:'Venezolano', tipoSangre:'', fotoUrl:'',
     telefono:'', correo:'', direccion:'', contactoEmergenciaNombre:'', contactoEmergenciaTelefono:'',
     centroCostoId:'', departamentoId:'', cargo:'', fechaIngreso:'', tipoContrato:'Indefinido', turno:'Diurno',
     salarioBase:'', formaPago:'Quincenal', cuentaBancaria:'', supervisor:'',
@@ -252,6 +252,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const nombreCentro = (id) => centros.find(c=>c.id===id)?.nombre||'—';
   const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
+  const [subiendoFoto,setSubiendoFoto]=useState(false);
+  const uploadFotoTrabajador = async (file) => {
+    if(!file) return;
+    setSubiendoFoto(true);
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const sRef = storageRef(storage, `rrhh_fotos/${Date.now()}.${ext}`);
+      const snap = await uploadBytes(sRef, file, {contentType: file.type || 'image/jpeg'});
+      const url = await getDownloadURL(snap.ref);
+      setTrabajadorForm(f=>({...f, fotoUrl:url}));
+    } catch(e) { alert('Error al subir la foto: '+e.message); }
+    finally { setSubiendoFoto(false); }
+  };
   const trabajadoresFiltrados = trabajadores.filter(t=>!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab));
 
   return (
@@ -406,7 +419,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               {trabajadores.filter(t=>!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab)).map(t=>(
                 <div key={t.id} onClick={()=>setTrabajadorVer(t)} className="bg-white rounded-2xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 hover:shadow-md transition-all">
                   <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-full bg-cyan-100 flex items-center justify-center font-black text-cyan-600 text-xs flex-shrink-0">{(t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}</div>
+                    <div className="w-10 h-10 rounded-full bg-cyan-100 overflow-hidden flex items-center justify-center font-black text-cyan-600 text-xs flex-shrink-0">
+                      {t.fotoUrl ? <img src={t.fotoUrl} alt={t.nombre} className="w-full h-full object-cover"/> : (t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
+                    </div>
                     <div className="min-w-0">
                       <p className="font-black text-sm text-gray-800 truncate">{t.nombre}</p>
                       <p className="text-[10px] text-gray-400 truncate">{t.cargo||'—'}</p>
@@ -430,6 +445,22 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <div className="flex items-center justify-between">
               <h2 className="font-black text-lg text-gray-800">{f.id?'Editar Trabajador':'Nuevo Trabajador'}</h2>
               <button onClick={()=>setTrabajadorForm(null)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-4">
+              <div className="relative flex-shrink-0">
+                <div className="w-20 h-20 rounded-full bg-gray-100 border-2 border-gray-200 overflow-hidden flex items-center justify-center">
+                  {f.fotoUrl ? <img src={f.fotoUrl} alt="Foto" className="w-full h-full object-cover"/> : <User size={32} className="text-gray-300"/>}
+                </div>
+                <label className="absolute -bottom-1 -right-1 bg-cyan-600 text-white rounded-full p-1.5 cursor-pointer hover:bg-cyan-700 shadow">
+                  <Camera size={13}/>
+                  <input type="file" accept="image/*" className="hidden" onChange={e=>uploadFotoTrabajador(e.target.files?.[0])}/>
+                </label>
+              </div>
+              <div>
+                <p className="text-xs font-black text-gray-700">Foto del trabajador</p>
+                <p className="text-[10px] text-gray-400">{subiendoFoto?'Subiendo...':'Clic en la cámara para subir o cambiar la foto.'}</p>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -600,14 +631,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <div className="flex items-center justify-between">
               <button onClick={()=>setTrabajadorVer(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a la lista</button>
               <div className="flex gap-2">
-                <button onClick={()=>setTrabajadorForm({...t})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit3 size={13}/> Editar</button>
+                <button onClick={()=>setTrabajadorForm({...initTrabajador(), ...t})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit size={13}/> Editar</button>
                 <button onClick={()=>eliminarTrabajador(t)} className="flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-red-100"><Trash2 size={13}/> Eliminar</button>
               </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <div className="flex items-center gap-4 mb-4">
-                <div className="w-14 h-14 rounded-full bg-cyan-100 flex items-center justify-center font-black text-cyan-600 text-lg flex-shrink-0">{(t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}</div>
+                <div className="w-14 h-14 rounded-full bg-cyan-100 overflow-hidden flex items-center justify-center font-black text-cyan-600 text-lg flex-shrink-0">
+                  {t.fotoUrl ? <img src={t.fotoUrl} alt={t.nombre} className="w-full h-full object-cover"/> : (t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
+                </div>
                 <div className="flex-1">
                   <p className="font-black text-lg text-gray-800">{t.nombre}</p>
                   <p className="text-xs text-gray-500">{t.cargo||'—'} · {nombreCentro(t.centroCostoId)} / {nombreDepto(t.departamentoId)}</p>
