@@ -24429,7 +24429,7 @@ function App() {
   // Solo tabs nativos del portal. Las vistas cross-portal viven DENTRO del módulo de Ventas.
   const NAV_PORTAL_TABS = {
     produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
-    administracion:      ['ventas','banco','procura','impuestos'],
+    administracion:      ['ventas','banco','procura','impuestos','rrhh'],
     rrhh:                ['rrhh'],
     finanzas:            ['costos_operativos','kpi','costos'],
     contabilidad:        [],
@@ -24682,7 +24682,7 @@ function App() {
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
-      administracion:      ['ventas','banco','procura','impuestos'],
+      administracion:      ['ventas','banco','procura','impuestos','rrhh'],
       rrhh:                ['rrhh'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
       contabilidad:        ['comprobantes_contables','plan_cuentas','mayor_analitico_cc','balance_comprobacion_cc','estado_resultados_cc','balance_general_cc','ajuste_inflacion_cc','activos_fijos_cc'],
