@@ -85,6 +85,194 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 };
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
+function RRHHApp({fbUser,onBack,settings,appUser}) {
+  const [centros,setCentros]=useState([]);
+  const [departamentos,setDepartamentos]=useState([]);
+  const [cuentasNomina,setCuentasNomina]=useState([]);
+  const [planCuentasRH,setPlanCuentasRH]=useState([]);
+  useEffect(()=>{
+    const s1=onSnapshot(getColRef('rrhh_centros_costo'),s=>setCentros(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s2=onSnapshot(getColRef('rrhh_departamentos'),s=>setDepartamentos(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s3=onSnapshot(getColRef('rrhh_cuentas_nomina'),s=>setCuentasNomina(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s4=onSnapshot(getColRef('planDeCuentas'),s=>setPlanCuentasRH(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{s1();s2();s3();s4();};
+  },[]);
+
+  const [centroSel,setCentroSel]=useState(null);
+  const [deptoSel,setDeptoSel]=useState(null);
+  const [nuevoCentro,setNuevoCentro]=useState('');
+  const [nuevoDepto,setNuevoDepto]=useState('');
+  const [busqCuenta,setBusqCuenta]=useState('');
+  const [nuevaLinea,setNuevaLinea]=useState({tipo:'asignacion',concepto:'',codigo:'',nombre:''});
+  const [busy,setBusy]=useState(false);
+
+  const deptosDelCentro = departamentos.filter(d=>d.centroCostoId===centroSel?.id);
+  const cuentasDelDepto = cuentasNomina.filter(c=>c.departamentoId===deptoSel?.id);
+  const asignaciones = cuentasDelDepto.filter(c=>c.tipo==='asignacion');
+  const deducciones = cuentasDelDepto.filter(c=>c.tipo==='deduccion');
+
+  const crearCentro = async () => {
+    if(!nuevoCentro.trim()) return;
+    setBusy(true);
+    try{ await addDoc(getColRef('rrhh_centros_costo'),{nombre:nuevoCentro.trim().toUpperCase(),createdAt:Date.now()}); setNuevoCentro(''); }
+    finally{ setBusy(false); }
+  };
+  const eliminarCentro = async (c) => {
+    const deps = departamentos.filter(d=>d.centroCostoId===c.id);
+    if(!window.confirm(`¿Eliminar "${c.nombre}"?${deps.length?`\n\nTiene ${deps.length} departamento(s) asociado(s) — también se eliminarán, junto con sus cuentas de nómina.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    const batch=writeBatch(db);
+    deps.forEach(d=>{
+      cuentasNomina.filter(cu=>cu.departamentoId===d.id).forEach(cu=>batch.delete(getDocRef('rrhh_cuentas_nomina',cu.id)));
+      batch.delete(getDocRef('rrhh_departamentos',d.id));
+    });
+    batch.delete(getDocRef('rrhh_centros_costo',c.id));
+    await batch.commit();
+    if(centroSel?.id===c.id){setCentroSel(null);setDeptoSel(null);}
+  };
+  const crearDepto = async () => {
+    if(!nuevoDepto.trim()||!centroSel) return;
+    setBusy(true);
+    try{ await addDoc(getColRef('rrhh_departamentos'),{centroCostoId:centroSel.id,nombre:nuevoDepto.trim().toUpperCase(),createdAt:Date.now()}); setNuevoDepto(''); }
+    finally{ setBusy(false); }
+  };
+  const eliminarDepto = async (d) => {
+    const cuentas = cuentasNomina.filter(c=>c.departamentoId===d.id);
+    if(!window.confirm(`¿Eliminar "${d.nombre}"?${cuentas.length?`\n\nTiene ${cuentas.length} cuenta(s) de nómina asociada(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    const batch=writeBatch(db);
+    cuentas.forEach(c=>batch.delete(getDocRef('rrhh_cuentas_nomina',c.id)));
+    batch.delete(getDocRef('rrhh_departamentos',d.id));
+    await batch.commit();
+    if(deptoSel?.id===d.id) setDeptoSel(null);
+  };
+  const asociarCuenta = async (cuentaContable) => {
+    if(!nuevaLinea.concepto.trim()||!deptoSel) return alert('Escribe el concepto (ej. Sueldo Básico, IVSS...)');
+    setBusy(true);
+    try{
+      await addDoc(getColRef('rrhh_cuentas_nomina'),{
+        departamentoId:deptoSel.id, tipo:nuevaLinea.tipo, concepto:nuevaLinea.concepto.trim(),
+        codigoCuenta:cuentaContable.codigo, nombreCuenta:cuentaContable.nombre, createdAt:Date.now()
+      });
+      setNuevaLinea({tipo:nuevaLinea.tipo,concepto:'',codigo:'',nombre:''}); setBusqCuenta('');
+    } finally { setBusy(false); }
+  };
+  const eliminarLinea = async (c) => {
+    if(!window.confirm(`¿Quitar "${c.concepto}" de este departamento?`)) return;
+    await deleteDoc(getDocRef('rrhh_cuentas_nomina',c.id));
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-gray-900 px-6 py-5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-gray-400 hover:text-white"><ArrowLeft size={20}/></button>
+          <div>
+            <h1 className="text-white font-black text-lg uppercase flex items-center gap-2"><Users size={20}/> Recursos Humanos</h1>
+            <p className="text-gray-400 text-xs">Configuración de nómina — centros de costo, departamentos y cuentas contables</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">1. Centro de Costo</h3>
+            <div className="space-y-1.5 mb-3">
+              {centros.length===0 && <p className="text-xs text-gray-400 text-center py-6">Sin centros de costo aún</p>}
+              {centros.map(c=>(
+                <div key={c.id} onClick={()=>{setCentroSel(c);setDeptoSel(null);}}
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer group ${centroSel?.id===c.id?'bg-cyan-600 text-white':'hover:bg-gray-50 text-gray-700'}`}>
+                  <span className="text-xs font-bold uppercase">{c.nombre}</span>
+                  <button onClick={e=>{e.stopPropagation();eliminarCentro(c);}} className={`opacity-0 group-hover:opacity-100 ${centroSel?.id===c.id?'text-cyan-200 hover:text-white':'text-red-400 hover:text-red-600'}`}><Trash2 size={13}/></button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input value={nuevoCentro} onChange={e=>setNuevoCentro(e.target.value)} placeholder="Ej: Planta, Administración..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+              <button onClick={crearCentro} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Departamento {centroSel?`(en ${centroSel.nombre})`:''}</h3>
+            {!centroSel ? <p className="text-xs text-gray-400 text-center py-10">Selecciona un centro de costo</p> : (
+              <>
+                <div className="space-y-1.5 mb-3">
+                  {deptosDelCentro.length===0 && <p className="text-xs text-gray-400 text-center py-6">Sin departamentos aún</p>}
+                  {deptosDelCentro.map(d=>(
+                    <div key={d.id} onClick={()=>setDeptoSel(d)}
+                      className={`flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer group ${deptoSel?.id===d.id?'bg-cyan-600 text-white':'hover:bg-gray-50 text-gray-700'}`}>
+                      <span className="text-xs font-bold uppercase">{d.nombre}</span>
+                      <button onClick={e=>{e.stopPropagation();eliminarDepto(d);}} className={`opacity-0 group-hover:opacity-100 ${deptoSel?.id===d.id?'text-cyan-200 hover:text-white':'text-red-400 hover:text-red-600'}`}><Trash2 size={13}/></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input value={nuevoDepto} onChange={e=>setNuevoDepto(e.target.value)} placeholder="Ej: Producción, Mantenimiento..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <button onClick={crearDepto} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. Cuentas de Nómina {deptoSel?`(${deptoSel.nombre})`:''}</h3>
+            {!deptoSel ? <p className="text-xs text-gray-400 text-center py-10">Selecciona un departamento</p> : (
+              <>
+                <p className="text-[9px] font-black text-emerald-600 uppercase mt-2 mb-1">Asignaciones</p>
+                <div className="space-y-1 mb-3">
+                  {asignaciones.length===0 && <p className="text-[10px] text-gray-400 py-2">Ninguna todavía</p>}
+                  {asignaciones.map(c=>(
+                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
+                      <span className="text-gray-700 font-bold">{c.concepto}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-emerald-600 font-black">{c.codigoCuenta}</span>
+                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[9px] font-black text-red-500 uppercase mb-1">Deducciones</p>
+                <div className="space-y-1 mb-3">
+                  {deducciones.length===0 && <p className="text-[10px] text-gray-400 py-2">Ninguna todavía</p>}
+                  {deducciones.map(c=>(
+                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
+                      <span className="text-gray-700 font-bold">{c.concepto}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-red-500 font-black">{c.codigoCuenta}</span>
+                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-gray-100 pt-3 space-y-2">
+                  <div className="flex gap-1">
+                    {['asignacion','deduccion'].map(t=>(
+                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':'Deducción'}</button>
+                    ))}
+                  </div>
+                  <input value={nuevaLinea.concepto} onChange={e=>setNuevaLinea(l=>({...l,concepto:e.target.value}))} placeholder="Concepto: Sueldo Básico, IVSS..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <input value={busqCuenta} onChange={e=>setBusqCuenta(e.target.value)} placeholder="Buscar cuenta contable a asociar..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  {busqCuenta && (
+                    <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto">
+                      {planCuentasRH.filter(c=>(c.codigo||'').includes(busqCuenta)||(c.nombre||'').toUpperCase().includes(busqCuenta.toUpperCase())).slice(0,15).map(c=>(
+                        <div key={c.id} onClick={()=>asociarCuenta(c)} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
+                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [sec,setSec]=useState('tabla');
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
@@ -23926,6 +24114,10 @@ function App() {
       },
       (hasPerm('impuestos')||appUser?.role==='Master') && { tab:'impuestos', icon:<BookOpen size={20}/>, title:'Módulo de Impuestos', color:'#8b5cf6',
         stats: ()=>({ s1:'ISLR, IVA, Retenciones, UT', s2:'Módulo Impuestos'}),
+        chart:null
+      },
+      (hasPerm('rrhh')||appUser?.role==='Master') && { tab:'rrhh', icon:<Users size={20}/>, title:'Recursos Humanos', color:'#0891b2',
+        stats: ()=>({ s1:'Nómina, centros de costo y departamentos', s2:'Módulo RRHH'}),
         chart:null
       },
     ].filter(Boolean);
@@ -54581,6 +54773,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                     {hasPerm('banco') && navInPortal('banco') && <button onClick={() => {clearAllReports(); setActiveTab('banco');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'banco' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Building2 size={14}/> Bancos</button>}
                     {(hasPerm('procura')||appUser?.role==='Master') && <button onClick={() => {clearAllReports(); setActiveTab('procura');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'procura' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><ShoppingCart size={14}/> Procura</button>}
                     {(hasPerm('impuestos')||appUser?.role==='Master') && <button onClick={() => {clearAllReports(); setActiveTab('impuestos');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'impuestos' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><BookOpen size={14}/> Impuestos</button>}
+                    {(hasPerm('rrhh')||appUser?.role==='Master') && <button onClick={() => {clearAllReports(); setActiveTab('rrhh');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'rrhh' ? 'bg-cyan-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Users size={14}/> RRHH</button>}
                     {hasPerm('produccion') && navInPortal('produccion') && <button onClick={() => {clearAllReports(); setActiveTab('produccion');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'produccion' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Factory size={14}/> Producción</button>}
                     {hasPerm('formulas') && navInPortal('formulas') && <button onClick={() => {clearAllReports(); setActiveTab('formulas');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'formulas' ? 'bg-purple-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Beaker size={14}/> Fórmulas</button>}
                     {hasPerm('inventario') && navInPortal('inventario') && <button onClick={() => {clearAllReports(); setActiveTab('inventario');}} className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 relative ${activeTab === 'inventario' ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}><Package size={14}/> Inventario{pendingRequisitions.length>0&&<span className="absolute -top-1 -right-1 bg-yellow-500 text-black text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">{pendingRequisitions.length}</span>}</button>}
@@ -56436,6 +56629,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
           {/* ── IMPUESTOS ── */}
            {activeTab === 'impuestos' && (hasPerm('impuestos')||appUser?.role==='Master') && <ImpuestosApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings} appUser={appUser}/>}
+           {activeTab === 'rrhh' && (hasPerm('rrhh')||appUser?.role==='Master') && <RRHHApp fbUser={fbUser} onBack={()=>setActiveTab('home')} settings={settings} appUser={appUser}/>}
            {/* ── REPORTES FINANCIEROS SUB-NAV ── */}
            {activeTab === 'costos' && (hasPerm('costos') || hasPerm('costos_reportes') || hasPerm('rep_finiquito') || appUser?.role==='Master') && (
              <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
