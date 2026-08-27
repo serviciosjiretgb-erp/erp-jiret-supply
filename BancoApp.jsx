@@ -8324,26 +8324,55 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const montoBs=form.moneda==='BS'?monto:monto*tasa;
         const tercero=(form.tipoTercero==='Cliente'?clientes2:provs2).find(x=>x.id===form.terceroId);
         const nombre=tercero?.nombre||form.titular;
-        await setDoc(getDocRef('caja_vales',id),{id,fecha:form.fecha,titular:nombre,tipoTercero:form.tipoTercero,terceroId:form.terceroId||'',concepto:form.concepto,moneda:form.moneda,monto,montoUSD,montoBs,tasa,estado:'Pendiente',historial:[],ts:serverTimestamp()});
+        await setDoc(getDocRef('caja_vales',id),{id,fecha:form.fecha,titular:nombre,tipoTercero:form.tipoTercero,terceroId:form.terceroId||'',concepto:form.concepto,moneda:form.moneda,monto,montoUSD,montoBs,tasa,estado:'Pendiente',montoAplicado:0,historial:[],ts:serverTimestamp()});
         setModal(false);setForm(initF());
       }finally{setBusy(false);}
     };
 
-    // Bajar de vale: pagar a proveedor, llevar a CxC o marcar cobrado
+    // Bajar de vale: pagar a proveedor, llevar a CxC o marcar cobrado — ahora admite bajas
+    // parciales: cada baja se suma a montoAplicado y se registra en el historial con su propio
+    // monto/fecha/concepto; el vale solo pasa a estado final cuando queda cubierto por completo.
     const [accionModal,setAccionModal]=useState(null);
-    const [accionForm,setAccionForm]=useState({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:''});
+    const [accionForm,setAccionForm]=useState({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:'',monto:''});
+    const [editModal,setEditModal]=useState(null);
+    const [detalleVale,setDetalleVale]=useState(null);
+    const montoRestante=(v)=>Number(v.monto||0)-Number(v.montoAplicado||0);
+    const abrirAccion=(v)=>{setAccionModal(v);setAccionForm({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:'',monto:String(montoRestante(v).toFixed(2))});};
     const ejecutarAccion=async()=>{
       if(!accionModal)return;
+      const restante=montoRestante(accionModal);
+      const montoBaja=Number(accionForm.monto);
+      if(!montoBaja||montoBaja<=0)return alert('Ingrese un monto válido para bajar');
+      if(montoBaja>restante+0.005)return alert(`El monto no puede ser mayor al restante: ${accionModal.moneda==='USD'?'$':'Bs.'}${bancoFmt(restante)}`);
       setBusy(true);
       try{
         const id=accionModal.id;
-        const histEntry={fecha:getTodayDate(),tipo:accionForm.tipo,concepto:accionForm.concepto,ctaId:accionForm.ctaId,ctaNom:accionForm.ctaNom};
-        const nuevoEstado=accionForm.tipo==='Cobrado'?'Cobrado':accionForm.tipo==='Pago a Proveedor'?'Aplicado a Proveedor':'Aplicado a CxC';
-        await import('firebase/firestore').then(()=>null); // ensure imported
+        const nuevoAplicado=Number(accionModal.montoAplicado||0)+montoBaja;
+        const esFinal=nuevoAplicado>=Number(accionModal.monto||0)-0.005;
+        const histEntry={fecha:getTodayDate(),tipo:accionForm.tipo,concepto:accionForm.concepto,ctaId:accionForm.ctaId,ctaNom:accionForm.ctaNom,monto:montoBaja};
+        const nuevoEstado=!esFinal?'Pendiente':(accionForm.tipo==='Cobrado'?'Cobrado':accionForm.tipo==='Pago a Proveedor'?'Aplicado a Proveedor':'Aplicado a CxC');
         const {updateDoc,arrayUnion}=await import('firebase/firestore');
-        await updateDoc(getDocRef('caja_vales',id),{estado:nuevoEstado,fechaCierre:getTodayDate(),historial:arrayUnion(histEntry)});
-        setAccionModal(null);setAccionForm({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:''});
+        await updateDoc(getDocRef('caja_vales',id),{estado:nuevoEstado,montoAplicado:nuevoAplicado,...(esFinal?{fechaCierre:getTodayDate()}:{}),historial:arrayUnion(histEntry)});
+        setAccionModal(null);setAccionForm({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:'',monto:''});
       }finally{setBusy(false);}
+    };
+    const guardarEdicion=async()=>{
+      if(!editModal)return;
+      if(!editModal.titular)return alert('Ingrese el nombre del titular');
+      if(!editModal.monto||Number(editModal.monto)<=0)return alert('Ingrese un monto válido');
+      setBusy(true);
+      try{
+        const monto=Number(editModal.monto);
+        const tasa=Number(editModal.tasa)||tasaActiva;
+        const montoUSD=editModal.moneda==='USD'?monto:monto/tasa;
+        const montoBs=editModal.moneda==='BS'?monto:monto*tasa;
+        await updateDoc(getDocRef('caja_vales',editModal.id),{fecha:editModal.fecha,titular:editModal.titular,concepto:editModal.concepto,moneda:editModal.moneda,monto,montoUSD,montoBs,tasa});
+        setEditModal(null);
+      }finally{setBusy(false);}
+    };
+    const eliminarVale=async(v)=>{
+      if(!window.confirm(`¿Eliminar el vale de ${v.titular} por ${v.moneda==='USD'?'$':'Bs.'}${bancoFmt(v.monto)}?\n\nEsta acción no se puede deshacer.`))return;
+      await deleteDoc(getDocRef('caja_vales',v.id));
     };
 
     return(
@@ -8362,38 +8391,48 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           {pendientes.length===0
             ?<BEmptyState icon={FileText} title="Sin vales pendientes" desc="Registre los vales cuando entregue efectivo a un tercero"/>
             :<div className="divide-y divide-slate-100">
-              {pendientes.map(v=>(
-                <div key={v.id} className="flex items-center gap-4 py-3 px-2 hover:bg-amber-50/40 rounded-xl">
+              {pendientes.map(v=>{
+                const restante=montoRestante(v);
+                const tieneParcial=Number(v.montoAplicado||0)>0;
+                return (
+                <div key={v.id} className="flex items-center gap-3 py-3 px-2 hover:bg-amber-50/40 rounded-xl">
                   <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0"><FileText size={16} className="text-amber-600"/></div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
                       <p className="font-black text-slate-900 text-xs uppercase">{v.titular}</p>
                       <BBadge v="gold">Vale</BBadge>
+                      {tieneParcial && <BBadge v="blue">Parcial</BBadge>}
                     </div>
                     <p className="text-[10px] text-slate-500">{v.concepto} · {bancoDd(v.fecha)}</p>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <p className="font-mono font-black text-amber-600">{v.moneda==='USD'?'$':'Bs.'}{bancoFmt(v.monto)}</p>
-                    <p className="text-[9px] text-slate-400">{v.moneda==='USD'?`Bs.${bancoFmt(v.montoBs)}`:`$${bancoFmt(v.montoUSD)}`}</p>
+                    <p className="font-mono font-black text-amber-600">{v.moneda==='USD'?'$':'Bs.'}{bancoFmt(restante)}</p>
+                    <p className="text-[9px] text-slate-400">{tieneParcial?`de ${v.moneda==='USD'?'$':'Bs.'}${bancoFmt(v.monto)} original`:(v.moneda==='USD'?`Bs.${bancoFmt(v.montoBs)}`:`$${bancoFmt(v.montoUSD)}`)}</p>
                   </div>
-                  <button onClick={()=>setAccionModal(v)}
-                    className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-slate-900 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-500 transition-colors">
-                    <ArrowRight size={11}/> Bajar Vale
-                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {(v.historial||[]).length>0 && <button onClick={()=>setDetalleVale(v)} title="Ver detalle de bajas" className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"><Search size={13}/></button>}
+                    <button onClick={()=>setEditModal({...v,monto:String(v.monto)})} title="Editar vale" className="p-2 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Edit size={13}/></button>
+                    <button onClick={()=>eliminarVale(v)} title="Eliminar vale" className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={13}/></button>
+                    <button onClick={()=>abrirAccion(v)}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 text-white rounded-xl text-[9px] font-black uppercase hover:bg-orange-500 transition-colors">
+                      <ArrowRight size={11}/> Bajar Vale
+                    </button>
+                  </div>
                 </div>
-              ))}
+              );})}
             </div>}
         </BCard>
 
         {/* Historial de vales aplicados */}
         {cobrados.length>0&&<BCard title={`Vales Aplicados (${cobrados.length})`} subtitle="Historial">
-          <table className="w-full text-[11px]"><thead><tr><BTh>Fecha</BTh><BTh>Titular</BTh><BTh>Concepto</BTh><BTh>Moneda</BTh><BTh right>Monto</BTh><BTh>Estado</BTh></tr></thead>
+          <table className="w-full text-[11px]"><thead><tr><BTh>Fecha</BTh><BTh>Titular</BTh><BTh>Concepto</BTh><BTh>Moneda</BTh><BTh right>Monto</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
             <tbody>{cobrados.map(v=><tr key={v.id} className="hover:bg-slate-50">
               <BTd>{bancoDd(v.fecha)}</BTd><BTd className="font-black uppercase">{v.titular}</BTd>
               <BTd className="max-w-[150px] truncate">{v.concepto}</BTd>
               <BTd><BPill usd={v.moneda==='USD'}>{v.moneda}</BPill></BTd>
               <BTd right mono className="font-black">{v.moneda==='USD'?'$':'Bs.'}{bancoFmt(v.monto)}</BTd>
               <BTd><BBadge v="green">{v.estado}</BBadge></BTd>
+              <BTd>{(v.historial||[]).length>0 && <button onClick={()=>setDetalleVale(v)} title="Ver detalle de bajas" className="p-1 text-slate-400 hover:text-slate-700"><Search size={13}/></button>}</BTd>
             </tr>)}</tbody>
           </table>
         </BCard>}
@@ -8440,8 +8479,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           <div className="space-y-4">
             <div className="bg-slate-50 rounded-xl p-4 flex items-center gap-4 border border-slate-200">
               <div><p className="font-black text-slate-900 uppercase">{accionModal.titular}</p><p className="text-[10px] text-slate-500">{accionModal.concepto} · {bancoDd(accionModal.fecha)}</p></div>
-              <div className="ml-auto text-right"><p className="font-mono font-black text-amber-600 text-lg">{accionModal.moneda==='USD'?'$':'Bs.'}{bancoFmt(accionModal.monto)}</p></div>
+              <div className="ml-auto text-right">
+                <p className="text-[9px] text-slate-400 uppercase font-black">Restante</p>
+                <p className="font-mono font-black text-amber-600 text-lg">{accionModal.moneda==='USD'?'$':'Bs.'}{bancoFmt(montoRestante(accionModal))}</p>
+                {Number(accionModal.montoAplicado||0)>0 && <p className="text-[9px] text-slate-400">de {accionModal.moneda==='USD'?'$':'Bs.'}{bancoFmt(accionModal.monto)} original</p>}
+              </div>
             </div>
+            <BFG label={`Monto a bajar (${accionModal.moneda}) — puede ser parcial`}>
+              <input type="number" step="0.01" className={`${inp} font-black text-lg`} value={accionForm.monto} onChange={e=>setAccionForm({...accionForm,monto:e.target.value})}/>
+            </BFG>
             <BFG label="Acción a realizar">
               <div className="space-y-2">
                 {[{v:'Cobrado',label:'Cobrado — Ingresó físicamente a caja',color:'#10b981'},
@@ -8464,6 +8510,49 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 {[...contCuentas2].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
               </select>
             </BFG>}
+          </div>
+        </BModal>}
+
+        {/* BModal Editar Vale */}
+        {editModal&&<BModal open={!!editModal} onClose={()=>setEditModal(null)} title={`Editar Vale — ${editModal.titular}`} wide
+          footer={<><BBo onClick={()=>setEditModal(null)}>Cancelar</BBo><BBg onClick={guardarEdicion} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <BFG label="Fecha"><input type="date" className={inp} value={editModal.fecha} onChange={e=>setEditModal({...editModal,fecha:e.target.value})}/></BFG>
+              <BFG label="Nombre del Titular"><input className={inp} value={editModal.titular} onChange={e=>setEditModal({...editModal,titular:e.target.value.toUpperCase()})}/></BFG>
+              <BFG label="Concepto / Descripción" full><input className={inp} value={editModal.concepto} onChange={e=>setEditModal({...editModal,concepto:e.target.value})}/></BFG>
+              <BFG label="Moneda">
+                <div className="flex gap-1">{['USD','BS'].map(m=>(
+                  <button key={m} onClick={()=>setEditModal({...editModal,moneda:m})}
+                    className={`flex-1 py-2 rounded-lg text-[9px] font-black uppercase border transition-all ${editModal.moneda===m?'bg-slate-900 text-white':'bg-white text-slate-500 border-slate-200'}`}>{m}</button>
+                ))}</div>
+              </BFG>
+              <BFG label={`Monto (${editModal.moneda})`}><input type="number" step="0.01" className={`${inp} font-black text-lg`} value={editModal.monto} onChange={e=>setEditModal({...editModal,monto:e.target.value})}/></BFG>
+              <BFG label="Tasa de Cambio" full><input type="number" step="0.01" className={inp} value={editModal.tasa} onChange={e=>setEditModal({...editModal,tasa:e.target.value})}/></BFG>
+            </div>
+            {Number(editModal.montoAplicado||0)>0 && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠️ Este vale ya tiene {editModal.moneda==='USD'?'$':'Bs.'}{bancoFmt(editModal.montoAplicado)} aplicado en bajas parciales. Editar el monto total no ajusta esas bajas ya registradas — revísalo si cambias el monto.</div>}
+          </div>
+        </BModal>}
+
+        {/* BModal Detalle de Vale (historial de bajas) */}
+        {detalleVale&&<BModal open={!!detalleVale} onClose={()=>setDetalleVale(null)} title={`Detalle — ${detalleVale.titular}`} wide
+          footer={<BBo onClick={()=>setDetalleVale(null)}>Cerrar</BBo>}>
+          <div className="space-y-4">
+            <div className="bg-slate-50 rounded-xl p-4 grid grid-cols-3 gap-3 border border-slate-200 text-center">
+              <div><p className="text-[9px] text-slate-400 uppercase font-black">Monto Original</p><p className="font-mono font-black">{detalleVale.moneda==='USD'?'$':'Bs.'}{bancoFmt(detalleVale.monto)}</p></div>
+              <div><p className="text-[9px] text-slate-400 uppercase font-black">Aplicado</p><p className="font-mono font-black text-emerald-600">{detalleVale.moneda==='USD'?'$':'Bs.'}{bancoFmt(detalleVale.montoAplicado||0)}</p></div>
+              <div><p className="text-[9px] text-slate-400 uppercase font-black">Restante</p><p className="font-mono font-black text-amber-600">{detalleVale.moneda==='USD'?'$':'Bs.'}{bancoFmt(montoRestante(detalleVale))}</p></div>
+            </div>
+            <table className="w-full text-[11px]"><thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Concepto</BTh><BTh right>Monto</BTh></tr></thead>
+              <tbody>{(detalleVale.historial||[]).map((h,i)=>(
+                <tr key={i} className="hover:bg-slate-50">
+                  <BTd>{bancoDd(h.fecha)}</BTd>
+                  <BTd><BBadge v="blue">{h.tipo}</BBadge></BTd>
+                  <BTd className="max-w-[200px] truncate">{h.concepto||'—'}</BTd>
+                  <BTd right mono className="font-black text-emerald-600">{detalleVale.moneda==='USD'?'$':'Bs.'}{bancoFmt(h.monto||0)}</BTd>
+                </tr>
+              ))}</tbody>
+            </table>
           </div>
         </BModal>}
       </div>
