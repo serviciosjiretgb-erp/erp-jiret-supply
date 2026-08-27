@@ -253,6 +253,50 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const nombreCentro = (id) => centros.find(c=>c.id===id)?.nombre||'—';
   const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
   const [subiendoFoto,setSubiendoFoto]=useState(false);
+  const exportarFichaPDF = (t) => {
+    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
+    const dir = settings?.empresaDireccion || 'Av. Circunvalación Nro 02, C.C. El Dividivi, Local G-9, Nivel PB, Sector El Trébol, Maracaibo - Zulia';
+    const esc = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const box = (titulo, filas) => `<div class="caja"><p class="caja-t">${esc(titulo)}</p>${filas.length===0?'<p class="vacio">Ninguna registrada</p>':filas.map(([l,v])=>`<div class="fila"><span class="lbl">${esc(l)}</span><span class="val">${esc(v||'—')}</span></div>`).join('')}</div>`;
+    const chip = (label, ok) => `<span class="chip ${ok?'chip-ok':'chip-no'}">${esc(label)}</span>`;
+    const iniciales = (t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;}.membrete h1{font-size:18px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.membrete .tit{float:right;text-align:right;font-size:13px;font-weight:900;text-transform:uppercase;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}.header{display:flex;align-items:center;gap:14px;margin-bottom:16px;}.foto{width:70px;height:70px;border-radius:50%;background:#f3f4f6;border:2px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-weight:900;color:#9ca3af;font-size:20px;overflow:hidden;}.foto img{width:100%;height:100%;object-fit:cover;}.nombre{font-size:18px;font-weight:900;}.cargo{font-size:11px;color:#6b7280;margin-top:2px;}.estado{margin-top:4px;display:inline-block;font-size:10px;font-weight:900;text-transform:uppercase;padding:3px 12px;border-radius:12px;}.estado-activo{background:#d1fae5;color:#059669;}.estado-egresado{background:#fee2e2;color:#dc2626;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}.caja{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:12px;}.caja-t{font-size:10px;font-weight:900;color:#ea580c;text-transform:uppercase;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid #e5e7eb;}.fila{display:flex;justify-content:space-between;font-size:11px;padding:2px 0;}.lbl{color:#6b7280;}.val{font-weight:700;}.vacio{font-size:10px;color:#9ca3af;}.chip{display:inline-block;font-size:9px;font-weight:900;padding:3px 9px;border-radius:6px;margin:2px 4px 2px 0;}.chip-ok{background:#d1fae5;color:#059669;}.chip-no{background:#fff;border:1px solid #e5e7eb;color:#9ca3af;}.egreso{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 12px;}.egreso .caja-t{color:#dc2626;border-color:#fca5a5;}@media print{@page{margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const vacaciones = Number(t.vacacionesAcumuladas||0)-Number(t.vacacionesDisfrutadas||0);
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Ficha - ${esc(t.nombre)}</title><style>${css}</style></head><body><div class="wrap">
+      <div class="membrete" style="overflow:auto"><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)}</p><p>${esc(dir)}</p><div class="tit">FICHA DE TRABAJADOR</div></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        <div class="header">
+          <div class="foto">${t.fotoUrl?`<img src="${esc(t.fotoUrl)}"/>`:iniciales}</div>
+          <div><p class="nombre">${esc(t.nombre)}</p><p class="cargo">${esc(t.cargo||'—')} · ${esc(nombreCentro(t.centroCostoId))} / ${esc(nombreDepto(t.departamentoId))}</p>
+          <span class="estado ${t.estado==='Egresado'?'estado-egresado':'estado-activo'}">${esc(t.estado)}</span></div>
+        </div>
+        <div class="grid">
+          ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
+          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
+          ${box('Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]])}
+          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>[`${cg.parentesco}${cg.edad?' ('+cg.edad+' años)':''}`,cg.nombre]))}
+          ${box('Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]])}
+          ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
+        </div>
+        <div class="grid3">
+          ${box('Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]])}
+          ${t.vehiculoAsignado?box('Vehículo Asignado',[['Marca/Modelo',`${t.vehiculoMarca||''} ${t.vehiculoModelo||''}`],['Año',t.vehiculoAnio],['Color',t.vehiculoColor]]):box('Vehículo Asignado',[])}
+          ${box('Vacaciones',[['Acumulados',t.vacacionesAcumuladas||0],['Disfrutados',t.vacacionesDisfrutadas||0],['Pendientes',vacaciones]])}
+        </div>
+        <div class="grid3">
+          ${box('Hist. de Aumentos',(t.historialAumentos||[]).map(a=>[contDd(a.fecha),`$${formatNum(a.salarioAnterior)} → $${formatNum(a.salarioNuevo)}`]))}
+          ${box('Evaluaciones (Mensual)',(t.evaluaciones||[]).slice(-4).map(e=>[e.mes,e.resultado]))}
+          ${box('Amonestaciones',(t.amonestaciones||[]).map(a=>[contDd(a.fecha),`${a.tipo} · ${a.motivo}`]))}
+        </div>
+        <div class="caja"><p class="caja-t">Documentos</p>${chip('Cédula',t.documentoCedula)}${chip('Contrato firmado',t.documentoContrato)}${chip('Currículum',t.documentoCV)}${chip('Certificados',t.documentoCertificados)}</div>
+        ${t.estado==='Egresado'?`<div class="egreso"><p class="caja-t">Datos de Egreso</p><div class="fila"><span class="lbl">Fecha de egreso</span><span class="val">${esc(contDd(t.fechaEgreso))}</span></div><div class="fila"><span class="lbl">Motivo</span><span class="val">${esc(t.motivoEgreso)}</span></div></div>`:''}
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+  };
   const uploadFotoTrabajador = async (file) => {
     if(!file) return;
     setSubiendoFoto(true);
@@ -631,6 +675,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <div className="flex items-center justify-between">
               <button onClick={()=>setTrabajadorVer(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a la lista</button>
               <div className="flex gap-2">
+                <button onClick={()=>exportarFichaPDF(t)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100"><FileText size={13}/> PDF</button>
                 <button onClick={()=>setTrabajadorForm({...initTrabajador(), ...t})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit size={13}/> Editar</button>
                 <button onClick={()=>eliminarTrabajador(t)} className="flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-red-100"><Trash2 size={13}/> Eliminar</button>
               </div>
@@ -12685,6 +12730,7 @@ const SYSTEM_MODULES = [
 const SYSTEM_PORTALS = [
   { id:'produccion',     title:'PRODUCCIÓN',     desc:'Planta, fórmulas, inventario y simulador de OP', color:'#f97316' },
   { id:'administracion', title:'ADMINISTRACIÓN', desc:'Ventas, facturación y clientes',                  color:'#3b82f6' },
+  { id:'rrhh',           title:'RRHH',           desc:'Nómina, centros de costo y fichas de trabajadores', color:'#0891b2' },
   { id:'finanzas',       title:'FINANZAS',       desc:'Costos, reportes financieros y KPI gerencial',   color:'#22c55e' },
   { id:'contabilidad',   title:'CONTABILIDAD',   desc:'Balance general, mayor analítico y activo fijo', color:'#06b6d4' },
   { id:'resena_portal',  title:'RESEÑA',          desc:'Reseña institucional, brochure y catálogo digital', color:'#E8541A' },
@@ -24384,6 +24430,7 @@ function App() {
   const NAV_PORTAL_TABS = {
     produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
     administracion:      ['ventas','banco','procura','impuestos'],
+    rrhh:                ['rrhh'],
     finanzas:            ['costos_operativos','kpi','costos'],
     contabilidad:        [],
     resena_portal:       ['resena'],
@@ -24635,7 +24682,8 @@ function App() {
     // módulo sigue intacto — solo se controla su visibilidad en el home.
     const PORTAL_TABS = {
       produccion:          ['produccion','formulas','inventario','simulador','costos_operativos','kpi'],
-      administracion:      ['ventas','banco','procura','impuestos','rrhh'],
+      administracion:      ['ventas','banco','procura','impuestos'],
+      rrhh:                ['rrhh'],
       finanzas:            ['costos','reciprocidad_bancaria','estados_financieros','inversiones','activos_fijos'],
       contabilidad:        ['comprobantes_contables','plan_cuentas','mayor_analitico_cc','balance_comprobacion_cc','estado_resultados_cc','balance_general_cc','ajuste_inflacion_cc','activos_fijos_cc'],
       resena_portal:       ['resena'],
