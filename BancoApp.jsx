@@ -3267,7 +3267,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       aplicaComision:false,tasaDestino:'',comisionCtaId:'',
       origenIngreso:'Venta',motivoEgreso:'Pago Proveedor',
       concepto:'',referencia:'',tasa:String(tasaActiva),montoNativo:'',
-      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',
+      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',esAjusteCxP:false,
       cerrarCxC:false,facturaId:'',
       ctaContraId:'',ctaContraNombre:'',cuentaAjusteId:'',
       lineasContra:[{ctaId:'',ctaNom:'',debeBs:'',haberBs:'',debeUSD:'',haberUSD:''}],
@@ -3461,7 +3461,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           concepto:form.concepto,referencia:form.referencia,
           tasa,montoNativo:mNat,montoBs,montoUSD,
           saldoAnterior:Number(cuenta.saldo),saldoResultante:nuevoSaldo,
-          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,
+          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP,
           terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
           facturaId:factura?.id||'',facturaNumero:factura?.numero||'',
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
@@ -3589,7 +3589,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           origenIngreso:form.origenIngreso,motivoEgreso:form.motivoEgreso,
           concepto:form.concepto,referencia:form.referencia,
           tasa,montoNativo:mNat,montoBs,montoUSD,saldoResultante:nuevoSaldo,
-          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,
+          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP,
           terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
@@ -3895,7 +3895,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
         tasa:String(m.tasa||tasaActiva),montoNativo:String(m.montoNativo||''),
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||false,
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||'',
         cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId});
     };
@@ -4219,6 +4219,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       </select>
                     </BFG>
                   </div>}
+                  {form.aplicaTercero&&<label className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 cursor-pointer">
+                    <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked})}/>
+                    <span className="text-[11px] text-amber-800"><b>Es un ajuste a {form.tipoTercero==='Proveedor'?'Cuentas por Pagar':'Cuentas por Cobrar'}</b> — marca esto si el movimiento NO es un pago de factura ni un anticipo formal (ej. reintegro de retención, nota de ajuste). Aparecerá como línea aparte en el Estado de Cuenta de este tercero.</span>
+                  </label>}
                 </div>
               </div>
             ) : (
@@ -5955,7 +5959,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       monedaOp:'BS',montoOp:'',
       tasaDestino:'',comisionCtaId:'',
       concepto:'',referencia:'',tasa:String(tasaActiva),montoNativo:'',
-      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',
+      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',esAjusteCxP:false,
       cerrarCxC:false,facturaId:'',
       cuentaAjusteId:'',
       lineasContra:[{ctaId:'',ctaNom:'',debeBs:'',haberBs:'',debeUSD:'',haberUSD:''}],
@@ -6270,7 +6274,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           id, fecha:form.fecha, tipo: esTransferencia?'Egreso':form.tipo, cajaId:caja.id, cajaNombre:caja.nombre, moneda:caja.moneda,
           concepto:form.concepto, referencia:form.referencia,
           tasa, monto:mNat, montoBs, montoUSD,
-          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero,
+          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP,
           terceroId:tercero?.id||'', terceroNombre:tercero?.nombre||'',
           facturaId:factura?.id||'', facturaNumero:factura?.numero||'',
           asientoContableId:asientoId, estatus:'No Conciliado', ts:serverTimestamp()
@@ -6385,7 +6389,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setCajaEdit(true);
       setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',
         motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||false,
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
     };
 
@@ -6410,7 +6414,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           fecha:form.fecha, tipo:form.tipo, moneda:form.moneda, concepto:form.concepto, referencia:form.referencia,
           motivoEgreso:form.motivoEgreso,
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
-          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero,
+          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP,
           terceroId:terceroEdit?.id||'', terceroNombre:terceroEdit?.nombre||'',
           ctaContraId:form.ctaContraId, ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaCajaEdit:ctaContraEdit,
@@ -6949,6 +6953,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     </>)}
                   </div>
                 </BFG>
+                {form.aplicaTercero&&<label className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked})}/>
+                  <span className="text-[11px] text-amber-800"><b>Es un ajuste a {form.tipoTercero==='Proveedor'?'Cuentas por Pagar':'Cuentas por Cobrar'}</b> — marca esto si el movimiento NO es un pago de factura ni un anticipo formal. Aparecerá como línea aparte en el Estado de Cuenta de este tercero.</span>
+                </label>}
               </div>
               );
             })():(
