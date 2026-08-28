@@ -88,23 +88,62 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales'
   const [parafiscalSel,setParafiscalSel]=useState('ivss'); // 'ivss' | 'rpe' | 'faov' | 'inces'
+  const [busqCuentaParafiscal,setBusqCuentaParafiscal]=useState('');
   const [centros,setCentros]=useState([]);
   const [departamentos,setDepartamentos]=useState([]);
   const [cuentasNomina,setCuentasNomina]=useState([]);
   const [planCuentasRH,setPlanCuentasRH]=useState([]);
+  const [conceptos,setConceptos]=useState([]);
+  const [conceptoSelCod,setConceptoSelCod]=useState(null);
+  const [conceptoForm,setConceptoForm]=useState(null);
+  const [esNuevoConcepto,setEsNuevoConcepto]=useState(false);
+  const [busqConcepto,setBusqConcepto]=useState('');
+  const [filtroTipoConcepto,setFiltroTipoConcepto]=useState('');
+  const [busqCuentaConcepto,setBusqCuentaConcepto]=useState({});
+  const [busySeed,setBusySeed]=useState(false);
+  const [parametrosFormula,setParametrosFormula]=useState([]);
+  const [mostrarParametros,setMostrarParametros]=useState(false);
+  const [nuevoParametro,setNuevoParametro]=useState({codigo:'',valor:'',nota:''});
   const [trabajadores,setTrabajadores]=useState([]);
   const [configParafiscal,setConfigParafiscal]=useState({
     salarioMinimo: 130,
-    ivss:{pctTrabajador:4, riesgo:'medio', pctPatronalMin:9, pctPatronalMedio:10, pctPatronalMax:11, topeMultiplo:5, cuentaPasivo:'', nombrePasivo:''},
-    rpe:{pctTrabajador:0.5, pctPatronal:2, topeMultiplo:10, cuentaPasivo:'', nombrePasivo:''},
-    faov:{pctTrabajador:1, pctPatronal:2, cuentaPasivo:'', nombrePasivo:''},
-    inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, cuentaPasivo:'', nombrePasivo:''},
+    ivss:{pctTrabajador:4, riesgo:'medio', pctPatronalMin:9, pctPatronalMedio:10, pctPatronalMax:11, topeMultiplo:5, codigoPasivo:'', nombrePasivo:''},
+    rpe:{pctTrabajador:0.5, pctPatronal:2, topeMultiplo:10, codigoPasivo:'', nombrePasivo:''},
+    faov:{pctTrabajador:1, pctPatronal:2, codigoPasivo:'', nombrePasivo:''},
+    inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, codigoPasivo:'', nombrePasivo:''},
   });
   const RIESGO_PCT = {minimo:9, medio:10, maximo:11};
   const guardarConfigParafiscal = async () => {
     try{ await setDoc(getDocRef('rrhh_config','parafiscal'),configParafiscal); alert('Configuración guardada.'); }
     catch(e){ alert('Error: '+e.message); }
   };
+  const BuscadorCuentaPasivo = ({cfg, set}) => (
+    <div>
+      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
+      {cfg.codigoPasivo ? (
+        <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-2">
+          <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{cfg.codigoPasivo}</span>{cfg.nombrePasivo}</span>
+          <button onClick={()=>set({codigoPasivo:'',nombrePasivo:''})} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+        </div>
+      ) : (
+        <>
+          <input value={busqCuentaParafiscal} onChange={e=>setBusqCuentaParafiscal(e.target.value)} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+          {busqCuentaParafiscal && (
+            <div className="border-2 border-gray-100 rounded-xl max-h-36 overflow-y-auto mt-1.5">
+              {planCuentasRH.filter(c=>(c.codigo||'').includes(busqCuentaParafiscal)||(c.nombre||'').toUpperCase().includes(busqCuentaParafiscal.toUpperCase())).slice(0,15).map(c=>(
+                <div key={c.id} onClick={()=>{set({codigoPasivo:c.codigo,nombrePasivo:c.nombre});setBusqCuentaParafiscal('');}} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
+                  <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
+                </div>
+              ))}
+              {planCuentasRH.filter(c=>(c.codigo||'').includes(busqCuentaParafiscal)||(c.nombre||'').toUpperCase().includes(busqCuentaParafiscal.toUpperCase())).length===0 && (
+                <div className="px-3 py-3 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
   const [nominas,setNominas]=useState([]);
   const [nominaDetalles,setNominaDetalles]=useState([]);
   useEffect(()=>{
@@ -113,6 +152,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s3=onSnapshot(getColRef('rrhh_cuentas_nomina'),s=>setCuentasNomina(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s4=onSnapshot(getColRef('planDeCuentas'),s=>setPlanCuentasRH(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s5=onSnapshot(getColRef('rrhh_trabajadores'),s=>setTrabajadores(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s9=onSnapshot(getColRef('rrhh_conceptos'),s=>setConceptos(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s10=onSnapshot(getColRef('rrhh_parametros_formula'),s=>setParametrosFormula(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{
       if(!d.exists()) return;
       const cargado = d.data();
@@ -126,7 +167,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();};
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -142,6 +183,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     deduccion: ['IVSS (Seguro Social)','RPE / Paro Forzoso','FAOV (Ley de Vivienda)','ISLR','INCES','Préstamo / Anticipo','Otro (escribir)'],
     patronal: ['Cargas Sociales Patronales (IVSS+RPE+FAOV)'],
   };
+
+  const TIPOS_CONCEPTO = {
+    A:{label:'Asignación', badge:'bg-emerald-100 text-emerald-700'},
+    D:{label:'Deducción', badge:'bg-red-100 text-red-700'},
+    P:{label:'Patronal', badge:'bg-amber-100 text-amber-700'},
+    L:{label:'Prestaciones', badge:'bg-violet-100 text-violet-700'},
+    V:{label:'Vacaciones', badge:'bg-blue-100 text-blue-700'},
+    R:{label:'Resultado', badge:'bg-gray-200 text-gray-700'},
+  };
+  const CATALOGO_CONCEPTOS_ESTANDAR = [{"codigo":"00001","nombre":"SALARIO Diario","tipo":"A","formula":"","formato":"{ CE00003 } DIAS TRABAJADOS x { CE00001/30 }","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00004","nombre":"DIAS PENDIENTES","tipo":"A","formula":"","formato":"{ CE00016 } DIAS PENDIENTES x { CE00001/30 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00005","nombre":"HORAS EXTRAS DIURNAS","tipo":"A","formula":"","formato":"{( RF03 * CE00004 )} HORA(S) EXTRAS DIURNAS x { (((CE00001/30) /8)*1,5)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00006","nombre":"HORAS EXTRAS NOCTURNAS","tipo":"A","formula":"","formato":"{( RF03 * CE00005 )} HORA(S) EXTRAS NOCTURNAS x { (((CE00001/30)/8)*1,8)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00007","nombre":"BONO NOCTURNO","tipo":"A","formula":"","formato":"{ CE00012 } HORAS DE BONO NOCTURNO x { ((((CE00001 /30)/8)*30)/100)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00008","nombre":"DESCANSO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00013 } DIA DESCANSO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00009","nombre":"DIA FERIADO NO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00014 } DIA FERIADO NO TRABAJADO x { CE00001/30 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00010","nombre":"DIA FERIADO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00015 }  DIA FERIADO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00011","nombre":"CESTA TICKET SOCIALISTA PARA LOS TRABAJADORES/(DORAS)","tipo":"A","formula":"","formato":"?{ (CE00033-CE00055-CE00056) } CESTA TICKET SOCIALISTA PARA LOS TRABAJADORES/(DORAS) x {","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00012","nombre":"PERMISO REMUNERADO","tipo":"A","formula":"","formato":"{CE00071} DIAS DE PERMISO REMUNERADO x {(CE00001/30)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00013","nombre":"SUSPENSION REMUNERADA","tipo":"A","formula":"","formato":"{ CE00089} SUSPENSION REMUNERADA","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00015","nombre":"DIAS DE REPOSO POST-NATAL","tipo":"A","formula":"","formato":"{ CE00064 } DIAS DE REPOSO POST- NATAL  x { ((CE00001 /30)*(33,33/100))}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00016","nombre":"SUSPENSION IVSS 33.33%","tipo":"A","formula":"","formato":"{CE00017}¨DIAS DE SUSPENSION IVSS 33.33% x {((CE00001 /30)*33,33/100)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00017","nombre":"COMPENSATORIO DISFRUTADO","tipo":"A","formula":"","formato":"{ CE00038 } DIAS DE COMPENSATORIO x { (CE00001 /30)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00018","nombre":"PERMISO POR PATERNIDAD","tipo":"A","formula":"","formato":"{ CE00050 } DIAS DE PERMISO POR PATERNIDAD x { (CE00001 /30)}","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00020","nombre":"DIA DE DESCANSO","tipo":"A","formula":"","formato":"{ CE00009 } DIAS DE DESCANSO x { (CE00001 /30)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00022","nombre":"BONIFICACION POR VIAJE","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00024","nombre":"DOMINGO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00065 } DOMINGOS TRABAJADOS x {CE00001/30*0,5}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00026","nombre":"CESTA TICKET","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01000","nombre":"REINTEGRO HCM","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01001","nombre":"DIFERENCIA DE SUELDO","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01VAT","nombre":"TOTAL VACACIONES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"02SUB","nombre":"SUBSIDIO OTORGADO POR EL EJECUTIVO NACIONAL","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20000","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20010","nombre":"REGIMEN PRESTACIONAL DE EMPLEO (PARO FORZOSO)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20030","nombre":"REGIMEN PRESTACIONAL VIVIENDA Y HABITAD (BANAVIH)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20031","nombre":"RETENCION DE I.S.L.R","tipo":"D","formula":"","formato":"IMPUESTO SOBRE LA RENTA x {CE00026} %","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20033","nombre":"DIAS DE AUSENCIA INJUSTIFICADAS","tipo":"D","formula":"","formato":"{ CE00056 } DIAS DE AUSENCIA INJUSTIFICADAS x { (CE00001/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20042","nombre":"CARTON DE HUEVOS","tipo":"D","formula":"","formato":"{ CE00040 } CARTONES DE HUEVOS x { CE00039 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"22000","nombre":"BOLSA ALIMENTOS","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"22001","nombre":"?Otras Deducciones","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24000","nombre":"POLIZA HCM","tipo":"D","formula":"","formato":"{ CE00086 } POLIZA HCM x { CE00088 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24001","nombre":"POLIZA HCM","tipo":"V","formula":"","formato":"{ CE00093 } POLIZA HCM x { CE00088 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24002","nombre":"DIFERENCIAL DE HCM","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24003","nombre":"DESCUENTO POLIZA HCM 9","tipo":"D","formula":"","formato":"{ CE00115 } POLIZA HCM x { CE00088 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24004","nombre":"DESCUENTO POLIZA HCM","tipo":"D","formula":"","formato":"{ CE00116 } POLIZA HCM x { CE00088 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"26587","nombre":"DIFERENCIA DE IVSS","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30000","nombre":"VACACIONES ART. 190","tipo":"V","formula":"","formato":"{ CE00002 } VACACIONES ART. 190 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30001","nombre":"DIAS ADICIONALES POR VACACIONES ART. 190","tipo":"V","formula":"","formato":"{ N00001 } DIAS ADICIONALES POR VACACIONES ART. 190 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30002","nombre":"RETENCION DE I.S.L.R","tipo":"V","formula":"","formato":"IMPUESTO SOBRE LA RENTA x {CE00026} %","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31000","nombre":"BONO VACACIONAL ART.192","tipo":"V","formula":"","formato":"{ CE00002 } DIAS DE BONO VACACIONAL ART.192 x {  ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31001","nombre":"DIAS ADICIONALES POR BONO VACACIONAL ART. 192","tipo":"V","formula":"","formato":"{N00021 }DIAS ADICIONALES POR BONO VACACIONAL ART. 192 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31002","nombre":"BONO POR DISFRUTE DE VACACIONES","tipo":"V","formula":"","formato":"BONO POR DISFRUTE DE VACACIONES","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32000","nombre":"DIAS DE DESCANSO EN VACACIONES","tipo":"V","formula":"","formato":"{ CE00043 } DIAS DE DESCANSO EN VACACIONE x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32001","nombre":"DOMINGOS EN VACACIONES","tipo":"V","formula":"","formato":"{ DFSERIE0003 } FERIADOS EN VACACIONES x { (CE00001 /30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32002","nombre":"FERIADOS EN VACACIONES","tipo":"V","formula":"","formato":"{ DFSERIE0003 } FERIADOS EN VACACIONES x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32111","nombre":"DIFERENCIA DE PARO FORZOZO","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33001","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33002","nombre":"REGIMEN PRESTACIONAL DE EMPLEO (PARO FORZOSO)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33003","nombre":"REGIMEN PRESTACIONAL VIVIENDA Y HABITAD (BANAVIH)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33005","nombre":"CARTON DE HUEVOS","tipo":"V","formula":"","formato":"{ CE00062 } CARTONES DE HUEVOS x { CE00063 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33006","nombre":"?OTRAS ASIGNACIONES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33007","nombre":"OTRAS ASIGNACIONES NO BONIFICABLES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33009","nombre":"DIAS TRABAJADOS","tipo":"L","formula":"","formato":"{ CE00103 } DIAS TRABAJADOS PENDIENTES x { (CE00001 /30)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40000","nombre":"PRESTACION DE ANTIGUEDAD ART. 142 LITERAL \"A\"","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40001","nombre":"INTERESES SOBRE LAS PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40003","nombre":"VACACIONES FRACCIONADAS","tipo":"R","formula":"","formato":"{ N00008 } DIAS DE VACACIONES FRACCIONADAS ART. 196 x { (CE00001/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40004","nombre":"BONO VACACIONAL FRACCIONADO","tipo":"R","formula":"","formato":"{ N00009 } DIAS DE BONO VACACIONAL FRACCIONADO ART. 196 x { CNR0007 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40006","nombre":"VACACIONES ACUMULADAS","tipo":"L","formula":"","formato":"{ CE00046 } DIAS DE VACACIONES ACUMULADAS ART. 199 x { CNR0007 }","afVac":false,"afLiq":false,"general":false,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40007","nombre":"BONO VACACIONAL ACUMULADO","tipo":"L","formula":"","formato":"{ CE00047 } DIAS DE BONO VACACIONAL ACUMULADO ART. 199 x { CNR0007 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40008","nombre":"DESCANSO TRABAJADO","tipo":"A","formula":"","formato":"{REF00013 } DIA DESCANSO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40009","nombre":"DIAS PENTIENTES","tipo":"V","formula":"","formato":"?{ CE00096 } DIAS PENDIENTES x { CE00001/30 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40010","nombre":"ANTICIPO DE PRESTACIONES SOCIALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40011","nombre":"PRESTACION DE ANTIGUEDAD ART. 142 LITERAL \"C\"","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40012","nombre":"VACACIONES EVENTUALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40402","nombre":"UTILIDADES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"48000","nombre":"IDEMNIZACION POR DESPIDO ART. 92 LOTT","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"48001","nombre":"DOMINGO TRABAJADOS","tipo":"A","formula":"","formato":"{ REF00065 } DOMINGOS TRABAJADOS x {CE00001/30*1,5}","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"49001","nombre":"ADELANTO DE PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"49005","nombre":"TOTAL PRESTACIONES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50000","nombre":"ALICUOTA DE UTILIDAD","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50001","nombre":"ALICUOTA BONO VACACIONAL","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50002","nombre":"TOTAL DEVENGADO DE SUELDO MENSUAL","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50009","nombre":"REGIMEN PRESTACIONAL VIVEINDA Y HABITAD (BANAVIH)","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50014","nombre":"INCES","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50015","nombre":"SALARIO INTEGRAL PARA PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50016","nombre":"TOTAL A DEVENGAR PRESTACIONES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50020","nombre":"INTERESES SOBRE PRESTACIONES SOCIALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50022","nombre":"?Otras Deducciones","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"68929","nombre":"OTRAS DEDUCIONES","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"70934","nombre":"?OTRAS DEDUCCIONES","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"77360","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"95082","nombre":"OTRAS ASIGNACIONES","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"E0007","nombre":"BONO NOCTURNO","tipo":"A","formula":"","formato":"{ REFCE00012} HORAS DE BONO NOCTURNO x { ((((CE00001 /30)/8)*30)/100)}","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"F0002","nombre":"PRESTACION COMPLEMENTARIA","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"F0003","nombre":"SALARIO DIARIO INTEGRAL","tipo":"R","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0001","nombre":"APORTE PATRONAL (IVSS)","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0002","nombre":"APORTE PATRONAL SPF","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0003","nombre":"APORTE PATRONAL BANAVIH","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0004","nombre":"APORTE PATRONAL INCES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0007","nombre":"SALARIO NORMAL","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0010","nombre":"VACACIONES FRACCIONADAS REP. PROVI","tipo":"L","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0011","nombre":"BONO VACACIONAL FRACCIONADO REP. PROVI","tipo":"L","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0014","nombre":"TOTAL DEVENGADO UTILIDADES","tipo":"R","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0016","nombre":"TOTAL DEVENGADO MENSUAL","tipo":"R","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0018","nombre":"BONIFICACION ALIMENTACION","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0019","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R001V","nombre":"APORTE PATRONAL (IVSS)","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0020","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0021","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0022","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0023","nombre":"BONIFICACION UNICA E IRREPETIBLE","tipo":"A","formula":"","formato":"BONIFICACION UNICA E IRREPETIBLE","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0024","nombre":"DEDUCCION EVENTUAL","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0025","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0026","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0027","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0028","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R002V","nombre":"APORTE PATRONAL SPF","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R003V","nombre":"APORTE PATRONAL BANAVIH","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R004V","nombre":"APORTE PATRONAL INCES","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RET01","nombre":"BONIFICACION RUTA TRANSPORTE","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RET02","nombre":"BONIFICACION POR REPARTO","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RETR0","nombre":"BONO PRESENCIAL DE PRODUCTIVIDAD","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true}];
 
   const deptosDelCentro = departamentos.filter(d=>d.centroCostoId===centroSel?.id);
   const cuentasDelDepto = cuentasNomina.filter(c=>c.departamentoId===deptoSel?.id);
@@ -209,6 +260,110 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     try{ await deleteDoc(getDocRef('rrhh_cuentas_nomina',c.id)); }
     catch(e){ alert('Error al eliminar: '+e.message); }
   };
+
+  // ── Conceptos de Nómina (catálogo con fórmula + cuenta por centro de costo) ─
+  const initConceptoForm = () => ({
+    codigo:'', nombre:'', tipo:'A', formula:'', formato:'',
+    afVac:false, afLiq:false, general:true, bonif:false, historico:true, mStatus:false, arC:false,
+    minPer:0, maxPer:0, maxAcum:0, activo:true, cuentasPorCentro:{},
+  });
+  const conceptosFiltrados = conceptos.filter(c=>
+    (!filtroTipoConcepto || c.tipo===filtroTipoConcepto) &&
+    ((c.nombre||'').toUpperCase().includes(busqConcepto.toUpperCase()) || (c.codigo||'').toUpperCase().includes(busqConcepto.toUpperCase()))
+  ).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+  const abrirConcepto = (c) => { setConceptoSelCod(c.codigo); setEsNuevoConcepto(false); setConceptoForm({...initConceptoForm(), ...c}); };
+  const nuevoConceptoForm = () => { setConceptoSelCod(null); setEsNuevoConcepto(true); setConceptoForm(initConceptoForm()); };
+  const guardarConcepto = async () => {
+    const f = conceptoForm;
+    const codigoFinal = (f.codigo||'').trim().toUpperCase();
+    if(!codigoFinal||!f.nombre.trim()) return alert('Código y nombre son obligatorios');
+    if(esNuevoConcepto && conceptos.some(c=>c.codigo===codigoFinal)) return alert('Ya existe un concepto con ese código');
+    setBusy(true);
+    try{
+      await setDoc(getDocRef('rrhh_conceptos', codigoFinal), {...f, codigo:codigoFinal, updatedAt:Date.now()});
+      setConceptoSelCod(codigoFinal); setEsNuevoConcepto(false);
+    } catch(e){ alert('Error al guardar el concepto: '+e.message); }
+    finally{ setBusy(false); }
+  };
+  const eliminarConcepto = async (c) => {
+    if(!window.confirm(`¿Eliminar el concepto "${c.codigo} - ${c.nombre}"?\n\nEsta acción no se puede deshacer.`)) return;
+    try{
+      await deleteDoc(getDocRef('rrhh_conceptos', c.codigo));
+      if(conceptoSelCod===c.codigo){ setConceptoSelCod(null); setConceptoForm(null); }
+    } catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+  const asignarCuentaConcepto = async (c, centroId, cuenta) => {
+    try{ await updateDoc(getDocRef('rrhh_conceptos', c.codigo), {[`cuentasPorCentro.${centroId}`]: cuenta}); }
+    catch(e){ alert('Error al asignar la cuenta: '+e.message); }
+  };
+  const quitarCuentaConcepto = async (c, centroId) => {
+    try{ await updateDoc(getDocRef('rrhh_conceptos', c.codigo), {[`cuentasPorCentro.${centroId}`]: null}); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  const cargarCatalogoEstandar = async () => {
+    const faltantes = CATALOGO_CONCEPTOS_ESTANDAR.filter(c=>!conceptos.some(x=>x.codigo===c.codigo));
+    if(faltantes.length===0) return alert('Ya tienes todos los conceptos del catálogo estándar cargados.');
+    if(!window.confirm(`Se van a crear ${faltantes.length} concepto(s) nuevo(s) del catálogo estándar (los que ya existan no se tocan). ¿Continuar?`)) return;
+    setBusySeed(true);
+    try{
+      const batch = writeBatch(db);
+      faltantes.forEach(c=>{ batch.set(getDocRef('rrhh_conceptos', c.codigo), {...c, cuentasPorCentro:{}, createdAt:Date.now()}); });
+      await batch.commit();
+      alert(`Se cargaron ${faltantes.length} concepto(s).`);
+    } catch(e){ alert('Error al cargar el catálogo: '+e.message); }
+    finally{ setBusySeed(false); }
+  };
+  const agregarParametro = async () => {
+    const codigo = nuevoParametro.codigo.trim().toUpperCase();
+    if(!codigo) return alert('Escribe un código, ej: RF03');
+    if(parametrosFormula.some(p=>p.codigo===codigo)) return alert('Ese código ya existe');
+    try{
+      await setDoc(getDocRef('rrhh_parametros_formula', codigo), {codigo, valor:parseFloat(nuevoParametro.valor)||0, nota:nuevoParametro.nota||'', createdAt:Date.now()});
+      setNuevoParametro({codigo:'',valor:'',nota:''});
+    } catch(e){ alert('Error al agregar: '+e.message); }
+  };
+  const actualizarParametro = async (p, patch) => {
+    try{ await updateDoc(getDocRef('rrhh_parametros_formula', p.codigo), patch); }
+    catch(e){ alert('Error al actualizar: '+e.message); }
+  };
+  const eliminarParametro = async (p) => {
+    if(!window.confirm(`¿Eliminar el parámetro "${p.codigo}"?`)) return;
+    try{ await deleteDoc(getDocRef('rrhh_parametros_formula', p.codigo)); }
+    catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+  const CuentaPorCentroRow = ({centro, cuenta, onAsignar, onQuitar}) => {
+    const busq = busqCuentaConcepto[centro.id] || '';
+    const setBusq = (v) => setBusqCuentaConcepto(s=>({...s, [centro.id]: v}));
+    const coincidencias = planCuentasRH.filter(p=>(p.codigo||'').includes(busq)||(p.nombre||'').toUpperCase().includes(busq.toUpperCase())).slice(0,10);
+    return (
+      <div className="flex items-start justify-between gap-3 py-2 border-b border-gray-50 last:border-0">
+        <span className="text-xs font-bold text-gray-600 w-32 flex-shrink-0 truncate pt-1.5">{centro.nombre}</span>
+        <div className="flex-1 min-w-0">
+          {cuenta && cuenta.codigo ? (
+            <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-1.5">
+              <span className="text-[11px] font-bold truncate"><span className="font-mono text-cyan-600 mr-1.5">{cuenta.codigo}</span>{cuenta.nombre}</span>
+              <button onClick={onQuitar} className="text-red-400 hover:text-red-600 flex-shrink-0 ml-2"><X size={13}/></button>
+            </div>
+          ) : (
+            <>
+              <input value={busq} onChange={e=>setBusq(e.target.value)} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+              {busq && (
+                <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto mt-1">
+                  {coincidencias.map(p=>(
+                    <div key={p.id} onClick={()=>{onAsignar({codigo:p.codigo,nombre:p.nombre}); setBusq('');}} className="px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
+                      <span className="font-mono font-black text-cyan-700">{p.codigo}</span> <span className="text-gray-700 uppercase">{p.nombre}</span>
+                    </div>
+                  ))}
+                  {coincidencias.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
 
   // ── Trabajadores (ficha completa) ────────────────────────────────────────
   const initTrabajador = () => ({
@@ -358,8 +513,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const esUtilidades = /utilidad/i.test(conceptoNomina||'');
 
     const calcSemanal = (base, pct, topeMultiplo) => {
-      const tope = configParafiscal.salarioMinimo * topeMultiplo;
-      const baseValidada = Math.min(base, tope);
+      const topeBs = configParafiscal.salarioMinimo * topeMultiplo;
+      const topeUSD = tasa>0 ? topeBs/tasa : topeBs;
+      const baseValidada = Math.min(base, topeUSD);
       const semanal = (baseValidada*12)/52;
       return parseFloat(((semanal*pct/100)*lunes).toFixed(2));
     };
@@ -648,6 +804,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             {id:'config', label:'Configuración', icon:<Settings size={13}/>},
             {id:'nomina', label:'Registro de Nómina', icon:<DollarSign size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null},
             {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>},
+            {id:'conceptos', label:'Conceptos', icon:<Calculator size={13}/>, badge:conceptos.length||null},
             {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null},
           ].map(t=>(
             <button key={t.id} onClick={()=>setRhTab(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${rhTab===t.id?'border-cyan-500 text-cyan-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
@@ -783,27 +940,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </div>
 
         </div>
-
-        <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
-          <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">4. Deducciones Parafiscales (editable)</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-            {[['ivssPct','ivssBase','IVSS'],['rpePct','rpeBase','RPE (Paro Forzoso)'],['faovPct','faovBase','FAOV (Vivienda)'],['incesPct','incesBase','INCES (solo en utilidades)']].map(([pctKey,baseKey,label])=>(
-              <div key={pctKey} className="bg-gray-50 rounded-xl p-3">
-                <p className="text-[10px] font-black text-gray-600 uppercase mb-2">{label}</p>
-                <div className="flex items-center gap-2 mb-2">
-                  <input type="number" step="0.1" value={configParafiscal[pctKey]} onChange={e=>setConfigParafiscal(c=>({...c,[pctKey]:parseFloat(e.target.value)||0}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
-                  <span className="text-xs font-black text-gray-400">%</span>
-                </div>
-                <select value={configParafiscal[baseKey]} onChange={e=>setConfigParafiscal(c=>({...c,[baseKey]:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500 bg-white">
-                  <option value="basico">Sobre Sueldo Básico</option>
-                  <option value="total">Sobre Total Asignaciones</option>
-                </select>
-              </div>
-            ))}
-          </div>
-          <button onClick={()=>setDoc(getDocRef('rrhh_config','parafiscal'),configParafiscal).then(()=>alert('Configuración parafiscal guardada.')).catch(e=>alert('Error: '+e.message))} className="bg-cyan-600 text-white px-4 py-2 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración Parafiscal</button>
-          <p className="text-[10px] text-gray-400 mt-2">Valores de referencia legal venezolana — cámbialos aquí si algún día varían; se aplican a toda nómina que registres de aquí en adelante.</p>
-        </div>
       </div>
       )}
 
@@ -825,7 +961,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <div className="mb-4">
-              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Mínimo Vigente (compartido por todos)</label>
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Mínimo Vigente (Bs., compartido por todos)</label>
               <input type="number" step="0.01" value={configParafiscal.salarioMinimo} onChange={e=>setConfigParafiscal(c=>({...c,salarioMinimo:parseFloat(e.target.value)||0}))} className="w-48 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-cyan-500"/>
             </div>
 
@@ -846,12 +982,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     </select>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (5x, automático)</label><input value={`$${formatNum(tope)}`} disabled className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
-                    <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: IVSS por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  </div>
+                <div className="mb-4">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (5x, automático — Bs.)</label><input value={`Bs. ${formatNum(tope)}`} disabled className="w-48 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/>
                 </div>
+                <div className="mb-4"><BuscadorCuentaPasivo cfg={cfg} set={set}/></div>
                 <div className="bg-gray-50 rounded-xl p-3 mb-4">
                   <p className="text-[9px] text-gray-400 mb-2">Fórmula: (base × 12 ÷ 52) × % × lunes de la quincena. Si el sueldo supera el tope, se usa el tope.</p>
                   <p className="text-[10px] font-black text-cyan-600">Trabajador {cfg.pctTrabajador}% · Patrono {pctPatronal}%</p>
@@ -870,12 +1004,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (10x, automático)</label><input value={`$${formatNum(tope)}`} disabled className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/></div>
-                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
-                    <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: RPE por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  </div>
+                <div className="mb-4">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (10x, automático — Bs.)</label><input value={`Bs. ${formatNum(tope)}`} disabled className="w-48 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/>
                 </div>
+                <div className="mb-4"><BuscadorCuentaPasivo cfg={cfg} set={set}/></div>
               </>
               );
             })()}
@@ -889,9 +1021,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                 </div>
-                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
-                  <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: FAOV por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                </div>
+                <BuscadorCuentaPasivo cfg={cfg} set={set}/>
               </>
               );
             })()}
@@ -905,15 +1035,156 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador (solo utilidades)</label><input type="number" step="0.1" value={cfg.pctTrabajadorUtilidades} onChange={e=>set({pctTrabajadorUtilidades:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal (trimestral)</label><input type="number" step="0.1" value={cfg.pctPatronalTrimestral} onChange={e=>set({pctPatronalTrimestral:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                 </div>
-                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
-                  <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: INCES por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                </div>
+                <BuscadorCuentaPasivo cfg={cfg} set={set}/>
               </>
               );
             })()}
 
             <button onClick={guardarConfigParafiscal} className="mt-5 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
           </div>
+        </div>
+      </div>
+      )}
+
+      {rhTab==='conceptos' && (
+      <div className="p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <div className="flex gap-2 mb-3">
+              <button onClick={nuevoConceptoForm} className="flex-1 bg-cyan-600 text-white rounded-xl py-2 text-[10px] font-black uppercase hover:bg-cyan-700 flex items-center justify-center gap-1"><Plus size={13}/> Nuevo</button>
+              <button onClick={cargarCatalogoEstandar} disabled={busySeed} className="flex-1 border-2 border-gray-200 rounded-xl py-2 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1"><Upload size={12}/> {busySeed?'Cargando...':'Catálogo'}</button>
+            </div>
+            <button onClick={()=>setMostrarParametros(v=>!v)} className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50 border-2 border-gray-100 mb-3">
+              <span>Parámetros de fórmula {parametrosFormula.length>0?`(${parametrosFormula.length})`:''}</span>
+              <ChevronDown size={13} className={`transition-transform ${mostrarParametros?'rotate-180':''}`}/>
+            </button>
+            {mostrarParametros && (
+              <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-2">
+                <p className="text-[9px] text-gray-400 mb-1">Valores fijos que usan tus fórmulas (RF03, CN30000...) — tú decides qué significan y cuánto valen.</p>
+                {parametrosFormula.map(p=>(
+                  <div key={p.id} className="flex items-center gap-1.5 bg-white rounded-lg px-2 py-1.5 border border-gray-200">
+                    <span className="font-mono text-[10px] font-black text-cyan-700 w-16 flex-shrink-0 truncate">{p.codigo}</span>
+                    <input type="number" defaultValue={p.valor} onBlur={e=>actualizarParametro(p,{valor:parseFloat(e.target.value)||0})} className="w-16 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 text-right flex-shrink-0"/>
+                    <input defaultValue={p.nota} onBlur={e=>actualizarParametro(p,{nota:e.target.value})} placeholder="Nota..." className="flex-1 min-w-0 border border-gray-200 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-cyan-500"/>
+                    <button onClick={()=>eliminarParametro(p)} className="text-red-400 hover:text-red-600 flex-shrink-0"><X size={12}/></button>
+                  </div>
+                ))}
+                <div className="flex items-center gap-1.5 pt-1">
+                  <input value={nuevoParametro.codigo} onChange={e=>setNuevoParametro(p=>({...p,codigo:e.target.value}))} placeholder="Código" className="w-16 border-2 border-gray-200 rounded-lg px-1.5 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 flex-shrink-0"/>
+                  <input type="number" value={nuevoParametro.valor} onChange={e=>setNuevoParametro(p=>({...p,valor:e.target.value}))} placeholder="Valor" className="w-16 border-2 border-gray-200 rounded-lg px-1.5 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 text-right flex-shrink-0"/>
+                  <input value={nuevoParametro.nota} onChange={e=>setNuevoParametro(p=>({...p,nota:e.target.value}))} placeholder="Nota..." className="flex-1 min-w-0 border-2 border-gray-200 rounded-lg px-1.5 py-1 text-[10px] outline-none focus:border-cyan-500"/>
+                  <button onClick={agregarParametro} className="bg-cyan-600 text-white rounded-lg px-2 py-1 flex-shrink-0"><Plus size={12}/></button>
+                </div>
+              </div>
+            )}
+            <input value={busqConcepto} onChange={e=>setBusqConcepto(e.target.value)} placeholder="Buscar por código o nombre..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 mb-2"/>
+            <select value={filtroTipoConcepto} onChange={e=>setFiltroTipoConcepto(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white mb-3">
+              <option value="">Todos los tipos</option>
+              {Object.entries(TIPOS_CONCEPTO).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+              {conceptosFiltrados.length===0 && <p className="text-xs text-gray-400 text-center py-6">Sin conceptos {conceptos.length>0?'que coincidan':'aún — crea uno o carga el catálogo'}</p>}
+              {conceptosFiltrados.map(c=>{
+                const ti = TIPOS_CONCEPTO[c.tipo]||TIPOS_CONCEPTO.A;
+                return (
+                  <div key={c.codigo} onClick={()=>abrirConcepto(c)} className={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl cursor-pointer ${conceptoSelCod===c.codigo?'bg-cyan-50 border-2 border-cyan-500':'border-2 border-transparent hover:bg-gray-50'}`}>
+                    <div className="min-w-0">
+                      <p className={`text-xs font-bold truncate ${c.activo===false?'text-gray-400':'text-gray-800'}`}>{c.nombre}</p>
+                      <p className="text-[10px] font-mono text-gray-400">{c.codigo}</p>
+                    </div>
+                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full flex-shrink-0 ${ti.badge}`}>{c.tipo}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            {!conceptoForm ? (
+              <p className="text-xs text-gray-400 text-center py-16">Selecciona un concepto de la lista o crea uno nuevo</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-3 mb-4">
+                  <div className="w-28">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Código</label>
+                    <input value={conceptoForm.codigo} disabled={!esNuevoConcepto} onChange={e=>setConceptoForm(f=>({...f,codigo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 font-mono disabled:bg-gray-50"/>
+                  </div>
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nombre</label>
+                    <input value={conceptoForm.nombre} onChange={e=>setConceptoForm(f=>({...f,nombre:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                  <div className="w-40">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tipo</label>
+                    <select value={conceptoForm.tipo} onChange={e=>setConceptoForm(f=>({...f,tipo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                      {Object.entries(TIPOS_CONCEPTO).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="w-24">
+                    <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Activo</label>
+                    <select value={conceptoForm.activo?'Si':'No'} onChange={e=>setConceptoForm(f=>({...f,activo:e.target.value==='Si'}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                      <option>Si</option><option>No</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fórmula (cálculo)</label>
+                  <input value={conceptoForm.formula} onChange={e=>setConceptoForm(f=>({...f,formula:e.target.value}))} placeholder="Pendiente — falta el diccionario de variables (CE, RF, N...)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 font-mono"/>
+                </div>
+                <div className="mb-1">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Formato en el recibo</label>
+                  <input value={conceptoForm.formato} onChange={e=>setConceptoForm(f=>({...f,formato:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 font-mono"/>
+                </div>
+                <p className="text-[10px] text-gray-400 mb-4">Por ahora son texto libre — todavía no se calculan solos (ver dudas pendientes).</p>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                  {[['afVac','Af. Vacaciones'],['afLiq','Af. Liquidación'],['general','General'],['bonif','Bonificable'],['historico','Histórico'],['mStatus','M. Status'],['arC','AR-C']].map(([k,l])=>(
+                    <div key={k}>
+                      <label className="text-[8px] font-black text-gray-500 uppercase block mb-1">{l}</label>
+                      <select value={conceptoForm[k]?'Si':'No'} onChange={e=>setConceptoForm(f=>({...f,[k]:e.target.value==='Si'}))} className="w-full border-2 border-gray-200 rounded-xl px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500 bg-white">
+                        <option>Si</option><option>No</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 mb-5">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Mín. período</label><input type="number" value={conceptoForm.minPer} onChange={e=>setConceptoForm(f=>({...f,minPer:parseFloat(e.target.value)||0}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Máx. período</label><input type="number" value={conceptoForm.maxPer} onChange={e=>setConceptoForm(f=>({...f,maxPer:parseFloat(e.target.value)||0}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Máx. acumulado</label><input type="number" value={conceptoForm.maxAcum} onChange={e=>setConceptoForm(f=>({...f,maxAcum:parseFloat(e.target.value)||0}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                </div>
+
+                <div className="border-t border-gray-100 pt-4 mb-4">
+                  <p className="text-[9px] font-black text-gray-500 uppercase mb-2">Cuentas contables por centro de costo</p>
+                  {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero un Centro de Costo en Configuración</p>}
+                  {centros.map(centro=>(
+                    <CuentaPorCentroRow
+                      key={centro.id}
+                      centro={centro}
+                      cuenta={conceptoForm.cuentasPorCentro?.[centro.id]}
+                      onAsignar={(cuenta)=>{
+                        setConceptoForm(f=>({...f, cuentasPorCentro:{...f.cuentasPorCentro,[centro.id]:cuenta}}));
+                        if(!esNuevoConcepto) asignarCuentaConcepto(conceptoForm, centro.id, cuenta);
+                      }}
+                      onQuitar={()=>{
+                        setConceptoForm(f=>({...f, cuentasPorCentro:{...f.cuentasPorCentro,[centro.id]:null}}));
+                        if(!esNuevoConcepto) quitarCuentaConcepto(conceptoForm, centro.id);
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={guardarConcepto} disabled={busy} className="flex-1 bg-cyan-600 text-white rounded-xl py-2.5 text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">Guardar concepto</button>
+                  {!esNuevoConcepto && (
+                    <button onClick={()=>eliminarConcepto(conceptoForm)} className="px-4 rounded-xl border-2 border-red-200 text-red-500 hover:bg-red-50"><Trash2 size={15}/></button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
         </div>
       </div>
       )}
