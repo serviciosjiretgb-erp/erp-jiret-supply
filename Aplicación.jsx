@@ -92,7 +92,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [cuentasNomina,setCuentasNomina]=useState([]);
   const [planCuentasRH,setPlanCuentasRH]=useState([]);
   const [trabajadores,setTrabajadores]=useState([]);
-  const [configParafiscal,setConfigParafiscal]=useState({ivssPct:4,ivssBase:'basico',rpePct:0.5,rpeBase:'basico',faovPct:1,faovBase:'basico'});
+  const [configParafiscal,setConfigParafiscal]=useState({ivssPct:4,ivssBase:'basico',rpePct:0.5,rpeBase:'basico',faovPct:1,faovBase:'basico',incesPct:0.5,incesBase:'basico'});
   const [nominas,setNominas]=useState([]);
   const [nominaDetalles,setNominaDetalles]=useState([]);
   useEffect(()=>{
@@ -203,6 +203,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [trabajadorVer,setTrabajadorVer]=useState(null); // ficha en modo solo lectura
   const [busyTrab,setBusyTrab]=useState(false);
   const [buscarTrab,setBuscarTrab]=useState('');
+  const [filtroCentroTrab,setFiltroCentroTrab]=useState('');
+  const [filtroDeptoTrab,setFiltroDeptoTrab]=useState('');
   const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',edad:''});
   const [nuevaEval,setNuevaEval]=useState({mes:'',resultado:'Satisfactorio'});
   const [nuevaAmon,setNuevaAmon]=useState({fecha:getTodayDate(),tipo:'Verbal',motivo:''});
@@ -292,26 +294,34 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     } catch(e){ alert('Error al eliminar: '+e.message); }
   };
 
-  // Calcula IVSS/RPE/FAOV según la config (% sobre sueldo básico o sobre total de asignaciones)
-  const calcularDeduccionesLegales = (asignaciones, tasa) => {
-    const totalAsig = asignaciones.reduce((s,a)=>s+Number(a.montoUSD||0),0);
-    const basico = asignaciones.find(a=>/sueldo b[aá]sico/i.test(a.concepto))?.montoUSD || totalAsig;
-    const baseDe = (b) => b==='total' ? totalAsig : Number(basico||0);
+  // Calcula IVSS/RPE/FAOV/INCES según la config — SOLO si "Sueldo Básico" está entre las
+  // asignaciones incluidas (si no hay sueldo básico cargado, no hay base para calcular nada).
+  // INCES además solo aplica si el concepto de esta nómina es de utilidades.
+  const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina) => {
+    const incluidas = asignaciones.filter(a=>a.incluida);
+    const totalAsig = incluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
+    const sueldoBasicoItem = incluidas.find(a=>/sueldo b[aá]sico/i.test(a.concepto));
+    const hayBase = !!sueldoBasicoItem;
+    const basico = Number(sueldoBasicoItem?.montoUSD||0);
+    const baseDe = (b) => b==='total' ? totalAsig : basico;
+    const esUtilidades = /utilidad/i.test(conceptoNomina||'');
     const mk = (concepto, pct, base, cuenta) => {
-      const montoUSD = parseFloat((base*pct/100).toFixed(2));
+      const montoUSD = hayBase ? parseFloat((base*pct/100).toFixed(2)) : 0;
       return {concepto, montoUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||'', esLegal:true};
     };
-    return {totalAsig, basico, mk, baseDe};
+    return {totalAsig, basico, hayBase, esUtilidades, mk, baseDe};
   };
 
   const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
   const abrirCargarTrabajador = (trabajador) => {
     const cuentasDepto = cuentasNomina.filter(c=>c.departamentoId===trabajador.departamentoId);
     const asignacionesCfg = cuentasDepto.filter(c=>c.tipo==='asignacion');
-    const deduccionesCfgManual = cuentasDepto.filter(c=>c.tipo==='deduccion' && !/ivss|rpe|paro forzoso|faov/i.test(c.concepto));
-    const asignaciones = asignacionesCfg.map(c=>({concepto:c.concepto, montoUSD:c.concepto==='Sueldo Básico'?Number(trabajador.salarioBase||0):0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}));
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual: deduccionesCfgManual.map(c=>({concepto:c.concepto, montoUSD:0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}))});
+    const deduccionesCfgManual = cuentasDepto.filter(c=>c.tipo==='deduccion' && !/ivss|rpe|paro forzoso|faov|inces/i.test(c.concepto));
+    const asignaciones = asignacionesCfg.map(c=>({concepto:c.concepto, incluida:false, montoUSD:c.concepto==='Sueldo Básico'?Number(trabajador.salarioBase||0):0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}));
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual: deduccionesCfgManual.map(c=>({concepto:c.concepto, incluida:false, montoUSD:0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}))});
   };
+  const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
+  const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
   const actualizarMontoAsignacion = (idx, montoUSD) => {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
@@ -333,14 +343,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const cIVSS = cuentasDepto.find(c=>c.tipo==='deduccion' && /ivss/i.test(c.concepto));
     const cRPE = cuentasDepto.find(c=>c.tipo==='deduccion' && /rpe|paro forzoso/i.test(c.concepto));
     const cFAOV = cuentasDepto.find(c=>c.tipo==='deduccion' && /faov/i.test(c.concepto));
-    const {mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa);
-    const deduccionesLegales = [
+    const cINCES = cuentasDepto.find(c=>c.tipo==='deduccion' && /inces/i.test(c.concepto));
+    const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
+    const {hayBase, esUtilidades, mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva.concepto);
+    const deduccionesLegales = hayBase ? [
       mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase), cIVSS),
       mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase), cRPE),
       mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase), cFAOV),
-    ];
-    const deduccionesManual = cargarTrabModal.deduccionesManual.map(d=>({...d, esLegal:false}));
-    const asignaciones = cargarTrabModal.asignaciones.map(a=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
+      ...(esUtilidades ? [mk('INCES', configParafiscal.incesPct||0.5, baseDe(configParafiscal.incesBase||'basico'), cINCES)] : []),
+    ] : [];
+    const deduccionesManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).map(({incluida,...d})=>({...d, esLegal:false}));
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
     const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual].reduce((s,d)=>s+d.montoUSD,0);
     setBusyNomina(true);
@@ -642,8 +654,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
         <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
           <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">4. Deducciones Parafiscales (editable)</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-            {[['ivssPct','ivssBase','IVSS'],['rpePct','rpeBase','RPE (Paro Forzoso)'],['faovPct','faovBase','FAOV (Vivienda)']].map(([pctKey,baseKey,label])=>(
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+            {[['ivssPct','ivssBase','IVSS'],['rpePct','rpeBase','RPE (Paro Forzoso)'],['faovPct','faovBase','FAOV (Vivienda)'],['incesPct','incesBase','INCES (solo en utilidades)']].map(([pctKey,baseKey,label])=>(
               <div key={pctKey} className="bg-gray-50 rounded-xl p-3">
                 <p className="text-[10px] font-black text-gray-600 uppercase mb-2">{label}</p>
                 <div className="flex items-center gap-2 mb-2">
@@ -806,12 +818,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
 
               <div>
-                <p className="text-[10px] font-black text-cyan-600 uppercase mb-2">Asignaciones — se cargan a mano, en dólares</p>
+                <p className="text-[10px] font-black text-cyan-600 uppercase mb-2">Asignaciones — elige cuáles aplican, en dólares</p>
                 {cargarTrabModal.asignaciones.length===0 && <p className="text-[11px] text-gray-400">Este departamento no tiene asignaciones configuradas. Ve a Configuración para agregarlas.</p>}
                 {cargarTrabModal.asignaciones.map((a,i)=>(
-                  <div key={i} className="grid grid-cols-[1fr_90px_100px] gap-2 items-center mb-1.5">
+                  <div key={i} className={`grid grid-cols-[24px_1fr_90px_100px] gap-2 items-center mb-1.5 ${a.incluida?'':'opacity-40'}`}>
+                    <input type="checkbox" checked={a.incluida} onChange={()=>toggleAsignacion(i)}/>
                     <span className="text-xs font-bold text-gray-700">{a.concepto}</span>
-                    <input type="number" step="0.01" value={a.montoUSD} onChange={e=>actualizarMontoAsignacion(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                    <input type="number" step="0.01" value={a.montoUSD} disabled={!a.incluida} onChange={e=>actualizarMontoAsignacion(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right disabled:bg-gray-50"/>
                     <span className="text-[11px] text-gray-400 text-right">Bs.{formatNum(a.montoBs)}</span>
                   </div>
                 ))}
@@ -819,11 +832,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
               {cargarTrabModal.deduccionesManual.length>0 && (
                 <div>
-                  <p className="text-[10px] font-black text-orange-600 uppercase mb-2">Otras Deducciones — también manuales</p>
+                  <p className="text-[10px] font-black text-orange-600 uppercase mb-2">Otras Deducciones — elige cuáles aplican</p>
                   {cargarTrabModal.deduccionesManual.map((d,i)=>(
-                    <div key={i} className="grid grid-cols-[1fr_90px_100px] gap-2 items-center mb-1.5">
+                    <div key={i} className={`grid grid-cols-[24px_1fr_90px_100px] gap-2 items-center mb-1.5 ${d.incluida?'':'opacity-40'}`}>
+                      <input type="checkbox" checked={d.incluida} onChange={()=>toggleDeduccionManual(i)}/>
                       <span className="text-xs font-bold text-gray-700">{d.concepto}</span>
-                      <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                      <input type="number" step="0.01" value={d.montoUSD} disabled={!d.incluida} onChange={e=>actualizarMontoDeduccionManual(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right disabled:bg-gray-50"/>
                       <span className="text-[11px] text-gray-400 text-right">Bs.{formatNum(d.montoBs)}</span>
                     </div>
                   ))}
@@ -832,22 +846,24 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
               {(()=>{
                 const tasa = Number(nominaActiva?.tasa||0);
-                const {mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa);
-                const legales = [
-                  mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase)),
-                  mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase)),
-                  mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase)),
-                ];
-                const totalAsig = cargarTrabModal.asignaciones.reduce((s,a)=>s+Number(a.montoUSD||0),0);
-                const totalDedManual = cargarTrabModal.deduccionesManual.reduce((s,d)=>s+Number(d.montoUSD||0),0);
-                const totalDedLegal = legales.reduce((s,d)=>s+d.montoUSD,0);
+                const {hayBase, esUtilidades, mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva?.concepto);
+                const legales = hayBase ? [
+                  ['IVSS', mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase)), configParafiscal.ivssPct],
+                  ['RPE (Paro Forzoso)', mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase)), configParafiscal.rpePct],
+                  ['FAOV (Vivienda)', mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase)), configParafiscal.faovPct],
+                  ...(esUtilidades?[['INCES', mk('INCES', configParafiscal.incesPct||0.5, baseDe(configParafiscal.incesBase||'basico')), configParafiscal.incesPct||0.5]]:[]),
+                ] : [];
+                const totalAsig = cargarTrabModal.asignaciones.filter(a=>a.incluida).reduce((s,a)=>s+Number(a.montoUSD||0),0);
+                const totalDedManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).reduce((s,d)=>s+Number(d.montoUSD||0),0);
+                const totalDedLegal = legales.reduce((s,[,d])=>s+d.montoUSD,0);
                 const neto = totalAsig - totalDedManual - totalDedLegal;
                 return (
                 <>
                   <div>
-                    <p className="text-[10px] font-black text-green-600 uppercase mb-2">Deducciones Legales — calculadas solas</p>
-                    {legales.map((d,i)=>(
-                      <div key={i} className="flex justify-between text-xs py-0.5"><span className="text-gray-500">{d.concepto} ({i===0?configParafiscal.ivssPct:i===1?configParafiscal.rpePct:configParafiscal.faovPct}%)</span><span className="font-bold text-red-500">-${formatNum(d.montoUSD)}</span></div>
+                    <p className="text-[10px] font-black text-green-600 uppercase mb-2">Deducciones Legales</p>
+                    {!hayBase && <p className="text-[11px] text-gray-400">Incluye "Sueldo Básico" arriba para que se calculen.</p>}
+                    {legales.map(([label,d,pct],i)=>(
+                      <div key={i} className="flex justify-between text-xs py-0.5"><span className="text-gray-500">{label} ({pct}%)</span><span className="font-bold text-red-500">-${formatNum(d.montoUSD)}</span></div>
                     ))}
                   </div>
                   <div className="border-t border-gray-100 pt-3 flex justify-between items-center">
@@ -892,27 +908,38 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         {/* ═══ LISTA ═══ */}
         {!trabajadorForm && !trabajadorVer && (
           <>
-            <div className="flex gap-3 mb-4">
-              <input value={buscarTrab} onChange={e=>setBuscarTrab(e.target.value)} placeholder="Buscar por nombre o cédula..." className="flex-1 border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold outline-none focus:border-cyan-500"/>
+            <div className="flex flex-wrap gap-3 mb-4">
+              <input value={buscarTrab} onChange={e=>setBuscarTrab(e.target.value)} placeholder="Buscar por nombre o cédula..." className="flex-1 min-w-[200px] border-2 border-gray-200 rounded-xl px-4 py-2.5 text-sm font-bold outline-none focus:border-cyan-500"/>
+              <select value={filtroCentroTrab} onChange={e=>{setFiltroCentroTrab(e.target.value);setFiltroDeptoTrab('');}} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                <option value="">Todos los Centros de Costo</option>
+                {centros.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+              <select value={filtroDeptoTrab} onChange={e=>setFiltroDeptoTrab(e.target.value)} disabled={!filtroCentroTrab} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white disabled:bg-gray-50">
+                <option value="">Todos los Departamentos</option>
+                {departamentos.filter(d=>d.centroCostoId===filtroCentroTrab).map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
+              </select>
               <button onClick={()=>setTrabajadorForm(initTrabajador())} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 flex items-center gap-2"><UserPlus size={15}/> Nuevo Trabajador</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {trabajadores.filter(t=>!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab)).map(t=>(
-                <div key={t.id} onClick={()=>setTrabajadorVer(t)} className="bg-white rounded-2xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 hover:shadow-md transition-all">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-full bg-cyan-100 overflow-hidden flex items-center justify-center font-black text-cyan-600 text-xs flex-shrink-0">
-                      {t.fotoUrl ? <img src={t.fotoUrl} alt={t.nombre} className="w-full h-full object-cover"/> : (t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-black text-sm text-gray-800 truncate">{t.nombre}</p>
-                      <p className="text-[10px] text-gray-400 truncate">{t.cargo||'—'}</p>
-                    </div>
-                    <span className={`ml-auto text-[8px] font-black uppercase px-2 py-1 rounded-full flex-shrink-0 ${t.estado==='Egresado'?'bg-red-100 text-red-600':'bg-green-100 text-green-600'}`}>{t.estado}</span>
+            <div className="bg-white rounded-2xl border border-gray-200 divide-y divide-gray-100">
+              {trabajadores.filter(t=>
+                (!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab)) &&
+                (!filtroCentroTrab||t.centroCostoId===filtroCentroTrab) &&
+                (!filtroDeptoTrab||t.departamentoId===filtroDeptoTrab)
+              ).map(t=>(
+                <div key={t.id} onClick={()=>setTrabajadorVer(t)} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-cyan-50/50 transition-colors">
+                  <div className="w-11 h-11 rounded-full bg-cyan-100 overflow-hidden flex items-center justify-center font-black text-cyan-600 text-xs flex-shrink-0">
+                    {t.fotoUrl ? <img src={t.fotoUrl} alt={t.nombre} className="w-full h-full object-cover"/> : (t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
                   </div>
-                  <p className="text-[10px] text-gray-500">{nombreCentro(t.centroCostoId)} / {nombreDepto(t.departamentoId)}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-black text-sm text-gray-800 truncate">{t.nombre}</p>
+                    <p className="text-[10px] text-gray-400 truncate">{t.cargo||'—'} · {t.cedula}</p>
+                  </div>
+                  <p className="text-[11px] text-gray-500 hidden sm:block flex-shrink-0">{nombreCentro(t.centroCostoId)} / {nombreDepto(t.departamentoId)}</p>
+                  <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-full flex-shrink-0 ${t.estado==='Egresado'?'bg-red-100 text-red-600':'bg-green-100 text-green-600'}`}>{t.estado}</span>
+                  <ChevronRight size={16} className="text-gray-300 flex-shrink-0"/>
                 </div>
               ))}
-              {trabajadores.length===0 && <p className="col-span-3 text-center text-gray-400 text-sm py-12">Sin trabajadores registrados aún.</p>}
+              {trabajadores.length===0 && <p className="text-center text-gray-400 text-sm py-12">Sin trabajadores registrados aún.</p>}
             </div>
           </>
         )}
