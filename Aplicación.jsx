@@ -113,7 +113,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s3=onSnapshot(getColRef('rrhh_cuentas_nomina'),s=>setCuentasNomina(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s4=onSnapshot(getColRef('planDeCuentas'),s=>setPlanCuentasRH(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s5=onSnapshot(getColRef('rrhh_trabajadores'),s=>setTrabajadores(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{ if(d.exists()) setConfigParafiscal(d.data()); });
+    const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{
+      if(!d.exists()) return;
+      const cargado = d.data();
+      setConfigParafiscal(def=>({
+        salarioMinimo: cargado.salarioMinimo ?? def.salarioMinimo,
+        ivss: {...def.ivss, ...(cargado.ivss||{})},
+        rpe: {...def.rpe, ...(cargado.rpe||{})},
+        faov: {...def.faov, ...(cargado.faov||{})},
+        inces: {...def.inces, ...(cargado.inces||{})},
+      }));
+    });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
     return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();};
