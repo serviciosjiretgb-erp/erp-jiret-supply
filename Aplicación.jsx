@@ -86,13 +86,25 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function RRHHApp({fbUser,onBack,settings,appUser}) {
-  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina'
+  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales'
+  const [parafiscalSel,setParafiscalSel]=useState('ivss'); // 'ivss' | 'rpe' | 'faov' | 'inces'
   const [centros,setCentros]=useState([]);
   const [departamentos,setDepartamentos]=useState([]);
   const [cuentasNomina,setCuentasNomina]=useState([]);
   const [planCuentasRH,setPlanCuentasRH]=useState([]);
   const [trabajadores,setTrabajadores]=useState([]);
-  const [configParafiscal,setConfigParafiscal]=useState({ivssPct:4,ivssBase:'basico',rpePct:0.5,rpeBase:'basico',faovPct:1,faovBase:'basico',incesPct:0.5,incesBase:'basico'});
+  const [configParafiscal,setConfigParafiscal]=useState({
+    salarioMinimo: 130,
+    ivss:{pctTrabajador:4, riesgo:'medio', pctPatronalMin:9, pctPatronalMedio:10, pctPatronalMax:11, topeMultiplo:5, cuentaPasivo:'', nombrePasivo:''},
+    rpe:{pctTrabajador:0.5, pctPatronal:2, topeMultiplo:10, cuentaPasivo:'', nombrePasivo:''},
+    faov:{pctTrabajador:1, pctPatronal:2, cuentaPasivo:'', nombrePasivo:''},
+    inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, cuentaPasivo:'', nombrePasivo:''},
+  });
+  const RIESGO_PCT = {minimo:9, medio:10, maximo:11};
+  const guardarConfigParafiscal = async () => {
+    try{ await setDoc(getDocRef('rrhh_config','parafiscal'),configParafiscal); alert('Configuración guardada.'); }
+    catch(e){ alert('Error: '+e.message); }
+  };
   const [nominas,setNominas]=useState([]);
   const [nominaDetalles,setNominaDetalles]=useState([]);
   useEffect(()=>{
@@ -110,6 +122,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [centroSel,setCentroSel]=useState(null);
   const [deptoSel,setDeptoSel]=useState(null);
   const [nuevoCentro,setNuevoCentro]=useState('');
+  const [nuevaNaturalezaCentro,setNuevaNaturalezaCentro]=useState('Gasto');
   const [nuevoDepto,setNuevoDepto]=useState('');
   const [busqCuenta,setBusqCuenta]=useState('');
   const [nuevaLinea,setNuevaLinea]=useState({tipo:'asignacion',concepto:'',conceptoOtro:'',codigo:'',nombre:''});
@@ -117,6 +130,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const CONCEPTOS_NOMINA = {
     asignacion: ['Sueldo Básico','Bono Nocturno','Horas Extra Diurnas','Horas Extra Nocturnas','Comisiones','Bono de Producción','Bono Vacacional','Utilidades','Días Feriados Trabajados','Otro (escribir)'],
     deduccion: ['IVSS (Seguro Social)','RPE / Paro Forzoso','FAOV (Ley de Vivienda)','ISLR','INCES','Préstamo / Anticipo','Otro (escribir)'],
+    patronal: ['Cargas Sociales Patronales (IVSS+RPE+FAOV)'],
   };
 
   const deptosDelCentro = departamentos.filter(d=>d.centroCostoId===centroSel?.id);
@@ -127,9 +141,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const crearCentro = async () => {
     if(!nuevoCentro.trim()) return;
     setBusy(true);
-    try{ await addDoc(getColRef('rrhh_centros_costo'),{nombre:nuevoCentro.trim().toUpperCase(),createdAt:Date.now()}); setNuevoCentro(''); }
+    try{ await addDoc(getColRef('rrhh_centros_costo'),{nombre:nuevoCentro.trim().toUpperCase(),naturaleza:nuevaNaturalezaCentro,createdAt:Date.now()}); setNuevoCentro(''); }
     catch(e){ alert('Error al crear el centro de costo: '+e.message); }
     finally{ setBusy(false); }
+  };
+  const actualizarNaturalezaCentro = async (c, naturaleza) => {
+    try{ await updateDoc(getDocRef('rrhh_centros_costo',c.id),{naturaleza}); }
+    catch(e){ alert('Error: '+e.message); }
   };
   const eliminarCentro = async (c) => {
     const deps = departamentos.filter(d=>d.centroCostoId===c.id);
@@ -295,21 +313,61 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
 
   // Calcula IVSS/RPE/FAOV/INCES según la config — SOLO si "Sueldo Básico" está entre las
-  // asignaciones incluidas (si no hay sueldo básico cargado, no hay base para calcular nada).
-  // INCES además solo aplica si el concepto de esta nómina es de utilidades.
-  const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina) => {
+  // Cuenta los lunes dentro del rango típico de una quincena (1-15 o 16-fin de mes) de un mes
+  // calendario dado. "mes" viene como 'YYYY-MM'. quincena === 'Quincena 1' | 'Quincena 2'.
+  const contarLunesEnQuincena = (mes, quincena) => {
+    if(!mes) return 0;
+    const [anio, mesNum] = mes.split('-').map(Number);
+    const ultimoDia = new Date(anio, mesNum, 0).getDate();
+    const desde = quincena==='Quincena 1' ? 1 : 16;
+    const hasta = quincena==='Quincena 1' ? 15 : ultimoDia;
+    let lunes = 0;
+    for(let d=desde; d<=hasta; d++){
+      if(new Date(anio, mesNum-1, d).getDay()===1) lunes++;
+    }
+    return lunes;
+  };
+
+  // Calcula IVSS, RPE y FAOV según la fórmula legal validada:
+  // - IVSS/RPE: (base semanal × %) × lunes de la quincena, con tope propio cada uno (5x / 10x
+  //   salario mínimo). Base = Salario Normal (todas las asignaciones incluidas que cuenten como
+  //   salario normal — se excluyen Utilidades y Bono Vacacional).
+  // - FAOV: % directo sobre el Sueldo Básico de la quincena, sin fórmula de semanas ni tope.
+  // - INCES: NO se calcula aquí — el trabajador solo se descuenta sobre utilidades (aparte), y el
+  //   patronal es trimestral (pantalla propia).
+  // Devuelve, para cada una, el monto AL TRABAJADOR y el APORTE PATRONAL por separado.
+  const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina, mes, quincena) => {
     const incluidas = asignaciones.filter(a=>a.incluida);
     const totalAsig = incluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
     const sueldoBasicoItem = incluidas.find(a=>/sueldo b[aá]sico/i.test(a.concepto));
     const hayBase = !!sueldoBasicoItem;
     const basico = Number(sueldoBasicoItem?.montoUSD||0);
-    const baseDe = (b) => b==='total' ? totalAsig : basico;
+    // Salario Normal = todas las incluidas MENOS Utilidades y Bono Vacacional (no cuentan para IVSS/RPE)
+    const salarioNormal = incluidas.filter(a=>!/utilidad|bono vacacional/i.test(a.concepto)).reduce((s,a)=>s+Number(a.montoUSD||0),0);
+    const lunes = contarLunesEnQuincena(mes, quincena);
     const esUtilidades = /utilidad/i.test(conceptoNomina||'');
-    const mk = (concepto, pct, base, cuenta) => {
-      const montoUSD = hayBase ? parseFloat((base*pct/100).toFixed(2)) : 0;
-      return {concepto, montoUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||'', esLegal:true};
+
+    const calcSemanal = (base, pct, topeMultiplo) => {
+      const tope = configParafiscal.salarioMinimo * topeMultiplo;
+      const baseValidada = Math.min(base, tope);
+      const semanal = (baseValidada*12)/52;
+      return parseFloat(((semanal*pct/100)*lunes).toFixed(2));
     };
-    return {totalAsig, basico, hayBase, esUtilidades, mk, baseDe};
+    const mkSemanal = (nombre, cfgSeccion, cuenta) => {
+      if(!hayBase || lunes===0) return {concepto:nombre, montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true};
+      const pctPatronal = nombre==='IVSS' ? RIESGO_PCT[configParafiscal.ivss.riesgo] : cfgSeccion.pctPatronal;
+      const montoUSD = calcSemanal(salarioNormal, cfgSeccion.pctTrabajador, cfgSeccion.topeMultiplo);
+      const montoPatronalUSD = calcSemanal(salarioNormal, pctPatronal, cfgSeccion.topeMultiplo);
+      return {concepto:nombre, montoUSD, montoPatronalUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((montoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true, lunesUsados:lunes};
+    };
+    const mkFaov = (cuenta) => {
+      const cfg = configParafiscal.faov;
+      if(!hayBase) return {concepto:'FAOV', montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
+      const montoUSD = parseFloat((basico*cfg.pctTrabajador/100).toFixed(2));
+      const montoPatronalUSD = parseFloat((basico*cfg.pctPatronal/100).toFixed(2));
+      return {concepto:'FAOV', montoUSD, montoPatronalUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((montoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
+    };
+    return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov};
   };
 
   const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
@@ -343,18 +401,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const cIVSS = cuentasDepto.find(c=>c.tipo==='deduccion' && /ivss/i.test(c.concepto));
     const cRPE = cuentasDepto.find(c=>c.tipo==='deduccion' && /rpe|paro forzoso/i.test(c.concepto));
     const cFAOV = cuentasDepto.find(c=>c.tipo==='deduccion' && /faov/i.test(c.concepto));
-    const cINCES = cuentasDepto.find(c=>c.tipo==='deduccion' && /inces/i.test(c.concepto));
     const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
-    const {hayBase, esUtilidades, mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva.concepto);
+    const {hayBase, mkSemanal, mkFaov} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva.concepto, nominaActiva.mes, nominaActiva.quincena);
     const deduccionesLegales = hayBase ? [
-      mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase), cIVSS),
-      mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase), cRPE),
-      mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase), cFAOV),
-      ...(esUtilidades ? [mk('INCES', configParafiscal.incesPct||0.5, baseDe(configParafiscal.incesBase||'basico'), cINCES)] : []),
+      mkSemanal('IVSS', configParafiscal.ivss, cIVSS),
+      mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, cRPE),
+      mkFaov(cFAOV),
     ] : [];
     const deduccionesManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).map(({incluida,...d})=>({...d, esLegal:false}));
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
     const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual].reduce((s,d)=>s+d.montoUSD,0);
+    const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
     setBusyNomina(true);
     try{
       const t = cargarTrabModal.trabajador;
@@ -364,6 +421,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         centroCostoId:t.centroCostoId, departamentoId:t.departamentoId,
         asignaciones, deducciones:[...deduccionesLegales,...deduccionesManual],
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
+        totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
         netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
         tasa, updatedAt:Date.now(),
       });
@@ -378,21 +436,64 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
   // Asiento agrupado por departamento — suma todas las líneas de todos los trabajadores del
   // mismo departamento en un solo bloque de Debe/Haber por cuenta contable.
+  // INCES trimestral (aporte patronal) — suma el "salario normal" en Bs. que YA quedó guardado
+  // en cada nómina de los 3 meses del trimestre (cada una con su propia tasa histórica, sin
+  // recalcular con una tasa nueva), excluyendo Utilidades y Bono Vacacional de la base.
+  const calcularIncesTrimestral = (anio, trimestreNum) => {
+    const mesesDelTrimestre = [3*(trimestreNum-1)+1, 3*(trimestreNum-1)+2, 3*(trimestreNum-1)+3].map(m=>`${anio}-${String(m).padStart(2,'0')}`);
+    const porMes = mesesDelTrimestre.map(mesStr=>{
+      const nominasDelMes = nominas.filter(n=>n.mes===mesStr);
+      let salarioNormalBs = 0, nominasIncluidas = 0;
+      nominasDelMes.forEach(n=>{
+        const detalles = nominaDetalles.filter(d=>d.nominaId===n.id);
+        if(detalles.length>0) nominasIncluidas++;
+        detalles.forEach(d=>{
+          d.asignaciones.filter(a=>!/utilidad|bono vacacional/i.test(a.concepto)).forEach(a=>{ salarioNormalBs += Number(a.montoBs||0); });
+        });
+      });
+      return {mes:mesStr, nominasIncluidas, salarioNormalBs};
+    });
+    const totalSalarioNormalBs = porMes.reduce((s,m)=>s+m.salarioNormalBs,0);
+    const aportePatronalBs = parseFloat((totalSalarioNormalBs*(configParafiscal.inces.pctPatronalTrimestral/100)).toFixed(2));
+    return {porMes, totalSalarioNormalBs, aportePatronalBs};
+  };
+  const [showIncesModal,setShowIncesModal]=useState(false);
+  const [incesTrimestreSel,setIncesTrimestreSel]=useState({anio:new Date().getFullYear(), trimestre:Math.ceil((new Date().getMonth()+1)/3)});
+
   const calcularAsientoPorDepartamento = (nominaId) => {
     const detalles = nominaDetalles.filter(d=>d.nominaId===nominaId);
     const porDepto = {};
+    const nombrePasivoLegal = (concepto) => {
+      if(/^ivss/i.test(concepto)) return configParafiscal.ivss.nombrePasivo||'IVSS por Pagar';
+      if(/rpe|paro forzoso/i.test(concepto)) return configParafiscal.rpe.nombrePasivo||'RPE por Pagar';
+      if(/faov/i.test(concepto)) return configParafiscal.faov.nombrePasivo||'FAOV por Pagar';
+      return null;
+    };
     detalles.forEach(d=>{
       const key = d.departamentoId;
       if(!porDepto[key]) porDepto[key]={departamentoId:key, nombreDepto:nombreDepto(key), trabajadores:0, cuentas:{}};
       porDepto[key].trabajadores++;
       const addCuenta = (codigo, nombre, tipo, monto) => {
+        if(monto<=0) return;
         const ck = codigo||nombre;
         if(!porDepto[key].cuentas[ck]) porDepto[key].cuentas[ck]={codigo, nombre, debe:0, haber:0};
         if(tipo==='debe') porDepto[key].cuentas[ck].debe += monto; else porDepto[key].cuentas[ck].haber += monto;
       };
       d.asignaciones.forEach(a=>addCuenta(a.codigoCuenta, a.nombreCuenta||a.concepto, 'debe', a.montoUSD));
-      d.deducciones.forEach(ded=>addCuenta(ded.codigoCuenta, ded.nombreCuenta||ded.concepto, 'haber', ded.montoUSD));
+      let totalPatronalDepto = 0;
+      d.deducciones.forEach(ded=>{
+        const nombrePasivoCompartido = ded.esLegal ? nombrePasivoLegal(ded.concepto) : null;
+        addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoUSD);
+        if(ded.montoPatronalUSD>0){
+          addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoPatronalUSD);
+          totalPatronalDepto += ded.montoPatronalUSD;
+        }
+      });
       addCuenta('', 'Nómina por Pagar (Banco)', 'haber', d.netoUSD);
+      if(totalPatronalDepto>0){
+        const cPatronal = cuentasNomina.find(c=>c.departamentoId===key && c.tipo==='patronal');
+        addCuenta(cPatronal?.codigoCuenta||'', cPatronal?.nombreCuenta||'Cargas Sociales Patronales (⚠️ sin cuenta configurada)', 'debe', totalPatronalDepto);
+      }
     });
     return Object.values(porDepto);
   };
@@ -536,6 +637,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           {[
             {id:'config', label:'Configuración', icon:<Settings size={13}/>},
             {id:'nomina', label:'Registro de Nómina', icon:<DollarSign size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null},
+            {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>},
             {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null},
           ].map(t=>(
             <button key={t.id} onClick={()=>setRhTab(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${rhTab===t.id?'border-cyan-500 text-cyan-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
@@ -559,13 +661,20 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div key={c.id} onClick={()=>{setCentroSel(c);setDeptoSel(null);}}
                   className={`flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer group ${centroSel?.id===c.id?'bg-cyan-600 text-white':'hover:bg-gray-50 text-gray-700'}`}>
                   <span className="text-xs font-bold uppercase">{c.nombre}</span>
-                  <button onClick={e=>{e.stopPropagation();eliminarCentro(c);}} className={`opacity-0 group-hover:opacity-100 ${centroSel?.id===c.id?'text-cyan-200 hover:text-white':'text-red-400 hover:text-red-600'}`}><Trash2 size={13}/></button>
+                  <div className="flex items-center gap-1.5">
+                    <select value={c.naturaleza||'Gasto'} onClick={e=>e.stopPropagation()} onChange={e=>actualizarNaturalezaCentro(c,e.target.value)} className={`text-[9px] font-black uppercase rounded-lg px-1.5 py-1 border-none outline-none ${centroSel?.id===c.id?'bg-cyan-700 text-cyan-100':'bg-gray-100 text-gray-500'}`}>
+                      <option value="Costo">Costo</option>
+                      <option value="Gasto">Gasto</option>
+                    </select>
+                    <button onClick={e=>{e.stopPropagation();eliminarCentro(c);}} className={`opacity-0 group-hover:opacity-100 ${centroSel?.id===c.id?'text-cyan-200 hover:text-white':'text-red-400 hover:text-red-600'}`}><Trash2 size={13}/></button>
+                  </div>
                 </div>
 
               ))}
             </div>
             <div className="flex gap-2">
               <input value={nuevoCentro} onChange={e=>setNuevoCentro(e.target.value)} placeholder="Ej: Planta, Administración..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+              <select value={nuevaNaturalezaCentro} onChange={e=>setNuevaNaturalezaCentro(e.target.value)} className="border-2 border-gray-200 rounded-xl px-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option value="Gasto">Gasto</option><option value="Costo">Costo</option></select>
               <button onClick={crearCentro} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
             </div>
           </div>
@@ -622,10 +731,23 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     </div>
                   ))}
                 </div>
+                <p className="text-[9px] font-black text-amber-600 uppercase mb-1">Cargas Patronales ({centroSel?.naturaleza||'Gasto'})</p>
+                <div className="space-y-1 mb-3">
+                  {cuentasDelDepto.filter(c=>c.tipo==='patronal').length===0 && <p className="text-[10px] text-gray-400 py-2">Sin configurar — el aporte patronal no se contabilizará</p>}
+                  {cuentasDelDepto.filter(c=>c.tipo==='patronal').map(c=>(
+                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
+                      <span className="text-gray-700 font-bold">{c.concepto}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-amber-600 font-black">{c.codigoCuenta}</span>
+                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
                 <div className="border-t border-gray-100 pt-3 space-y-2">
                   <div className="flex gap-1">
-                    {['asignacion','deduccion'].map(t=>(
-                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t,concepto:'',conceptoOtro:''}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':'Deducción'}</button>
+                    {['asignacion','deduccion','patronal'].map(t=>(
+                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t,concepto:'',conceptoOtro:''}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':t==='deduccion'?'Deducción':'Patronal'}</button>
                     ))}
                   </div>
                   <select value={nuevaLinea.concepto} onChange={e=>setNuevaLinea(l=>({...l,concepto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
@@ -675,10 +797,124 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       </div>
       )}
 
+      {rhTab==='parafiscales' && (
+      <div className="p-6">
+        <div className="grid grid-cols-[200px_1fr] gap-4">
+          <div className="flex flex-col gap-1.5">
+            {[
+              ['ivss','Seguro Social',ShieldCheck],
+              ['rpe','Paro Forzoso',Ban],
+              ['faov','FAOV',Home],
+              ['inces','INCES',BookOpen],
+            ].map(([id,label,Icon])=>(
+              <button key={id} onClick={()=>setParafiscalSel(id)} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-left ${parafiscalSel===id?'bg-cyan-600 text-white':'text-gray-600 hover:bg-gray-50'}`}>
+                <Icon size={15}/> {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <div className="mb-4">
+              <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Mínimo Vigente (compartido por todos)</label>
+              <input type="number" step="0.01" value={configParafiscal.salarioMinimo} onChange={e=>setConfigParafiscal(c=>({...c,salarioMinimo:parseFloat(e.target.value)||0}))} className="w-48 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:border-cyan-500"/>
+            </div>
+
+            {parafiscalSel==='ivss' && (()=>{ const cfg=configParafiscal.ivss; const set=(p)=>setConfigParafiscal(c=>({...c,ivss:{...c.ivss,...p}}));
+              const pctPatronal = RIESGO_PCT[cfg.riesgo];
+              const tope = configParafiscal.salarioMinimo*cfg.topeMultiplo;
+              return (
+              <>
+                <p className="font-black text-gray-800 mb-1">Seguro Social Obligatorio (IVSS)</p>
+                <p className="text-[10px] text-gray-400 mb-4">Base: Salario Normal · Cálculo por semanas (lunes de la quincena) · Art. 66 LSS</p>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador (fijo)</label><input type="number" value={cfg.pctTrabajador} disabled className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nivel de Riesgo</label>
+                    <select value={cfg.riesgo} onChange={e=>set({riesgo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                      <option value="minimo">Riesgo Mínimo — {RIESGO_PCT.minimo}%</option>
+                      <option value="medio">Riesgo Medio — {RIESGO_PCT.medio}%</option>
+                      <option value="maximo">Riesgo Máximo — {RIESGO_PCT.maximo}%</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (5x, automático)</label><input value={`$${formatNum(tope)}`} disabled className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
+                    <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: IVSS por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3 mb-4">
+                  <p className="text-[9px] text-gray-400 mb-2">Fórmula: (base × 12 ÷ 52) × % × lunes de la quincena. Si el sueldo supera el tope, se usa el tope.</p>
+                  <p className="text-[10px] font-black text-cyan-600">Trabajador {cfg.pctTrabajador}% · Patrono {pctPatronal}%</p>
+                </div>
+              </>
+              );
+            })()}
+
+            {parafiscalSel==='rpe' && (()=>{ const cfg=configParafiscal.rpe; const set=(p)=>setConfigParafiscal(c=>({...c,rpe:{...c.rpe,...p}}));
+              const tope = configParafiscal.salarioMinimo*cfg.topeMultiplo;
+              return (
+              <>
+                <p className="font-black text-gray-800 mb-1">Régimen Prestacional de Empleo (Paro Forzoso)</p>
+                <p className="text-[10px] text-gray-400 mb-4">Base: Salario Normal · Misma fórmula de semanas/lunes que IVSS, tope propio</p>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (10x, automático)</label><input value={`$${formatNum(tope)}`} disabled className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
+                    <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: RPE por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
+                </div>
+              </>
+              );
+            })()}
+
+            {parafiscalSel==='faov' && (()=>{ const cfg=configParafiscal.faov; const set=(p)=>setConfigParafiscal(c=>({...c,faov:{...c.faov,...p}}));
+              return (
+              <>
+                <p className="font-black text-gray-800 mb-1">FAOV — Fondo de Ahorro Obligatorio para la Vivienda</p>
+                <p className="text-[10px] text-gray-400 mb-4">Base: Sueldo Básico de la quincena · % directo, sin fórmula de semanas · Sin tope</p>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
+                  <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: FAOV por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                </div>
+              </>
+              );
+            })()}
+
+            {parafiscalSel==='inces' && (()=>{ const cfg=configParafiscal.inces; const set=(p)=>setConfigParafiscal(c=>({...c,inces:{...c.inces,...p}}));
+              return (
+              <>
+                <p className="font-black text-gray-800 mb-1">INCES</p>
+                <p className="text-[10px] text-gray-400 mb-4">Trabajador: solo 0,5% sobre utilidades (no mensual). Patrono: 2% trimestral sobre salario normal total — ve a "Registro de Nómina → INCES Trimestral" para ese cálculo.</p>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador (solo utilidades)</label><input type="number" step="0.1" value={cfg.pctTrabajadorUtilidades} onChange={e=>set({pctTrabajadorUtilidades:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal (trimestral)</label><input type="number" step="0.1" value={cfg.pctPatronalTrimestral} onChange={e=>set({pctPatronalTrimestral:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                </div>
+                <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
+                  <input value={cfg.nombrePasivo} onChange={e=>set({nombrePasivo:e.target.value})} placeholder="Ej: INCES por Pagar" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                </div>
+              </>
+              );
+            })()}
+
+            <button onClick={guardarConfigParafiscal} className="mt-5 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
+          </div>
+        </div>
+      </div>
+      )}
+
       {rhTab==='nomina' && (
       <div className="p-6">
         {!nominaActiva && (
           <>
+            <div className="flex justify-end mb-3">
+              <button onClick={()=>setShowIncesModal(true)} className="flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-amber-100"><BookOpen size={13}/> INCES Trimestral</button>
+            </div>
             <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4">
               <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Iniciar Nuevo Pago</h3>
               <div className="grid grid-cols-2 gap-3 mb-3">
@@ -846,25 +1082,32 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
               {(()=>{
                 const tasa = Number(nominaActiva?.tasa||0);
-                const {hayBase, esUtilidades, mk, baseDe} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva?.concepto);
+                const {hayBase, salarioNormal, lunes, mkSemanal, mkFaov} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
                 const legales = hayBase ? [
-                  ['IVSS', mk('IVSS', configParafiscal.ivssPct, baseDe(configParafiscal.ivssBase)), configParafiscal.ivssPct],
-                  ['RPE (Paro Forzoso)', mk('RPE (Paro Forzoso)', configParafiscal.rpePct, baseDe(configParafiscal.rpeBase)), configParafiscal.rpePct],
-                  ['FAOV (Vivienda)', mk('FAOV (Vivienda)', configParafiscal.faovPct, baseDe(configParafiscal.faovBase)), configParafiscal.faovPct],
-                  ...(esUtilidades?[['INCES', mk('INCES', configParafiscal.incesPct||0.5, baseDe(configParafiscal.incesBase||'basico')), configParafiscal.incesPct||0.5]]:[]),
+                  mkSemanal('IVSS', configParafiscal.ivss),
+                  mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe),
+                  mkFaov(),
                 ] : [];
                 const totalAsig = cargarTrabModal.asignaciones.filter(a=>a.incluida).reduce((s,a)=>s+Number(a.montoUSD||0),0);
                 const totalDedManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).reduce((s,d)=>s+Number(d.montoUSD||0),0);
-                const totalDedLegal = legales.reduce((s,[,d])=>s+d.montoUSD,0);
+                const totalDedLegal = legales.reduce((s,d)=>s+d.montoUSD,0);
+                const totalPatronal = legales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
                 const neto = totalAsig - totalDedManual - totalDedLegal;
                 return (
                 <>
                   <div>
-                    <p className="text-[10px] font-black text-green-600 uppercase mb-2">Deducciones Legales</p>
+                    <p className="text-[10px] font-black text-green-600 uppercase mb-2">Deducciones Legales {lunes>0 && `(${lunes} lunes en esta quincena)`}</p>
                     {!hayBase && <p className="text-[11px] text-gray-400">Incluye "Sueldo Básico" arriba para que se calculen.</p>}
-                    {legales.map(([label,d,pct],i)=>(
-                      <div key={i} className="flex justify-between text-xs py-0.5"><span className="text-gray-500">{label} ({pct}%)</span><span className="font-bold text-red-500">-${formatNum(d.montoUSD)}</span></div>
+                    {legales.map((d,i)=>(
+                      <div key={i} className="flex justify-between items-center text-xs py-0.5">
+                        <span className="text-gray-500">{d.concepto}</span>
+                        <span className="flex items-center gap-3">
+                          <span className="font-bold text-red-500">Trab. -${formatNum(d.montoUSD)}</span>
+                          <span className="font-bold text-amber-600">Patr. ${formatNum(d.montoPatronalUSD)}</span>
+                        </span>
+                      </div>
                     ))}
+                    {hayBase && <p className="text-[9px] text-gray-400 mt-1">Base salario normal: ${formatNum(salarioNormal)} · Aporte patronal total: ${formatNum(totalPatronal)} (no se le descuenta al trabajador, es costo/gasto de la empresa)</p>}
                   </div>
                   <div className="border-t border-gray-100 pt-3 flex justify-between items-center">
                     <span className="text-xs font-black text-gray-600 uppercase">Neto a Pagar</span>
@@ -900,6 +1143,50 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             </div>
           </div>
         )}
+
+        {showIncesModal && (()=>{
+          const {porMes, totalSalarioNormalBs, aportePatronalBs} = calcularIncesTrimestral(incesTrimestreSel.anio, incesTrimestreSel.trimestre);
+          const NOMBRES_MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+          return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowIncesModal(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 space-y-4" onClick={e=>e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <p className="font-black text-gray-800 flex items-center gap-2"><BookOpen size={16}/> INCES Trimestral — Aporte Patronal (Bs.)</p>
+                <button onClick={()=>setShowIncesModal(false)} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <select value={incesTrimestreSel.anio} onChange={e=>setIncesTrimestreSel(s=>({...s,anio:parseInt(e.target.value)}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  {[incesTrimestreSel.anio-1,incesTrimestreSel.anio,incesTrimestreSel.anio+1].map(a=><option key={a} value={a}>{a}</option>)}
+                </select>
+                <select value={incesTrimestreSel.trimestre} onChange={e=>setIncesTrimestreSel(s=>({...s,trimestre:parseInt(e.target.value)}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  <option value={1}>1er trimestre (Ene-Feb-Mar)</option>
+                  <option value={2}>2do trimestre (Abr-May-Jun)</option>
+                  <option value={3}>3er trimestre (Jul-Ago-Sep)</option>
+                  <option value={4}>4to trimestre (Oct-Nov-Dic)</option>
+                </select>
+              </div>
+              <table className="w-full text-xs">
+                <thead><tr className="text-[9px] text-gray-400 uppercase"><th className="text-left pb-1">Mes</th><th className="text-right pb-1">Nóminas</th><th className="text-right pb-1">Salario Normal Bs.</th></tr></thead>
+                <tbody>
+                  {porMes.map((m,i)=>(
+                    <tr key={i} className="border-t border-gray-100">
+                      <td className="py-1.5">{NOMBRES_MESES[parseInt(m.mes.split('-')[1])-1]} {m.mes.split('-')[0]}</td>
+                      <td className="py-1.5 text-right">{m.nominasIncluidas}</td>
+                      <td className="py-1.5 text-right font-mono">{formatNum(m.salarioNormalBs)}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-gray-200"><td className="py-1.5 font-black" colSpan={2}>Total salario normal del trimestre</td><td className="py-1.5 text-right font-mono font-black">{formatNum(totalSalarioNormalBs)}</td></tr>
+                </tbody>
+              </table>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex justify-between items-center">
+                <span className="text-xs font-black text-amber-700 uppercase">Aporte patronal ({configParafiscal.inces.pctPatronalTrimestral}%)</span>
+                <span className="font-mono font-black text-amber-700 text-lg">Bs. {formatNum(aportePatronalBs)}</span>
+              </div>
+              <p className="text-[10px] text-gray-400">Cada mes usa su propia tasa histórica ya guardada en cada nómina — no se recalcula con tasa nueva. Se paga en los primeros 5 días hábiles del mes siguiente al cierre del trimestre.</p>
+            </div>
+          </div>
+          );
+        })()}
       </div>
       )}
 
