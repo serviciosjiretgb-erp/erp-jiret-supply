@@ -4826,7 +4826,8 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   let contra;
   if(m.tipoTercero==='Relacionado' && m.terceroId){
     const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
-    const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+    const codRel = (tercRel?.cuentaContableCod||'').trim();
+    const nomRel = (tercRel?.cuentaContableNom||'').trim();
     const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
     contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
   } else if(tercero && (codTercero||nomTercero)){
@@ -5201,7 +5202,8 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
   const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : montoUSD*tasa;
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
-  const [codRel,nomRel] = tercRel?.cuentaContableNombre ? tercRel.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
+  const codRel = (tercRel?.cuentaContableCod||'').trim();
+  const nomRel = (tercRel?.cuentaContableNom||'').trim();
   // Antes, si el tercero no tenía cuenta configurada, se adivinaba buscando en TODO el Plan de
   // Cuentas la primera cuyo nombre contenga "préstamo" o "relacionad" — eso hacía que caudales de
   // terceros SIN configurar terminaran mezclados en una cuenta genérica ajena (visto en datos
