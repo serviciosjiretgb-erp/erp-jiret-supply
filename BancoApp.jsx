@@ -3515,7 +3515,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           // su saldo por el factor de la tasa. Con esto, el destino siempre usa SU propia moneda.
           const netoNativoDest = cuentaDest.moneda==='BS' ? netoBs : netoUSD;
           if(destinoEsCaja){
-            batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativoDest});
+            // Antes esto también sobreescribía saldoInicial (el punto fijo del mes declarado)
+            // sumándole el traslado — eso lo corrompía cada vez que llegaba una transferencia,
+            // haciendo que pareciera "cambiar solo". El movimiento de Ingreso de abajo ya es
+            // suficiente: getSaldoCaja() lo suma sobre saldoInicial automáticamente.
             batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativoDest,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           } else {
             batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativoDest});
@@ -3757,8 +3760,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         Object.values(deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
           if(Math.abs(delta)<0.005) return;
           const nuevoSaldo = Number(cuenta.saldo||0) + delta;
-          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: nuevoSaldo});
-          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
+          // saldoInicial de caja es el punto fijo del mes declarado, no un saldo corriente —
+          // no se toca aquí. El monto del movimiento ya se corrige abajo; getSaldoCaja() recalcula solo.
+          if(!esCaja) batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
         });
         problemasTraslado.forEach(p=>{
           if(p.cuenta && Math.abs(p.delta)>=0.005){
@@ -3790,8 +3794,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         Object.values(ultimaCorreccionTraslados.deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
           if(Math.abs(delta)<0.005) return;
           const saldoRevertido = Number(cuenta.saldo||0); // el saldo ANTES de aplicar delta, ya capturado al momento de corregir
-          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: saldoRevertido});
-          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: saldoRevertido});
+          // Misma razón que en corregirTraslados: no tocar saldoInicial de caja.
+          if(!esCaja) batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: saldoRevertido});
         });
         ultimaCorreccionTraslados.problemas.forEach(p=>{
           if(p.cuenta && Math.abs(p.delta)>=0.005){
@@ -6309,7 +6313,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             ts:serverTimestamp(),
           });
           if(destinoEsCaja){
-            batch.update(getDocRef('caja_cuentas',cuentaDest.id),{saldoInicial:Number(cuentaDest.saldo)+netoNativo});
+            // Ver nota igual en la vista de Bancos: no tocar saldoInicial, el movimiento basta.
             batch.set(getDocRef('caja_movimientos',idDestino),{id:idDestino,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDest,referencia:form.referencia,tasa,monto:netoNativo,montoBs:netoBs,montoUSD:netoUSD,asientoContableId:asientoDestId,estatus:'No Conciliado',ts:serverTimestamp()});
           } else {
             batch.update(getDocRef('banco_cuentas',cuentaDest.id),{saldo:Number(cuentaDest.saldo)+netoNativo});
@@ -6587,8 +6591,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         Object.values(deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
           if(Math.abs(delta)<0.005) return;
           const nuevoSaldo = Number(cuenta.saldo||0) + delta;
-          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: nuevoSaldo});
-          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
+          // saldoInicial de caja es el punto fijo del mes declarado, no un saldo corriente —
+          // no se toca aquí. El monto del movimiento ya se corrige abajo; getSaldoCaja() recalcula solo.
+          if(!esCaja) batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: nuevoSaldo});
         });
         problemasTrasladoCaja.forEach(p=>{
           if(p.cuenta && Math.abs(p.delta)>=0.005){
@@ -6617,8 +6622,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         Object.values(ultimaCorreccionTrasladosCaja.deltaPorCuenta).forEach(({esCaja,cuenta,delta})=>{
           if(Math.abs(delta)<0.005) return;
           const saldoRevertido = Number(cuenta.saldo||0);
-          if(esCaja) batch.update(getDocRef('caja_cuentas', cuenta.id), {saldoInicial: saldoRevertido});
-          else batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: saldoRevertido});
+          // Misma razón que en corregirTraslados: no tocar saldoInicial de caja.
+          if(!esCaja) batch.update(getDocRef('banco_cuentas', cuenta.id), {saldo: saldoRevertido});
         });
         ultimaCorreccionTrasladosCaja.problemas.forEach(p=>{
           if(p.cuenta && Math.abs(p.delta)>=0.005){
@@ -8910,7 +8915,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // no en Clientes ni Proveedores — si se buscan ahí nunca aparecen y el reporte termina
         // cayendo en "Cuentas por Cobrar/Pagar" genérico, que no tiene nada que ver.
         const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
-        const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const codRel=(tercRel?.cuentaContableCod||'').trim();
+        const nomRel=(tercRel?.cuentaContableNom||'').trim();
         const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
         sub.push({comp,grupoKey,mes:mesL,fecha:m.fecha,doc,conc,tasa,codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''),cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas'),tipo:isIng?'H':'D',dBs:isIng?0:valBs,hBs:isIng?valBs:0,dUSD:isIng?0:valUSD,hUSD:isIng?valUSD:0});
       }
@@ -9235,7 +9241,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const cuentaGenerica=(patron)=>{const cta2=(contCuentas||[]).find(p=>patron.test(p.nombre||''));return cta2?{codigo:String(cta2.codigo||cta2.id||''),nombre:cta2.nombre||''}:null;};
       if(m.tipoTercero==='Relacionado'&&m.terceroId){
         const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
-        const [codRel,nomRel]=tercRel?.cuentaContableNombre?tercRel.cuentaContableNombre.split('—').map(s=>s.trim()):['',''];
+        const codRel=(tercRel?.cuentaContableCod||'').trim();
+        const nomRel=(tercRel?.cuentaContableNom||'').trim();
         const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
         lineasContra=[{codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''),cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas'),tipoLinea:isIng?'H':'D',debeBs:isIng?0:m.montoBs,haberBs:isIng?m.montoBs:0,debeUSD:isIng?0:m.montoUSD,haberUSD:isIng?m.montoUSD:0}];
       }
