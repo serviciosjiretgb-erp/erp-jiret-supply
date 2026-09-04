@@ -33380,7 +33380,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               {min:150000, max:199999, pct:0.40},
               {min:200000, max:275000, pct:0.45},
             ],
-            mixTabla: [ {cat:4, monto:100}, {cat:6, monto:150}, {cat:8, monto:200} ],
+            mixTabla: [ {cat:4, monto:100}, {cat:6, monto:100}, {cat:8, monto:100} ],
             cobranzaEscala: [
               {dMin:0, dMax:7, pct:1.50},
               {dMin:8, dMax:14, pct:1.30},
