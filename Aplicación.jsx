@@ -13526,8 +13526,9 @@ const detectSubcategory = (code, desc) => {
   if (/CINTA|CINTA DE EMBALAR/.test(c)) return 'Cintas';
   if (/PAPEL KRAFT|KRAFT/.test(c)) return 'Papel Kraft';
   if (/DISPEN|DISPENSADOR/.test(c)) return 'Dispensadores';
-  if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA|PAÑAL|FG-[A-Z]/.test(c) && !/TERMO|STRETCH|STRECTH|CINTA|KRAFT|DISPEN/.test(c)) return 'Bolsas Plásticas';
+  if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA|PAÑAL|FG-[A-Z]/.test(c) && !/TERMO|STRETCH|STRECTH|CINTA|KRAFT|DISPEN|FLEJE/.test(c)) return 'Bolsas Plásticas';
   if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
+  if (/FLEJE|FLEJADORA|STRAPPING/.test(c)) return 'Fleje';
   return '';
 };
 // Unidad correcta de un producto terminado — antes solo distinguía Termoencogible (KG) vs
@@ -33426,8 +33427,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const subcatsVendidas = new Set();
           facturasMesEmpresa.forEach(inv => (inv.itemsFacturados||[]).forEach(it => {
             const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
-            const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode);
-            const sub = invItem?.subcategory || getItemSubcategory(invItem||{}) || (fg?'Productos Terminados':'');
+            // También se busca por fgId (no solo invCode) — muchos Productos Terminados vendidos
+            // solo calzan por ahí, y antes se quedaban sin subcategoría (0 en Mix de Categoría
+            // aunque sí se hubiera vendido de varias líneas).
+            const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode || (it.fgId && (i.id||'').split('___')[0]===it.fgId));
+            const sub = invItem?.subcategory || getItemSubcategory(invItem||{}) || fg?.subcategory || (fg?'Productos Terminados':'');
             if(sub) subcatsVendidas.add(sub);
           }));
           const nSubcats = subcatsVendidas.size;
