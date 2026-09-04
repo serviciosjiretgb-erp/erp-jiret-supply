@@ -13523,9 +13523,11 @@ const formatFGLabel = (item) => {
 const detectSubcategory = (code, desc) => {
   const c = ((code||'')+(desc||'')).toUpperCase();
   if (/STRECTH|STRECH|STRETCH|STREFIL|ENTREFIL|SFM-|SFA-|OSFA|SFJUMBO|PSFM|STRETCH FILM/.test(c)) return 'Stretch Film';
+  // Dispensadores va ANTES que Cintas: "DISPENSADOR DE CINTA DE EMBALAR" contiene la palabra
+  // "CINTA", así que si Cintas se revisaba primero, un dispensador nunca se detectaba como tal.
+  if (/DISPEN|DISPENSADOR/.test(c)) return 'Dispensadores';
   if (/CINTA|CINTA DE EMBALAR/.test(c)) return 'Cintas';
   if (/PAPEL KRAFT|KRAFT/.test(c)) return 'Papel Kraft';
-  if (/DISPEN|DISPENSADOR/.test(c)) return 'Dispensadores';
   if (/BOL-|BOLSA|EMBUTID|EMPAQUE|LAMINA|PAÑAL|FG-[A-Z]/.test(c) && !/TERMO|STRETCH|STRECTH|CINTA|KRAFT|DISPEN|FLEJE/.test(c)) return 'Bolsas Plásticas';
   if (/TERMO|THERMO|SHRINK|ENCOG/.test(c)) return 'Termoencogibles';
   if (/FLEJE|FLEJADORA|STRAPPING/.test(c)) return 'Fleje';
@@ -33425,13 +33427,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Subcategorías vendidas por toda la empresa en el mes
           const subcatsVendidas = new Set();
-          facturasMesEmpresa.forEach(inv => (inv.itemsFacturados||[]).forEach(it => {
+          facturasMesEmpresa.forEach(inv => (inv.itemsFacturados||inv.items||[]).forEach(it => {
             const fg = (finishedGoodsInventory||[]).find(f=>f.id===it.fgId);
             // También se busca por fgId (no solo invCode) — muchos Productos Terminados vendidos
             // solo calzan por ahí, y antes se quedaban sin subcategoría (0 en Mix de Categoría
             // aunque sí se hubiera vendido de varias líneas).
             const invItem = (inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===it.invCode || (it.fgId && (i.id||'').split('___')[0]===it.fgId));
-            const sub = invItem?.subcategory || getItemSubcategory(invItem||{}) || fg?.subcategory || (fg?'Productos Terminados':'');
+            // Última red: detectar directo sobre el código/descripción del renglón VENDIDO
+            // (eso siempre existe, venga o no un cruce exitoso con Inventario/Prod. Terminados).
+            // Antes, si el cruce fallaba, se llamaba getItemSubcategory({}) — con un objeto vacío,
+            // sin texto que analizar — así que nunca detectaba nada aunque la descripción del
+            // renglón sí dijera claramente "STRETCH FILM", "CINTA", "PAPEL KRAFT", etc.
+            const sub = invItem?.subcategory || getItemSubcategory(invItem||{}) || fg?.subcategory
+              || detectSubcategory(it.invCode||it.fgId||'', it.desc||'')
+              || (fg?'Productos Terminados':'');
             if(sub) subcatsVendidas.add(sub);
           }));
           const nSubcats = subcatsVendidas.size;
