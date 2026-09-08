@@ -34754,6 +34754,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             } catch(e){ alert('Error al importar: '+e.message); }
             finally{ setImportandoHist(false); }
           };
+          const crearCobrosHistoricosEneAbr2026 = async () => {
+            const nesHist = (notasEntrega||[]).filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX');
+            if(nesHist.length===0){ alert('Primero importa las Notas de Entrega históricas (botón de arriba).'); return; }
+            const yaCobradas = new Set((cobrosCxc||[]).filter(c=>c.origenImport==='HIST_ENE_ABR_2026_XLSX').map(c=>c.neId));
+            const pendientes = nesHist.filter(n=>!yaCobradas.has(n.id));
+            if(pendientes.length===0){ alert('Ya se registró el cobro de estas NE históricas — no se crea de nuevo.'); return; }
+            if(!window.confirm(`Esto es lo que realmente evita que aparezcan en Cuentas por Cobrar: se va a registrar un cobro por el monto TOTAL de ${pendientes.length} Nota(s) de Entrega histórica(s), fechado el mismo día de cada una. Después de esto deben desaparecer de "Cuentas por Cobrar Detallado". ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              pendientes.forEach(ne=>{
+                const id = `COB-HIST-${ne.id}`;
+                batch.set(getDocRef('cobros_cxc', id), {
+                  id, neId: ne.id, neDocumento: ne.documento||ne.id, clientName: ne.clientName,
+                  monto: parseFloat(Number(ne.total||0).toFixed(2)), metodo:'Histórico', referencia:'Cobro histórico (importación Excel)',
+                  cuentaBancariaId:'', cuentaBancoNombre:'', fecha: ne.fecha, vendedor: ne.vendedor||'', tipo:'Cobro',
+                  origenImport:'HIST_ENE_ABR_2026_XLSX', timestamp: Date.now(),
+                });
+              });
+              await batch.commit();
+              alert(`Se registró el cobro completo de ${pendientes.length} NE. Ya no deberían salir en Cuentas por Cobrar.`);
+            } catch(e){ alert('Error al registrar cobros: '+e.message); }
+            finally{ setImportandoHist(false); }
+          };
           const importarFacturasHistoricasEneAbr2026 = async () => {
             const nesHist = (notasEntrega||[]).filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX');
             if(nesHist.length===0){ alert('Primero importa las Notas de Entrega históricas (botón de arriba).'); return; }
@@ -34804,6 +34828,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   {(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX') && !(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX'&&n.facturaId) && (
                     <button onClick={importarFacturasHistoricasEneAbr2026} disabled={importandoHist} className="bg-indigo-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-indigo-800 disabled:opacity-50">
                       <FileCheck size={14}/> {importandoHist?'Creando...':'Crear Facturas Históricas'}
+                    </button>
+                  )}
+                  {(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX') && !(cobrosCxc||[]).some(c=>c.origenImport==='HIST_ENE_ABR_2026_XLSX') && (
+                    <button onClick={crearCobrosHistoricosEneAbr2026} disabled={importandoHist} className="bg-emerald-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-emerald-800 disabled:opacity-50">
+                      <CheckCircle2 size={14}/> {importandoHist?'Registrando...':'Registrar Cobro Histórico (quita de CxC)'}
                     </button>
                   )}
                   <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
