@@ -21032,7 +21032,7 @@ function App() {
   };
   const [showManageSubcats, setShowManageSubcats] = useState(false);
   const [newSubcatInput, setNewSubcatInput] = useState('');
-  const DEFAULT_SUBCATS = ['Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Otros Terminados','Materia Prima','Quimicos','Pigmento','Tintas','Semielaborado'];
+  const DEFAULT_SUBCATS = ['Stretch Film','Cintas','Papel Kraft','Dispensadores','Bolsas Plásticas','Empaques Flexibles','Termoencogibles','Otros Terminados','Materia Prima','Químicos','Pigmentos','Tintas','Semielaborados'];
   const getSubcats = () => settings?.invSubcategorias?.length ? settings.invSubcategorias : DEFAULT_SUBCATS;
   const handleAddSubcat = async (name) => {
     if(!name.trim()) return;
@@ -46132,7 +46132,7 @@ ${resumenHtml}
                                     {(()=>{
                                       // Show ALL categories — user selects what is needed for this phase
                                       // Categorías que coinciden exactamente con el inventario
-                                      const ALL_CATS = ['Materia Prima','Quimicos','Tintas','Pigmento','Semielaborado','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      const ALL_CATS = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       // Consolidate ALL inventory items (prefer ALMACEN ZI stock, show all with stock > 0)
                                       const seen = {};
@@ -46157,7 +46157,7 @@ ${resumenHtml}
                                       // Group by category
                                       const catGroups = {};
                                       uniqueItems.forEach(i=>{ const c=i.category||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
-                                      const catOrder = ['Materia Prima','Quimicos','Tintas','Pigmento','Semielaborado','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      const catOrder = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
 
                                       return (
                                         <div className="flex gap-2 mb-3">
