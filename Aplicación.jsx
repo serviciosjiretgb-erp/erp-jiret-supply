@@ -37404,10 +37404,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   clTotalUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
                   const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
+                  const diasVenc=getAgingDays(ne,fechaRef);
+                  const diasVencLbl=diasVenc>0?`${diasVenc} d.`:'Al día';
                   return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
                     <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
                     <td>${ne.fecha||'—'}</td>
                     <td style="color:#b45309">${getVence(ne)}</td>
+                    <td style="text-align:center;font-weight:bold;color:${diasVenc>0?'#dc2626':'#16a34a'}">${diasVencLbl}</td>
                     <td style="color:#4338ca">${docFiscalPDF}</td>
                     <td style="text-align:right">$${formatNum(totalUSD)}</td>
                     <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
@@ -37427,11 +37430,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span style="font-size:9px;color:#94a3b8;padding-right:16px">${cl.clientRif}</span>
                     <span style="color:#fbbf24">${estado}</span>
                   </div>
-                  <table style="width:100%;border-collapse:collapse">
+                  <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+                    <colgroup>
+                      <col style="width:9%"><col style="width:9%"><col style="width:8%"><col style="width:8%">
+                      <col style="width:10%"><col style="width:13%"><col style="width:13%"><col style="width:30%">
+                    </colgroup>
                     <thead><tr style="background:#f1f5f9;color:#64748b;font-size:9px;text-transform:uppercase">
                       <th style="text-align:left;padding:5px 16px;font-weight:bold">N.E.</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Fecha</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Vence</th>
+                      <th style="text-align:center;padding:5px;font-weight:bold">Días Venc.</th>
                       <th style="text-align:left;padding:5px;font-weight:bold">Factura</th>
                       <th style="text-align:right;padding:5px;font-weight:bold">Total USD</th>
                       <th style="text-align:right;padding:5px;font-weight:bold">Saldo USD</th>
@@ -37439,7 +37447,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     </tr></thead>
                     <tbody>${neRows}</tbody>
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
-                      <td colspan="4" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
+                      <td colspan="5" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold;font-size:13px;color:${clSaldo<-0.01?'#0f766e':'#dc2626'}">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td>
                       <td style="padding:5px 16px"></td>
