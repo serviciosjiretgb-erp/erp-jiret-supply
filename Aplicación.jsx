@@ -86,7 +86,16 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 function RRHHApp({fbUser,onBack,settings,appUser}) {
-  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales'
+  const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
+  useEffect(()=>{
+    const perms=appUser?.permissions||{};
+    const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
+    if(appUser?.role==='Master'||!tieneSubs) return;
+    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores'};
+    if(perms[mapa[rhTab]]) return;
+    const primero=Object.keys(mapa).find(k=>perms[mapa[k]]);
+    if(primero) setRhTab(primero);
+  },[appUser,rhTab]);
   const [parafiscalSel,setParafiscalSel]=useState('ivss'); // 'ivss' | 'rpe' | 'faov' | 'inces'
   const [busqCuentaParafiscal,setBusqCuentaParafiscal]=useState('');
   const [centros,setCentros]=useState([]);
@@ -800,13 +809,23 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       {/* Sub-nav */}
       <div className="flex-shrink-0" style={{background:'#111827',borderBottom:'2px solid #0891b2'}}>
         <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
-          {[
-            {id:'config', label:'Configuración', icon:<Settings size={13}/>},
-            {id:'nomina', label:'Registro de Nómina', icon:<DollarSign size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null},
-            {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>},
-            {id:'conceptos', label:'Conceptos', icon:<Calculator size={13}/>, badge:conceptos.length||null},
-            {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null},
-          ].map(t=>(
+          {(() => {
+            const _permsRRHH=appUser?.permissions||{};
+            const _tieneSubsRRHH=Object.keys(_permsRRHH).some(k=>k.startsWith('rrhh_')&&_permsRRHH[k]);
+            const permRRHH=(k)=>{
+              if(!appUser) return true;
+              if(appUser.role==='Master') return true;
+              if(!_tieneSubsRRHH) return true;
+              return !!_permsRRHH[k];
+            };
+            return [
+              {id:'config', label:'Configuración', icon:<Settings size={13}/>, perm:'rrhh_configuracion'},
+              {id:'nomina', label:'Registro de Nómina', icon:<DollarSign size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null, perm:'rrhh_nomina'},
+              {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>, perm:'rrhh_parafiscales'},
+              {id:'conceptos', label:'Conceptos', icon:<Calculator size={13}/>, badge:conceptos.length||null, perm:'rrhh_conceptos'},
+              {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null, perm:'rrhh_trabajadores'},
+            ].filter(t=>permRRHH(t.perm));
+          })().map(t=>(
             <button key={t.id} onClick={()=>setRhTab(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 relative ${rhTab===t.id?'border-cyan-500 text-cyan-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>
               {t.icon} {t.label}
               {t.badge>0&&<span className="ml-1 bg-cyan-500 text-white text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center">{t.badge}</span>}
@@ -13716,6 +13735,18 @@ const SYSTEM_MODULES = [
     submodules: [
       { id: 'banco_movimientos',   label: 'Movimientos Bancarios' },
       { id: 'banco_conciliacion',  label: 'Conciliación Bancaria' },
+    ]
+  },
+  {
+    id: 'rrhh',
+    label: '13. MÓDULO RRHH',
+    icon: '🧑‍💼',
+    submodules: [
+      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Cuentas)' },
+      { id: 'rrhh_nomina',        label: 'Registro de Nómina' },
+      { id: 'rrhh_parafiscales',  label: 'Parafiscales (IVSS, RPE, FAOV, INCES)' },
+      { id: 'rrhh_conceptos',     label: 'Conceptos de Nómina' },
+      { id: 'rrhh_trabajadores',  label: 'Trabajadores (Fichas)' },
     ]
   },
   {
