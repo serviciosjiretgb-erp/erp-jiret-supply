@@ -37103,10 +37103,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
             // Buscar TODAS las NE de esa factura por nroFactura (número fiscal visible en la retención)
             // Fallback: nroControl, luego facturaId (Firestore ID)
-            const hit = _nesByFiscal.get(r.nroFactura)
+            let hit = _nesByFiscal.get(r.nroFactura)
                      || _nesByFiscal.get(r.nroControl)
                      || _nesByFiscal.get(r.facturaId);
             if(!hit) continue;
+            // Si el match inicial fue por un documento de factura específico (facturaId) pero ese
+            // mismo número fiscal está repartido en VARIOS documentos de factura (mismo caso de
+            // CORPORACION CIBUS: una sola factura fiscal cargada como varios documentos, una NE
+            // cada uno), expandir al grupo completo por nroFiscal — la retención de un contribuyente
+            // especial se calcula sobre la factura fiscal completa, no por documento interno.
+            if(hit.inv?.nroFiscal && _nesByFiscal.has(hit.inv.nroFiscal)) hit = _nesByFiscal.get(hit.inv.nroFiscal);
             const {nes: nesTarget, inv} = hit;
             const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
@@ -37467,7 +37473,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const diasVenc=getAgingDays(ne,fechaRef);
                   const diasVencLbl=`${diasVenc} d.`;
                   const _dbgGrupo=(invVincPDF&&(invVincPDF.nroFiscal||invVincPDF.documento))?(_nesByFiscal.get(invVincPDF.nroFiscal)||_nesByFiscal.get(invVincPDF.documento)||_nesByFiscal.get(invVincPDF.id)):null;
-                  const _dbg=`[DBG facturaId=${ne.facturaId||'∅'} inv.id=${invVincPDF?.id||'∅'} neOrigen=${invVincPDF?.neOrigen||'∅'} nesAdic=[${(invVincPDF?.nesAdicionales||[]).join(',')||'∅'}] grupo=[${_dbgGrupo?_dbgGrupo.nes.map(n=>n.documento||n.id).join(',')||'∅':'SIN-GRUPO'}]]`;
+                  const _dbgCobrado=getCobradoNEAtFecha(ne,fechaRef);
+                  const _dbgRetItems=_retsPorNE.get(ne.id)||[];
+                  const _dbgRetIva=_dbgRetItems.filter(r=>!r.tipoExtra).reduce((s,r)=>s+r._montoUSD,0);
+                  const _dbg=`[DBG facturaId=${ne.facturaId||'∅'} inv.id=${invVincPDF?.id||'∅'} neOrigen=${invVincPDF?.neOrigen||'∅'} nesAdic=[${(invVincPDF?.nesAdicionales||[]).join(',')||'∅'}] grupo=[${_dbgGrupo?_dbgGrupo.nes.map(n=>n.documento||n.id).join(',')||'∅':'SIN-GRUPO'}] | COBRADO=$${formatNum(_dbgCobrado)} RET_MATCHES=${_dbgRetItems.length} RET_USD=$${formatNum(_dbgRetIva)}]`;
                   return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
                     <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
                     <td>${ne.fecha||'—'}</td>
@@ -39375,10 +39384,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _retsPorNEec = new Map();
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            const hit = _nesByFiscalEc.get(r.nroFactura)
+            let hit = _nesByFiscalEc.get(r.nroFactura)
                      || _nesByFiscalEc.get(r.nroControl)
                      || _nesByFiscalEc.get(r.facturaId);
             if(!hit) continue;
+            if(hit.inv?.nroFiscal && _nesByFiscalEc.has(hit.inv.nroFiscal)) hit = _nesByFiscalEc.get(hit.inv.nroFiscal);
             const {nes: nesTarget, inv} = hit;
             const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
