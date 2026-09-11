@@ -37071,16 +37071,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Esto evita el problema de _findNEforInv que retornaba la NE equivocada
           // cuando el facturaId de una NE apuntaba a la factura de otra NE.
           const _nesByFiscal = new Map();
+          // Fuente principal: la propia factura sabe qué NE la componen (neOrigen + nesAdicionales) —
+          // más confiable que depender de que cada NE tenga su facturaId bien poblado.
+          for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
+            const nesIds=[inv.neOrigen,...(inv.nesAdicionales||[])].filter(Boolean);
+            if(nesIds.length===0) continue;
+            const nesGroup=nesIds.map(nid=>(notasEntrega||[]).find(n=>n.id===nid||n.documento===nid)).filter(Boolean);
+            if(nesGroup.length===0) continue;
+            for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
+              if(!_nesByFiscal.has(k)) _nesByFiscal.set(k, {nes:[], inv});
+              nesGroup.forEach(ne=>{ if(!_nesByFiscal.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscal.get(k).nes.push(ne); });
+            }
+          }
+          // Respaldo: NE con facturaId propio que por alguna razón no quedaron en neOrigen/nesAdicionales.
           for(const ne of (notasEntrega||[])){
+            if(!ne.facturaId) continue;
             const neRif=(ne.clientRif||'').trim().toUpperCase();
             const rifOk=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
-            // Misma lógica que invVinc en el modal cobro
-            const inv = ne.facturaId
-              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOk(i))
-              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOk(i));
+            const inv=(invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOk(i));
             if(!inv) continue;
-            // Indexar por todos los identificadores posibles de la factura — agrupando TODAS las NE
-            // que comparten esa factura (antes solo se quedaba con la primera y las demás no recibían nada).
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
               if(!_nesByFiscal.has(k)) _nesByFiscal.set(k, {nes:[], inv});
               if(!_nesByFiscal.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscal.get(k).nes.push(ne);
@@ -39336,14 +39346,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Misma lógica NE-first que _retsPorNE (CxC): construido DESDE las NEs
           // para evitar que _findNEforInvEc retorne la NE equivocada.
           const _nesByFiscalEc = new Map();
+          for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
+            const nesIdsEc=[inv.neOrigen,...(inv.nesAdicionales||[])].filter(Boolean);
+            if(nesIdsEc.length===0) continue;
+            const nesGroupEc=nesIdsEc.map(nid=>(notasEntrega||[]).find(n=>n.id===nid||n.documento===nid)).filter(Boolean);
+            if(nesGroupEc.length===0) continue;
+            for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
+              if(!_nesByFiscalEc.has(k)) _nesByFiscalEc.set(k, {nes:[], inv});
+              nesGroupEc.forEach(ne=>{ if(!_nesByFiscalEc.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscalEc.get(k).nes.push(ne); });
+            }
+          }
           for(const ne of (notasEntrega||[])){
+            if(!ne.facturaId) continue;
             const neRif=(ne.clientRif||'').trim().toUpperCase();
             const rifOkEc=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
-            // Se busca PRIMERO por neOrigen/nesAdicionales de la propia factura (la misma fuente
-            // que usa Mayor Analítico, así que es la más confiable) — facturaId (guardado aparte
-            // en la NE) es solo respaldo si ninguna factura la referencia directamente.
-            let inv = (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento||(i.nesAdicionales||[]).includes(ne.id)||(i.nesAdicionales||[]).includes(ne.documento))&&!i.esAnulacionFiscal&&rifOkEc(i));
-            if(!inv && ne.facturaId) inv = (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkEc(i));
+            const inv=(invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkEc(i));
             if(!inv) continue;
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
               if(!_nesByFiscalEc.has(k)) _nesByFiscalEc.set(k, {nes:[], inv});
