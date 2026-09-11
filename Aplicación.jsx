@@ -37466,6 +37466,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   const diasVenc=getAgingDays(ne,fechaRef);
                   const diasVencLbl=`${diasVenc} d.`;
+                  const _dbgGrupo=(invVincPDF&&(invVincPDF.nroFiscal||invVincPDF.documento))?(_nesByFiscal.get(invVincPDF.nroFiscal)||_nesByFiscal.get(invVincPDF.documento)||_nesByFiscal.get(invVincPDF.id)):null;
+                  const _dbg=`[DBG facturaId=${ne.facturaId||'∅'} inv.id=${invVincPDF?.id||'∅'} neOrigen=${invVincPDF?.neOrigen||'∅'} nesAdic=[${(invVincPDF?.nesAdicionales||[]).join(',')||'∅'}] grupo=[${_dbgGrupo?_dbgGrupo.nes.map(n=>n.documento||n.id).join(',')||'∅':'SIN-GRUPO'}]]`;
                   return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
                     <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
                     <td>${ne.fecha||'—'}</td>
@@ -37474,7 +37476,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="color:#4338ca">${docFiscalPDF}</td>
                     <td style="text-align:right">$${formatNum(totalUSD)}</td>
                     <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
-                    <td style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</td>
+                    <td style="font-size:7px;color:#64748b;font-style:italic">${ne.observacionCxC||''} <span style="color:#e11d48">${_dbg}</span></td>
                   </tr>`;
                 }).join('');
                 const sobrepagoCerradoClPDF=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
