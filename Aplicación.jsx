@@ -37521,7 +37521,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               body+=`<div class="gran-tot" style="display:grid;grid-template-columns:1fr auto auto auto;border-radius:6px;margin-top:4px">
                 <span>TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</span>
                 <span style="text-align:right;padding-right:16px">$${formatNum(gTotTotalUSD)}</span>
-                <span style="text-align:right">$${formatNum(gTotUSD)}</span>
+                <span style="text-align:right">$${formatNum(totalCartera)}</span>
                 <span></span>
               </div>`;
             }
@@ -37585,7 +37585,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const anticiposClAg=(_anticiposPorCliente.get(cl.clientRif)||[]);
                 const anticiposUSDclAg=anticiposClAg.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
                 anticiposClAg.forEach(a=>{detRows+=`<tr style="background:#f0fdfa"><td class="left" style="padding-left:16px;color:#0f766e;font-weight:bold">💰 Anticipo · ${a.fecha||'—'}</td><td class="left">${a.referencia||'—'}</td><td class="left">${a.concepto||'Anticipo de cliente'}</td><td colspan="6"></td><td style="color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</td><td></td></tr>`;});
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg-anticiposUSDclAg;
+                const sobrepagoClAg=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg-anticiposUSDclAg+sobrepagoClAg;
                 detRows+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
               });
               const html=XH+EMPRESA
@@ -37626,7 +37627,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 ].filter(Boolean).join(' · ');
                 body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="4">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="7"></td></tr>`;
               });
-              body+=`<tr class="tot"><td class="left" colspan="4">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(gTotUSD)}</td><td></td></tr>`;
+              body+=`<tr class="tot"><td class="left" colspan="4">TOTAL CARTERA · ${nesAbiertas.length} N.E. abiertas · Corte: ${corte}</td><td>$${formatNum(gTotTotalUSD)}</td><td style="color:#f97316">$${formatNum(totalCartera)}</td><td></td></tr>`;
               const html=XH+EMPRESA+`<table>${body}</table></body></html>`;
               const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`CxC_Detallado_${corte}.xls`;a.click();URL.revokeObjectURL(url);
             }
