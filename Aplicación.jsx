@@ -37177,9 +37177,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             for(const k of keys){for(const n of (_ncsByNe.get(k)||[])){if(!seen.has(n.id)){seen.add(n.id);ncs.push(n);}}}
             const result=ncs.filter(n=>!fRef||(n.fecha||'')<=fRef).reduce((s,n)=>{
               const t=parseNum(n.tasaFactura||0)||tasaBCV;
-              if(!t||t<2) return s;
               const baseBs=parseNum(n.monto||0);
-              const u=(n.tieneIva===false?baseBs:baseBs*1.16)/t;
+              const montoUSDdirecto=parseNum(n.montoUSD||0);
+              let u;
+              if(montoUSDdirecto>0){ u=montoUSDdirecto; }
+              else { if(!t||t<2) return s; u=(n.tieneIva===false?baseBs:baseBs*1.16)/t; }
               // NC resta del saldo (reduce lo que debe el cliente) → contribuye positivo aquí,
               // ya que getSaldoNEAtFecha hace total - getNCUSDNEAtFecha(...).
               // ND SUMA al saldo (aumenta lo que debe el cliente) → contribuye NEGATIVO aquí,
@@ -38903,7 +38905,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                 const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
                                                 const baseBs=parseNum(nc.monto||0);
                                                 const totalBs=nc.tieneIva===false?baseBs:baseBs*1.16;
-                                                const ncUSD=tNC>1?totalBs/tNC:parseNum(nc.montoUSD||0);
+                                                const ncUSD=parseNum(nc.montoUSD||0)>0?parseNum(nc.montoUSD):(tNC>1?totalBs/tNC:0);
                                                 return(
                                                 <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                                                   <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'}</td>
@@ -38912,7 +38914,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   <td className="py-1.5 px-2 text-[8px]"><span className="font-black text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded text-[8px]">{nc.nroDocumento||'—'}</span></td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
-                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-purple-700">-${formatNum(ncUSD)}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] font-black text-purple-700">{nc.tipo==='ND'?'+':'-'}${formatNum(ncUSD)}</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
