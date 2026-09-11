@@ -20739,7 +20739,7 @@ function App() {
           nesRef.length ? `NE: ${nesRef.join(', ')}` : '',
           opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
         ].filter(Boolean).join(' · ');
-        out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
+        out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
       }catch(e){}
     });
     // 2b) Notas de Crédito/Débito de Ventas FISCALES (naturaleza==='FISCAL'), sin contar las que
@@ -20784,7 +20784,7 @@ function App() {
           {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
           ...(conIva?[{codigo:lin2.codigo, cuenta:lin2.cuenta, debeBs:0, haberBs:ivaBs, debeUSD:0, haberUSD:ivaUSD}]:[]),
         ];
-        out.push({fecha:n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo} ${n.nroDocumento||''} — ${n.clientName||'—'}`, lineas});
+        out.push({fecha:facturaRef?.fechaFactura||n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo} ${n.nroDocumento||''} — ${n.clientName||'—'}`, lineas});
       }catch(e){}
     });
     // 2c) Notas de Crédito/Débito de Ventas NO fiscales — 2b las excluye a propósito (no son
@@ -20908,7 +20908,7 @@ function App() {
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
       const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos});
       if(!r) return;
-      out.push({fecha:f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
+      out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
     });
     // 9b) Consumos Internos / Muestras Clientes — Autoconsumo, Avería (combinados), Muestra y
     // Pérdida/Merma, desde Control de Inventario. Misma tasa manual editable que en 9a.
