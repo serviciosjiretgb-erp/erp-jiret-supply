@@ -37070,7 +37070,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // de cobro que muestra correctamente qué número fiscal va con qué NE.
           // Esto evita el problema de _findNEforInv que retornaba la NE equivocada
           // cuando el facturaId de una NE apuntaba a la factura de otra NE.
-          const _neByFiscal = new Map();
+          const _nesByFiscal = new Map();
           for(const ne of (notasEntrega||[])){
             const neRif=(ne.clientRif||'').trim().toUpperCase();
             const rifOk=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
@@ -37079,29 +37079,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOk(i))
               : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOk(i));
             if(!inv) continue;
-            // Indexar por todos los identificadores posibles de la factura
+            // Indexar por todos los identificadores posibles de la factura — agrupando TODAS las NE
+            // que comparten esa factura (antes solo se quedaba con la primera y las demás no recibían nada).
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
-              if(!_neByFiscal.has(k)) _neByFiscal.set(k, {ne, inv});
+              if(!_nesByFiscal.has(k)) _nesByFiscal.set(k, {nes:[], inv});
+              if(!_nesByFiscal.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscal.get(k).nes.push(ne);
             }
           }
+          const _neByFiscal = new Map([..._nesByFiscal].map(([k,v])=>[k,{ne:v.nes[0],inv:v.inv}])); // compat: código que solo necesita presencia/una NE
 
           const _retsPorNE = new Map();
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            // Buscar la NE directamente por nroFactura (número fiscal visible en la retención)
+            // Buscar TODAS las NE de esa factura por nroFactura (número fiscal visible en la retención)
             // Fallback: nroControl, luego facturaId (Firestore ID)
-            const hit = _neByFiscal.get(r.nroFactura)
-                     || _neByFiscal.get(r.nroControl)
-                     || _neByFiscal.get(r.facturaId);
+            const hit = _nesByFiscal.get(r.nroFactura)
+                     || _nesByFiscal.get(r.nroControl)
+                     || _nesByFiscal.get(r.facturaId);
             if(!hit) continue;
-            const {ne: neTarget, inv} = hit;
+            const {nes: nesTarget, inv} = hit;
             const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
-            const key=neTarget.id;
-            if(!_retsPorNE.has(key)) _retsPorNE.set(key,[]);
-            _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||''});
+            // Repartir proporcional al peso (total) de cada NE dentro de esa factura — si es 1 sola NE,
+            // el peso es 1 y se comporta exactamente igual que antes.
+            const totalFacturaPeso=nesTarget.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+            nesTarget.forEach(neTarget=>{
+              const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
+              const key=neTarget.id;
+              if(!_retsPorNE.has(key)) _retsPorNE.set(key,[]);
+              _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||''});
+            });
           }
           const getRetsDetalleNE=(ne)=>{
             const items=_retsPorNE.get(ne.id)||[];
@@ -37272,6 +37281,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             else if(d<=60) porCliente[k].v31_60+=saldo; else porCliente[k].vMas60+=saldo;
             porCliente[k].total+=saldo; porCliente[k].nes.push(ne);
           });
+          // Crédito de NE cerradas con sobrepago (saldo negativo) — mismo trato que un anticipo:
+          // resta del total del cliente aunque no tengan su propia fila en la lista.
+          for(const ne of nesTotal){
+            if(ne.status==='ANULADA') continue;
+            const saldoNE=getSaldoNEAtFecha(ne,fechaRef);
+            if(saldoNE>=-0.01) continue; // no es sobrepago
+            const k=ne.clientRif||ne.clientName||'SIN-RIF';
+            if(!porCliente[k]) porCliente[k]={clientName:ne.clientName||k,clientRif:k,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+            porCliente[k].total+=saldoNE; porCliente[k].corriente+=saldoNE;
+          }
           // Vendedor asignado en el Directorio de Clientes — solo se usa para clientes que NO tienen
           // ninguna NE (retenciones manuales / NC-ND directa / anticipos), ya que esos registros no
           // tienen su propio campo "vendedor" como sí lo tiene cada NE.
@@ -37448,7 +37467,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</td>
                   </tr>`;
                 }).join('');
-                clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF;
+                const sobrepagoCerradoClPDF=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+                clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF; clSaldo+=sobrepagoCerradoClPDF;
                 gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotUSD-=anticiposUSDclPDF;
                 const notaAjustes=[
                   manualRetsCl2.length>0?'Ret. manual -$'+formatNum(manualRetUSDclPDF):'',
@@ -37584,7 +37604,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualNCSignedUSDXls=manualNCClXls.reduce((s,n)=>s+n._signedUSD,0);
                 const anticiposClXls=(_anticiposPorCliente.get(cl.clientRif)||[]);
                 const anticiposUSDclXls=anticiposClXls.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
-                clSaldo-=manualRetUSDclXls; clSaldo+=manualNCSignedUSDXls; clSaldo-=anticiposUSDclXls;
+                const sobrepagoCerradoClXls=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
+                clSaldo-=manualRetUSDclXls; clSaldo+=manualNCSignedUSDXls; clSaldo-=anticiposUSDclXls; clSaldo+=sobrepagoCerradoClXls;
                 gTotUSD-=manualRetUSDclXls; gTotUSD+=manualNCSignedUSDXls; gTotUSD-=anticiposUSDclXls;
                 const notaAjustesXls=[
                   manualRetUSDclXls>0?'Ret. manual -$'+formatNum(manualRetUSDclXls):'',
@@ -39314,7 +39335,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Mapa NE-first para Estado de Cuenta ───────────────────────────────────
           // Misma lógica NE-first que _retsPorNE (CxC): construido DESDE las NEs
           // para evitar que _findNEforInvEc retorne la NE equivocada.
-          const _neByFiscalEc = new Map();
+          const _nesByFiscalEc = new Map();
           for(const ne of (notasEntrega||[])){
             const neRif=(ne.clientRif||'').trim().toUpperCase();
             const rifOkEc=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
@@ -39325,24 +39346,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!inv && ne.facturaId) inv = (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkEc(i));
             if(!inv) continue;
             for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
-              if(!_neByFiscalEc.has(k)) _neByFiscalEc.set(k, {ne, inv});
+              if(!_nesByFiscalEc.has(k)) _nesByFiscalEc.set(k, {nes:[], inv});
+              if(!_nesByFiscalEc.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscalEc.get(k).nes.push(ne);
             }
           }
+          const _neByFiscalEc = new Map([..._nesByFiscalEc].map(([k,v])=>[k,{ne:v.nes[0],inv:v.inv}])); // compat
           const _retsPorNEec = new Map();
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
-            const hit = _neByFiscalEc.get(r.nroFactura)
-                     || _neByFiscalEc.get(r.nroControl)
-                     || _neByFiscalEc.get(r.facturaId);
+            const hit = _nesByFiscalEc.get(r.nroFactura)
+                     || _nesByFiscalEc.get(r.nroControl)
+                     || _nesByFiscalEc.get(r.facturaId);
             if(!hit) continue;
-            const {ne: neTarget, inv} = hit;
+            const {nes: nesTarget, inv} = hit;
             const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
-            const key=neTarget.id;
-            if(!_retsPorNEec.has(key)) _retsPorNEec.set(key,[]);
-            _retsPorNEec.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||''});
+            const totalFacturaPeso=nesTarget.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+            nesTarget.forEach(neTarget=>{
+              const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
+              const key=neTarget.id;
+              if(!_retsPorNEec.has(key)) _retsPorNEec.set(key,[]);
+              _retsPorNEec.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||''});
+            });
           }
           const getRetsDetalleNEec=(ne)=>{
             const items=_retsPorNEec.get(ne.id)||[];
