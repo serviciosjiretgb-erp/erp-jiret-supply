@@ -37472,11 +37472,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   const diasVenc=getAgingDays(ne,fechaRef);
                   const diasVencLbl=`${diasVenc} d.`;
-                  const _dbgGrupo=(invVincPDF&&(invVincPDF.nroFiscal||invVincPDF.documento))?(_nesByFiscal.get(invVincPDF.nroFiscal)||_nesByFiscal.get(invVincPDF.documento)||_nesByFiscal.get(invVincPDF.id)):null;
-                  const _dbgCobrado=getCobradoNEAtFecha(ne,fechaRef);
-                  const _dbgRetItems=_retsPorNE.get(ne.id)||[];
-                  const _dbgRetIva=_dbgRetItems.filter(r=>!r.tipoExtra).reduce((s,r)=>s+r._montoUSD,0);
-                  const _dbg=`[DBG facturaId=${ne.facturaId||'∅'} inv.id=${invVincPDF?.id||'∅'} neOrigen=${invVincPDF?.neOrigen||'∅'} nesAdic=[${(invVincPDF?.nesAdicionales||[]).join(',')||'∅'}] grupo=[${_dbgGrupo?_dbgGrupo.nes.map(n=>n.documento||n.id).join(',')||'∅':'SIN-GRUPO'}] | COBRADO=$${formatNum(_dbgCobrado)} RET_MATCHES=${_dbgRetItems.length} RET_USD=$${formatNum(_dbgRetIva)}]`;
                   return `<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
                     <td style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td>
                     <td>${ne.fecha||'—'}</td>
@@ -37485,7 +37480,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="color:#4338ca">${docFiscalPDF}</td>
                     <td style="text-align:right">$${formatNum(totalUSD)}</td>
                     <td style="text-align:right;font-weight:bold">$${formatNum(saldo)}</td>
-                    <td style="font-size:7px;color:#64748b;font-style:italic">${ne.observacionCxC||''} <span style="color:#e11d48">${_dbg}</span></td>
+                    <td style="font-size:8px;color:#64748b;font-style:italic">${ne.observacionCxC||''}</td>
                   </tr>`;
                 }).join('');
                 const sobrepagoCerradoClPDF=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
