@@ -37059,9 +37059,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _invsByNe = new Map();
           for(const inv of (invoices||[])){
             if(inv.esAnulacionFiscal) continue;
-            if(inv.neOrigen){
-              if(!_invsByNe.has(inv.neOrigen)) _invsByNe.set(inv.neOrigen,[]);
-              _invsByNe.get(inv.neOrigen).push(inv);
+            for(const nid of [inv.neOrigen,...(inv.nesAdicionales||[])].filter(Boolean)){
+              if(!_invsByNe.has(nid)) _invsByNe.set(nid,[]);
+              _invsByNe.get(nid).push(inv);
             }
           }
 
@@ -38224,7 +38224,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const ivaBs=baseBs*ivaPct;
                         const totalBs=baseBs+ivaBs;
                         // NC/ND aplicadas a esta NE/factura, para mostrarlas desglosadas igual que las retenciones
-                        const ncsAplicadas=ne._esNDDirecta?[]:(_ncsByNe.get(ne.id)||_ncsByNe.get(ne.documento)||_ncsByNe.get(ne.facturaId)||[]).filter((n,idx,arr)=>arr.findIndex(x=>x.id===n.id)===idx);
+                        const ncsAplicadas=ne._esNDDirecta?[]:[..._ncsByNe.get(ne.id)||[],..._ncsByNe.get(ne.documento)||[],..._ncsByNe.get(ne.facturaId)||[],..._ncsByNe.get(invVinc?.id)||[],..._ncsByNe.get(invVinc?.nroFiscal)||[],..._ncsByNe.get(invVinc?.documento)||[]].filter((n,idx,arr)=>arr.findIndex(x=>x.id===n.id)===idx);
                         const esCredito=saldo<-0.005;
                         return(
                         <div key={ne.id} onClick={()=>{if(esCredito)return;setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}));}}
