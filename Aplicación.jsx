@@ -37181,7 +37181,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(fechaRef&&(ne.fecha||'')>fechaRef) return false;
             // Math.abs: incluye tanto saldo pendiente (positivo) como crédito a favor (negativo, por retenciones que superan el cargo).
             // Solo se excluye saldo exactamente en cero (ya saldado, sin nada pendiente en ninguna dirección).
-            return Math.abs(getSaldoNEAtFecha(ne,fechaRef))>0.01;
+            return getSaldoNEAtFecha(ne,fechaRef)>0.01;
           });
           // nesTotal: TODAS las NEs (incluye saldo=0 por NC completa) para que Total coincida con NE view
           const nesTotal=(notasEntrega||[]).filter(ne=>{
@@ -37945,7 +37945,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           if(cxcPagoModal){
             const pm=cxcPagoModal;
             // Construir lista de clientes con saldo independiente de filtros
-            const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&Math.abs(getSaldoNEAtFecha(ne,null))>0.01);
+            const allNesAbiertas=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA'&&getSaldoNEAtFecha(ne,null)>0.01);
             // ND de cliente directo (sin NE, sin factura) — cuenta por cobrar propia, tratada como pseudo-NE
             const ndsDirectas=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n.clientRif||n.clientName))
               .map(n=>({
