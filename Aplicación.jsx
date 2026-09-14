@@ -36545,12 +36545,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             </div>
                             <p className="text-[7px] text-gray-400 font-bold">★ Si deja IVA/Total vacíos, se calculan automáticamente (Base × 16%). Lo que ingrese aquí es lo que aparece en el Libro de Ventas.</p>
                             {/* Equivalencia USD */}
-                            {tasaNC>1&&baseImpBs>0&&(
+                            {(()=>{ const tasaEfectiva=parseNum(ventaNCForm.tasaDirecta||0)||tasaNC; return tasaEfectiva>1&&baseImpBs>0&&(
                               <div className="bg-white border border-blue-200 rounded-xl p-3 grid grid-cols-2 gap-2 text-[9px]">
-                                <div><p className="text-gray-400 uppercase font-bold text-[8px]">Base USD (tasa {formatNum(tasaNC)})</p><p className="font-black text-blue-700 text-base">${formatNum(baseImpBs/tasaNC)}</p></div>
-                                <div><p className="text-gray-400 uppercase font-bold text-[8px]">Total USD con IVA</p><p className="font-black text-blue-700 text-base">${formatNum(totalBs/tasaNC)}</p></div>
+                                <div><p className="text-gray-400 uppercase font-bold text-[8px]">Base USD (tasa {formatNum(tasaEfectiva)})</p><p className="font-black text-blue-700 text-base">${formatNum(baseImpBs/tasaEfectiva)}</p></div>
+                                <div><p className="text-gray-400 uppercase font-bold text-[8px]">Total USD con IVA</p><p className="font-black text-blue-700 text-base">${formatNum(totalBs/tasaEfectiva)}</p></div>
                               </div>
-                            )}
+                            );})()}
                             {/* Tag de inventario */}
                             {modoOp==='devolucion'&&!esND&&itemsActivos.length>0&&(
                               <div className="bg-green-50 border border-green-200 rounded-xl p-2 text-[8px] text-green-700 font-bold">↩ {itemsActivos.length} producto(s) se reversarán al inventario</div>
