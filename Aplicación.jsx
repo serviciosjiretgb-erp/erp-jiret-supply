@@ -35978,9 +35978,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const id=ventaNCForm.id||`VNC-${Date.now()}`;
               const facAfect=(invoices||[]).find(i=>i.id===ventaNCForm.facturaId);
               const neAfect=(notasEntrega||[]).find(e=>e.id===ventaNCForm.neId);
-              const tasaAfect=esUsdSinIva
-                ?(parseNum(ventaNCForm.tasaDirecta||0)||parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1)
-                :(parseNum(facAfect?.tasa||neAfect?.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
+              const tasaAfect=parseNum(ventaNCForm.tasaDirecta||0)
+                ||parseNum(facAfect?.tasa||neAfect?.tasa||0)
+                ||parseNum(settings?.tasaBCV||0)||1;
               const docSel=facAfect||neAfect;
               const esND = ventaNCForm.tipo==='ND';
               const modoOp = esND ? 'ajuste' : (ventaNCForm.modoOp||'devolucion');
@@ -36464,7 +36464,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 {selInv&&<><div><span className="font-black">N° Fiscal:</span> {selInv.nroFiscal||'—'}</div><div><span className="font-black">Control:</span> {selInv.nroControl||'—'}</div>
                            </>}
                                 <div><span className="font-black">Fecha:</span> {docSel.fecha}</div>
-                                <div><span className="font-black">Tasa:</span> <span className="font-black text-blue-600">{formatNum(tasaNC)} Bs/$</span></div>
+                                <div>
+                                  <span className="font-black">Tasa:</span>{' '}
+                                  {esFiscal?(
+                                    <input type="number" step="0.0001" placeholder={String(formatNum(tasaNC))}
+                                      value={ventaNCForm.tasaDirecta||''}
+                                      onChange={e=>setVentaNCForm({...ventaNCForm,tasaDirecta:e.target.value})}
+                                      className="inline-block w-24 font-black text-blue-600 border border-blue-200 rounded-lg px-1.5 py-0.5 text-[10px] outline-none focus:border-blue-500"/>
+                                  ):(
+                                    <span className="font-black text-blue-600">{formatNum(tasaNC)}</span>
+                                  )} Bs/$
+                                  {esFiscal&&<span className="text-[8px] text-gray-400 ml-1">(factura: {formatNum(tasaNC)} — editable)</span>}
+                                </div>
                                 <div><span className="font-black">Monto original:</span> <span className="font-black text-orange-600">${formatNum(parseNum(docSel.total||0))}</span></div>
                                 {esND&&<div className="col-span-2 mt-1 text-[8px] text-blue-600 font-bold">ℹ La ND es referencial — no afecta inventario. Solo ajusta saldo en CxC/Libro de Ventas.</div>}
                                 {modoOp==='ajuste'&&!esND&&<div className="col-span-2 mt-1 text-[8px] text-amber-600 font-bold">ℹ Ajuste financiero — no reversa inventario. Ideal para diferencial cambiario o error de precio.</div>}
