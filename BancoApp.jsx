@@ -6987,7 +6987,29 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   const asientoLinked = asientosBanco.find(a=>a.id===cajaDet.asientoContableId);
                   const esLadoQueSale = /traslado de fondo/i.test(cajaDet.concepto||'') && cajaDet.tipo!=='Ingreso';
                   const esLadoQueEntra = cajaDet.tipo==='Ingreso' && /traslado recibido/i.test(cajaDet.concepto||'');
-                  if(!asientoLinked?.lineas?.length) return null;
+                  if(!asientoLinked?.lineas?.length){
+                    const cajaSelRO=cajas.find(c=>c.id===cajaDet.cajaId);
+                    return (
+                      <div className="rounded-2xl overflow-hidden border border-blue-100">
+                        <div className="px-5 py-3 bg-blue-600 flex items-center gap-2">
+                          <BookOpen size={14} className="text-blue-200"/><p className="text-[10px] font-black uppercase text-white tracking-widest">Efecto Contable (resumen)</p>
+                        </div>
+                        <div className="p-4 bg-blue-50 grid grid-cols-2 gap-3">
+                          <div className="bg-white rounded-xl p-3 border-l-4 border-emerald-500 border border-slate-100">
+                            <p className="text-[8px] font-black uppercase text-emerald-600 tracking-widest mb-1">DÉBITO +</p>
+                            <p className="text-[11px] font-black text-slate-800">{cajaDet.tipo==='Ingreso'?(cajaSelRO?.cuentaContableNom||`Caja ${cajaSelRO?.nombre||''}`):(cajaDet._tercero||cajaDet.terceroNombre||'Gasto/Proveedor')}</p>
+                            <p className="font-mono font-black text-emerald-600 text-xs mt-1">{cajaDet.moneda==='BS'?`Bs.${bancoFmt(cajaDet.montoBs)}`:`$${bancoFmt(cajaDet.montoUSD)}`}</p>
+                          </div>
+                          <div className="bg-white rounded-xl p-3 border-l-4 border-red-500 border border-slate-100">
+                            <p className="text-[8px] font-black uppercase text-red-600 tracking-widest mb-1">CRÉDITO −</p>
+                            <p className="text-[11px] font-black text-slate-800">{cajaDet.tipo==='Egreso'?(cajaSelRO?.cuentaContableNom||`Caja ${cajaSelRO?.nombre||''}`):(cajaDet._tercero||cajaDet.terceroNombre||'CxC / Ingreso')}</p>
+                            <p className="font-mono font-black text-red-600 text-xs mt-1">{cajaDet.moneda==='BS'?`Bs.${bancoFmt(cajaDet.montoBs)}`:`$${bancoFmt(cajaDet.montoUSD)}`}</p>
+                          </div>
+                        </div>
+                        {cajaDet._fromBanco&&<p className="px-4 pb-3 text-[9px] text-slate-400 bg-blue-50">Movimiento sintetizado desde {cajaDet.origen==='CxP'?'Cuentas por Pagar':'Cuentas por Cobrar'} — no tiene un comprobante contable propio, este es el efecto equivalente.</p>}
+                      </div>
+                    );
+                  }
                   const todosLosMovs = [...(movBanco||[]),...(movCaja||[])];
                   const movOtroLado = esLadoQueSale
                     ? todosLosMovs.find(m=>m.id!==cajaDet.id && m.referencia && m.referencia===cajaDet.referencia && m.fecha===cajaDet.fecha && m.tipo==='Ingreso' && /traslado recibido/i.test(m.concepto||''))
@@ -7659,6 +7681,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // hay forma de saber a cuál pertenece todavía.
     const pendientes = useMemo(() =>
       (pagosCxPTodos||[]).filter(p => {
+        if(p.eliminado) return false;
         if((p.cuentaId||'').startsWith('ANTICIPO::')) return false;
         if(gruposConMov.has(p.grupoPagoId)) return false;
         const enCaja = (p.cuentaId||'').startsWith('CAJA::');
@@ -7746,14 +7769,26 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       finally { setProcesando(null); }
     };
 
+    const eliminados = useMemo(() =>
+      (pagosCxPTodos||[]).filter(p=>p.eliminado).sort((a,b)=>(b.eliminadoTs||0)-(a.eliminadoTs||0)),
+      [pagosCxPTodos]
+    );
+    const [verPapelera, setVerPapelera] = useState(false);
+
     const eliminarPendiente = async (p) => {
       const e = edit(p);
-      if(!window.confirm(`¿Eliminar este registro de "${p.proveedor||'—'}" por $${bancoFmt(Number(e.montoUSD||0))}?\n\nSe borra de Historial de Pagos y no se crea ningún movimiento en Banco/Caja. Úsalo solo si está repetido o es un error — no si el pago sí ocurrió.`)) return;
+      if(!window.confirm(`¿Eliminar este registro de "${p.proveedor||'—'}" por $${bancoFmt(Number(e.montoUSD||0))}?\n\nSe quita de Pagos por Identificar y no se crea ningún movimiento en Banco/Caja. Queda en la Papelera por si te equivocas — no se borra de verdad.`)) return;
       setProcesando(p.id);
       try {
-        await deleteDoc(getDocRef('procura_pagos_cxp', p.id));
+        await updateDoc(getDocRef('procura_pagos_cxp', p.id), {eliminado:true, eliminadoTs:Date.now()});
         setEdiciones(prev => { const n={...prev}; delete n[p.id]; return n; });
       } catch(err){ alert('Error: '+err.message); }
+      finally { setProcesando(null); }
+    };
+    const restaurarPendiente = async (p) => {
+      setProcesando(p.id);
+      try { await updateDoc(getDocRef('procura_pagos_cxp', p.id), {eliminado:false, eliminadoTs:null}); }
+      catch(err){ alert('Error: '+err.message); }
       finally { setProcesando(null); }
     };
 
@@ -7764,8 +7799,31 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <h2 className="text-xl font-black uppercase text-slate-900">Pagos por Identificar</h2>
             <p className="text-xs text-slate-400 font-medium mt-0.5">Pagos de Historial de Pago (Procura) sin movimiento en Banco o Caja — asígnales su cuenta a medida que los reconozcas contra tu estado de cuenta real. {pendientes.length} pendiente(s).</p>
           </div>
-          <input value={busq} onChange={e=>setBusq(e.target.value)} placeholder="Buscar proveedor, referencia, concepto..." className={`${inp} w-64`}/>
+          <div className="flex items-center gap-2">
+            <input value={busq} onChange={e=>setBusq(e.target.value)} placeholder="Buscar proveedor, referencia, concepto..." className={`${inp} w-64`}/>
+            <button onClick={()=>setVerPapelera(v=>!v)} className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border ${verPapelera?'bg-slate-800 text-white border-slate-800':'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+              <Trash2 size={14}/> Papelera {eliminados.length>0?`(${eliminados.length})`:''}
+            </button>
+          </div>
         </div>
+        {verPapelera && (
+          <div className="mb-6 bg-slate-50 border border-slate-200 rounded-2xl p-4">
+            <p className="text-xs font-bold text-slate-500 mb-3">Eliminados — se pueden restaurar, no se borran de verdad.</p>
+            {eliminados.length===0 ? (
+              <p className="text-xs text-slate-400">La papelera está vacía.</p>
+            ) : eliminados.map(p=>(
+              <div key={p.id} className="flex items-center justify-between gap-3 bg-white rounded-xl px-3 py-2 mb-2 border border-slate-100">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-700 truncate">{p.proveedor||'—'} · ${bancoFmt(Number(p.montoUSD||0))}</p>
+                  <p className="text-[10px] text-slate-400">{p.fecha} · {p.concepto||p.referencia||''}</p>
+                </div>
+                <button onClick={()=>restaurarPendiente(p)} disabled={procesando===p.id} className="flex items-center gap-1 text-xs font-bold text-cyan-600 hover:text-cyan-800 flex-shrink-0 disabled:opacity-50">
+                  <RefreshCw size={13}/> Restaurar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {pendientes.length===0 ? (
           <BEmptyState icon={Inbox} title="Nada por identificar" desc="Todos los pagos de Historial de Pago ya tienen su movimiento en Banco o Caja"/>
         ) : (
@@ -8321,8 +8379,47 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const pendientes=vales.filter(v=>v.estado==='Pendiente');
     const cobrados=vales.filter(v=>v.estado!=='Pendiente');
-    const totalUSD=pendientes.reduce((a,v)=>a+Number(v.monto||0),0);
-    const totalBs=pendientes.reduce((a,v)=>a+Number(v.monto||0)*(v.moneda==='USD'?Number(v.tasa||tasaActiva):1),0);
+    const totalUSD=pendientes.reduce((a,v)=>a+(Number(v.monto||0)-Number(v.montoAplicado||0)),0);
+    const totalBs=pendientes.reduce((a,v)=>a+(Number(v.monto||0)-Number(v.montoAplicado||0))*(v.moneda==='USD'?Number(v.tasa||tasaActiva):1),0);
+
+    const montoRestante=(v)=>Number(v.monto||0)-Number(v.montoAplicado||0);
+
+    const exportarVales=(formato='excel')=>{
+      const lista=[...pendientes,...cobrados].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+      const rows=lista.map((v,i)=>{
+        const restante=montoRestante(v);
+        const simb=v.moneda==='USD'?'$':'Bs.';
+        return `<tr>
+        <td>${i+1}</td>
+        <td>${bancoDd(v.fecha)}</td>
+        <td style="font-weight:bold">${v.titular||'—'}</td>
+        <td>${v.concepto||'—'}</td>
+        <td style="text-align:center">${v.moneda||'USD'}</td>
+        <td style="text-align:right;font-family:monospace">${simb}${bancoFmt(v.monto)}</td>
+        <td style="text-align:right;font-family:monospace;color:#0891b2">${simb}${bancoFmt(v.montoAplicado||0)}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:bold;color:${v.estado==='Pendiente'?'#d97706':'#16a34a'}">${simb}${bancoFmt(restante)}</td>
+        <td><span style="background:${v.estado==='Pendiente'?'#fef3c7':'#d1fae5'};color:${v.estado==='Pendiente'?'#92400e':'#065f46'};padding:2px 8px;border-radius:12px;font-size:9px;font-weight:900">${v.estado||'Pendiente'}</span></td>
+      </tr>`;}).join('');
+      const html=bancoLetterheadOpen(
+        'Reporte de Vales',
+        `${pendientes.length} pendiente(s) · $${bancoFmt(totalUSD)} por cobrar · ${cobrados.length} aplicado(s) · ${lista.length} vale(s) en total`
+      )+
+      `<table><thead><tr><th>#</th><th>Fecha</th><th>Titular</th><th>Concepto</th><th>Moneda</th><th>Monto Original</th><th>Aplicado</th><th>Restante</th><th>Estado</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="background:#000">
+        <td colspan="7" style="color:#94a3b8;font-weight:bold;font-size:9px;text-transform:uppercase">TOTALES — ${pendientes.length} vale(s) pendiente(s)</td>
+        <td style="text-align:right;font-family:monospace;font-weight:bold;color:#fbbf24">$${bancoFmt(totalUSD)}</td>
+        <td></td>
+      </tr></tfoot></table>`+
+      bancoLetterheadClose(`Módulo: Tesorería & Bancos — Vales · ${bancoDd(getTodayDate())}`);
+      if(formato==='pdf'){
+        bancoPrintWindow(html);
+      } else {
+        const blob=new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'});
+        const url=URL.createObjectURL(blob);const a=document.createElement('a');
+        a.href=url;a.download=`vales_${getTodayDate()}.xls`;a.click();URL.revokeObjectURL(url);
+      }
+    };
 
     const guardarVale=async()=>{
       if(!form.titular&&!form.terceroId)return alert('Ingrese el nombre o seleccione un tercero');
@@ -8349,7 +8446,6 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [accionForm,setAccionForm]=useState({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:'',monto:''});
     const [editModal,setEditModal]=useState(null);
     const [detalleVale,setDetalleVale]=useState(null);
-    const montoRestante=(v)=>Number(v.monto||0)-Number(v.montoAplicado||0);
     const abrirAccion=(v)=>{setAccionModal(v);setAccionForm({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:'',monto:String(montoRestante(v).toFixed(2))});};
     const ejecutarAccion=async()=>{
       if(!accionModal)return;
@@ -8400,7 +8496,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
         {/* Vales Pendientes */}
         <BCard title={`Vales Pendientes (${pendientes.length})`} subtitle="Efectivo en caja aún no recibido físicamente"
-          action={<BBg onClick={()=>{setForm(initF());setModal(true);}} sm><Plus size={12}/> Nuevo Vale</BBg>}>
+          action={<div className="flex items-center gap-2">
+            <button onClick={()=>exportarVales('pdf')} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 text-white rounded-xl text-[9px] font-black uppercase hover:bg-slate-800"><FileText size={12}/> PDF</button>
+            <button onClick={()=>exportarVales('excel')} className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-xl text-[9px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
+            <BBg onClick={()=>{setForm(initF());setModal(true);}} sm><Plus size={12}/> Nuevo Vale</BBg>
+          </div>}>
           {pendientes.length===0
             ?<BEmptyState icon={FileText} title="Sin vales pendientes" desc="Registre los vales cuando entregue efectivo a un tercero"/>
             :<div className="divide-y divide-slate-100">
