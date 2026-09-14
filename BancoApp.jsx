@@ -6392,7 +6392,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(m._fromBanco) return; // para ERP solo vista
       setCajaEdit(true);
       setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',
-        motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),
+        motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),cajaId:m.cajaId||'',
         aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||false,
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
     };
@@ -6408,7 +6408,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const esBsCaja = form.moneda==='BS';
         const montoBsEdit  = esBsCaja ? mNatEdit : mNatEdit*tasaEdit;
         const montoUSDEdit = esBsCaja ? (tasaEdit>0?mNatEdit/tasaEdit:0) : mNatEdit;
-        const cajaObjEdit = cajas.find(c=>c.id===cajaDet.cajaId);
+        const cajaObjEdit = cajas.find(c=>c.id===(form.cajaId||cajaDet.cajaId));
         const ctaCajaEdit  = cajaObjEdit?.cuentaContableNom || `Caja ${cajaObjEdit?.nombre||''}`;
         const ctaContraEdit = form.ctaContraNombre||(form.tipo==='Ingreso'?'Cuentas por Cobrar':'Cuentas por Pagar');
         const terceroEdit = form.tipoTercero==='Cliente'?clientes.find(c=>c.id===form.terceroId):provs.find(p=>p.id===form.terceroId);
@@ -6416,7 +6416,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const batch = writeBatch(_bancoDB);
         batch.update(getDocRef('caja_movimientos',cajaDet.id),{
           fecha:form.fecha, tipo:form.tipo, moneda:form.moneda, concepto:form.concepto, referencia:form.referencia,
-          motivoEgreso:form.motivoEgreso,
+          motivoEgreso:form.motivoEgreso, cajaId:form.cajaId||cajaDet.cajaId, cajaNombre:cajaObjEdit?.nombre||cajaDet.cajaNombre||'',
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP,
           terceroId:terceroEdit?.id||'', terceroNombre:terceroEdit?.nombre||'',
@@ -6883,7 +6883,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               const bsEd = form.moneda==='BS';
               const montoBsEd  = bsEd ? mNatEd : mNatEd*tasaEd;
               const montoUSDEd = bsEd ? (tasaEd>0?mNatEd/tasaEd:0) : mNatEd;
-              const cajaSelEd = cajas.find(c=>c.id===cajaDet.cajaId);
+              const cajaSelEd = cajas.find(c=>c.id===(form.cajaId||cajaDet.cajaId));
               return (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -6895,6 +6895,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     ))}</div>
                   </BFG>
                 </div>
+                <BFG label="Caja" full>
+                  <select className={sel} value={form.cajaId||''} onChange={e=>setForm({...form,cajaId:e.target.value})}>
+                    <option value="">— Seleccionar caja —</option>
+                    {cajas.map(c=><option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                  {form.cajaId&&form.cajaId!==cajaDet.cajaId&&<p className="text-[9px] text-amber-600 font-bold mt-1">⚠ Vas a mover este movimiento a otra caja — el saldo de ambas cajas se recalcula solo.</p>}
+                </BFG>
                 <div className="grid grid-cols-2 gap-4">
                   <BFG label="Referencia"><input className={inp} value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})}/></BFG>
                   {form.tipo==='Egreso'&&<div className="bg-red-50 rounded-xl p-3 border border-red-100">
