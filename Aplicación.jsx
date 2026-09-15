@@ -379,7 +379,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     nombre:'', cedula:'', sexo:'Masculino', fechaNacimiento:'', estadoCivil:'Soltero', nivelEducativo:'Bachiller',
     nacionalidad:'Venezolano', tipoSangre:'', fotoUrl:'',
     telefono:'', correo:'', direccion:'', contactoEmergenciaNombre:'', contactoEmergenciaTelefono:'',
-    centroCostoId:'', departamentoId:'', cargo:'', fechaIngreso:'', tipoContrato:'Indefinido', turno:'Diurno',
+    centroCostoId:'', departamentoId:'', cargo:'', fechaIngreso:'', tipoContrato:'Indefinido', fechaFinContrato:'', turno:'Diurno',
     salarioBase:'', formaPago:'Quincenal', cuentaBancaria:'', supervisor:'',
     ivss:'', rpe:'', faov:'', rif:'',
     alergias:'', certificadoMedicoFecha:'', eppAsignado:'', eppFechaEntrega:'',
@@ -397,6 +397,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [buscarTrab,setBuscarTrab]=useState('');
   const [filtroCentroTrab,setFiltroCentroTrab]=useState('');
   const [filtroDeptoTrab,setFiltroDeptoTrab]=useState('');
+  const [filtroContratoTrab,setFiltroContratoTrab]=useState('');
   const calcularEdad = (fechaNac) => {
     if(!fechaNac) return null;
     const hoy = new Date(); const nac = new Date(fechaNac+'T00:00:00');
@@ -405,6 +406,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const m = hoy.getMonth() - nac.getMonth();
     if(m<0 || (m===0 && hoy.getDate()<nac.getDate())) edad--;
     return edad>=0 ? edad : null;
+  };
+  const diasRestantesContrato = (fechaFin) => {
+    if(!fechaFin) return null;
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const fin = new Date(fechaFin+'T00:00:00');
+    if(isNaN(fin.getTime())) return null;
+    return Math.round((fin-hoy)/86400000);
   };
   const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
   const [nuevaEval,setNuevaEval]=useState({mes:'',resultado:'Satisfactorio'});
@@ -741,6 +749,47 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const w = window.open('', '_blank');
     if(w){ w.document.write(html); w.document.close(); }
   };
+  const exportarTrabajadoresPDF = (lista) => {
+    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
+    const esc = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const grupos = {};
+    lista.forEach(t=>{ const k=nombreCentro(t.centroCostoId)||'— Sin Centro de Costo —'; (grupos[k]=grupos[k]||[]).push(t); });
+    const nombresGrupos = Object.keys(grupos).sort();
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:1000px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;overflow:auto;}.membrete h1{font-size:18px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.membrete .tit{float:right;text-align:right;font-size:13px;font-weight:900;text-transform:uppercase;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}.grupo-t{background:#0891b2;color:#fff;font-size:11px;font-weight:900;text-transform:uppercase;padding:8px 12px;border-radius:6px 6px 0 0;margin-top:16px;display:flex;justify-content:space-between;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#f1f5f9;color:#64748b;text-transform:uppercase;font-size:8px;padding:6px 8px;text-align:left;border-bottom:2px solid #e2e8f0;}td{padding:6px 8px;border-bottom:1px solid #f1f5f9;}tr:nth-child(even) td{background:#fafafa;}.badge{font-size:8px;font-weight:900;padding:2px 8px;border-radius:10px;text-transform:uppercase;}.badge-activo{background:#d1fae5;color:#059669;}.badge-egresado{background:#fee2e2;color:#dc2626;}.total-general{background:#111;color:#fff;padding:14px 18px;border-radius:8px;margin-top:20px;display:flex;justify-content:space-between;align-items:center;}.total-general b{font-size:22px;color:#fbbf24;}@media print{@page{margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.grupo-t{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.total-general{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const filaTrab = (t) => `<tr><td style="font-weight:700">${esc(t.nombre)}</td><td>${esc(t.cedula)}</td><td>${esc(t.cargo||'—')}</td><td>${esc(nombreDepto(t.departamentoId)||'—')}</td><td>${esc(t.tipoContrato||'—')}</td><td>${contDd(t.fechaIngreso)||'—'}</td><td><span class="badge ${t.estado==='Egresado'?'badge-egresado':'badge-activo'}">${esc(t.estado)}</span></td></tr>`;
+    const bloqueGrupo = (nombre) => `<div class="grupo-t"><span>${esc(nombre)}</span><span>${grupos[nombre].length} trabajador(es)</span></div>
+      <table><thead><tr><th>Nombre</th><th>Cédula</th><th>Cargo</th><th>Departamento</th><th>Contrato</th><th>Ingreso</th><th>Estado</th></tr></thead>
+      <tbody>${grupos[nombre].map(filaTrab).join('')}</tbody></table>`;
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Trabajadores por Centro de Costo</title><style>${css}</style></head><body><div class="wrap">
+      <div class="membrete"><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)}</p><div class="tit">TRABAJADORES POR CENTRO DE COSTO<br/><span style="font-weight:400;font-size:10px">${contDd(getTodayDate())}</span></div></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        ${nombresGrupos.map(bloqueGrupo).join('')}
+        <div class="total-general"><span style="font-size:11px;font-weight:900;text-transform:uppercase">Total general de trabajadores</span><b>${lista.length}</b></div>
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+  };
+  const exportarTrabajadoresExcel = (lista) => {
+    const grupos = {};
+    lista.forEach(t=>{ const k=nombreCentro(t.centroCostoId)||'— Sin Centro de Costo —'; (grupos[k]=grupos[k]||[]).push(t); });
+    const nombresGrupos = Object.keys(grupos).sort();
+    let body = '';
+    nombresGrupos.forEach(nombre=>{
+      body += `<tr><td colspan="7" style="background:#0891b2;color:#fff;font-weight:bold">${nombre} — ${grupos[nombre].length} trabajador(es)</td></tr>`;
+      body += `<tr style="background:#f1f5f9;font-weight:bold"><td>Nombre</td><td>Cédula</td><td>Cargo</td><td>Departamento</td><td>Contrato</td><td>Ingreso</td><td>Estado</td></tr>`;
+      grupos[nombre].forEach(t=>{
+        body += `<tr><td>${t.nombre||''}</td><td>${t.cedula||''}</td><td>${t.cargo||''}</td><td>${nombreDepto(t.departamentoId)||''}</td><td>${t.tipoContrato||''}</td><td>${contDd(t.fechaIngreso)||''}</td><td>${t.estado||''}</td></tr>`;
+      });
+    });
+    body += `<tr style="background:#111;color:#fff;font-weight:bold"><td colspan="6">TOTAL GENERAL DE TRABAJADORES</td><td>${lista.length}</td></tr>`;
+    const html = `<html><head><meta charset="utf-8"/></head><body><table border="1">${body}</table></body></html>`;
+    const blob = new Blob([html], {type:'application/vnd.ms-excel;charset=utf-8'});
+    const url = URL.createObjectURL(blob); const a = document.createElement('a');
+    a.href = url; a.download = `trabajadores_por_centro_${getTodayDate()}.xls`; a.click(); URL.revokeObjectURL(url);
+  };
   const exportarFichaPDF = (t) => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -761,10 +810,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           <span class="estado ${t.estado==='Egresado'?'estado-egresado':'estado-activo'}">${esc(t.estado)}</span></div>
         </div>
         <div class="grid">
-          ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
-          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
+          ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
+          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
           ${box('Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]])}
-          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];}))}
+          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];}))}
           ${box('Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]])}
           ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
         </div>
@@ -1514,14 +1563,31 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <option value="">Todos los Departamentos</option>
                 {departamentos.filter(d=>d.centroCostoId===filtroCentroTrab).map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
               </select>
+              <select value={filtroContratoTrab} onChange={e=>setFiltroContratoTrab(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                <option value="">Todos los Contratos</option>
+                <option>Indefinido</option><option>Determinado</option><option>Obra o labor</option>
+              </select>
+              {(()=>{ const listaFiltrada = trabajadores.filter(t=>
+                (!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab)) &&
+                (!filtroCentroTrab||t.centroCostoId===filtroCentroTrab) &&
+                (!filtroDeptoTrab||t.departamentoId===filtroDeptoTrab) &&
+                (!filtroContratoTrab||t.tipoContrato===filtroContratoTrab)
+              ); return (<>
+                <button onClick={()=>exportarTrabajadoresPDF(listaFiltrada)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-100"><FileText size={13}/> PDF</button>
+                <button onClick={()=>exportarTrabajadoresExcel(listaFiltrada)} className="flex items-center gap-1.5 bg-green-50 text-green-600 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-green-100"><FileSpreadsheet size={13}/> Excel</button>
+              </>); })()}
               <button onClick={()=>setTrabajadorForm(initTrabajador())} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 flex items-center gap-2"><UserPlus size={15}/> Nuevo Trabajador</button>
             </div>
             <div className="bg-white rounded-2xl border border-gray-200 divide-y divide-gray-100">
               {trabajadores.filter(t=>
                 (!buscarTrab.trim()||(t.nombre||'').toUpperCase().includes(buscarTrab.toUpperCase())||(t.cedula||'').includes(buscarTrab)) &&
                 (!filtroCentroTrab||t.centroCostoId===filtroCentroTrab) &&
-                (!filtroDeptoTrab||t.departamentoId===filtroDeptoTrab)
-              ).map(t=>(
+                (!filtroDeptoTrab||t.departamentoId===filtroDeptoTrab) &&
+                (!filtroContratoTrab||t.tipoContrato===filtroContratoTrab)
+              ).map(t=>{
+                const drC = t.tipoContrato==='Determinado' ? diasRestantesContrato(t.fechaFinContrato) : null;
+                const porVencer = drC!==null && drC<=15;
+                return (
                 <div key={t.id} onClick={()=>setTrabajadorVer(t)} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-cyan-50/50 transition-colors">
                   <div className="w-11 h-11 rounded-full bg-cyan-100 overflow-hidden flex items-center justify-center font-black text-cyan-600 text-xs flex-shrink-0">
                     {t.fotoUrl ? <img src={t.fotoUrl} alt={t.nombre} className="w-full h-full object-cover"/> : (t.nombre||'?').split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase()}
@@ -1531,10 +1597,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <p className="text-[10px] text-gray-400 truncate">{t.cargo||'—'} · {t.cedula}</p>
                   </div>
                   <p className="text-[11px] text-gray-500 hidden sm:block flex-shrink-0">{nombreCentro(t.centroCostoId)} / {nombreDepto(t.departamentoId)}</p>
+                  {porVencer&&<span title={drC<0?`Contrato vencido hace ${Math.abs(drC)} día(s)`:`Contrato vence en ${drC} día(s)`} className={`text-[8px] font-black uppercase px-2 py-1 rounded-full flex-shrink-0 flex items-center gap-1 ${drC<0?'bg-red-100 text-red-600':'bg-orange-100 text-orange-600'}`}>⚠ {drC<0?'Vencido':`${drC}d`}</span>}
                   <span className={`text-[8px] font-black uppercase px-2 py-1 rounded-full flex-shrink-0 ${t.estado==='Egresado'?'bg-red-100 text-red-600':'bg-green-100 text-green-600'}`}>{t.estado}</span>
                   <ChevronRight size={16} className="text-gray-300 flex-shrink-0"/>
                 </div>
-              ))}
+              );})}
               {trabajadores.length===0 && <p className="text-center text-gray-400 text-sm py-12">Sin trabajadores registrados aún.</p>}
             </div>
           </>
@@ -1614,6 +1681,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <input type="date" value={f.fechaIngreso} onChange={e=>set({fechaIngreso:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
                     <select value={f.tipoContrato} onChange={e=>set({tipoContrato:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Indefinido</option><option>Determinado</option><option>Obra o labor</option></select>
                   </div>
+                  {f.tipoContrato==='Determinado'&&(()=>{ const dr=diasRestantesContrato(f.fechaFinContrato); return (
+                    <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-2.5">
+                      <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Fecha fin de contrato</label>
+                      <input type="date" value={f.fechaFinContrato} onChange={e=>set({fechaFinContrato:e.target.value})} className="w-full border-2 border-amber-200 rounded-lg px-3 py-2 text-xs font-bold outline-none focus:border-amber-500 bg-white"/>
+                      {dr!==null&&<p className={`text-[10px] font-black mt-1.5 ${dr<0?'text-red-600':dr<=15?'text-orange-600':'text-amber-600'}`}>{dr<0?`Vencido hace ${Math.abs(dr)} día(s)`:dr===0?'Vence hoy':`Faltan ${dr} día(s)`}{dr>=0&&dr<=15&&' ⚠ por vencer'}</p>}
+                    </div>
+                  );})()}
                   <div className="grid grid-cols-2 gap-2">
                     <select value={f.turno} onChange={e=>set({turno:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Diurno</option><option>Nocturno</option><option>Mixto</option></select>
                     <select value={f.formaPago} onChange={e=>set({formaPago:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincenal</option><option>Mensual</option><option>Semanal</option></select>
@@ -1684,7 +1758,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Cargas Familiares ({f.cargasFamiliares.length})</h3>
                 <div className="space-y-1 mb-2">
                   {f.cargasFamiliares.map((cg,i)=>{
-                    const edadCg=calcularEdad(cg.fechaNacimiento);
+                    const edadCg=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);
                     return (
                     <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
                       <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{edadCg!==null?' · '+edadCg+' años':''}</span></span>
@@ -1763,10 +1837,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
-                  ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
-                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
+                  ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
+                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
                   ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
-                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];})],
+                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];})],
                   ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
                   ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
                   ['Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]]],
