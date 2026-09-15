@@ -397,7 +397,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [buscarTrab,setBuscarTrab]=useState('');
   const [filtroCentroTrab,setFiltroCentroTrab]=useState('');
   const [filtroDeptoTrab,setFiltroDeptoTrab]=useState('');
-  const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',edad:''});
+  const calcularEdad = (fechaNac) => {
+    if(!fechaNac) return null;
+    const hoy = new Date(); const nac = new Date(fechaNac+'T00:00:00');
+    if(isNaN(nac.getTime())) return null;
+    let edad = hoy.getFullYear() - nac.getFullYear();
+    const m = hoy.getMonth() - nac.getMonth();
+    if(m<0 || (m===0 && hoy.getDate()<nac.getDate())) edad--;
+    return edad>=0 ? edad : null;
+  };
+  const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
   const [nuevaEval,setNuevaEval]=useState({mes:'',resultado:'Satisfactorio'});
   const [nuevaAmon,setNuevaAmon]=useState({fecha:getTodayDate(),tipo:'Verbal',motivo:''});
 
@@ -421,7 +430,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const agregarCarga = () => {
     if(!nuevaCarga.nombre.trim()) return;
     setTrabajadorForm(f=>({...f,cargasFamiliares:[...f.cargasFamiliares,{...nuevaCarga}]}));
-    setNuevaCarga({nombre:'',parentesco:'Hijo(a)',edad:''});
+    setNuevaCarga({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
   };
   const quitarCarga = (i) => setTrabajadorForm(f=>({...f,cargasFamiliares:f.cargasFamiliares.filter((_,j)=>j!==i)}));
   const agregarEval = async (t) => {
@@ -755,7 +764,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
           ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
           ${box('Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]])}
-          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>[`${cg.parentesco}${cg.edad?' ('+cg.edad+' años)':''}`,cg.nombre]))}
+          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];}))}
           ${box('Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]])}
           ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
         </div>
@@ -1566,7 +1575,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <input value={f.cedula} onChange={e=>set({cedula:e.target.value})} placeholder="Cédula * (V-12345678)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
                   <div className="grid grid-cols-2 gap-2">
                     <select value={f.sexo} onChange={e=>set({sexo:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Masculino</option><option>Femenino</option></select>
-                    <input type="date" value={f.fechaNacimiento} onChange={e=>set({fechaNacimiento:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <div className="relative">
+                      <input type="date" value={f.fechaNacimiento} onChange={e=>set({fechaNacimiento:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                      {calcularEdad(f.fechaNacimiento)!==null&&<span className="absolute -bottom-4 left-1 text-[9px] font-black text-cyan-600">{calcularEdad(f.fechaNacimiento)} años</span>}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <select value={f.estadoCivil} onChange={e=>set({estadoCivil:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Soltero</option><option>Casado</option><option>Divorciado</option><option>Viudo</option><option>Concubinato</option></select>
@@ -1671,17 +1683,22 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Cargas Familiares ({f.cargasFamiliares.length})</h3>
                 <div className="space-y-1 mb-2">
-                  {f.cargasFamiliares.map((cg,i)=>(
+                  {f.cargasFamiliares.map((cg,i)=>{
+                    const edadCg=calcularEdad(cg.fechaNacimiento);
+                    return (
                     <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
-                      <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{cg.edad?' · '+cg.edad+' años':''}</span></span>
+                      <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{edadCg!==null?' · '+edadCg+' años':''}</span></span>
                       <button onClick={()=>quitarCarga(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button>
                     </div>
-                  ))}
+                  );})}
                 </div>
                 <div className="grid grid-cols-4 gap-1.5">
                   <input value={nuevaCarga.nombre} onChange={e=>setNuevaCarga(c=>({...c,nombre:e.target.value}))} placeholder="Nombre" className="col-span-2 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
                   <select value={nuevaCarga.parentesco} onChange={e=>setNuevaCarga(c=>({...c,parentesco:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-1 py-1.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"><option>Cónyuge</option><option>Hijo(a)</option><option>Padre/Madre</option></select>
-                  <input value={nuevaCarga.edad} onChange={e=>setNuevaCarga(c=>({...c,edad:e.target.value}))} placeholder="Edad" className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                  <div className="relative">
+                    <input type="date" value={nuevaCarga.fechaNacimiento} onChange={e=>setNuevaCarga(c=>({...c,fechaNacimiento:e.target.value}))} title="Fecha de nacimiento" className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:border-cyan-500"/>
+                    {calcularEdad(nuevaCarga.fechaNacimiento)!==null&&<span className="absolute -bottom-3.5 left-1 text-[8px] font-black text-cyan-600">{calcularEdad(nuevaCarga.fechaNacimiento)} años</span>}
+                  </div>
                 </div>
                 <button onClick={agregarCarga} className="mt-1.5 w-full bg-gray-100 text-gray-600 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-gray-200">+ Agregar carga</button>
               </div>
@@ -1749,7 +1766,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
                   ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
                   ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
-                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>[`${cg.parentesco}${cg.edad?' ('+cg.edad+' años)':''}`,cg.nombre])],
+                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];})],
                   ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
                   ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
                   ['Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]]],
