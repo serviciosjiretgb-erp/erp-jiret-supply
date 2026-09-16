@@ -9490,7 +9490,9 @@ const CxPView = ({
 
   const _ncPorProv = useMemo(()=>{
     const m = new Map();
-    for(const n of (notasCompraCD||[])){
+    // Las de tipo 'ajuste' (Ajuste Financiero fiscal, sin movimiento de inventario/CxP) quedan
+    // fuera desde acá — no deben afectar el saldo de CxP ni aparecer en Estado de Cuenta Proveedor.
+    for(const n of (notasCompraCD||[]).filter(n=>n.modoOp!=='ajuste')){
       const rif = (n.provRif||'').trim();
       if(!rif) continue;
       if(!m.has(rif)) m.set(rif,[]);
@@ -9509,7 +9511,10 @@ const CxPView = ({
     return m;
   },[notasCompraCD]);
   // Neto NC/ND en USD de una factura: NC resta del saldo (ya pagó de menos / le deben menos), ND suma.
-  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
+  // Las de tipo 'ajuste' (Ajuste Financiero — solo Libro de Compras, sin movimiento de inventario)
+  // quedan FUERA de este cálculo: no deben afectar lo que realmente se le debe al proveedor,
+  // solo el Libro de Compras fiscal. Únicamente las NC de devolución real siguen restando aquí.
+  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).filter(n=>n.modoOp!=='ajuste').reduce((s,n)=>{
     const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
     const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
     return s + usd*(n.tipo==='NC'?1:-1);
@@ -11700,8 +11705,8 @@ const EstadoCuentaProvView = ({
   // Maps
   const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP]);
   const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra]);
-  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
-  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
+  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>n.modoOp!=='ajuste').forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
+  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>n.modoOp!=='ajuste').forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
   const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
     const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
     const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
@@ -12132,6 +12137,36 @@ const NotasCompraNCView = ({
     setShowCompraNCModal(true);
   };
 
+  const exportarNCCompraPDF = (n) => {
+    const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
+    const t=pNum(n.tasaFactura||0)||1;
+    const usd=t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0);
+    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
+    const esc = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${n.tipo} ${esc(n.nroDocumento)}</title>
+    <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:24px;color:#111;}.wrap{max-width:640px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.12);}.membrete{background:${n.tipo==='NC'?'#dc2626':'#2563eb'};color:#fff;padding:20px 26px;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.tit{font-size:20px;font-weight:900;text-transform:uppercase;margin-top:8px;}.btn-print{display:block;margin:18px 26px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 52px);}.cont{padding:0 26px 26px;}.fila{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px;}.fila span:first-child{color:#94a3b8;font-weight:700;text-transform:uppercase;font-size:9px;}.fila span:last-child{font-weight:700;text-align:right;}.monto{background:#111;color:${n.tipo==='NC'?'#fca5a5':'#93c5fd'};padding:16px;border-radius:8px;text-align:center;margin-top:18px;}.monto b{font-size:26px;display:block;}.desc{background:#f8fafc;border-radius:8px;padding:12px;margin-top:14px;font-size:11px;color:#475569;}@media print{@page{margin:10mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete,.monto{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+    </head><body><div class="wrap">
+      <div class="membrete"><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)}</p><div class="tit">${n.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} — Compras</div></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="cont">
+        <div class="fila"><span>N° Documento</span><span>${esc(n.nroDocumento||n.id)}</span></div>
+        <div class="fila"><span>Fecha</span><span>${esc(n.fecha||'—')}</span></div>
+        <div class="fila"><span>Naturaleza</span><span>${n.naturaleza==='FISCAL'?'🏛 Fiscal':'📦 No Fiscal'}</span></div>
+        <div class="fila"><span>Proveedor</span><span>${esc(fc?.proveedor||n.provName||'—')}</span></div>
+        <div class="fila"><span>RIF Proveedor</span><span>${esc(n.provRif||fc?.rif||'—')}</span></div>
+        <div class="fila"><span>Factura Afectada</span><span>${esc(fc?.nroFactura||'—')}</span></div>
+        <div class="fila"><span>N° Control</span><span>${esc(n.nroControl||'—')}</span></div>
+        <div class="fila"><span>Tasa</span><span>${t>1?fN(t)+' Bs/$':'—'}</span></div>
+        <div class="fila"><span>Tipo de operación</span><span>${n.modoOp==='ajuste'?'Ajuste financiero (sin inventario)':'Devolución de productos'}</span></div>
+        <div class="monto"><span style="font-size:10px;text-transform:uppercase;font-weight:700">Monto ${n.tipo==='NC'?'(resta del Libro de Compras)':'(suma al Libro de Compras)'}</span><b>${n.tipo==='NC'?'-':'+'}$${fN(usd)}</b></div>
+        ${n.descripcion?`<div class="desc"><b>Descripción:</b> ${esc(n.descripcion)}</div>`:''}
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+  };
+
   const handleDeleteCompraNC = (n) => {
     const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
     const t=pNum(n.tasaFactura||0)||1;
@@ -12222,6 +12257,7 @@ const NotasCompraNCView = ({
                   <td className="p-3 text-gray-500 text-[10px]">{n.descripcion||'—'}</td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-center">
+                      <button onClick={()=>exportarNCCompraPDF(n)} title="Ver PDF" className="w-7 h-7 flex items-center justify-center bg-orange-50 text-orange-600 hover:bg-orange-600 hover:text-white rounded-lg transition-all"><FileText size={11}/></button>
                       <button onClick={()=>abrirEditarCompraNC(n)} title="Editar" className="w-7 h-7 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-all"><Edit size={11}/></button>
                       <button onClick={()=>handleDeleteCompraNC(n)} title="Eliminar" className="w-7 h-7 flex items-center justify-center bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-all"><Trash2 size={11}/></button>
                     </div>
@@ -12465,6 +12501,22 @@ const NotasCompraNCView = ({
                           placeholder="00-00001" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
                       </div>
                     </div>
+                    {esFiscal&&(
+                      <div className="grid grid-cols-2 gap-3 bg-amber-50 border-2 border-amber-200 rounded-xl p-3">
+                        <div className="col-span-2 text-[8px] font-black text-amber-700 uppercase -mb-1">📖 Período en Libro de Compras (si difiere de la fecha del documento)</div>
+                        <div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Reflejar</label>
+                          <input type="month" value={compraNCForm.periodoLibroMes||(compraNCForm.fecha||'').substring(0,7)||''} onChange={e=>setCompraNCForm(f=>({...f,periodoLibroMes:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-amber-500 bg-white"/>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                          <select value={compraNCForm.periodoLibroQ||'1'} onChange={e=>setCompraNCForm(f=>({...f,periodoLibroQ:e.target.value}))} className="w-full border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-amber-500 bg-white">
+                            <option value="1">I Quincena (1-15)</option>
+                            <option value="2">II Quincena (16-fin)</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
                     <div>
                       <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Descripción / Concepto</label>
                       <input value={compraNCForm.descripcion||''} onChange={e=>setCompraNCForm(f=>({...f,descripcion:e.target.value}))}
@@ -12607,6 +12659,36 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
       retFact:ret.nroFactura||'', retComp:ret.nroComprobante||'',
     });
   });
+  // NC/ND fiscales de compras — mismo criterio de período que las facturas (respeta el
+  // mes/quincena de aprovechamiento si se asignó uno distinto a la fecha real del documento).
+  // Las de tipo 'ajuste' financiero NO afectan CxP, pero SÍ deben ir al Libro de Compras — es
+  // justamente su propósito. NC resta del crédito fiscal, ND suma.
+  const ncsPeriodo = (notasCompraCD||[]).filter(n => {
+    if(n.naturaleza!=='FISCAL') return false;
+    if(n.periodoLibroMes){
+      return n.periodoLibroMes===`${filtAnio}-${mes2}` && (filtQ==='AMBAS'||String(n.periodoLibroQ||'1')===String(filtQ));
+    }
+    const fecha = n.fecha||'';
+    return fecha>=desde && fecha<=hasta;
+  });
+  ncsPeriodo.forEach(n => {
+    const fc = (facturasCompra||[]).find(f=>f.id===n.facturaId);
+    const prov = (proveedores||[]).find(p=>p.id===fc?.proveedorId);
+    const rif = n.provRif || prov?.rif || fc?.rif || '';
+    const tasa = pNum(n.tasaFactura||0) || pNum(fc?.tasa||0) || 1;
+    const baseBs = pNum(n.monto||0);
+    const ivaBs = pNum(n.ivaBs||0) || (n.tieneIva===false?0:baseBs*0.16);
+    const totalBs = pNum(n.totalBs||0) || (baseBs+ivaBs);
+    const signo = n.tipo==='NC' ? -1 : 1;
+    rows.push({
+      fecha:n.fecha||'', rif, nombre: n.provName||fc?.proveedor||prov?.nombre||'—',
+      tipo:n.tipo, nroFactura:n.nroDocumento||n.id, nroControl:n.nroControl||'',
+      impFechaAplic:'', impPlanilla:'', impExpediente:'', impTotal:0, impBase:0, impIVA:0,
+      ciTotal: totalBs*signo, ciSinDer:0, ciBase: baseBs*signo, ciCred: ivaBs*signo,
+      crTotal:0, crBase:0, crCred:0,
+      retPct:'', retMonto:0, retFact:fc?.nroFactura||'', retComp:'', _id:n.id,
+    });
+  });
   // Orden cronológico real: cada fila (factura o retención) por su propia fecha —
   // esto hace que una factura de mes anterior "aprovechada" en este período aparezca
   // naturalmente cerca del inicio, y que las retenciones queden intercaladas donde
@@ -12624,7 +12706,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
   rows=rows.map((r,i)=>({...r,seq:i+1}));
 
   // Totales
-  const fRows = rows.filter(r=>r.tipo==='FACTURA');
+  const fRows = rows.filter(r=>r.tipo==='FACTURA'||r.tipo==='NC'||r.tipo==='ND');
   const rRows = rows.filter(r=>r.tipo==='RETENCIÓN');
   const totImpTotal = fRows.reduce((s,r)=>s+r.impTotal,0);
   const totImpBase  = fRows.reduce((s,r)=>s+r.impBase,0);
@@ -12682,7 +12764,7 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, se
         r.nroFactura||'—', r.nroControl||'—', r.retFact||'—',
         r.impFechaAplic?fmtFE(r.impFechaAplic):'', r.impPlanilla||'', r.impExpediente||'',
         r.impTotal||null, r.impBase||null, r.impBase>0&&r.tipo==='FACTURA'?0.16:null, r.impIVA||null,
-        r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, r.tipo==='FACTURA'&&r.ciBase>0?0.16:null, r.ciCred||null,
+        r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, (r.tipo==='FACTURA'||r.tipo==='NC'||r.tipo==='ND')&&r.ciBase!==0?0.16:null, r.ciCred||null,
         r.crTotal||null, r.crBase||null, r.tipo==='FACTURA'&&r.crBase>0?0.08:null, r.crCred||null,
         r.retPct||'—', r.retMonto||null, r.retFact||'—', r.retComp||'—',
       ]);
