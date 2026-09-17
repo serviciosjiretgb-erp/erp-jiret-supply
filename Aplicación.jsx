@@ -38371,10 +38371,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}{parseNum(a.montoAplicado||0)>0.01?` (de $${formatNum(parseNum(a.monto||0))})`:''}</span>
                               <div style={{display:'flex',gap:4,flexShrink:0}}>
                                 {parseNum(a.montoAplicado||0)>0.01&&<button title="Restaurar el disponible completo de este anticipo — no toca Banco, Caja ni ninguna factura, solo corrige el saldo mostrado aquí" onClick={async()=>{
-                                  if(!window.confirm(`¿Restaurar disponible completo?\n\nEsto deja "$${fN(parseNum(a.monto||0))} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" con TODO su monto disponible otra vez (ahora mismo solo se ve $${fN(a._saldoAnt)} de $${fN(parseNum(a.monto||0))}).\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo.`)) return;
+                                  if(!window.confirm(`¿Restaurar disponible completo?\n\nEsto deja "$${formatNum(parseNum(a.monto||0))} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" con TODO su monto disponible otra vez (ahora mismo solo se ve $${formatNum(a._saldoAnt)} de $${formatNum(parseNum(a.monto||0))}).\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo.`)) return;
                                   try{
                                     await updateDoc(getDocRef('cobros_cxc',a.id),{montoAplicado:0});
-                                    logAuditoria(appUser,'Cuentas por Cobrar','EDICIÓN',`Anticipo ${a.id} (${a.clientName||''}) corregido manualmente — disponible restaurado a $${fN(parseNum(a.monto||0))} (tenía $${fN(a._saldoAnt)} disponible antes).`);
+                                    logAuditoria(appUser,'Cuentas por Cobrar','EDICIÓN',`Anticipo ${a.id} (${a.clientName||''}) corregido manualmente — disponible restaurado a $${formatNum(parseNum(a.monto||0))} (tenía $${formatNum(a._saldoAnt)} disponible antes).`);
                                     alert('Listo — anticipo restaurado a disponible completo.');
                                   }catch(e){ alert('Error: '+e.message); }
                                 }}
