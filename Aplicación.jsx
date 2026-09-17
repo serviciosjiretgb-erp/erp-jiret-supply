@@ -37959,6 +37959,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const montoLineaNE=parseFloat((montoNE*proporcion).toFixed(2));
                   if(montoLineaNE<0.001) continue;
                   tk.usdAsignado+=montoLineaNE;
+                  // Si esta línea viene de aplicar un anticipo, el Bs. debe cuadrar con la factura
+                  // que se está pagando (su propia tasa), no con la tasa que tenía el anticipo el
+                  // día que se creó — son fechas distintas, y el crédito es en USD, no en Bs congelados.
                   const tasa=parseNum(linea.tasa||tasaBCV);
                   // Bs exacto: si la línea es en Bs y esta es su última porción, se asigna el remanente exacto de lo tecleado
                   const esUltimaPorcion=(tk.usdTotal-tk.usdAsignado)<0.005;
@@ -38555,23 +38558,33 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </div>
                         {(pm.lineasPago||[]).map((l,i)=>{
                           const lUSD=l.moneda==='USD'?parseNum(l.monto):parseNum(l.monto)/Math.max(parseNum(l.tasa),1);
+                          const lBs=l.moneda==='Bs'?parseNum(l.monto):parseNum(l.monto)*parseNum(l.tasa||0);
                           return(
-                          <div key={i} style={{padding:'10px 12px',borderBottom:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:8,background:'#fff'}}>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:2}}>
-                                <span style={{fontSize:10,fontWeight:900,color:'#111'}}>{l.metodo}</span>
-                                <span style={{fontSize:10,fontWeight:900,color:'#16a34a'}}>${formatNum(lUSD)}</span>
-                                {l.moneda==='Bs'&&<span style={{fontSize:9,color:'#64748b'}}>Bs.{formatNum(parseNum(l.monto))}</span>}
+                          <div key={i} style={{padding:'10px 12px',borderBottom:'1px solid #e2e8f0',background:'#fff'}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:2}}>
+                                  <span style={{fontSize:10,fontWeight:900,color:'#111'}}>{l.metodo}</span>
+                                  <span style={{fontSize:10,fontWeight:900,color:'#16a34a'}}>${formatNum(lUSD)}</span>
+                                </div>
+                                <div style={{display:'flex',gap:10,fontSize:9,color:'#64748b'}}>
+                                  <span>{l.cuentaNombre||'Sin cuenta'}</span>
+                                  {l.referencia&&<span>Ref: {l.referencia}</span>}
+                                  {l.concepto&&<span style={{fontStyle:'italic',color:'#92400e'}}>"{l.concepto}"</span>}
+                                  <span>{l.fecha}</span>
+                                </div>
                               </div>
-                              <div style={{display:'flex',gap:10,fontSize:9,color:'#64748b'}}>
-                                <span>{l.cuentaNombre||'Sin cuenta'}</span>
-                                {l.referencia&&<span>Ref: {l.referencia}</span>}
-                                {l.concepto&&<span style={{fontStyle:'italic',color:'#92400e'}}>"{l.concepto}"</span>}
-                                <span>{l.fecha}</span>
-                              </div>
+                              <button onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:(m.lineasPago||[]).filter((_,j)=>j!==i)}))}
+                                style={{padding:'4px 8px',background:'#fee2e2',color:'#dc2626',border:'none',borderRadius:6,fontSize:9,fontWeight:900,cursor:'pointer'}}>✕</button>
                             </div>
-                            <button onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:(m.lineasPago||[]).filter((_,j)=>j!==i)}))}
-                              style={{padding:'4px 8px',background:'#fee2e2',color:'#dc2626',border:'none',borderRadius:6,fontSize:9,fontWeight:900,cursor:'pointer'}}>✕</button>
+                            <div style={{display:'flex',alignItems:'center',gap:6,marginTop:6,paddingTop:6,borderTop:'1px dashed #e2e8f0'}}>
+                              <span style={{fontSize:8,fontWeight:900,color:'#92400e',textTransform:'uppercase'}}>Tasa</span>
+                              <input type="number" step="0.0001" value={l.tasa||''} placeholder={String(tasaBCV||'')}
+                                onChange={e=>setCxcPagoModal(m=>({...m,lineasPago:(m.lineasPago||[]).map((x,j)=>j===i?{...x,tasa:e.target.value}:x)}))}
+                                style={{width:80,padding:'3px 6px',border:'1px solid #fbbf24',borderRadius:6,fontSize:10,fontWeight:700,outline:'none'}}/>
+                              <span style={{fontSize:9,color:'#64748b'}}>Bs/$ · = <b style={{color:'#1d4ed8'}}>Bs.{formatNum(lBs)}</b></span>
+                              {l.anticipoId&&<span style={{fontSize:8,color:'#b45309',fontStyle:'italic'}}>(anticipo — edita si la tasa de la factura es distinta)</span>}
+                            </div>
                           </div>);
                         })}
                       </div>
