@@ -38368,7 +38368,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id)||(pm.lineaActual?.anticipoId===a.id);
                             return(
                             <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
-                              <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}</span>
+                              <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}
+                                <span style={{color:'#dc2626',fontWeight:900}}> [DBG monto={formatNum(parseNum(a.monto||0))} montoAplicado={formatNum(parseNum(a.montoAplicado||0))} tasa={a.tasa||'∅'}]</span>
+                              </span>
                               <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                                 style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                             </div>);
