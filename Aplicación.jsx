@@ -9955,6 +9955,7 @@ ${body}
                                 const totalPag=pagosF.reduce((s,p)=>s+pN(p.monto||0),0);
                                 const rets=_retIVAPorFact.get(f.id)||[];
                                 const retIVA=rets.reduce((s,r)=>s+pN(r.montoBs||r.montoRetenido||0)/tasaF,0);
+                                const ncsF=_ncPorFact.get(f.id)||[];
                                 const retISLR=(f.retISLRLista||[]).reduce((s,r)=>s+pN(r.monto||0),0);
                                 const saldo=getSaldoFact(f);
                                 const dc=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
@@ -10012,6 +10013,17 @@ ${body}
                                         <td></td>
                                       </tr>
                                     ))}
+                                    {ncsF.map((n,ni)=>{
+                                      const tN=pN(n.tasaFactura||0)||tasaF||1;
+                                      const usdN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);
+                                      return(
+                                      <tr key={'nc'+ni} className="bg-purple-50 border-b border-purple-100">
+                                        <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {n.tipo} {n.nroDocumento||''} · {n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}{n.descripcion?' · '+n.descripcion:''}</td>
+                                        <td colSpan={4}></td>
+                                        <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{n.tipo==='NC'?'-':'+'}${fN(usdN)}</td>
+                                        <td></td>
+                                      </tr>
+                                    );})}
                                     {(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map((r,ri)=>(
                                       <tr key={ri} className="bg-purple-50 border-b border-purple-100">
                                         <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ Ret. ISLR {r.pct||0}% · {r.codigo||''} {r.concepto||''}</td>
@@ -11989,7 +12001,22 @@ ${body}
                                 <td colSpan={3}></td>
                               </tr>
                             ))}
-                            {(pagosF.length>0||retsF.length>0||(f.retISLRLista||[]).some(r=>pN(r.monto||0)>0.001))&&(
+                            {(_ncPorFact.get(f.id)||[]).map((n,ni)=>{
+                              const tN=pN(n.tasaFactura||0)||tasa||1;
+                              const usdN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);
+                              return(
+                              <tr key={'nc'+ni} className="bg-indigo-50/80 border-b border-indigo-100">
+                                <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ {n.tipo}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-indigo-600">{fD(n.fecha)}</td>
+                                <td className="py-1.5 px-3"><span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">{n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}</span></td>
+                                <td className="py-1.5 px-3 text-[8px] text-indigo-600">{n.nroDocumento||''}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500">{n.descripcion||(n.tipo==='NC'?'Nota de Crédito':'Nota de Débito')}</td>
+                                <td></td>
+                                <td className="py-1.5 px-3 text-right font-mono font-black text-indigo-700 text-[8px]">{n.tipo==='NC'?'-':'+'}${fN(usdN)}</td>
+                                <td colSpan={3}></td>
+                              </tr>
+                            );})}
+                            {(pagosF.length>0||retsF.length>0||(f.retISLRLista||[]).some(r=>pN(r.monto||0)>0.001)||(_ncPorFact.get(f.id)||[]).length>0)&&(
                               <tr className={`border-b-2 ${saldo<-0.01?'bg-teal-100/70 border-teal-200':saldo<0.01?'bg-green-100/70 border-green-200':'bg-orange-100/60 border-orange-200'}`}>
                                 <td colSpan={8} className={`py-1.5 px-3 pl-7 text-[9px] font-black ${saldo<-0.01?'text-teal-700':saldo<0.01?'text-green-700':'text-orange-700'}`}>Saldo de la factura {f.nroFactura||f.id}</td>
                                 <td className={`py-1.5 px-3 text-right font-mono font-black text-[9px] ${saldo<-0.01?'text-teal-700':saldo<0.01?'text-green-700':'text-orange-700'}`}>${fN(saldo)}</td>
@@ -13144,9 +13171,10 @@ ${resumenHtml}
             )}
             {rows.map((r,i) => {
               const isFac = r.tipo==='FACTURA';
-              const bg = isFac ? (i%2===0?'#ffffff':'#f8fafc') : '#fefce8';
-              const txt = isFac ? '#111827' : '#78350f';
-              const numC = isFac ? '#1f2937' : '#dc2626';
+              const isFacLike = r.tipo==='FACTURA'||r.tipo==='NC'||r.tipo==='ND';
+              const bg = isFac ? (i%2===0?'#ffffff':'#f8fafc') : (isFacLike?(r.tipo==='NC'?'#fdf2f8':'#eff6ff'):'#fefce8');
+              const txt = isFac ? '#111827' : (isFacLike?(r.tipo==='NC'?'#9d174d':'#1e40af'):'#78350f');
+              const numC = isFac ? '#1f2937' : (isFacLike?(r.tipo==='NC'?'#be185d':'#1d4ed8'):'#dc2626');
               const td = (v,right=false,bold=false,extra='') =>
                 `<td style="padding:2px 4px;border-right:1px solid #e5e7eb;white-space:nowrap;${right?'text-align:right;':''}${bold?'font-weight:bold;':''}${extra}font-family:${right?'monospace':'inherit'}">${v}</td>`;
               return (
@@ -13155,7 +13183,7 @@ ${resumenHtml}
                   <td style={{padding:'2px 4px',borderRight:'1px solid #e5e7eb',fontSize:9,whiteSpace:'nowrap'}}>{fmtFE(r.fecha)}</td>
                   <td style={{padding:'2px 4px',borderRight:'1px solid #e5e7eb',fontSize:9,whiteSpace:'nowrap'}}>{r.rif||'—'}</td>
                   <td style={{padding:'2px 4px',borderRight:'1px solid #e5e7eb',fontSize:9,maxWidth:200}}><div style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.nombre}>{r.nombre}</div></td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontWeight:900,fontSize:9,background:isFac?'#f0fdf4':'#fef9c3',color:isFac?'#065f46':'#92400e'}}>{r.tipo}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontWeight:900,fontSize:9,background:isFac?'#f0fdf4':(isFacLike?(r.tipo==='NC'?'#fce7f3':'#dbeafe'):'#fef9c3'),color:isFac?'#065f46':(isFacLike?(r.tipo==='NC'?'#9d174d':'#1e40af'):'#92400e')}}>{r.tipo}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#1d4ed8',fontWeight:700,fontSize:9}}>{r.nroFactura||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{r.nroControl||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac?'—':r.retFact||'—'}</td>
@@ -13168,16 +13196,16 @@ ${resumenHtml}
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',color:'#94a3b8',fontSize:9}}>{r.impIVA>0?'0.16':'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:r.impIVA>0?'#1d4ed8':'#94a3b8',fontSize:9,fontFamily:'monospace'}}>{r.impIVA>0?fmtV(r.impIVA):'—'}</td>
                   {/* Compras internas */}
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:isFac?700:400}}>{isFac&&r.ciTotal>0?fmtV(r.ciTotal):'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.ciSinDer>0?fmtV(r.ciSinDer):'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.ciBase>0?fmtV(r.ciBase):'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac&&r.ciBase>0?'0.16':'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:700}}>{isFac&&r.ciCred>0?fmtV(r.ciCred):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:isFac?700:400}}>{isFacLike&&r.ciTotal!==0?fmtV(r.ciTotal):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFacLike&&r.ciSinDer!==0?fmtV(r.ciSinDer):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFacLike&&r.ciBase!==0?fmtV(r.ciBase):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFacLike&&r.ciBase!==0?'0.16':'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace',fontWeight:700}}>{isFacLike&&r.ciCred!==0?fmtV(r.ciCred):'—'}</td>
                   {/* Alicuota reducida */}
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.crTotal>0?fmtV(r.crTotal):'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.crBase>0?fmtV(r.crBase):'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFac&&r.crBase>0?'0.08':'—'}</td>
-                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFac&&r.crCred>0?fmtV(r.crCred):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFacLike&&r.crTotal!==0?fmtV(r.crTotal):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFacLike&&r.crBase!==0?fmtV(r.crBase):'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9}}>{isFacLike&&r.crBase!==0?'0.08':'—'}</td>
+                  <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:numC,fontSize:9,fontFamily:'monospace'}}>{isFacLike&&r.crCred!==0?fmtV(r.crCred):'—'}</td>
                   {/* IVA Retenido */}
                   <td style={{padding:'2px 4px',textAlign:'center',borderRight:'1px solid #e5e7eb',fontSize:9,background:!isFac?'#fef3c7':'',color:!isFac?'#ea580c':'#94a3b8',fontWeight:!isFac?900:400}}>{r.retPct||'—'}</td>
                   <td style={{padding:'2px 4px',textAlign:'right',borderRight:'1px solid #e5e7eb',color:'#dc2626',fontWeight:700,fontSize:9,fontFamily:'monospace'}}>{r.retMonto>0?fmtV(r.retMonto):'—'}</td>
