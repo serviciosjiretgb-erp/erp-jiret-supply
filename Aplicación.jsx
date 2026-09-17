@@ -9490,9 +9490,8 @@ const CxPView = ({
 
   const _ncPorProv = useMemo(()=>{
     const m = new Map();
-    // Las de tipo 'ajuste' (Ajuste Financiero fiscal, sin movimiento de inventario/CxP) quedan
-    // fuera desde acá — no deben afectar el saldo de CxP ni aparecer en Estado de Cuenta Proveedor.
-    for(const n of (notasCompraCD||[]).filter(n=>n.modoOp!=='ajuste')){
+    // Todas las NC/ND (fiscales o no) cuentan aquí — afectan CxP y Estado de Cuenta por igual.
+    for(const n of (notasCompraCD||[])){
       const rif = (n.provRif||'').trim();
       if(!rif) continue;
       if(!m.has(rif)) m.set(rif,[]);
@@ -9511,10 +9510,9 @@ const CxPView = ({
     return m;
   },[notasCompraCD]);
   // Neto NC/ND en USD de una factura: NC resta del saldo (ya pagó de menos / le deben menos), ND suma.
-  // Las de tipo 'ajuste' (Ajuste Financiero — solo Libro de Compras, sin movimiento de inventario)
-  // quedan FUERA de este cálculo: no deben afectar lo que realmente se le debe al proveedor,
-  // solo el Libro de Compras fiscal. Únicamente las NC de devolución real siguen restando aquí.
-  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).filter(n=>n.modoOp!=='ajuste').reduce((s,n)=>{
+  // Todas las NC/ND (fiscales o no) afectan CxP, Estado de Cuenta y Contabilidad por igual —
+  // lo fiscal/no-fiscal solo decide si además entran al Libro de Compras (ver LibroComprasView).
+  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
     const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
     const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
     return s + usd*(n.tipo==='NC'?1:-1);
@@ -11705,8 +11703,8 @@ const EstadoCuentaProvView = ({
   // Maps
   const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP]);
   const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra]);
-  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>n.modoOp!=='ajuste').forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
-  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>n.modoOp!=='ajuste').forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
+  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
+  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
   const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
     const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
     const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
