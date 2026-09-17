@@ -38367,12 +38367,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           {anticiposCliente.map(a=>{
                             const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id)||(pm.lineaActual?.anticipoId===a.id);
                             return(
-                            <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
-                              <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}
-                                <span style={{color:'#dc2626',fontWeight:900}}> [DBG monto={formatNum(parseNum(a.monto||0))} montoAplicado={formatNum(parseNum(a.montoAplicado||0))} tasa={a.tasa||'∅'}]</span>
-                              </span>
-                              <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
-                                style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
+                            <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3,gap:4}}>
+                              <span style={{fontSize:9,color:'#166534',fontWeight:700}}>{a.fecha} · ${formatNum(a._saldoAnt)}{a.referencia?` · ${a.referencia}`:''}{parseNum(a.montoAplicado||0)>0.01?` (de $${formatNum(parseNum(a.monto||0))})`:''}</span>
+                              <div style={{display:'flex',gap:4,flexShrink:0}}>
+                                {parseNum(a.montoAplicado||0)>0.01&&<button title="Restaurar el disponible completo de este anticipo — no toca Banco, Caja ni ninguna factura, solo corrige el saldo mostrado aquí" onClick={()=>setDialog({title:'¿Restaurar disponible completo?',text:`Esto deja "$${fN(parseNum(a.monto||0))} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" con TODO su monto disponible otra vez (ahora mismo solo se ve $${fN(a._saldoAnt)} de $${fN(parseNum(a.monto||0))}).\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo. Úsalo si el sistema le quitó disponibilidad por error.`,type:'confirm',onConfirm:async()=>{try{await updateDoc(getDocRef('cobros_cxc',a.id),{montoAplicado:0});logAuditoria(appUser,'Cuentas por Cobrar','EDICIÓN',`Anticipo ${a.id} (${a.clientName||''}) corregido manualmente — disponible restaurado a $${fN(parseNum(a.monto||0))} (tenía $${fN(a._saldoAnt)} disponible antes).`);}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})}
+                                  style={{fontSize:7,fontWeight:900,padding:'3px 6px',borderRadius:6,border:'1px solid #f59e0b',background:'#fffbeb',color:'#b45309',cursor:'pointer',textTransform:'uppercase',whiteSpace:'nowrap'}}>↺ Corregir</button>}
+                                <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                                  style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
+                              </div>
                             </div>);
                           })}
                         </div>
