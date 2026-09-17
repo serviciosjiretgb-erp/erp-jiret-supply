@@ -12139,13 +12139,17 @@ const NotasCompraNCView = ({
 
   const exportarNCCompraPDF = (n) => {
     const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
+    const prov=(proveedores||[]).find(p=>p.id===fc?.proveedorId||p.rif===n.provRif);
     const t=pNum(n.tasaFactura||0)||1;
-    const usd=t>1?pNum(n.monto||0)/t:pNum(n.montoUSD||0);
+    const baseBs=pNum(n.monto||0);
+    const ivaBs=pNum(n.ivaBs||0)||(n.tieneIva===false?0:baseBs*0.16);
+    const totalBs=pNum(n.totalBs||0)||(baseBs+ivaBs);
+    const usd=t>1?totalBs/t:pNum(n.montoUSD||0);
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
     const esc = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${n.tipo} ${esc(n.nroDocumento)}</title>
-    <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:24px;color:#111;}.wrap{max-width:640px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.12);}.membrete{background:${n.tipo==='NC'?'#dc2626':'#2563eb'};color:#fff;padding:20px 26px;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.tit{font-size:20px;font-weight:900;text-transform:uppercase;margin-top:8px;}.btn-print{display:block;margin:18px 26px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 52px);}.cont{padding:0 26px 26px;}.fila{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px;}.fila span:first-child{color:#94a3b8;font-weight:700;text-transform:uppercase;font-size:9px;}.fila span:last-child{font-weight:700;text-align:right;}.monto{background:#111;color:${n.tipo==='NC'?'#fca5a5':'#93c5fd'};padding:16px;border-radius:8px;text-align:center;margin-top:18px;}.monto b{font-size:26px;display:block;}.desc{background:#f8fafc;border-radius:8px;padding:12px;margin-top:14px;font-size:11px;color:#475569;}@media print{@page{margin:10mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete,.monto{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
+    <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:24px;color:#111;}.wrap{max-width:640px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.12);}.membrete{background:${n.tipo==='NC'?'#dc2626':'#2563eb'};color:#fff;padding:20px 26px;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.tit{font-size:20px;font-weight:900;text-transform:uppercase;margin-top:8px;}.btn-print{display:block;margin:18px 26px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 52px);}.cont{padding:0 26px 26px;}.fila{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px;}.fila span:first-child{color:#94a3b8;font-weight:700;text-transform:uppercase;font-size:9px;}.fila span:last-child{font-weight:700;text-align:right;}.montos{display:flex;gap:10px;margin-top:18px;}.monto{flex:1;background:#111;color:${n.tipo==='NC'?'#fca5a5':'#93c5fd'};padding:14px;border-radius:8px;text-align:center;}.monto b{font-size:20px;display:block;}.desc{background:#f8fafc;border-radius:8px;padding:12px;margin-top:14px;font-size:11px;color:#475569;}@media print{@page{margin:10mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete,.monto{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style>
     </head><body><div class="wrap">
       <div class="membrete"><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)}</p><div class="tit">${n.tipo==='NC'?'Nota de Crédito':'Nota de Débito'} — Compras</div></div>
       <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
@@ -12153,13 +12157,18 @@ const NotasCompraNCView = ({
         <div class="fila"><span>N° Documento</span><span>${esc(n.nroDocumento||n.id)}</span></div>
         <div class="fila"><span>Fecha</span><span>${esc(n.fecha||'—')}</span></div>
         <div class="fila"><span>Naturaleza</span><span>${n.naturaleza==='FISCAL'?'🏛 Fiscal':'📦 No Fiscal'}</span></div>
-        <div class="fila"><span>Proveedor</span><span>${esc(fc?.proveedor||n.provName||'—')}</span></div>
-        <div class="fila"><span>RIF Proveedor</span><span>${esc(n.provRif||fc?.rif||'—')}</span></div>
+        <div class="fila"><span>Proveedor</span><span>${esc(fc?.proveedor||n.provName||prov?.nombre||'—')}</span></div>
+        <div class="fila"><span>RIF Proveedor</span><span>${esc(n.provRif||prov?.rif||'—')}</span></div>
         <div class="fila"><span>Factura Afectada</span><span>${esc(fc?.nroFactura||'—')}</span></div>
         <div class="fila"><span>N° Control</span><span>${esc(n.nroControl||'—')}</span></div>
         <div class="fila"><span>Tasa</span><span>${t>1?fN(t)+' Bs/$':'—'}</span></div>
+        <div class="fila"><span>Base Imponible</span><span>Bs.${fN(baseBs)}</span></div>
+        ${ivaBs>0?`<div class="fila"><span>IVA</span><span>Bs.${fN(ivaBs)}</span></div>`:''}
         <div class="fila"><span>Tipo de operación</span><span>${n.modoOp==='ajuste'?'Ajuste financiero (sin inventario)':'Devolución de productos'}</span></div>
-        <div class="monto"><span style="font-size:10px;text-transform:uppercase;font-weight:700">Monto ${n.tipo==='NC'?'(resta del Libro de Compras)':'(suma al Libro de Compras)'}</span><b>${n.tipo==='NC'?'-':'+'}$${fN(usd)}</b></div>
+        <div class="montos">
+          <div class="monto"><span style="font-size:9px;text-transform:uppercase;font-weight:700">Total Bs.</span><b>${n.tipo==='NC'?'-':'+'}Bs.${fN(totalBs)}</b></div>
+          <div class="monto"><span style="font-size:9px;text-transform:uppercase;font-weight:700">Total USD ${n.tipo==='NC'?'(resta)':'(suma)'}</span><b>${n.tipo==='NC'?'-':'+'}$${fN(usd)}</b></div>
+        </div>
         ${n.descripcion?`<div class="desc"><b>Descripción:</b> ${esc(n.descripcion)}</div>`:''}
       </div>
     </div></body></html>`;
@@ -12542,7 +12551,7 @@ const NotasCompraNCView = ({
 };
 
 
-const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, dialog, setDialog, settings}) => {
+const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, notasCompraCD, dialog, setDialog, settings}) => {
   const anioAct = new Date().getFullYear();
   const mesAct = String(new Date().getMonth()+1).padStart(2,'0');
   const [filtAnio, setFiltAnio] = useState(String(anioAct));
