@@ -12106,7 +12106,7 @@ const NotasCompraNCView = ({
       const montoFinal=esProvDirecto
         ?parseFloat((pNum(compraNCForm.montoUSD||0)*tasaAfect).toFixed(2))
         :(compraNCForm.monto?pNum(compraNCForm.monto):0);
-      const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,_editId:_e,...formSafe}=compraNCForm;
+      const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,_editId:_e,_fsId:_f,id:_idc,...formSafe}=compraNCForm;
       const cleanForm=Object.fromEntries(Object.entries({...formSafe}).filter(([,v])=>v!==undefined));
       const batch=writeBatch(db);
       if(editId){
@@ -13386,7 +13386,7 @@ function ProcuraApp({fbUser,onBack,settings,appUser}) {
       onSnapshot(getColRef('procura_proveedores'),s=>setProveedores(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('procura_ordenes_compra'),s=>setOrdenesCompra(s.docs.map(d=>d.data()).sort((a,b)=>(b.creadoEn||0)-(a.creadoEn||0)))),
       onSnapshot(query(getColRef('procura_facturas_compra'),orderBy('fecha','desc')),s=>setFacturasCompra(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('notasCompraCreditoDebito'),s=>setNotasCompraCD(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('notasCompraCreditoDebito'),s=>setNotasCompraCD(s.docs.map(d=>({...d.data(), id:d.id})))),
       onSnapshot(query(getColRef('procura_ret_iva'),orderBy('fecha','desc')),s=>setRetIVACompra(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_ret_islr'),orderBy('fecha','desc')),s=>setRetISLR(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('procura_pagos_cxp'),orderBy('fecha','desc')),s=>setPagosCxP(s.docs.map(d=>d.data()))),
@@ -22584,7 +22584,7 @@ function App() {
     const unsubBancoMovsFin = onSnapshot(getColRef('banco_movimientos'), (s) => setBancoMovsFin(s.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubReq = onSnapshot(getColRef('requirements'), (s) => setRequirements(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvB = onSnapshot(getColRef('maquilaInvoices'), (s) => setInvoices(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
-    const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({_fsId:d.id, id:d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
+    const unsubNotasVentaCD = onSnapshot(getColRef('notasVentaCreditoDebito'), (s)=>setNotasVentaCD(s.docs.map(d=>({...d.data(), _fsId:d.id, id:d.id})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubPapelera = onSnapshot(getColRef('papelera'), (s) => setPapeleraItems(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.eliminadoEn||0)-(a.eliminadoEn||0))));
     const unsubRetenciones = onSnapshot(getColRef('retencionesClientes'), (s) => setRetenciones(s.docs.map(d=>({...d.data(),id:d.id})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
     const unsubInvReqs = onSnapshot(getColRef('inventoryRequisitions'), (s) => setInvRequisitions(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0))));
@@ -36175,7 +36175,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 :(ventaNCForm.monto?parseNum(ventaNCForm.monto):parseFloat((baseUSDCalc*tasaAfect).toFixed(2)));
               const batch=writeBatch(db);
               // 1. Guardar NC — excluir campos de estado UI (undefined no válido en Firestore)
-              const {itemsNC:_iNC,_prevDocId:_pId,montoUSD:_mUSD,tasaDirecta:_tDir,...ncFormSafe}=ventaNCForm;
+              const {itemsNC:_iNC,_prevDocId:_pId,montoUSD:_mUSD,tasaDirecta:_tDir,_fsId:_fId,id:_idOld,...ncFormSafe}=ventaNCForm;
               // Limpiar cualquier undefined restante
               const ncClean=Object.fromEntries(Object.entries({...ncFormSafe}).filter(([,v])=>v!==undefined));
               batch.set(getDocRef('notasVentaCreditoDebito',id),{
