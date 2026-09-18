@@ -21422,12 +21422,14 @@ function App() {
     try{
       const inv=esManualOtra?null:(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
       const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
-      const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+      const tasa=esIGTF
+        ? (parseNum(otraRetForm.tasa||0)||parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1)
+        : (parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
       // Para IGTF el usuario entra el monto en USD y el Bs. se deriva con la tasa DE LA FACTURA —
       // al revés que las demás retenciones, que se entran en Bs. y de ahí se calcula el USD.
       const montoUSD=esIGTF?parseNum(otraRetForm.montoRetenidoUSD||0):(tasa>1?parseFloat((parseNum(montoRetenidoBs||0)/tasa).toFixed(4)):0);
       const montoBs=esIGTF?parseFloat((montoUSD*tasa).toFixed(2)):parseNum(montoRetenidoBs||0);
-      const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+      const id=otraRetForm._editId||`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
       const facturaIdFinal=esManualOtra?('MANUAL-OTRA-'+Date.now()):facturaId;
       const batch=writeBatch(db);
       batch.set(getDocRef('retencionesClientes',id),{
@@ -21455,7 +21457,9 @@ function App() {
       // El IGTF sí es dinero real que entra a Banco/Caja — a diferencia de las demás "otras
       // retenciones" (que solo reducen la Cuenta por Cobrar sin movimiento de efectivo), acá se
       // crea el movimiento bancario real y se actualiza el saldo de la cuenta, igual que un cobro.
-      if(esIGTF){
+      // Solo se hace al CREAR — al editar, ya existe el movimiento y no se debe duplicar el saldo.
+      const esEdicion=!!otraRetForm._editId;
+      if(esIGTF&&!esEdicion){
         const ctaB=(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId);
         const mvId=`MV-IGTF-${Date.now().toString(36).toUpperCase()}`;
         batch.set(getDocRef('banco_movimientos',mvId),{
@@ -21472,7 +21476,7 @@ function App() {
       }
       await batch.commit();
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
-      setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
+      setDialog({title:esEdicion?'✅ Actualizada':'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF&&!esEdicion?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
@@ -40960,14 +40964,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const base=parseNum(inv.montoBase||0);
             const ivaAmt=parseNum(inv.iva||0)||(inv.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0);
             const total=parseNum(inv.total||0)||base+ivaAmt;
-            const ret=retPeriodo.find(r=>r.facturaId===inv.id);
+            // IGTF de esta factura: va en la MISMA línea, no como fila aparte — es un dato de
+            // apreciación/informativo, no toca Base Imponible ni IVA de la factura para nada.
+            const igtfsFact=retPeriodo.filter(r=>r.facturaId===inv.id&&r.tipo==='IGTF');
+            const igtfMonto=igtfsFact.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
             rows.push({seq:seq++,fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
               totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, alicuota:inv.aplicaIva==='SI'?'16%':'0%',
-              ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,igtf:0,nroFactAfecta:'',
+              ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,igtf:igtfMonto,nroFactAfecta:'',
               nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
           });
           retPeriodo.forEach(ret=>{
+            if(ret.tipo==='IGTF') return; // ya se fusionó arriba en la línea de su factura, no crear fila aparte
             const isManual=(ret.facturaId||'').startsWith('MANUAL-');
             const inv=isManual?null:(invoices||[]).find(i=>i.id===ret.facturaId);
             if(!inv&&!isManual) return; // saltar solo si NO es manual Y no se encuentra la factura
@@ -42087,8 +42095,8 @@ ${resumenHtml}
                           })();
                           return (<tr key={ret.id} className="hover:bg-yellow-50">
                             <td className="py-2 px-3 font-black text-blue-700">{ret.nroRetencion}</td>
-                            <td className="py-2 px-3">{(()=>{const t=ret.tipoRetencion||'IVA';
-                              const c={IVA:'bg-blue-100 text-blue-700',ISLR:'bg-purple-100 text-purple-700',Municipal:'bg-amber-100 text-amber-700',Otro:'bg-gray-200 text-gray-700'}[t]||'bg-gray-200 text-gray-700';
+                            <td className="py-2 px-3">{(()=>{const t=ret.tipoExtra?(ret.tipoLabel||ret.tipo||'Otra'):(ret.tipoRetencion||'IVA');
+                              const c={IVA:'bg-blue-100 text-blue-700',ISLR:'bg-purple-100 text-purple-700',Municipal:'bg-amber-100 text-amber-700',Otro:'bg-gray-200 text-gray-700'}[t]||(ret.tipoExtra?'bg-fuchsia-100 text-fuchsia-700':'bg-gray-200 text-gray-700');
                               return <span className={`px-2 py-0.5 rounded font-black text-[9px] ${c}`}>{t}</span>;})()}</td>
                             <td className="py-2 px-3">{ret.fechaComprobante}</td>
                             <td className={`py-2 px-3 font-bold ${retNeDoc==='⚠️ No vinculada'?'text-red-600 text-[10px]':'text-indigo-600'}`}>{retNeDoc}</td>
@@ -42102,7 +42110,16 @@ ${resumenHtml}
                             <td className="py-2 px-3 text-right font-black text-green-700">{retMontoUSD>0?'$'+formatNum(retMontoUSD):<span className="text-red-400 text-[9px]">—</span>}</td>
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
-                              <button onClick={()=>{setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);}} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
+                              <button onClick={()=>{
+                                if(ret.tipoExtra){
+                                  setOtraRetForm({...ret,_editId:ret.id,montoRetenidoUSD:ret.montoRetenidoUSD?String(ret.montoRetenidoUSD):'',montoRetenidoBs:ret.montoRetenido?String(ret.montoRetenido):''});
+                                  setOtraRetManual((ret.facturaId||'').startsWith('MANUAL-'));
+                                  setOtraRetBusqCli(ret._manualCliente||ret.clientName||'');
+                                  setShowOtraRetModal(true);
+                                } else {
+                                  setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);
+                                }
+                              }} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
                               <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await archivarEnPapelera('retencionesClientes',ret.id,ret,`Retención ${ret.nroRetencion}`,appUser);await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
