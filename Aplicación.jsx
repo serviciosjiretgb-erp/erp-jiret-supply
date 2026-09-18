@@ -40520,10 +40520,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         onChange={e=>setOtraRetForm(f=>({...f,montoRetenidoUSD:e.target.value}))}/>
                     </div>
                   </div>
-                  {otraRetForm.facturaId&&otraRetForm.montoRetenidoUSD&&(
-                    <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-[10px]">
-                      <span className="text-purple-600 font-bold">Tasa de la factura: </span><span className="font-mono">{parseNum(otraRetForm.tasa||0).toFixed(4)} Bs/$</span>
-                      <span className="mx-3 text-purple-400">|</span>
+                  {otraRetForm.montoRetenidoUSD&&(
+                    <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 flex items-center gap-3 text-[10px]">
+                      <span className="text-purple-600 font-bold whitespace-nowrap">Tasa del pago (Bs/$):</span>
+                      <input type="number" step="0.0001" className="w-28 border-2 border-purple-200 rounded-lg px-2 py-1 text-xs font-black outline-none focus:border-purple-500 bg-white"
+                        title="Tasa del día en que el cliente pagó — el IGTF se causa ese día, puede ser distinta a la tasa de la factura"
+                        value={otraRetForm.tasa||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,tasa:e.target.value}))}/>
+                      <span className="mx-1 text-purple-400">|</span>
                       <span className="text-purple-600 font-bold">IGTF en Bs. (va al Libro de Ventas): </span>
                       <span className="font-mono font-black text-purple-800">Bs.{(parseNum(otraRetForm.montoRetenidoUSD||0)*parseNum(otraRetForm.tasa||0)).toFixed(2)}</span>
                     </div>
@@ -40634,7 +40638,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <span className="font-mono font-black text-[11px] text-red-400 shrink-0 text-right">Bs.{formatNum(montoBsAst)}<br/>${formatNum(montoUsdAst)}</span>
                       </div>
                       <div className="flex justify-between items-center text-[9px] text-slate-400 pt-1.5 border-t border-slate-700">
-                        <span>Tasa de la factura: {formatNum(tasaAst)} Bs/$ · No afecta la Cuenta por Cobrar del cliente</span>
+                        <span>Tasa del pago: {formatNum(tasaAst)} Bs/$ · No afecta la Cuenta por Cobrar del cliente</span>
                         {!(otraRetForm.cuentaContableId||(TIPOS_RET_EXTRA.find(t=>t.id==='IGTF')||{}).cuentaContableId)&&<span className="text-amber-400 font-bold">⚠ Falta configurar la cuenta de IGTF por Pagar</span>}
                       </div>
                     </div>
