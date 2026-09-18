@@ -21473,6 +21473,18 @@ function App() {
           timestamp:Date.now()
         });
         if(ctaB) batch.update(getDocRef('banco_cuentas',ctaB.id),{saldo:parseNum(ctaB.saldo||0)+montoUSD});
+        // También aparece en Historial de Cobros — mismo formato que un cobro normal, sin ser anticipo
+        const cobroIgtfId=`COB-IGTF-${Date.now().toString(36).toUpperCase()}`;
+        batch.set(getDocRef('cobros_cxc',cobroIgtfId),{
+          id:cobroIgtfId,esAnticipo:false,
+          neId:inv?.neOrigen||'',neDocumento:inv?.nroFiscal?`IGTF · Fac. ${inv.nroFiscal}`:'IGTF',
+          clientName:inv?.clientName||otraRetForm.clientName||'',clientRif:inv?.clientRif||otraRetForm.clientRif||'',
+          monto:montoUSD,montoBs,moneda:'USD',tasa,
+          metodo:otraRetForm.referencia?`IGTF (${otraRetForm.referencia})`:'IGTF Percibido',
+          referencia:otraRetForm.referencia||'',cuentaBancariaId:otraRetForm.cuentaBancariaId||'',cuentaBancoNombre:ctaB?.banco||otraRetForm.cuentaBancariaNombre||'',
+          fecha:fechaComprobante,tipo:'IGTF',concepto:`IGTF percibido sobre pago de Fac. ${inv?.nroFiscal||''}`,
+          timestamp:Date.now()
+        });
       }
       await batch.commit();
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
