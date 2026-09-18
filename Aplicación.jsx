@@ -21406,21 +21406,31 @@ function App() {
   // guardarOtraRet — scope de componente (modal se renderiza fuera del IIFE CxC)
   // guardarOtraRet: función simple (no useCallback) — evita TDZ con invoices
   const guardarOtraRet=async()=>{
-    const {facturaId,nroComprobante,fechaComprobante,tipoId,montoRetenidoBs}=otraRetForm;
+    const {facturaId,nroComprobante,fechaComprobante,tipoId}=otraRetForm;
+    const esIGTF=tipoId==='IGTF';
+    const montoRetenidoBs=otraRetForm.montoRetenidoBs;
     const esManualOtra=!facturaId; // sin factura seleccionada = modo manual
     if(esManualOtra&&!otraRetForm.clientRif)
       return setDialog({title:'Datos incompletos',text:'Busca y selecciona un cliente registrado.',type:'alert'});
-    if(!nroComprobante||!fechaComprobante||!montoRetenidoBs)
+    if(esIGTF){
+      if(!nroComprobante||!fechaComprobante||!otraRetForm.montoRetenidoUSD)
+        return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
+      if(!otraRetForm.cuentaBancariaId||!otraRetForm.referencia)
+        return setDialog({title:'Falta la cuenta o la referencia',text:'Selecciona en qué cuenta de Banco/Caja ingresó el IGTF y su número de referencia.',type:'alert'});
+    } else if(!nroComprobante||!fechaComprobante||!montoRetenidoBs)
       return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
     try{
       const inv=esManualOtra?null:(invoices||[]).find(i=>i.id===facturaId||i.documento===facturaId);
       const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
       const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-      const montoBs=parseNum(montoRetenidoBs||0);
-      const montoUSD=tasa>1?parseFloat((montoBs/tasa).toFixed(4)):0;
+      // Para IGTF el usuario entra el monto en USD y el Bs. se deriva con la tasa DE LA FACTURA —
+      // al revés que las demás retenciones, que se entran en Bs. y de ahí se calcula el USD.
+      const montoUSD=esIGTF?parseNum(otraRetForm.montoRetenidoUSD||0):(tasa>1?parseFloat((parseNum(montoRetenidoBs||0)/tasa).toFixed(4)):0);
+      const montoBs=esIGTF?parseFloat((montoUSD*tasa).toFixed(2)):parseNum(montoRetenidoBs||0);
       const id=`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
       const facturaIdFinal=esManualOtra?('MANUAL-OTRA-'+Date.now()):facturaId;
-      await setDoc(getDocRef('retencionesClientes',id),{
+      const batch=writeBatch(db);
+      batch.set(getDocRef('retencionesClientes',id),{
         id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
         porcentaje:parseNum(otraRetForm.porcentaje||tipo.porcentaje||0),
         cuentaContableId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
@@ -21432,12 +21442,37 @@ function App() {
         nroRetencion:nroComprobante,fechaComprobante,
         quincena:(parseInt((fechaComprobante||'').split('-')[2],10)||1)<=15?'1':'2',
         montoRetenido:montoBs,tasa,montoRetenidoUSD:montoUSD,
-        baseImponibleBs:parseNum(otraRetForm.baseImponibleBs||0),
+        baseImponibleBs:esIGTF?0:parseNum(otraRetForm.baseImponibleBs||0),
+        baseImponibleUSD:esIGTF?parseNum(otraRetForm.baseImponibleUSD||0):0,
+        cuentaBancariaId:esIGTF?(otraRetForm.cuentaBancariaId||''):'',
+        cuentaBancariaNombre:esIGTF?(otraRetForm.cuentaBancariaNombre||''):'',
+        referencia:esIGTF?(otraRetForm.referencia||''):'',
+        periodoLibroMes:esIGTF?(otraRetForm.periodoLibroMes||(fechaComprobante||'').substring(0,7)):'',
+        periodoLibroQ:esIGTF?(otraRetForm.periodoLibroQ||'1'):'',
         observaciones:otraRetForm.observaciones||'',
         timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
       });
+      // El IGTF sí es dinero real que entra a Banco/Caja — a diferencia de las demás "otras
+      // retenciones" (que solo reducen la Cuenta por Cobrar sin movimiento de efectivo), acá se
+      // crea el movimiento bancario real y se actualiza el saldo de la cuenta, igual que un cobro.
+      if(esIGTF){
+        const ctaB=(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId);
+        const mvId=`MV-IGTF-${Date.now().toString(36).toUpperCase()}`;
+        batch.set(getDocRef('banco_movimientos',mvId),{
+          id:mvId,fecha:fechaComprobante,tipo:'Ingreso',origenIngreso:'IGTF Percibido',
+          neId:inv?.neOrigen||'',concepto:`IGTF percibido · Fac. ${inv?.nroFiscal||''} · ${inv?.clientName||otraRetForm.clientName||''}`,
+          referencia:otraRetForm.referencia||'',cuentaId:otraRetForm.cuentaBancariaId||'',cuentaNombre:ctaB?.banco||otraRetForm.cuentaBancariaNombre||'',
+          montoUSD,montoBs,tasa,montoNativo:montoUSD,
+          terceroNombre:inv?.clientName||otraRetForm.clientName||'',estatus:'No Conciliado',
+          cuentaContableCreditoId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
+          cuentaContableCreditoNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
+          timestamp:Date.now()
+        });
+        if(ctaB) batch.update(getDocRef('banco_cuentas',ctaB.id),{saldo:parseNum(ctaB.saldo||0)+montoUSD});
+      }
+      await batch.commit();
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
-      setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}`,type:'alert'});
+      setDialog({title:'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
@@ -40456,6 +40491,79 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     )}
                   </div>
                 </div>
+                {otraRetForm.tipoId==='IGTF'?(<>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Base Pagado (USD) *</label>
+                      <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        value={otraRetForm.baseImponibleUSD||''}
+                        onChange={e=>{
+                          const baseUSD=parseNum(e.target.value||0);
+                          const tipo=TIPOS_RET_EXTRA.find(t=>t.id==='IGTF')||{porcentaje:3};
+                          setOtraRetForm(f=>({...f,baseImponibleUSD:baseUSD,montoRetenidoUSD:parseFloat((baseUSD*tipo.porcentaje/100).toFixed(2))}));
+                        }}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% IGTF</label>
+                      <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        value={otraRetForm.porcentaje||(TIPOS_RET_EXTRA.find(t=>t.id==='IGTF')||{porcentaje:3}).porcentaje}
+                        onChange={e=>{
+                          const pct=parseNum(e.target.value||0);
+                          const baseUSD=parseNum(otraRetForm.baseImponibleUSD||0);
+                          setOtraRetForm(f=>({...f,porcentaje:pct,montoRetenidoUSD:baseUSD>0?parseFloat((baseUSD*pct/100).toFixed(2)):f.montoRetenidoUSD}));
+                        }}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto IGTF (USD) *</label>
+                      <input type="number" step="0.01" className="w-full border-2 border-purple-100 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-purple-500 bg-purple-50"
+                        value={otraRetForm.montoRetenidoUSD||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,montoRetenidoUSD:e.target.value}))}/>
+                    </div>
+                  </div>
+                  {otraRetForm.facturaId&&otraRetForm.montoRetenidoUSD&&(
+                    <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-[10px]">
+                      <span className="text-purple-600 font-bold">Tasa de la factura: </span><span className="font-mono">{parseNum(otraRetForm.tasa||0).toFixed(4)} Bs/$</span>
+                      <span className="mx-3 text-purple-400">|</span>
+                      <span className="text-purple-600 font-bold">IGTF en Bs. (va al Libro de Ventas): </span>
+                      <span className="font-mono font-black text-purple-800">Bs.{(parseNum(otraRetForm.montoRetenidoUSD||0)*parseNum(otraRetForm.tasa||0)).toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Banco/Caja donde ingresó *</label>
+                      <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        value={otraRetForm.cuentaBancariaId||''}
+                        onChange={e=>{
+                          const cta=(cuentasBanco||[]).find(c=>c.id===e.target.value);
+                          setOtraRetForm(f=>({...f,cuentaBancariaId:e.target.value,cuentaBancariaNombre:cta?`${cta.banco} · ${cta.numeroCuenta||''}`:''}));
+                        }}>
+                        <option value="">— Seleccionar cuenta —</option>
+                        {(cuentasBanco||[]).map(c=><option key={c.id} value={c.id}>{c.banco} · {c.numeroCuenta} · {c.moneda}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Referencia *</label>
+                      <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        placeholder="N° de transferencia, Zelle, etc."
+                        value={otraRetForm.referencia||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,referencia:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Reflejar en Libro de Ventas</label>
+                      <div className="flex gap-2">
+                        <input type="month" className="flex-1 border-2 border-amber-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500"
+                          value={otraRetForm.periodoLibroMes||(otraRetForm.fechaComprobante||'').substring(0,7)||''}
+                          onChange={e=>setOtraRetForm(f=>({...f,periodoLibroMes:e.target.value}))}/>
+                        <select className="border-2 border-amber-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-amber-500 bg-white"
+                          value={otraRetForm.periodoLibroQ||'1'}
+                          onChange={e=>setOtraRetForm(f=>({...f,periodoLibroQ:e.target.value}))}>
+                          <option value="1">I Q</option>
+                          <option value="2">II Q</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </>):(<>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Base Imponible Bs. *</label>
@@ -40492,6 +40600,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span className="font-mono font-black text-purple-800">${parseNum(otraRetForm.tasa||0)>1?(parseNum(otraRetForm.montoRetenidoBs||0)/parseNum(otraRetForm.tasa)).toFixed(2):'—'}</span>
                   </div>
                 )}
+                </>)}
                 {/* 🧾 Vista previa del asiento contable — mismo par D/H que verá Contabilidad → Retenciones a Clientes */}
                 {parseNum(otraRetForm.montoRetenidoBs||0)>0&&(()=>{
                   const partesCta=(str)=>{const p=(str||'').split('—');return {codigo:(p[0]||'').trim(),nombre:p.slice(1).join('—').trim()};};
@@ -40786,7 +40895,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Retenciones del período — filtra por rango de fechas del período
           // (excluye 'Otras Retenciones' tipoExtra: Responsabilidad Social, AE, Timbre Fiscal, etc. — esas NO afectan el Libro de Ventas) ──
           const retPeriodo=(retenciones||[]).filter(r=>{
-            if(r.tipoExtra) return false;
+            if(r.tipoExtra&&r.tipo!=='IGTF') return false;
             // El Libro de Ventas (legal) solo refleja retenciones de IVA.
             // ISLR / Municipales / Otras se registran igual, pero no entran aquí.
             if((r.tipoRetencion||'IVA')!=='IVA') return false;
