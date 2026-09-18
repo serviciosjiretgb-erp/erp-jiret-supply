@@ -40548,7 +40548,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <span className="font-mono font-black text-purple-800">Bs.{(parseNum(otraRetForm.montoRetenidoUSD||0)*parseNum(otraRetForm.tasa||0)).toFixed(2)}</span>
                     </div>
                   )}
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Banco/Caja donde ingresó *</label>
                       <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
@@ -40575,19 +40575,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         value={otraRetForm.fechaComprobante||''}
                         onChange={e=>setOtraRetForm(f=>({...f,fechaComprobante:e.target.value}))}/>
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Reflejar en Libro de Ventas</label>
-                      <div className="flex gap-2">
-                        <input type="month" className="flex-1 border-2 border-amber-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500"
-                          value={otraRetForm.periodoLibroMes||(otraRetForm.fechaComprobante||'').substring(0,7)||''}
-                          onChange={e=>setOtraRetForm(f=>({...f,periodoLibroMes:e.target.value}))}/>
-                        <select className="border-2 border-amber-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-amber-500 bg-white"
-                          value={otraRetForm.periodoLibroQ||'1'}
-                          onChange={e=>setOtraRetForm(f=>({...f,periodoLibroQ:e.target.value}))}>
-                          <option value="1">I Q</option>
-                          <option value="2">II Q</option>
-                        </select>
-                      </div>
+                      <input type="month" className="w-full border-2 border-amber-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500"
+                        value={otraRetForm.periodoLibroMes||(otraRetForm.fechaComprobante||'').substring(0,7)||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,periodoLibroMes:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                      <select className="w-full border-2 border-amber-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500 bg-white"
+                        value={otraRetForm.periodoLibroQ||'1'}
+                        onChange={e=>setOtraRetForm(f=>({...f,periodoLibroQ:e.target.value}))}>
+                        <option value="1">I Quincena (1-15)</option>
+                        <option value="2">II Quincena (16-fin)</option>
+                      </select>
                     </div>
                   </div>
                 </>):(<>
