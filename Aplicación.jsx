@@ -40528,7 +40528,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <span className="font-mono font-black text-purple-800">Bs.{(parseNum(otraRetForm.montoRetenidoUSD||0)*parseNum(otraRetForm.tasa||0)).toFixed(2)}</span>
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-4 gap-3">
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Cuenta Banco/Caja donde ingresó *</label>
                       <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
@@ -40547,6 +40547,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         placeholder="N° de transferencia, Zelle, etc."
                         value={otraRetForm.referencia||''}
                         onChange={e=>setOtraRetForm(f=>({...f,referencia:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha del Pago *</label>
+                      <input type="date" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        title="El IGTF se causa el día del pago — esta es la fecha que se usa en todo el registro"
+                        value={otraRetForm.fechaComprobante||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,fechaComprobante:e.target.value}))}/>
                     </div>
                     <div>
                       <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Reflejar en Libro de Ventas</label>
