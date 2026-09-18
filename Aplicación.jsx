@@ -2183,7 +2183,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'Municipal',label:'Impuestos Municipales'},
     {id:'Otro',label:'Otro'},
   ];
-  const TIPOS_RET_EXTRA_DEFAULT=[{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2}];
+  const TIPOS_RET_EXTRA_DEFAULT=[{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2},{id:'IGTF',label:'IGTF',porcentaje:3}];
   const tiposRetExtraCfg=(settings?.tiposRetencionExtra||[]).length>0?settings.tiposRetencionExtra:TIPOS_RET_EXTRA_DEFAULT;
   const [rccGuardando,setRccGuardando]=useState('');
   const guardarCuentaRetClientePrincipal=async(tipoId,cuentaObj)=>{
@@ -4487,6 +4487,8 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
                   <div key={t.id} className="grid grid-cols-[170px_1fr] gap-3 items-center">
                     <label className="text-[10px] font-black text-slate-600 uppercase">{t.label} ({t.porcentaje}%)</label>
                     <div className="flex items-center gap-2">
+                      {t.id==='IGTF'&&<input type="number" step="0.01" value={t.porcentaje} onChange={e=>guardarCuentaRetClienteExtra('IGTF',{porcentaje:parseFloat(e.target.value)||0})}
+                        title="Alícuota vigente del IGTF — cámbiala aquí cuando el SENIAT la modifique" className="w-16 border-2 border-amber-300 rounded-lg px-2 py-2 text-xs font-black text-center outline-none focus:border-amber-500 flex-shrink-0"/>}
                       <select value={t.cuentaContableId||''} onChange={e=>{
                         const cta=(planDeCuentas||[]).find(p=>p.id===e.target.value);
                         guardarCuentaRetClienteExtra(t.id, cta?{cuentaContableId:cta.id,cuentaContableNombre:`${cta.codigo} — ${cta.nombre}`}:{cuentaContableId:'',cuentaContableNombre:''});
@@ -21378,7 +21380,7 @@ function App() {
   // Tipos de retención extra — scope de componente para que el modal pueda accederlos
   const TIPOS_RET_EXTRA = useMemo(()=>(settings?.tiposRetencionExtra||[]).length>0
     ? settings.tiposRetencionExtra
-    : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2}]
+    : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2},{id:'IGTF',label:'IGTF',porcentaje:3}]
   ,[settings]);
   // Guarda la Cuenta Contable predeterminada para un tipo de retención extra (persiste en settings/general)
   const guardarCuentaTipoRet=async()=>{
