@@ -9492,13 +9492,17 @@ const CxPView = ({
     const m = new Map();
     // Todas las NC/ND (fiscales o no) cuentan aquí — afectan CxP y Estado de Cuenta por igual.
     for(const n of (notasCompraCD||[])){
-      const rif = (n.provRif||'').trim();
+      let rif = (n.provRif||'').trim();
+      if(!rif && n.facturaId){
+        const fc=(facturasCompra||[]).find(f=>f.id===n.facturaId);
+        rif=(fc?.rif||'').trim();
+      }
       if(!rif) continue;
       if(!m.has(rif)) m.set(rif,[]);
       m.get(rif).push(n);
     }
     return m;
-  },[notasCompraCD]);
+  },[notasCompraCD, facturasCompra]);
 
   const _ncPorFact = useMemo(()=>{
     const m = new Map();
@@ -11715,7 +11719,7 @@ const EstadoCuentaProvView = ({
   // Maps
   const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP]);
   const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra]);
-  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{const r=(n.provRif||'').trim();if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD]);
+  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{let r=(n.provRif||'').trim();if(!r&&n.facturaId){const fc=(facturasCompra||[]).find(f=>f.id===n.facturaId);r=(fc?.rif||'').trim();}if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD, facturasCompra]);
   const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
   const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
     const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
@@ -12134,6 +12138,10 @@ const NotasCompraNCView = ({
         ?parseFloat((pNum(compraNCForm.montoUSD||0)*tasaAfect).toFixed(2))
         :(compraNCForm.monto?pNum(compraNCForm.monto):0);
       const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,_editId:_e,_fsId:_f,id:_idc,...formSafe}=compraNCForm;
+      if(!esProvDirecto && !formSafe.provRif && facAfect){
+        formSafe.provRif=facAfect.rif||'';
+        formSafe.provName=facAfect.proveedor||facAfect.provName||'';
+      }
       const cleanForm=Object.fromEntries(Object.entries({...formSafe}).filter(([,v])=>v!==undefined));
       const batch=writeBatch(db);
       if(editId){
