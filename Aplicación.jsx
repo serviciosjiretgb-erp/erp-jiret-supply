@@ -40960,7 +40960,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             rows.push({seq:seq++,fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,rif:inv.clientRif||'',nombre:inv.clientName||'',
               tipo:'FACTURA',nroFactura:padNum(inv.nroFiscal,8),nroControl:padNum(inv.nroControl,8),
               totalVentasBs: parseNum(inv.totalBs||0)||total*tasa, baseImponibleBs: parseNum(inv.baseGravableBs||0)||base*tasa, alicuota:inv.aplicaIva==='SI'?'16%':'0%',
-              ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,nroFactAfecta:'',
+              ivaBs: parseNum(inv.ivaBs||0) || ivaAmt*tasa,ivaRetDb:0,ivaRetCr:0,igtf:0,nroFactAfecta:'',
               nroComprobante:'',invId:inv.id,opRelacionada:inv.opAsignada||''});
           });
           retPeriodo.forEach(ret=>{
@@ -40974,10 +40974,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const retRif=isManual?(ret._manualRif||clienteEnLista?.rif||''):(inv.clientRif||'');
             const retFiscal=isManual?(ret._manualNroFiscal||''):(inv.nroFiscal||'');
             const montoRet=parseNum(ret.montoRetenido||0);
+            const esIgtfRow=ret.tipo==='IGTF';
             rows.push({seq:seq++,fecha:ret.fechaComprobante||'',rif:retRif,nombre:retNombre,
               tipo:'RETENCION',nroFactura:'',nroControl:'',
-              totalVentasBs:0,baseImponibleBs:0,alicuota:`${ret.porcentaje||75}%`,
-              ivaBs:0,ivaRetDb:montoRet,ivaRetCr:0,nroFactAfecta:padNum(retFiscal,8),
+              totalVentasBs:0,baseImponibleBs:0,alicuota:esIgtfRow?`${ret.porcentaje||3}%`:`${ret.porcentaje||75}%`,
+              ivaBs:0,ivaRetDb:esIgtfRow?0:montoRet,ivaRetCr:0,igtf:esIgtfRow?montoRet:0,nroFactAfecta:padNum(retFiscal,8),
+              tipoDisplay:esIgtfRow?'IGTF':'RETENCION',
               nroComprobante:ret.nroRetencion||'',retId:ret.id});
           });
 
@@ -41001,6 +41003,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               rowsMap[key].baseImponibleBs += r.baseImponibleBs;
               rowsMap[key].ivaBs += r.ivaBs;
               rowsMap[key].ivaRetDb += r.ivaRetDb;
+              rowsMap[key].igtf = (rowsMap[key].igtf||0) + (r.igtf||0);
             }
           });
           // Reemplazar rows con agrupados
@@ -41175,7 +41178,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const totBase=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.baseImponibleBs||0)),0);
             const totIVA=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.ivaBs||0)),0);
             const totRet=rows.reduce((s,r)=>s+parseNum(r.ivaRetDb||0),0);
-            aoa.push(['TOTAL','','','','','','','','','',totTV,0,0,totBase,'',totIVA,totRet,'','']);
+            const totIgtf=rows.reduce((s,r)=>s+parseNum(r.igtf||0),0);
+            aoa.push(['TOTAL','','','','','','','','','',totTV,totIgtf,0,totBase,'',totIVA,totRet,'','']);
             // Resumen
             aoa.push([]);
             aoa.push(['','','','RESUMEN LIBRO DE VENTAS']);
@@ -41288,14 +41292,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
   <td style="padding:2px 4px;font-size:7px;min-width:68px;white-space:nowrap;border-right:1px solid #e5e7eb">${r.fecha}</td>
   <td style="padding:2px 4px;font-size:7px;min-width:90px;white-space:nowrap;border-right:1px solid #e5e7eb">${r.rif}</td>
   <td style="padding:2px 4px;font-size:7px;min-width:130px;max-width:180px;word-wrap:break-word;border-right:1px solid #e5e7eb">${r.nombre}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb;background:${r.tipo==='FACTURA'?'#f0fdf4':r.tipo==='RETENCION'?'#fefce8':'#f5f3ff'};color:#111;font-weight:bold">${r.tipo}</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb;background:${r.tipo==='FACTURA'?'#f0fdf4':r.tipo==='RETENCION'?'#fefce8':'#f5f3ff'};color:#111;font-weight:bold">${r.tipoDisplay||r.tipo}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;color:#1d4ed8;font-weight:bold;border-right:1px solid #e5e7eb">${pNum(r.nroFactura,8)}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${pNum(r.nroControl,8)||'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.nroDebito||'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.nroCredito||'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.facAfectada?pNum(r.facAfectada,8):'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">${r.totalVentasBs>0||r.totalVentasBs<0?fV(r.totalVentasBs):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">0,00</td>
+  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">${parseNum(r.igtf||0)>0?fV(r.igtf):'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">0,00</td>
   <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb;font-weight:bold">${r.baseImponibleBs>0||r.baseImponibleBs<0?fV(r.baseImponibleBs):'—'}</td>
   <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.alicuota}</td>
@@ -41309,7 +41313,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const totRow = `<tr style="background:#1f2937;color:#fff;font-weight:900">
   <td colspan="10" style="padding:3px 4px;font-size:7px">TOTALES — ${rows.length} registros</td>
   <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totTV)}</td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right">0,00</td>
+  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(rows.reduce((s,r)=>s+parseNum(r.igtf||0),0))}</td>
   <td style="padding:3px 4px;font-size:7px;text-align:right">0,00</td>
   <td style="padding:3px 4px;font-size:7px;text-align:right;font-weight:900">${fV(totBase)}</td>
   <td></td>
@@ -41722,14 +41726,14 @@ ${resumenHtml}
                             <td className="py-1.5 px-2">{r.fecha}</td>
                             <td className="py-1.5 px-2 font-bold">{r.rif}</td>
                             <td className="py-1.5 px-2 max-w-44 truncate uppercase">{r.nombre}</td>
-                            <td className="py-1.5 px-2 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${r.tipo==='FACTURA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{r.tipo}</span></td>
+                            <td className="py-1.5 px-2 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${r.tipo==='FACTURA'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{r.tipoDisplay||r.tipo}</span></td>
                             <td className="py-1.5 px-2 font-bold text-blue-700 text-center">{r.nroFactura||'—'}</td>
                             <td className="py-1.5 px-2 text-center">{r.nroControl||'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-blue-700">{r.nroDebito||'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-purple-700">{r.nroCredito||'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.facAfectada||'—'}</td>
                             <td className={`py-1.5 px-2 text-right font-bold ${r.totalVentasBs<0?'text-red-600':''}`}>{r.totalVentasBs!==0?fmtVen(r.totalVentasBs):'—'}</td>
-                            <td className="py-1.5 px-2 text-right">0,00</td>
+                            <td className="py-1.5 px-2 text-right">{parseNum(r.igtf||0)>0?fmtVen(r.igtf):'—'}</td>
                             <td className="py-1.5 px-2 text-right">0,00</td>
                             <td className={`py-1.5 px-2 text-right font-bold ${r.baseImponibleBs<0?'text-red-600':''}`}>{r.baseImponibleBs!==0?fmtVen(r.baseImponibleBs):'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold">{r.alicuota||'—'}</td>
@@ -41745,7 +41749,7 @@ ${resumenHtml}
                       <tr className="bg-gray-800 text-white font-black">
                         <td colSpan={10} className="py-2 px-2">TOTALES — {rows.length} registros</td>
                         <td className="py-2 px-2 text-right">{fmtVen(totTV)}</td>
-                        <td className="py-2 px-2 text-right">0,00</td>
+                        <td className="py-2 px-2 text-right">{fmtVen(rows.reduce((s,r)=>s+parseNum(r.igtf||0),0))}</td>
                         <td className="py-2 px-2 text-right">0,00</td>
                         <td className="py-2 px-2 text-right">{fmtVen(totBase)}</td>
                         <td></td>
