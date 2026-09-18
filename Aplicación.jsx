@@ -40608,8 +40608,40 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </div>
                 )}
                 </>)}
+                {/* 🧾 Vista previa del asiento — IGTF tiene su propio par D/H (Banco/Caja vs IGTF por Pagar) */}
+                {otraRetForm.tipoId==='IGTF'&&parseNum(otraRetForm.montoRetenidoUSD||0)>0&&(()=>{
+                  const partesCta=(str)=>{const p=(str||'').split('—');return {codigo:(p[0]||'').trim(),nombre:p.slice(1).join('—').trim()};};
+                  const pasivo=partesCta(otraRetForm.cuentaContableNombre||(TIPOS_RET_EXTRA.find(t=>t.id==='IGTF')||{}).cuentaContableNombre);
+                  const tasaAst=parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
+                  const montoUsdAst=parseNum(otraRetForm.montoRetenidoUSD||0);
+                  const montoBsAst=parseFloat((montoUsdAst*tasaAst).toFixed(2));
+                  return (
+                    <div className="bg-slate-900 rounded-xl p-3.5 space-y-2">
+                      <p className="text-[9px] font-black text-purple-300 uppercase tracking-wider">🧾 Asiento contable — vista previa</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-emerald-400 font-black text-[9px] shrink-0">D</span>
+                          <span className="text-[10px] text-slate-200 truncate">{otraRetForm.cuentaBancariaNombre||'Selecciona la cuenta de Banco/Caja arriba'}</span>
+                        </div>
+                        <span className="font-mono font-black text-[11px] text-emerald-400 shrink-0 text-right">Bs.{formatNum(montoBsAst)}<br/>${formatNum(montoUsdAst)}</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-2 pl-4">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-red-400 font-black text-[9px] shrink-0">H</span>
+                          <span className="font-mono text-[9px] text-purple-300 shrink-0">{pasivo.codigo||'—'}</span>
+                          <span className="text-[10px] text-slate-200 truncate">{pasivo.nombre||'IGTF por Pagar — configúralo en Impuestos → Configuración'}</span>
+                        </div>
+                        <span className="font-mono font-black text-[11px] text-red-400 shrink-0 text-right">Bs.{formatNum(montoBsAst)}<br/>${formatNum(montoUsdAst)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[9px] text-slate-400 pt-1.5 border-t border-slate-700">
+                        <span>Tasa de la factura: {formatNum(tasaAst)} Bs/$ · No afecta la Cuenta por Cobrar del cliente</span>
+                        {!(otraRetForm.cuentaContableId||(TIPOS_RET_EXTRA.find(t=>t.id==='IGTF')||{}).cuentaContableId)&&<span className="text-amber-400 font-bold">⚠ Falta configurar la cuenta de IGTF por Pagar</span>}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {/* 🧾 Vista previa del asiento contable — mismo par D/H que verá Contabilidad → Retenciones a Clientes */}
-                {parseNum(otraRetForm.montoRetenidoBs||0)>0&&(()=>{
+                {otraRetForm.tipoId!=='IGTF'&&parseNum(otraRetForm.montoRetenidoBs||0)>0&&(()=>{
                   const partesCta=(str)=>{const p=(str||'').split('—');return {codigo:(p[0]||'').trim(),nombre:p.slice(1).join('—').trim()};};
                   const debito=partesCta(otraRetForm.cuentaContableNombre);
                   const clienteAst=(clients||[]).find(c=>(c.rif||'').toUpperCase()===(otraRetForm.clientRif||'').toUpperCase());
