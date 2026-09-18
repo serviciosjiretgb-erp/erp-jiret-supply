@@ -2184,7 +2184,12 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'Otro',label:'Otro'},
   ];
   const TIPOS_RET_EXTRA_DEFAULT=[{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2},{id:'IGTF',label:'IGTF',porcentaje:3}];
-  const tiposRetExtraCfg=(settings?.tiposRetencionExtra||[]).length>0?settings.tiposRetencionExtra:TIPOS_RET_EXTRA_DEFAULT;
+  const tiposRetExtraCfg=(()=>{
+    const guardados=settings?.tiposRetencionExtra||[];
+    if(guardados.length===0) return TIPOS_RET_EXTRA_DEFAULT;
+    const faltantes=TIPOS_RET_EXTRA_DEFAULT.filter(d=>!guardados.some(g=>g.id===d.id));
+    return [...guardados,...faltantes];
+  })();
   const [rccGuardando,setRccGuardando]=useState('');
   const guardarCuentaRetClientePrincipal=async(tipoId,cuentaObj)=>{
     setRccGuardando(tipoId);
@@ -21378,10 +21383,13 @@ function App() {
   const [otraRetManual, setOtraRetManual] = useState(false);
   const [otraRetBusqCuenta, setOtraRetBusqCuenta] = useState('');
   // Tipos de retención extra — scope de componente para que el modal pueda accederlos
-  const TIPOS_RET_EXTRA = useMemo(()=>(settings?.tiposRetencionExtra||[]).length>0
-    ? settings.tiposRetencionExtra
-    : [{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2},{id:'IGTF',label:'IGTF',porcentaje:3}]
-  ,[settings]);
+  const TIPOS_RET_EXTRA_DEF2=[{id:'RESP_SOCIAL',label:'Responsabilidad Social',porcentaje:3},{id:'AE',label:'Actividad Económica (AE)',porcentaje:1},{id:'TIMBRE_FISCAL',label:'Timbre Fiscal',porcentaje:0.10},{id:'ISLR_OTRA',label:'Retención ISLR',porcentaje:2},{id:'IGTF',label:'IGTF',porcentaje:3}];
+  const TIPOS_RET_EXTRA = useMemo(()=>{
+    const guardados=settings?.tiposRetencionExtra||[];
+    if(guardados.length===0) return TIPOS_RET_EXTRA_DEF2;
+    const faltantes=TIPOS_RET_EXTRA_DEF2.filter(d=>!guardados.some(g=>g.id===d.id));
+    return [...guardados,...faltantes];
+  },[settings]);
   // Guarda la Cuenta Contable predeterminada para un tipo de retención extra (persiste en settings/general)
   const guardarCuentaTipoRet=async()=>{
     const tipoId=otraRetForm.tipoId||'RESP_SOCIAL';
