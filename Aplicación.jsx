@@ -35231,9 +35231,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <RefreshCw size={14}/> {importandoHist?'Reparando...':'Reparar Totales en $0'}
                     </button>
                   )}
-                  <button onClick={repararFacturaIdDesactualizado} className="bg-amber-600 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-amber-700">
-                    <RefreshCw size={14}/> Diagnóstico NE-00660
-                  </button>
                   <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
                 </div>
               </div>
@@ -38611,7 +38608,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const saldo=getSaldoNEAjustado(ne);
                         const sel=!!pm.nesSelec?.[ne.id];
                         const aplicado=distMap[ne.id]||0;
-                        const invVinc=ne._esNDDirecta?null:(ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())));
+                        const invVinc=ne._esNDDirecta?null:(ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(inv.nesAdicionales||[]).includes(ne.id)||(inv.nesAdicionales||[]).includes(ne.documento))&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())));
                         const nroFiscal=ne._esNDDirecta?ne.nroFiscal:(invVinc?.nroFiscal||ne.nroFiscal||null);
                         const tasa=parseNum(invVinc?.tasa||ne.tasa||tasaBCV||1);
                         const baseUSD=parseNum(invVinc?.montoBase||ne.montoBase||ne.total||0);
@@ -39239,7 +39236,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fechaRef||(c.fecha||'')<=fechaRef));
                                           // Factura vinculada (ambas direcciones, con guarda de RIF para evitar facturas de otro cliente)
                                           const _rifOkInv=inv=>!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
-                                          const invVinc=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento)&&!inv.esAnulacionFiscal&&_rifOkInv(inv))||
+                                          const invVinc=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(inv.nesAdicionales||[]).includes(ne.id)||(inv.nesAdicionales||[]).includes(ne.documento))&&!inv.esAnulacionFiscal&&_rifOkInv(inv))||
                                                          (ne.facturaId?(invoices||[]).find(inv=>(inv.id===ne.facturaId||inv.documento===ne.facturaId)&&!inv.esAnulacionFiscal&&_rifOkInv(inv)):null)||
                                                          (ne.nroFiscal?(invoices||[]).find(inv=>inv.nroFiscal===ne.nroFiscal&&!inv.esAnulacionFiscal&&_rifOkInv(inv)):null);
                                           const docFiscal = invVinc
