@@ -4993,10 +4993,16 @@ const CATEGORIA_A_BALDE_SHARED = {
   'Bolsas Plásticas':'MATERIA_PRIMA', 'Termoencogibles':'MATERIA_PRIMA',
 };
 const construirLineasCostoProduccionCompartido = (f, ctx) => {
-  const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas, simulacionCostos} = ctx;
+  const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas, simulacionCostos, notasEntrega} = ctx;
   const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
   const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
-  let totalMP=0, totalCons=0, totalTerm=0;
+  // Mapa NE→tiene OP, para poder partir el costo por línea (una factura puede juntar varias NE,
+  // unas con OP y otras sin OP — antes se clasificaba TODA la factura según un solo campo).
+  const _neTieneOp = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
+  const _neTieneOpDoc = new Map((notasEntrega||[]).map(ne=>[ne.documento, !!(ne.opId||ne.opRelacionada)]));
+  const hayInfoPorNE = notasEntrega && (f.neOrigen||(f.nesAdicionales||[]).length>0);
+  let totalMP=0, totalCons=0, totalTerm=0; // acumulado sin OP (o total, si no hay info por NE)
+  let totalMPop=0, totalConsOp=0, totalTermOp=0; // acumulado con OP
   (f.itemsFacturados||[]).forEach(it=>{
     const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
     // Simulación de costo real (solo vista de Estado de Resultados, opt-in por producto) — se
@@ -5008,27 +5014,50 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
     const val = costoRealUnit!=null ? costoRealUnit*Number(it.cantidad||0) : (Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0));
     if (val<=0) return;
     const balde = CATEGORIA_A_BALDE_SHARED[invItem?.category] || 'MATERIA_PRIMA';
-    if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
+    // ¿Esta línea específica tiene OP? Se mira la NE de la que vino (_neOrigenItem, ya guardado al
+    // armar la factura) — si no hay esa info, se usa el estado de toda la factura como antes.
+    const esOpLinea = hayInfoPorNE && it._neOrigenItem
+      ? (_neTieneOp.has(it._neOrigenItem) ? _neTieneOp.get(it._neOrigenItem) : (_neTieneOpDoc.get(it._neOrigenItem)||false))
+      : !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+    if (esOpLinea){
+      if (balde==='CONSUMIBLES') totalConsOp+=val; else if (balde==='TERMINADOS') totalTermOp+=val; else totalMPop+=val;
+    } else {
+      if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
+    }
   });
-  if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005) return null;
+  if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005 && totalMPop<=0.005 && totalConsOp<=0.005 && totalTermOp<=0.005) return null;
   const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
   const tasa = (tasasManuales||{})[f.id] || Number(settingsTasa||0) || 1;
-  const [codDeb,nomDeb] = partirCuenta(tieneOp ? cfg.costoVentaProduccionNombre : cfg.costoVentaMercanciaNombre);
+  const [codDebOp,nomDebOp] = partirCuenta(cfg.costoVentaProduccionNombre);
+  const [codDebSin,nomDebSin] = partirCuenta(cfg.costoVentaMercanciaNombre);
   const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
   const [codInvCons,nomInvCons] = partirCuenta(cfg.invConsumiblesNombre);
   const [codInvTerm,nomInvTerm] = partirCuenta(cfg.invTerminadosNombre);
-  const totalVal = totalMP+totalCons+totalTerm;
   // Reclasificación aplicada AQUÍ (misma clave tabId/f.id/lineIdx que usa Comprobantes Contables) —
   // antes solo se aplicaba del lado de Comprobantes Contables (aplicarReclasCC externo);
   // getAsientosReales() nunca la tocaba, así que reclasificar esta cuenta no llegaba a Mayor
   // Analítico ni a Estado de Resultados/Balance General. Si no se pasa aplicarReclas (por si algo
   // más sigue llamando esta función sin ese contexto), se comporta igual que antes.
   const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, f.id, li, codigo, cuenta) : {codigo,cuenta};
-  const l0 = reclas(0, codDeb, nomDeb);
-  const lineas = [{codigo:l0.codigo, cuenta:l0.cuenta, debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0, detalle:tieneOp?'Costo de venta (con OP)':'Costo de venta (sin OP)'}];
-  if (totalMP>0.005){ const l=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP, detalle:'Materia Prima'}); }
-  if (totalCons>0.005){ const l=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons, detalle:'Consumibles'}); }
-  if (totalTerm>0.005){ const l=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm, detalle:'Productos Terminados'}); }
+  const lineas = [];
+  // Bloque CON OP (si esta factura, o parte de ella, viene de una NE con OP)
+  const totalValOp = totalMPop+totalConsOp+totalTermOp;
+  if (totalValOp>0.005){
+    const l=reclas(lineas.length,codDebOp,nomDebOp);
+    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:totalValOp*tasa, haberBs:0, debeUSD:totalValOp, haberUSD:0, detalle:'Costo de venta (con OP)'});
+    if (totalMPop>0.005){ const l2=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalMPop*tasa, debeUSD:0, haberUSD:totalMPop, detalle:'Materia Prima (con OP)'}); }
+    if (totalConsOp>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalConsOp*tasa, debeUSD:0, haberUSD:totalConsOp, detalle:'Consumibles (con OP)'}); }
+    if (totalTermOp>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalTermOp*tasa, debeUSD:0, haberUSD:totalTermOp, detalle:'Productos Terminados (con OP)'}); }
+  }
+  // Bloque SIN OP (si esta factura, o parte de ella, viene de una NE sin OP)
+  const totalVal = totalMP+totalCons+totalTerm;
+  if (totalVal>0.005){
+    const l=reclas(lineas.length,codDebSin,nomDebSin);
+    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0, detalle:'Costo de venta (sin OP)'});
+    if (totalMP>0.005){ const l2=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP, detalle:'Materia Prima'}); }
+    if (totalCons>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons, detalle:'Consumibles'}); }
+    if (totalTerm>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm, detalle:'Productos Terminados'}); }
+  }
   return {tasa, tieneOp, lineas};
 };
 
@@ -5403,7 +5432,7 @@ const derivarMovsCajaDesdeCxcCxp = (cobrosCxc, pagosCxp, movCaja, tasaFallback) 
   return [...desdeCobros, ...desdePagos];
 };
 
-const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
+const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg,notasEntrega)=>{
   const tasa=pNum(f.tasa||0);
   const montoBase=pNum(f.montoBase||0);
   const iva=pNum(f.iva||0);
@@ -5414,17 +5443,32 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg)=>{
   const cliente=(clientesArg||[]).find(c=>rifFactura&&normRif(c.rif)===rifFactura);
   const ctaCliente=cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
   const tieneOp=!!(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas.length>0));
-  const cfgIngreso=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
-  const ctaIngreso=cfgIngreso||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
-  // La factura guarda sus PROPIOS Bs. reales (baseGravableBs, ivaBs) — NO son iguales a
-  // USD×tasa porque se calculan con más precisión al momento de facturar. Usarlos directo es lo
-  // que hace que el comprobante coincida con lo que la factura ya muestra; recalcular por
-  // multiplicación (como se hacía antes) daba un número parecido pero no exacto.
   const ingresoBs = f.baseGravableBs!=null ? pNum(f.baseGravableBs) : (tasa?montoBase*tasa:0);
   const ivaBs = f.ivaBs!=null ? pNum(f.ivaBs) : (tasa?iva*tasa:0);
-  lineas.push({tipo:'CREDITO',cuenta:ctaIngreso,
-    concepto:`Venta ${tieneOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
-    montoUSD:montoBase,montoBs:ingresoBs});
+  // Una factura puede juntar varias NE (neOrigen + nesAdicionales) — unas con OP, otras sin OP.
+  // Si hay esa info por línea, se parte el ingreso proporcional en vez de meterlo todo en un lado.
+  const _neTieneOpV = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
+  let propOp = tieneOp?1:0; // fracción del monto que corresponde a líneas con OP
+  if (notasEntrega && (f.itemsFacturados||[]).length>0 && (f.itemsFacturados||[]).some(it=>it._neOrigenItem)){
+    let valOp=0, valTot=0;
+    (f.itemsFacturados||[]).forEach(it=>{
+      const v=pNum(it.precioUnit||0)*pNum(it.cantidad||0);
+      valTot+=v;
+      if (it._neOrigenItem && _neTieneOpV.get(it._neOrigenItem)) valOp+=v;
+    });
+    if (valTot>0.005) propOp = valOp/valTot;
+  }
+  const hayMixto = propOp>0.001 && propOp<0.999;
+  const pushIngreso=(frac,esOp)=>{
+    if (frac<=0.001) return;
+    const cfgIngreso=esOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
+    const ctaIngreso=cfgIngreso||(esOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
+    lineas.push({tipo:'CREDITO',cuenta:ctaIngreso,
+      concepto:`Venta ${esOp?'con':'sin'} OP · Fact. ${f.nroFiscal||f.documento||'—'}`,
+      montoUSD:montoBase*frac,montoBs:ingresoBs*frac});
+  };
+  if (hayMixto){ pushIngreso(propOp,true); pushIngreso(1-propOp,false); }
+  else pushIngreso(1,tieneOp);
   if(iva>0){
     lineas.push({tipo:'CREDITO',cuenta:'2.1.04.02.001 — I.V.A. DÉBITO FISCAL (VENTAS)',
       concepto:`IVA 16% repercutido · Fact. ${f.nroFiscal||f.documento||'—'}`,
@@ -20955,7 +20999,7 @@ function App() {
       const nf = f.nroFiscal || f.documento || '';
       if (nf && _nroFiscalVistoApp.get(nf)?.id !== f.id) return; // duplicado — ya se avisó arriba, se omite
       try{
-        const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients);
+        const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients,notasEntrega);
         const nesRef = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean);
         const opsRef = [f.opAsignada, ...(f.opsAsignadas||[])].filter(Boolean);
         const refExtra = [
@@ -21129,7 +21173,7 @@ function App() {
     // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
     // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
-      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos});
+      const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos, notasEntrega});
       if(!r) return;
       out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
     });
@@ -36179,7 +36223,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const ivaCalc=newInvoiceForm.aplicaIva==='SI'?parseFloat((subCalc*0.16).toFixed(2)):0;
                         const totalCalc=parseFloat((subCalc+ivaCalc).toFixed(2));
                         const fPreview={...newInvoiceForm,montoBase:subCalc,iva:ivaCalc,total:totalCalc};
-                        const asientoV=generarAsientoVenta(fPreview,cuentasIngresoCfg,planDeCuentas,clients);
+                        const asientoV=generarAsientoVenta(fPreview,cuentasIngresoCfg,planDeCuentas,clients,notasEntrega);
                         return (
                           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                             <div className="px-4 py-3 border-b flex items-center justify-between" style={{background:asientoV.cuadrado?'#ecfdf5':'#fef2f2'}}>
@@ -37786,7 +37830,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
                   const totalUSD=parseNum(ne.total||ne.totalUSD||0);
                   clTotalUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
-                  const invVincPDF=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
+                  const invVincPDF=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||(inv.nesAdicionales||[]).includes(ne.id)||(inv.nesAdicionales||[]).includes(ne.documento))&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalPDF=invVincPDF?(invVincPDF.nroFiscal||invVincPDF.documento||'—'):'—';
                   const diasVenc=getAgingDays(ne,fechaRef);
                   const diasVencLbl=`${diasVenc} d.`;
@@ -37885,7 +37929,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                   const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const d=getAgingDays(ne,fechaRef);
                   const bucket=d<=0?'Corriente':d<=30?'1-30d':d<=60?'31-60d':'+60d';
-                  const invVinc=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                  const invVinc=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||(inv.nesAdicionales||[]).includes(ne.id)||(inv.nesAdicionales||[]).includes(ne.documento))&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
                   const docFisc=invVinc?(invVinc.nroFiscal||invVinc.documento||'—'):'—';
                   const diasCred=parseNum(ne.diasCredito||0);
                   const retDetalleAg=getRetsDetalleNE(ne);
@@ -37929,7 +37973,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const saldo=getSaldoNEAtFecha(ne,fechaRef);
                   const totalUSD=parseNum(ne.total||ne.totalUSD||0);
                   clTotUSD+=totalUSD; clSaldo+=saldo; gTotUSD+=saldo; gTotTotalUSD+=totalUSD;
-                  const invVincXLS=(invoices||[]).find(inv=>inv.neOrigen===ne.id&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
+                  const invVincXLS=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||(inv.nesAdicionales||[]).includes(ne.id)||(inv.nesAdicionales||[]).includes(ne.documento))&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||(ne.facturaId?(invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase())):null);
                   const docFiscalXLS=invVincXLS?(invVincXLS.nroFiscal||invVincXLS.documento||'—'):'—';
                   body+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left" style="color:#b45309">${getVence(ne)}</td><td class="left" style="color:#4338ca">${docFiscalXLS}</td><td>$${formatNum(totalUSD)}</td><td style="font-weight:bold">$${formatNum(saldo)}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                 });
