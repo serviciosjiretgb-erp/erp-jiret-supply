@@ -37682,6 +37682,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const clientesList=Object.values(porCliente).filter(cl=>Math.abs(cl.total)>=0.01)
             .map(cl=>({...cl,estado:cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA'}))
             .filter(cl=>cxcEstadoFilter.includes(cl.estado))
+            .filter(cl=>!cxcSearch.trim()||(cl.clientName||'').toUpperCase().includes(cxcSearch.toUpperCase())||(cl.clientRif||'').toUpperCase().includes(cxcSearch.toUpperCase())||(cl.nes||[]).some(ne=>(ne.documento||'').toUpperCase().includes(cxcSearch.toUpperCase())))
             .sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es',{sensitivity:'base'}));
 
           // ── Totales de cartera: SIEMPRE derivados de clientesList (misma fuente que la tabla en pantalla,
