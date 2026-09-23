@@ -35107,39 +35107,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             finally{ setImportandoHist(false); }
           };
           const repararFacturaIdDesactualizado = async () => {
-            const candidatas = [];
-            (notasEntrega||[]).forEach(ne=>{
-              if(!ne.facturaId) return;
-              const invActual = (invoices||[]).find(i=>i.id===ne.facturaId);
-              // Retención(es) de esta NE — si alguna apunta a un N° Fiscal distinto al de la factura
-              // que tiene guardada, es señal de que facturaId quedó desactualizado (viejo).
-              const retsDeNE = (retencionesClientesApp||[]).filter(r=>r.neId===ne.id||r.neId===ne.documento);
-              if(retsDeNE.length===0) return;
-              const fiscalRet = retsDeNE.find(r=>r.nroFiscal)?.nroFiscal;
-              if(!fiscalRet) return;
-              if(invActual?.nroFiscal===fiscalRet) return; // ya coincide, no hay nada que reparar
-              const invCorrecta = (invoices||[]).find(i=>i.nroFiscal===fiscalRet && !i.esAnulacionFiscal);
-              if(!invCorrecta || invCorrecta.id===ne.facturaId) return;
-              candidatas.push({ne, invViejaFiscal:invActual?.nroFiscal||'(ninguna)', invCorrecta});
-            });
-            if(candidatas.length===0){ alert('No se detectaron NE con factura desactualizada.'); return; }
-            const detalle=candidatas.slice(0,10).map(x=>`${x.ne.documento||x.ne.id}: mostraba "${x.invViejaFiscal}" → debería ser "${x.invCorrecta.nroFiscal}"`).join('\n')+(candidatas.length>10?`\n...y ${candidatas.length-10} más`:'');
-            if(!window.confirm(`Se detectaron ${candidatas.length} NE cuya factura vinculada no coincide con la de su propia retención.\n\n${detalle}\n\nSe van a agregar a la lista de NE adicionales de la factura correcta (no se borra ni se crea ninguna factura). ¿Continuar?`)) return;
-            setImportandoHist(true);
-            try{
-              const batch = writeBatch(db);
-              const porFactura = {};
-              candidatas.forEach(({ne, invCorrecta})=>{
-                if(!porFactura[invCorrecta.id]) porFactura[invCorrecta.id]=new Set(invCorrecta.nesAdicionales||[]);
-                porFactura[invCorrecta.id].add(ne.id);
-              });
-              Object.entries(porFactura).forEach(([invId,set])=>{
-                batch.update(getDocRef('maquilaInvoices', invId), {nesAdicionales: Array.from(set)});
-              });
-              await batch.commit();
-              alert(`Se corrigió el vínculo de ${candidatas.length} Nota(s) de Entrega.`);
-            } catch(e){ alert('Error al reparar: '+e.message); }
-            finally{ setImportandoHist(false); }
+            const ne = (notasEntrega||[]).find(n=>(n.documento||'').includes('00660')||n.id.includes('00660'));
+            if(!ne){ alert('No encontré NE-00660 para diagnosticar.'); return; }
+            const invActual = (invoices||[]).find(i=>i.id===ne.facturaId);
+            const invsMismoDia = (invoices||[]).filter(i=>i.fecha===ne.fecha && i.clientRif===ne.clientRif && !i.esAnulacionFiscal);
+            const retsDeNE = (retencionesClientesApp||[]).filter(r=>r.neId===ne.id||r.neId===ne.documento||(r.nroFiscal||'').includes('3352'));
+            const msg = `NE: id=${ne.id} documento=${ne.documento} fecha=${ne.fecha} clientRif=${ne.clientRif}\n`+
+              `facturaId guardado: ${ne.facturaId||'∅'}\n`+
+              `Invoice actual (por facturaId): id=${invActual?.id||'∅'} nroFiscal=${invActual?.nroFiscal||'∅'} neOrigen=${invActual?.neOrigen||'∅'} nesAdicionales=[${(invActual?.nesAdicionales||[]).join(',')}]\n\n`+
+              `Facturas con misma fecha+cliente (${invsMismoDia.length}):\n`+
+              invsMismoDia.map(i=>`  id=${i.id} nroFiscal=${i.nroFiscal} neOrigen=${i.neOrigen} nesAdicionales=[${(i.nesAdicionales||[]).join(',')}]`).join('\n')+
+              `\n\nRetenciones que matchean (${retsDeNE.length}):\n`+
+              retsDeNE.map(r=>`  neId=${r.neId||'∅'} nroFiscal=${r.nroFiscal||'∅'} facturaId=${r.facturaId||'∅'} monto=${r.montoRetenido||r.montoUSD||'∅'}`).join('\n');
+            alert(msg);
+            console.log(msg);
           };
           const repararTotalesNEHistoricas = async () => {
             const nesHist = (notasEntrega||[]).filter(n=>parseNum(n.total||n.montoBase||0)<=0.01);
@@ -35249,8 +35230,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <RefreshCw size={14}/> {importandoHist?'Reparando...':'Reparar Totales en $0'}
                     </button>
                   )}
-                  <button onClick={repararFacturaIdDesactualizado} disabled={importandoHist} className="bg-amber-600 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-amber-700 disabled:opacity-50">
-                    <RefreshCw size={14}/> {importandoHist?'Reparando...':'Reparar Factura Desactualizada'}
+                  <button onClick={repararFacturaIdDesactualizado} className="bg-amber-600 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-amber-700">
+                    <RefreshCw size={14}/> Diagnóstico NE-00660
                   </button>
                   <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
                 </div>
