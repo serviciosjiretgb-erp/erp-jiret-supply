@@ -35110,16 +35110,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ne = (notasEntrega||[]).find(n=>(n.documento||'').includes('00660')||n.id.includes('00660'));
             if(!ne){ setDialog({title:'Diagnóstico',text:'No encontré NE-00660 para diagnosticar.',type:'alert'}); return; }
             const invActual = (invoices||[]).find(i=>i.id===ne.facturaId);
-            const invsMismoDia = (invoices||[]).filter(i=>i.fecha===ne.fecha && i.clientRif===ne.clientRif && !i.esAnulacionFiscal);
-            const retsDeNE = (retencionesClientesApp||[]).filter(r=>r.neId===ne.id||r.neId===ne.documento||(r.nroFiscal||'').includes('3352'));
-            const msg = `NE: id=${ne.id} documento=${ne.documento} fecha=${ne.fecha} clientRif=${ne.clientRif}\n`+
-              `facturaId guardado: ${ne.facturaId||'∅'}\n`+
-              `Invoice actual (por facturaId): id=${invActual?.id||'∅'} nroFiscal=${invActual?.nroFiscal||'∅'} neOrigen=${invActual?.neOrigen||'∅'} nesAdicionales=[${(invActual?.nesAdicionales||[]).join(',')}]\n\n`+
-              `Facturas con misma fecha+cliente (${invsMismoDia.length}):\n`+
-              invsMismoDia.map(i=>`  id=${i.id} nroFiscal=${i.nroFiscal} neOrigen=${i.neOrigen} nesAdicionales=[${(i.nesAdicionales||[]).join(',')}]`).join('\n')+
-              `\n\nRetenciones que matchean (${retsDeNE.length}):\n`+
-              retsDeNE.map(r=>`  neId=${r.neId||'∅'} nroFiscal=${r.nroFiscal||'∅'} facturaId=${r.facturaId||'∅'} monto=${r.montoRetenido||r.montoUSD||'∅'}`).join('\n');
-            window.prompt('Diagnóstico NE-00660 — copia este texto (Ctrl+A, Ctrl+C):', msg);
+            const fac6 = (invoices||[]).find(i=>(i.documento||'')==='FAC-0006'||(i.nroFiscal||'')==='FAC-0006'||i.id==='FAC-0006');
+            const msg = `NE-00660: id=${ne.id} documento=${JSON.stringify(ne.documento)} fecha=${ne.fecha}\n\n`+
+              `facturaId guardado en la NE: ${ne.facturaId}\n`+
+              `→ Esa factura (correcta): id=${invActual?.id} nroFiscal=${invActual?.nroFiscal} neOrigen=${invActual?.neOrigen} nesAdicionales=[${(invActual?.nesAdicionales||[]).join(',')}]\n\n`+
+              `FAC-0006 (la que se está mostrando por error):\n`+
+              `  id=${fac6?.id||'∅ no encontrada'} documento=${fac6?.documento||'∅'} nroFiscal=${fac6?.nroFiscal||'∅'}\n`+
+              `  neOrigen=${JSON.stringify(fac6?.neOrigen)}\n`+
+              `  nesAdicionales (${(fac6?.nesAdicionales||[]).length}): [${(fac6?.nesAdicionales||[]).join(', ')}]\n`+
+              `  ¿incluye 'NE-00660'? ${(fac6?.nesAdicionales||[]).includes('NE-00660')}\n`+
+              `  ¿incluye el documento de la NE (${JSON.stringify(ne.documento)})? ${(fac6?.nesAdicionales||[]).includes(ne.documento)}`;
+            window.prompt('Diagnóstico FAC-0006 — copia este texto (Ctrl+A, Ctrl+C):', msg);
             console.log(msg);
           };
           const repararTotalesNEHistoricas = async () => {
