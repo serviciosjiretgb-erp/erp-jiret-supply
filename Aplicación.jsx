@@ -37865,10 +37865,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const sobrepagoCerradoClPDF=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
                 clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF; clSaldo+=sobrepagoCerradoClPDF;
                 gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotUSD-=anticiposUSDclPDF;
+                const filaNCND=manualNCCl2.map(nc=>{
+                  const facNC=(invoices||[]).find(i=>i.id===nc.facturaId);
+                  return `<tr style="background:#faf5ff">
+                    <td style="font-weight:bold;color:#9d174d">↳ ${nc.tipo||'NC'} ${nc.nroDocumento||''}</td>
+                    <td>${nc.fecha||'—'}</td>
+                    <td colspan="2" style="color:#94a3b8">—</td>
+                    <td style="color:#4338ca">${facNC?.nroFiscal||facNC?.documento||'—'}</td>
+                    <td style="text-align:right;color:#94a3b8">—</td>
+                    <td style="text-align:right;font-weight:bold;color:#9d174d">${(nc._signedUSD||0)<0?'-':'+'}$${formatNum(Math.abs(nc._signedUSD||0))}</td>
+                    <td style="font-size:8px;color:#9d174d;font-style:italic">${nc.descripcion||'Ajuste directo'}</td>
+                  </tr>`;}).join('');
+                const filaAnticipos=anticiposCl2.map(a=>`<tr style="background:#f0fdf4">
+                    <td style="font-weight:bold;color:#15803d">↳ Anticipo ${a.fecha||''}</td>
+                    <td>${a.fecha||'—'}</td>
+                    <td colspan="2" style="color:#94a3b8">—</td>
+                    <td style="color:#94a3b8">—</td>
+                    <td style="text-align:right;color:#94a3b8">—</td>
+                    <td style="text-align:right;font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td>
+                    <td style="font-size:8px;color:#15803d;font-style:italic">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td>
+                  </tr>`).join('');
                 const notaAjustes=[
-                  manualRetsCl2.length>0?'Ret. manual -$'+formatNum(manualRetUSDclPDF):'',
-                  manualNCCl2.length>0?'NC/ND directa '+(manualNCSignedUSDPDF<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDPDF)):'',
-                  anticiposUSDclPDF>0?'Anticipo -$'+formatNum(anticiposUSDclPDF)+' ('+(anticiposCl2.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
+                  manualRetsCl2.length>0?'Retención -$'+formatNum(manualRetUSDclPDF):'',
                 ].filter(Boolean).join(' · ');
                 return `<div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
@@ -37891,7 +37909,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <th style="text-align:right;padding:5px;font-weight:bold">Saldo USD</th>
                       <th style="text-align:left;padding:5px 16px;font-weight:bold">Observación</th>
                     </tr></thead>
-                    <tbody>${neRows}</tbody>
+                    <tbody>${neRows}${filaNCND}${filaAnticipos}</tbody>
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
                       <td colspan="5" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
@@ -38003,10 +38021,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const sobrepagoCerradoClXls=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
                 clSaldo-=manualRetUSDclXls; clSaldo+=manualNCSignedUSDXls; clSaldo-=anticiposUSDclXls; clSaldo+=sobrepagoCerradoClXls;
                 gTotUSD-=manualRetUSDclXls; gTotUSD+=manualNCSignedUSDXls; gTotUSD-=anticiposUSDclXls;
+                manualNCClXls.forEach(nc=>{
+                  const facNC=(invoices||[]).find(i=>i.id===nc.facturaId);
+                  body+=`<tr style="background:#faf5ff"><td class="left" style="font-weight:bold;color:#9d174d">↳ ${nc.tipo||'NC'} ${nc.nroDocumento||''}</td><td class="left">${nc.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#4338ca">${facNC?.nroFiscal||facNC?.documento||'—'}</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#9d174d">${(nc._signedUSD||0)<0?'-':'+'}$${formatNum(Math.abs(nc._signedUSD||0))}</td><td class="left" style="font-style:italic;color:#9d174d">${nc.descripcion||'Ajuste directo'}</td></tr>`;
+                });
+                anticiposClXls.forEach(a=>{
+                  body+=`<tr style="background:#f0fdf4"><td class="left" style="font-weight:bold;color:#15803d">↳ Anticipo ${a.fecha||''}</td><td class="left">${a.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#94a3b8">—</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td><td class="left" style="font-style:italic;color:#15803d">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td></tr>`;
+                });
                 const notaAjustesXls=[
-                  manualRetUSDclXls>0?'Ret. manual -$'+formatNum(manualRetUSDclXls):'',
-                  manualNCSignedUSDXls!==0?'NC/ND directa '+(manualNCSignedUSDXls<0?'-$':'+$')+formatNum(Math.abs(manualNCSignedUSDXls)):'',
-                  anticiposUSDclXls>0?'Anticipo -$'+formatNum(anticiposUSDclXls)+' ('+(anticiposClXls.map(a=>a.concepto||'Saldo a favor del cliente').filter((v,i,arr)=>arr.indexOf(v)===i).join(' · '))+')':'',
+                  manualRetUSDclXls>0?'Retención -$'+formatNum(manualRetUSDclXls):'',
                 ].filter(Boolean).join(' · ');
                 body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="4">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="7"></td></tr>`;
               });
