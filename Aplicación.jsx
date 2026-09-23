@@ -35062,6 +35062,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             } catch(e){ alert('Error al importar: '+e.message); }
             finally{ setImportandoHist(false); }
           };
+          const repararTotalesNEHistoricas = async () => {
+            const nesHist = (notasEntrega||[]).filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX' && parseNum(n.total||n.montoBase||0)<=0.01);
+            if(nesHist.length===0){ alert('No hay NE históricas con total en $0 — no hay nada que reparar.'); return; }
+            const candidatas = nesHist.map(n=>{
+              const cobro=(cobrosCxc||[]).find(c=>c.neId===n.id && parseNum(c.monto||0)>0);
+              return {ne:n, cobro};
+            }).filter(x=>x.cobro);
+            if(candidatas.length===0){ alert('Hay NE con total en $0, pero ninguna tiene un cobro histórico asociado para tomar el monto correcto.'); return; }
+            const totalImpacto=candidatas.reduce((s,x)=>s+parseNum(x.cobro.monto||0),0);
+            const detalle=candidatas.slice(0,10).map(x=>`${x.ne.documento||x.ne.id}: $0,00 → $${x.cobro.monto.toFixed(2)}`).join('\n')+(candidatas.length>10?`\n...y ${candidatas.length-10} más`:'');
+            if(!window.confirm(`Se van a corregir ${candidatas.length} Nota(s) de Entrega — su "total" pasa de $0,00 al monto de su cobro histórico ya registrado (total: $${totalImpacto.toFixed(2)}).\n\n${detalle}\n\nEsto NO crea ni modifica ningún cobro, banco ni caja — solo corrige el campo total de la NE. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              candidatas.forEach(({ne,cobro})=>{
+                batch.update(getDocRef('notasEntrega', ne.id), {total: parseFloat(Number(cobro.monto||0).toFixed(2)), montoBase: parseFloat(Number(cobro.monto||0).toFixed(2))});
+              });
+              await batch.commit();
+              alert(`Se corrigió el total de ${candidatas.length} Nota(s) de Entrega.`);
+            } catch(e){ alert('Error al reparar: '+e.message); }
+            finally{ setImportandoHist(false); }
+          };
           const crearCobrosHistoricosEneAbr2026 = async () => {
             const nesHist = (notasEntrega||[]).filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX');
             if(nesHist.length===0){ alert('Primero importa las Notas de Entrega históricas (botón de arriba).'); return; }
@@ -35141,6 +35163,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   {(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX') && !(cobrosCxc||[]).some(c=>c.origenImport==='HIST_ENE_ABR_2026_XLSX') && (
                     <button onClick={crearCobrosHistoricosEneAbr2026} disabled={importandoHist} className="bg-emerald-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-emerald-800 disabled:opacity-50">
                       <CheckCircle2 size={14}/> {importandoHist?'Registrando...':'Registrar Cobro Histórico (quita de CxC)'}
+                    </button>
+                  )}
+                  {(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX' && parseNum(n.total||n.montoBase||0)<=0.01) && (
+                    <button onClick={repararTotalesNEHistoricas} disabled={importandoHist} className="bg-rose-600 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-rose-700 disabled:opacity-50">
+                      <RefreshCw size={14}/> {importandoHist?'Reparando...':'Reparar Totales en $0'}
                     </button>
                   )}
                   <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
