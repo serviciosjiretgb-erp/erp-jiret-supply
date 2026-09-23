@@ -35108,7 +35108,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           const repararFacturaIdDesactualizado = async () => {
             const ne = (notasEntrega||[]).find(n=>(n.documento||'').includes('00660')||n.id.includes('00660'));
-            if(!ne){ alert('No encontré NE-00660 para diagnosticar.'); return; }
+            if(!ne){ setDialog({title:'Diagnóstico',text:'No encontré NE-00660 para diagnosticar.',type:'alert'}); return; }
             const invActual = (invoices||[]).find(i=>i.id===ne.facturaId);
             const invsMismoDia = (invoices||[]).filter(i=>i.fecha===ne.fecha && i.clientRif===ne.clientRif && !i.esAnulacionFiscal);
             const retsDeNE = (retencionesClientesApp||[]).filter(r=>r.neId===ne.id||r.neId===ne.documento||(r.nroFiscal||'').includes('3352'));
@@ -35119,7 +35119,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               invsMismoDia.map(i=>`  id=${i.id} nroFiscal=${i.nroFiscal} neOrigen=${i.neOrigen} nesAdicionales=[${(i.nesAdicionales||[]).join(',')}]`).join('\n')+
               `\n\nRetenciones que matchean (${retsDeNE.length}):\n`+
               retsDeNE.map(r=>`  neId=${r.neId||'∅'} nroFiscal=${r.nroFiscal||'∅'} facturaId=${r.facturaId||'∅'} monto=${r.montoRetenido||r.montoUSD||'∅'}`).join('\n');
-            alert(msg);
+            window.prompt('Diagnóstico NE-00660 — copia este texto (Ctrl+A, Ctrl+C):', msg);
             console.log(msg);
           };
           const repararTotalesNEHistoricas = async () => {
