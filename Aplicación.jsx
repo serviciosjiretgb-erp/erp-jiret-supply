@@ -37877,7 +37877,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="font-size:8px;color:#9d174d;font-style:italic">${nc.descripcion||'Ajuste directo'}</td>
                   </tr>`;}).join('');
                 const filaAnticipos=anticiposCl2.map(a=>`<tr style="background:#f0fdf4">
-                    <td style="font-weight:bold;color:#15803d">↳ Anticipo ${a.fecha||''}</td>
+                    <td style="font-weight:bold;color:#15803d">↳ Anticipo</td>
                     <td>${a.fecha||'—'}</td>
                     <td colspan="2" style="color:#94a3b8">—</td>
                     <td style="color:#94a3b8">—</td>
@@ -38026,7 +38026,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   body+=`<tr style="background:#faf5ff"><td class="left" style="font-weight:bold;color:#9d174d">↳ ${nc.tipo||'NC'} ${nc.nroDocumento||''}</td><td class="left">${nc.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#4338ca">${facNC?.nroFiscal||facNC?.documento||'—'}</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#9d174d">${(nc._signedUSD||0)<0?'-':'+'}$${formatNum(Math.abs(nc._signedUSD||0))}</td><td class="left" style="font-style:italic;color:#9d174d">${nc.descripcion||'Ajuste directo'}</td></tr>`;
                 });
                 anticiposClXls.forEach(a=>{
-                  body+=`<tr style="background:#f0fdf4"><td class="left" style="font-weight:bold;color:#15803d">↳ Anticipo ${a.fecha||''}</td><td class="left">${a.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#94a3b8">—</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td><td class="left" style="font-style:italic;color:#15803d">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${parseNum(a.montoBs||0)>0?' · Bs.'+formatNum(a.montoBs):''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td></tr>`;
+                  body+=`<tr style="background:#f0fdf4"><td class="left" style="font-weight:bold;color:#15803d">↳ Anticipo</td><td class="left">${a.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#94a3b8">—</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td><td class="left" style="font-style:italic;color:#15803d">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${parseNum(a.montoBs||0)>0?' · Bs.'+formatNum(a.montoBs):''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td></tr>`;
                 });
                 const notaAjustesXls=[
                   manualRetUSDclXls>0?'Retención -$'+formatNum(manualRetUSDclXls):'',
