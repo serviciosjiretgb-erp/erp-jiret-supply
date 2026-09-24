@@ -37639,10 +37639,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const items=_retsPorNE.get(ne.id)||[];
             const iva=items.filter(r=>!r.tipoExtra);
             const otras=items.filter(r=>r.tipoExtra);
+            const igtf=items.filter(r=>r.tipo==='IGTF');
             return{
-              iva,otras,
+              iva,otras,igtf,
               ivaUSD:iva.reduce((s,r)=>s+r._montoUSD,0),
               otrasUSD:otras.reduce((s,r)=>s+r._montoUSD,0),
+              igtfUSD:igtf.reduce((s,r)=>s+r._montoUSD,0),
               sinTasa:items.some(r=>r._sinTasa)
             };
           };
@@ -37661,7 +37663,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // ── Helpers de saldo con fecha de corte ────────────────────────
           const getSaldoNEAtFecha = (ne, fRef) => {
-            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            // tipo!=='IGTF': el IGTF es un cargo aparte (3% adicional al total de la factura, no
+            // un pago del propio total) — se excluye de Cobrado igual que ya se excluye de
+            // Retención, si no la NE queda con saldo "a favor" que no existe de verdad.
+            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             // Sin Math.max(0,...): si la retención deja la cuenta en negativo (crédito a favor del cliente),
             // se muestra el valor real en vez de forzarlo a $0,00.
             return parseNum(ne.total||ne.totalUSD||0)-cobrado-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
@@ -37697,10 +37702,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             },0);
             _ncCache.set(cacheKey,result); return result;
           };
-          // Ret. (IVA + Otras) en USD — usando el mapa seguro _retsPorNE
-          const getRetUSDNE=(ne)=>{const d=getRetsDetalleNE(ne);return d.ivaUSD+d.otrasUSD;};
+          // Ret. (IVA + Otras) en USD — usando el mapa seguro _retsPorNE. El IGTF se excluye:
+          // es un cargo aparte (3% adicional al total de la factura, dinero real que entró a
+          // Banco/Caja pero no como pago DEL propio total, sino como un cobro extra ligado al
+          // método de pago) — se excluye igual de Cobrado arriba en getSaldoNEAtFecha. Si se
+          // cuenta en cualquiera de los dos lados, la NE queda con saldo "a favor" que no existe.
+          const getRetUSDNE=(ne)=>{const d=getRetsDetalleNE(ne);return d.ivaUSD+d.otrasUSD-d.igtfUSD;};
           const getSaldoNE=(ne)=>getSaldoNEAtFecha(ne,null);
-          const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+          const getCobradoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
           const getNCNEAtFecha=(ne,fRef)=>getNCUSDNEAtFecha(ne,fRef);
           const getRetNE=(ne)=>getRetUSDNE(ne);
 
@@ -39958,10 +39967,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const items=_retsPorNEec.get(ne.id)||[];
             const iva=items.filter(r=>!r.tipoExtra);
             const otras=items.filter(r=>r.tipoExtra);
+            const igtf=items.filter(r=>r.tipo==='IGTF');
             return{
-              iva,otras,
+              iva,otras,igtf,
               ivaUSD:iva.reduce((s,r)=>s+r._montoUSD,0),
               otrasUSD:otras.reduce((s,r)=>s+r._montoUSD,0),
+              igtfUSD:igtf.reduce((s,r)=>s+r._montoUSD,0),
               sinTasa:items.some(r=>r._sinTasa)
             };
           };
@@ -39983,7 +39994,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return ncsNe;
           };
           const getSaldoNE = (ne) => {
-            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+            // tipo!=='IGTF': cargo aparte (3% adicional, no un pago del propio total) — se excluye
+            // de Cobrado igual que de Retención más abajo.
+            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
             // NC/ND: matchear por NE Y por su factura vinculada (nroFiscal/documento/id), como lo hace Registrar Cobro
             const ncsNe=getNCsNE(ne);
             const nc=ncsNe.filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).reduce((s,n)=>{
@@ -39995,7 +40008,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             },0);
             const retD=getRetsDetalleNEec(ne);
             // Sin Math.max(0,...): si la retención deja la cuenta en negativo (crédito a favor), se muestra el valor real.
-            return parseNum(ne.total||ne.montoBase||0)-cobrado-nc-retD.ivaUSD-retD.otrasUSD;
+            // igtfUSD se excluye del descuento: el IGTF es un cargo aparte, ya excluido arriba de
+            // Cobrado también — contarlo en cualquiera de los dos lados deja un saldo "a favor"
+            // que no existe de verdad.
+            return parseNum(ne.total||ne.montoBase||0)-cobrado-nc-retD.ivaUSD-retD.otrasUSD+retD.igtfUSD;
           };
           const allNEs=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
