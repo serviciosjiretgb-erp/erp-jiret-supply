@@ -21457,6 +21457,8 @@ function App() {
     if(esManualOtra&&!otraRetForm.clientRif)
       return setDialog({title:'Datos incompletos',text:'Busca y selecciona un cliente registrado.',type:'alert'});
     if(esIGTF){
+      if(!otraRetForm.facturaIds||otraRetForm.facturaIds.length===0)
+        return setDialog({title:'Falta la factura',text:'Selecciona al menos una factura cubierta por este pago.',type:'alert'});
       if(!nroComprobante||!fechaComprobante||!otraRetForm.montoRetenidoUSD)
         return setDialog({title:'Datos incompletos',text:'Completa todos los campos.',type:'alert'});
       if(!otraRetForm.cuentaBancariaId||!otraRetForm.referencia)
@@ -21473,9 +21475,47 @@ function App() {
       // al revés que las demás retenciones, que se entran en Bs. y de ahí se calcula el USD.
       const montoUSD=esIGTF?parseNum(otraRetForm.montoRetenidoUSD||0):(tasa>1?parseFloat((parseNum(montoRetenidoBs||0)/tasa).toFixed(4)):0);
       const montoBs=esIGTF?parseFloat((montoUSD*tasa).toFixed(2)):parseNum(montoRetenidoBs||0);
+      const facsSeleccionadas=esIGTF?((otraRetForm.facturaIds&&otraRetForm.facturaIds.length>0)?otraRetForm.facturaIds:[facturaId]).map(fid=>(invoices||[]).find(i=>i.id===fid)).filter(Boolean):[];
+      const totalFacsSeleccionadas=facsSeleccionadas.reduce((s,f)=>s+parseNum(f.total||0),0)||1;
+      const batch=writeBatch(db);
+      const idsCreados=[];
+      if(esIGTF && facsSeleccionadas.length>0){
+        // Reparte el IGTF proporcional al total de cada factura seleccionada — una retención por
+        // factura, para que cada una quede con su propio monto en Libro de Ventas y en pantalla.
+        facsSeleccionadas.forEach((f,fi)=>{
+          const peso=parseNum(f.total||0)/totalFacsSeleccionadas;
+          const montoUSDf=fi===facsSeleccionadas.length-1
+            ? parseFloat((montoUSD-facsSeleccionadas.slice(0,fi).reduce((s,ff,ii)=>s+parseFloat((montoUSD*(parseNum(ff.total||0)/totalFacsSeleccionadas)).toFixed(2)),0)).toFixed(2))
+            : parseFloat((montoUSD*peso).toFixed(2));
+          const montoBsf=parseFloat((montoUSDf*tasa).toFixed(2));
+          const idf=(otraRetForm._editId&&facsSeleccionadas.length===1)?otraRetForm._editId:`RET-EXTRA-${Date.now()}-${fi}-${Math.random().toString(36).substr(2,6)}`;
+          idsCreados.push(idf);
+          batch.set(getDocRef('retencionesClientes',idf),{
+            id:idf,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
+            porcentaje:parseNum(otraRetForm.porcentaje||tipo.porcentaje||0),
+            cuentaContableId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
+            cuentaContableNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
+            facturaId:f.id,nroFiscal:f.nroFiscal||'',
+            neId:f.neOrigen||'',neOrigen:f.neOrigen||'',
+            clientRif:f.clientRif||otraRetForm.clientRif||'',clientName:f.clientName||otraRetForm.clientName||'',
+            _manualRif:'',_manualCliente:'',
+            nroRetencion:facsSeleccionadas.length>1?`${nroComprobante}-${fi+1}`:nroComprobante,fechaComprobante,
+            quincena:(parseInt((fechaComprobante||'').split('-')[2],10)||1)<=15?'1':'2',
+            montoRetenido:montoBsf,tasa,montoRetenidoUSD:montoUSDf,
+            baseImponibleBs:0,baseImponibleUSD:0,
+            cuentaBancariaId:otraRetForm.cuentaBancariaId||'',cuentaBancariaNombre:otraRetForm.cuentaBancariaNombre||'',
+            referencia:otraRetForm.referencia||'',
+            periodoLibroMes:otraRetForm.periodoLibroMes||(fechaComprobante||'').substring(0,7),
+            periodoLibroQ:otraRetForm.periodoLibroQ||'1',
+            observaciones:otraRetForm.observaciones||'',
+            _repartidoDe:facsSeleccionadas.length>1?nroComprobante:'',
+            timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+          });
+        });
+      } else {
       const id=otraRetForm._editId||`RET-EXTRA-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
       const facturaIdFinal=esManualOtra?('MANUAL-OTRA-'+Date.now()):facturaId;
-      const batch=writeBatch(db);
+      idsCreados.push(id);
       batch.set(getDocRef('retencionesClientes',id),{
         id,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
         porcentaje:parseNum(otraRetForm.porcentaje||tipo.porcentaje||0),
@@ -21498,6 +21538,7 @@ function App() {
         observaciones:otraRetForm.observaciones||'',
         timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
       });
+      }
       // El IGTF sí es dinero real que entra a Banco/Caja — a diferencia de las demás "otras
       // retenciones" (que solo reducen la Cuenta por Cobrar sin movimiento de efectivo), acá se
       // crea el movimiento bancario real y se actualiza el saldo de la cuenta, igual que un cobro.
@@ -21505,13 +21546,16 @@ function App() {
       const esEdicion=!!otraRetForm._editId;
       if(esIGTF&&!esEdicion){
         const ctaB=(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId);
+        const facsTexto=facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', ')||inv?.nroFiscal||'';
+        const clienteTexto=facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'';
+        const neOrigenTexto=facsSeleccionadas.length===1?(facsSeleccionadas[0]?.neOrigen||''):(inv?.neOrigen||'');
         const mvId=`MV-IGTF-${Date.now().toString(36).toUpperCase()}`;
         batch.set(getDocRef('banco_movimientos',mvId),{
           id:mvId,fecha:fechaComprobante,tipo:'Ingreso',origenIngreso:'IGTF Percibido',
-          neId:inv?.neOrigen||'',concepto:`IGTF percibido · Fac. ${inv?.nroFiscal||''} · ${inv?.clientName||otraRetForm.clientName||''}`,
+          neId:neOrigenTexto,concepto:`IGTF percibido · Fac. ${facsTexto} · ${clienteTexto}`,
           referencia:otraRetForm.referencia||'',cuentaId:otraRetForm.cuentaBancariaId||'',cuentaNombre:ctaB?.banco||otraRetForm.cuentaBancariaNombre||'',
           montoUSD,montoBs,tasa,montoNativo:montoUSD,
-          terceroNombre:inv?.clientName||otraRetForm.clientName||'',estatus:'No Conciliado',
+          terceroNombre:clienteTexto,estatus:'No Conciliado',
           cuentaContableCreditoId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
           cuentaContableCreditoNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
           timestamp:Date.now()
@@ -21521,12 +21565,12 @@ function App() {
         const cobroIgtfId=`COB-IGTF-${Date.now().toString(36).toUpperCase()}`;
         batch.set(getDocRef('cobros_cxc',cobroIgtfId),{
           id:cobroIgtfId,esAnticipo:false,
-          neId:inv?.neOrigen||'',neDocumento:inv?.nroFiscal?`IGTF · Fac. ${inv.nroFiscal}`:'IGTF',
-          clientName:inv?.clientName||otraRetForm.clientName||'',clientRif:inv?.clientRif||otraRetForm.clientRif||'',
+          neId:neOrigenTexto,neDocumento:facsTexto?`IGTF · Fac. ${facsTexto}`:'IGTF',
+          clientName:clienteTexto,clientRif:facsSeleccionadas[0]?.clientRif||inv?.clientRif||otraRetForm.clientRif||'',
           monto:montoUSD,montoBs,moneda:'USD',tasa,
           metodo:otraRetForm.referencia?`IGTF (${otraRetForm.referencia})`:'IGTF Percibido',
           referencia:otraRetForm.referencia||'',cuentaBancariaId:otraRetForm.cuentaBancariaId||'',cuentaBancoNombre:ctaB?.banco||otraRetForm.cuentaBancariaNombre||'',
-          fecha:fechaComprobante,tipo:'IGTF',concepto:`IGTF percibido sobre pago de Fac. ${inv?.nroFiscal||''}`,
+          fecha:fechaComprobante,tipo:'IGTF',concepto:`IGTF percibido sobre pago de Fac. ${facsTexto}`,
           timestamp:Date.now()
         });
       }
@@ -40599,6 +40643,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         placeholder={String(parseNum(settings?.tasaBCV||0))}
                         value={otraRetForm.tasa||''}
                         onChange={e=>setOtraRetForm(f=>({...f,tasa:e.target.value}))}/>
+                    ):otraRetForm.tipoId==='IGTF'?(
+                    <div className="w-full border-2 border-slate-200 rounded-xl max-h-40 overflow-y-auto bg-white">
+                      {!otraRetForm.clientRif&&<div className="px-3 py-3 text-[10px] text-slate-400 font-bold text-center">Primero busca un cliente</div>}
+                      {(invoices||[]).filter(i=>i.clientRif===otraRetForm.clientRif).slice(0,80).map(i=>{
+                        const checked=(otraRetForm.facturaIds||[]).includes(i.id);
+                        return (
+                        <label key={i.id} className={`flex items-center gap-2 px-3 py-2 text-[10px] font-bold cursor-pointer border-b border-slate-100 last:border-0 ${checked?'bg-purple-50':''}`}>
+                          <input type="checkbox" checked={checked} onChange={e=>{
+                            const ids=new Set(otraRetForm.facturaIds||[]);
+                            if(e.target.checked) ids.add(i.id); else ids.delete(i.id);
+                            const idsArr=Array.from(ids);
+                            const facsSel=idsArr.map(id=>(invoices||[]).find(f=>f.id===id)).filter(Boolean);
+                            const totalCombinado=facsSel.reduce((s,f)=>s+parseNum(f.total||0),0);
+                            const primera=facsSel[0];
+                            const tasa=primera?parseNum(primera.tasa||primera.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1:parseNum(otraRetForm.tasa||0);
+                            setOtraRetForm(f=>({...f,facturaIds:idsArr,facturaId:idsArr[0]||'',tasa,baseImponibleUSD:totalCombinado}));
+                          }} className="accent-purple-600"/>
+                          <span>{i.nroFiscal?'#'+i.nroFiscal+' · ':''}{i.fecha?'('+i.fecha+')':''} ${formatNum(parseNum(i.total||0))}</span>
+                        </label>
+                      );})}
+                    </div>
                     ):(
                     <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 disabled:bg-slate-50 disabled:text-slate-400"
                       disabled={!otraRetForm.clientRif}
