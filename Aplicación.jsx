@@ -38552,6 +38552,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               porClienteModal[k].total+=getSaldoNEAtFecha(ne,null);
               porClienteModal[k].nes.push(ne);
             });
+            // Las NE con saldo negativo ("a favor" — ej. una factura que consolida 2 NE y a una le
+            // tocó de más en el reparto) quedan FUERA de allNesAbiertas (que solo filtra saldo>0.01)
+            // porque no tiene sentido ofrecerlas como línea "a pagar" — pero si no se restan en
+            // algún lado, el total del cliente queda inflado por ese crédito que sí existe (Estado
+            // de Cuenta sí las neta, sumando TODAS las NE del cliente). Se calculan aparte, sin
+            // agregarlas como pseudo-NE seleccionable, y se restan del total por cliente.
+            const negativosPorCliente={};
+            (notasEntrega||[]).forEach(ne=>{
+              if(ne.status==='ANULADA') return;
+              const s=getSaldoNEAtFecha(ne,null);
+              if(s>=-0.01) return;
+              const k=ne.clientRif||ne.clientName||'SIN-RIF';
+              negativosPorCliente[k]=(negativosPorCliente[k]||0)+s;
+            });
+            Object.keys(porClienteModal).forEach(k=>{
+              if(negativosPorCliente[k]) porClienteModal[k].total+=negativosPorCliente[k];
+            });
             // Repartir el crédito general (NC/ND "sin NE") de cada cliente entre sus NE, más
             // antigua primero — igual que se reparte un cobro. Sin esto, una NE ya cubierta por
             // una Nota de Crédito directa (sin factura específica) seguía apareciendo como
@@ -38591,7 +38608,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // NC/ND "sin NE" del cliente (ej. un cruce de cuenta manual) — ya se resta del total en
             // Estado de Cuenta, pero antes NUNCA se tomaba en cuenta aquí, así que Registrar Cobro
             // podía mostrar como pendiente algo que una Nota de Crédito ya había saldado.
-            const ncSinNEClienteSel = clienteSel ? (_manualNCPorCliente.get(clienteSel.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0) : 0;
+            // Excluye las que ya entraron arriba como pseudo-NE en ndsDirectas (mismo id) — si no,
+            // esas ND se suman dos veces: una como línea seleccionable y otra aquí.
+            const _ndsDirectasIds=new Set(ndsDirectas.map(nd=>nd._ndOrigId));
+            const ncSinNEClienteSel = clienteSel ? (_manualNCPorCliente.get(clienteSel.clientRif)||[]).filter(n=>!_ndsDirectasIds.has(n.id)).reduce((s,n)=>s+n._signedUSD,0) : 0;
             const saldoTotalCliente=Math.max(0,(clienteSel?.total||0)+ncSinNEClienteSel);
             const montoUSD=pm.moneda==='USD'?parseNum(pm.monto):parseNum(pm.monto)/Math.max(parseNum(pm.tasa),1);
             const montoBs=pm.moneda==='Bs'?parseNum(pm.monto):parseNum(pm.monto)*parseNum(pm.tasa||1);
