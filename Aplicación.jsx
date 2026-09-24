@@ -21479,6 +21479,7 @@ function App() {
       const totalFacsSeleccionadas=facsSeleccionadas.reduce((s,f)=>s+parseNum(f.total||0),0)||1;
       const batch=writeBatch(db);
       const idsCreados=[];
+      const repartoIGTF=[]; // {f,montoUSDf,montoBsf} por factura — se reutiliza abajo para el/los cobro(s)
       if(esIGTF && facsSeleccionadas.length>0){
         // Reparte el IGTF proporcional al total de cada factura seleccionada — una retención por
         // factura, para que cada una quede con su propio monto en Libro de Ventas y en pantalla.
@@ -21488,7 +21489,10 @@ function App() {
             ? parseFloat((montoUSD-facsSeleccionadas.slice(0,fi).reduce((s,ff,ii)=>s+parseFloat((montoUSD*(parseNum(ff.total||0)/totalFacsSeleccionadas)).toFixed(2)),0)).toFixed(2))
             : parseFloat((montoUSD*peso).toFixed(2));
           const montoBsf=parseFloat((montoUSDf*tasa).toFixed(2));
-          const idf=(otraRetForm._editId&&facsSeleccionadas.length===1)?otraRetForm._editId:`RET-EXTRA-${Date.now()}-${fi}-${Math.random().toString(36).substr(2,6)}`;
+          repartoIGTF.push({f,montoUSDf,montoBsf});
+          const idf=(otraRetForm._siblingIdsByFactura&&otraRetForm._siblingIdsByFactura[f.id])
+            ? otraRetForm._siblingIdsByFactura[f.id]
+            : (otraRetForm._editId&&facsSeleccionadas.length===1)?otraRetForm._editId:`RET-EXTRA-${Date.now()}-${fi}-${Math.random().toString(36).substr(2,6)}`;
           idsCreados.push(idf);
           batch.set(getDocRef('retencionesClientes',idf),{
             id:idf,tipo:tipo.id,tipoLabel:tipo.label,tipoExtra:true,
@@ -21561,23 +21565,78 @@ function App() {
           timestamp:Date.now()
         });
         if(ctaB) batch.update(getDocRef('banco_cuentas',ctaB.id),{saldo:parseNum(ctaB.saldo||0)+montoUSD});
-        // También aparece en Historial de Cobros — mismo formato que un cobro normal, sin ser anticipo
-        const cobroIgtfId=`COB-IGTF-${Date.now().toString(36).toUpperCase()}`;
-        batch.set(getDocRef('cobros_cxc',cobroIgtfId),{
-          id:cobroIgtfId,esAnticipo:false,
-          neId:neOrigenTexto,neDocumento:facsTexto?`IGTF · Fac. ${facsTexto}`:'IGTF',
-          clientName:clienteTexto,clientRif:facsSeleccionadas[0]?.clientRif||inv?.clientRif||otraRetForm.clientRif||'',
-          monto:montoUSD,montoBs,moneda:'USD',tasa,
-          metodo:otraRetForm.referencia?`IGTF (${otraRetForm.referencia})`:'IGTF Percibido',
-          referencia:otraRetForm.referencia||'',cuentaBancariaId:otraRetForm.cuentaBancariaId||'',cuentaBancoNombre:ctaB?.banco||otraRetForm.cuentaBancariaNombre||'',
-          fecha:fechaComprobante,tipo:'IGTF',concepto:`IGTF percibido sobre pago de Fac. ${facsTexto}`,
-          timestamp:Date.now()
+        // También aparece en Historial de Cobros — un cobro POR FACTURA, con el mismo reparto
+        // proporcional que las retenciones de arriba (repartoIGTF). Antes se creaba un único cobro
+        // con el monto TOTAL y se le acreditaba entero a la NE de la primera factura; las demás NE
+        // del grupo se quedaban sin que nada les bajara el saldo. grupoCobroId enlaza los N cobros
+        // entre sí, igual que un cobro masivo multi-NE normal.
+        const grupoCobroIgtf=repartoIGTF.length>1?`IGTF-${Date.now().toString(36).toUpperCase()}`:'';
+        repartoIGTF.forEach(({f,montoUSDf,montoBsf},fi)=>{
+          const cobroIgtfId=`COB-IGTF-${Date.now().toString(36).toUpperCase()}-${fi}`;
+          batch.set(getDocRef('cobros_cxc',cobroIgtfId),{
+            id:cobroIgtfId,esAnticipo:false,grupoCobroId:grupoCobroIgtf,
+            neId:f.neOrigen||'',neDocumento:f.nroFiscal?`IGTF · Fac. ${f.nroFiscal}`:(facsTexto?`IGTF · Fac. ${facsTexto}`:'IGTF'),
+            clientName:f.clientName||clienteTexto,clientRif:f.clientRif||inv?.clientRif||otraRetForm.clientRif||'',
+            monto:montoUSDf,montoBs:montoBsf,moneda:'USD',tasa,
+            metodo:otraRetForm.referencia?`IGTF (${otraRetForm.referencia})`:'IGTF Percibido',
+            referencia:otraRetForm.referencia||'',cuentaBancariaId:otraRetForm.cuentaBancariaId||'',cuentaBancoNombre:ctaB?.banco||otraRetForm.cuentaBancariaNombre||'',
+            fecha:fechaComprobante,tipo:'IGTF',concepto:repartoIGTF.length>1?`IGTF percibido sobre pago de Fac. ${facsTexto} (parte de Fac. ${f.nroFiscal||'—'})`:`IGTF percibido sobre pago de Fac. ${facsTexto}`,
+            timestamp:Date.now()
+          });
         });
       }
       await batch.commit();
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
       setDialog({title:esEdicion?'✅ Actualizada':'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF&&!esEdicion?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+  // ── Reparar cobros IGTF creados antes del fix de reparto (un solo cobro con el monto
+  // completo acreditado a una sola NE, en vez de uno por factura) — se detectan por patrón
+  // (más de una factura en el concepto/neDocumento y sin grupoCobroId) y se reemplazan por el
+  // reparto correcto, usando como fuente de verdad las retenciones IGTF hermanas (mismo
+  // _repartidoDe/referencia/fecha), que sí quedaron bien repartidas desde el principio.
+  const detectarCobrosIgtfSinRepartir=()=>(cobrosCxc||[]).filter(c=>c.tipo==='IGTF'&&!c.grupoCobroId&&(c.neDocumento||c.concepto||'').split(',').length>1);
+  const repararCobrosIgtf=async()=>{
+    setReparandoCobroIgtf(true);
+    try{
+      const pendientes=detectarCobrosIgtfSinRepartir();
+      const batch=writeBatch(db);
+      let reparados=0,facturasCubiertas=0;
+      pendientes.forEach((c,ci)=>{
+        const siblings=(retenciones||[]).filter(r=>r.tipo==='IGTF'&&r._repartidoDe&&r.referencia===c.referencia&&r.fechaComprobante===c.fecha);
+        if(siblings.length<2) return; // no hay grupo claro de retenciones hermanas — no se toca por seguridad
+        const sumaSiblingsUSD=siblings.reduce((s,r)=>s+parseNum(r.montoRetenidoUSD||0),0);
+        if(Math.abs(sumaSiblingsUSD-parseNum(c.monto||0))>0.05) return; // no cuadra con el cobro original — no se toca
+        batch.delete(getDocRef('cobros_cxc',c.id));
+        const facsTextoGrupo=siblings.map(s=>s.nroFiscal).filter(Boolean).join(', ');
+        const grupoId=`IGTF-FIX-${Date.now().toString(36).toUpperCase()}-${ci}`;
+        siblings.forEach((r,ri)=>{
+          const nid=`COB-IGTF-${Date.now().toString(36).toUpperCase()}-fx${ci}-${ri}`;
+          batch.set(getDocRef('cobros_cxc',nid),{
+            id:nid,esAnticipo:false,grupoCobroId:grupoId,
+            neId:r.neOrigen||'',neDocumento:r.nroFiscal?`IGTF · Fac. ${r.nroFiscal}`:(c.neDocumento||'IGTF'),
+            clientName:r.clientName||c.clientName||'',clientRif:r.clientRif||c.clientRif||'',
+            monto:parseNum(r.montoRetenidoUSD||0),montoBs:parseNum(r.montoRetenido||0),moneda:'USD',tasa:r.tasa||c.tasa||0,
+            metodo:c.metodo||'IGTF Percibido',referencia:c.referencia||'',cuentaBancariaId:c.cuentaBancariaId||'',cuentaBancoNombre:c.cuentaBancoNombre||'',
+            fecha:c.fecha,tipo:'IGTF',
+            concepto:`IGTF percibido sobre pago de Fac. ${facsTextoGrupo} (parte de Fac. ${r.nroFiscal||'—'})`,
+            timestamp:Date.now(),_reparadoDe:c.id
+          });
+        });
+        facturasCubiertas+=siblings.length;
+        reparados++;
+      });
+      if(reparados===0){
+        setDialog({title:'Nada que reparar',text:'No se encontró ningún cobro IGTF sin repartir que coincida de forma segura con su grupo de retenciones.',type:'alert'});
+        setReparandoCobroIgtf(false);return;
+      }
+      await batch.commit();
+      setDialog({title:'✅ Reparado',text:`${reparados} cobro(s) IGTF re-repartidos en ${facturasCubiertas} factura(s) en total. El saldo de Banco/Caja no cambió — la transacción real ya estaba correcta, solo se corrigió cómo se reparte entre las NE.`,type:'alert'});
+    }catch(e){
+      setDialog({title:'Error',text:e.message,type:'alert'});
+    }finally{
+      setReparandoCobroIgtf(false);
+    }
   };
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
@@ -21701,6 +21760,7 @@ function App() {
   const [retPage2, setRetPage2] = useState(0);
   const [showDiagNE, setShowDiagNE] = useState(false);
   const [showDiagRif, setShowDiagRif] = useState(false);
+  const [reparandoCobroIgtf, setReparandoCobroIgtf] = useState(false);
   // ── Ventas: Notas de Crédito / Débito ────────────────────────────────────────
   const [notasVentaCD, setNotasVentaCD] = useState([]);
   const [showVentaNCModal, setShowVentaNCModal] = useState(false);
@@ -37534,7 +37594,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // especial se calcula sobre la factura fiscal completa, no por documento interno.
             if(hit.inv?.nroFiscal && _nesByFiscal.has(hit.inv.nroFiscal)) hit = _nesByFiscal.get(hit.inv.nroFiscal);
             const {nes: nesTarget, inv} = hit;
-            const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
+            const tasa=parseNum(r.tasa||r.tasaFactura||inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
@@ -39855,7 +39915,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!hit) continue;
             if(hit.inv?.nroFiscal && _nesByFiscalEc.has(hit.inv.nroFiscal)) hit = _nesByFiscalEc.get(hit.inv.nroFiscal);
             const {nes: nesTarget, inv} = hit;
-            const tasa=parseNum(inv.tasa||inv.tasaFactura||0);
+            const tasa=parseNum(r.tasa||r.tasaFactura||inv.tasa||inv.tasaFactura||0);
             const montoBs=parseNum(r.montoRetenido||0);
             const sinTasa=!(tasa>1);
             const montoUSD=sinTasa?0:montoBs/tasa;
@@ -42115,6 +42175,17 @@ ${resumenHtml}
                       </>):null;
                     })()}
                     {(()=>{
+                      const pendientesIgtf=detectarCobrosIgtfSinRepartir();
+                      return pendientesIgtf.length>0?(
+                        <button onClick={()=>setDialog({title:'Reparar cobros IGTF sin repartir',text:`Se encontraron ${pendientesIgtf.length} cobro(s) IGTF de un pago con varias facturas que quedaron con el monto COMPLETO acreditado a una sola NE, en vez de repartido entre todas (bug ya corregido para los cobros nuevos). Esto va a borrar esos cobros y crear uno por factura, con el mismo monto total pero bien repartido, usando sus retenciones IGTF hermanas como referencia. El movimiento de Banco/Caja y el saldo de la cuenta NO se tocan — ya estaban correctos. ¿Continuar?`,type:'confirm',onConfirm:repararCobrosIgtf})}
+                          disabled={reparandoCobroIgtf}
+                          className="bg-orange-100 text-orange-700 px-2.5 py-1 rounded-lg text-[10px] font-black hover:bg-orange-200 transition-all disabled:opacity-50"
+                          title="Cobros IGTF de un pago con varias facturas que quedaron enteros en una sola NE en vez de repartidos entre todas">
+                          🔧 {reparandoCobroIgtf?'Reparando...':`${pendientesIgtf.length} cobro(s) IGTF sin repartir — reparar`}
+                        </button>
+                      ):null;
+                    })()}
+                    {(()=>{
                       // Diagnóstico: retenciones cuya factura.neOrigen apunta a una NE que existe,
                       // pero esa NE pertenece a OTRO cliente (RIF distinto). Estas SÍ se muestran
                       // ahora en CxC/Estado de Cuenta (como registro aparte bajo el cliente correcto),
@@ -42304,7 +42375,18 @@ ${resumenHtml}
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
                               <button onClick={()=>{
                                 if(ret.tipoExtra){
-                                  setOtraRetForm({...ret,_editId:ret.id,montoRetenidoUSD:ret.montoRetenidoUSD?String(ret.montoRetenidoUSD):'',montoRetenidoBs:ret.montoRetenido?String(ret.montoRetenido):''});
+                                  const esGrupoIGTF=ret.tipo==='IGTF'&&!!ret._repartidoDe;
+                                  const siblings=esGrupoIGTF?(retenciones||[]).filter(r=>r.tipo==='IGTF'&&r._repartidoDe===ret._repartidoDe):[ret];
+                                  const facturaIdsGrupo=siblings.map(s=>s.facturaId).filter(Boolean);
+                                  const montoUSDGrupo=siblings.reduce((s,r)=>s+parseNum(r.montoRetenidoUSD||0),0);
+                                  const baseUSDGrupo=facturaIdsGrupo.reduce((s,fid)=>{const f=(invoices||[]).find(i=>i.id===fid);return s+parseNum(f?.total||0);},0);
+                                  const idsPorFactura={}; siblings.forEach(s=>{if(s.facturaId) idsPorFactura[s.facturaId]=s.id;});
+                                  setOtraRetForm({...ret,_editId:ret.id,
+                                    montoRetenidoUSD:esGrupoIGTF?String(montoUSDGrupo):(ret.montoRetenidoUSD?String(ret.montoRetenidoUSD):''),
+                                    montoRetenidoBs:ret.montoRetenido?String(ret.montoRetenido):'',
+                                    facturaIds:esGrupoIGTF?facturaIdsGrupo:(ret.facturaId?[ret.facturaId]:[]),
+                                    baseImponibleUSD:esGrupoIGTF?baseUSDGrupo:(ret.baseImponibleUSD||0),
+                                    _siblingIdsByFactura:esGrupoIGTF?idsPorFactura:null});
                                   setOtraRetManual((ret.facturaId||'').startsWith('MANUAL-'));
                                   setOtraRetBusqCli(ret._manualCliente||ret.clientName||'');
                                   setShowOtraRetModal(true);
