@@ -37661,22 +37661,49 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _retCache = new Map();
           const _ncCache  = new Map();
 
-          // ── Helpers de saldo con fecha de corte ────────────────────────
-          const getSaldoNEAtFecha = (ne, fRef) => {
-            // tipo!=='IGTF': el IGTF es un cargo aparte (3% adicional al total de la factura, no
-            // un pago del propio total) — se excluye de Cobrado igual que ya se excluye de
-            // Retención, si no la NE queda con saldo "a favor" que no existe de verdad.
-            const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            // Sin Math.max(0,...): si la retención deja la cuenta en negativo (crédito a favor del cliente),
-            // se muestra el valor real en vez de forzarlo a $0,00.
-            return parseNum(ne.total||ne.totalUSD||0)-cobrado-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
-          };
           // Encontrar invoice vinculado a NE usando mapas pre-computados
           const findInvForNE=(ne)=>{
             const neId=ne.id||''; const neDoc=ne.documento||'';
             return (_invsByNe.get(neId)||_invsByNe.get(neDoc)||[])[0]
               ||(ne.facturaId?findInv(ne.facturaId):null)
               ||(ne.nroFiscal?findInv(ne.nroFiscal):null)||null;
+          };
+          // Grupo de NE que comparten una misma factura fiscal (consolidada) — reutiliza el mismo
+          // mapa _nesByFiscal que ya arma esa lista para el reparto de retenciones. Si la NE no
+          // tiene factura vinculada, o su factura no consolida más de una NE, el grupo es ella sola.
+          const getGrupoInvoiceNEs=(ne)=>{
+            const inv=findInvForNE(ne);
+            if(!inv) return [ne];
+            const hit=_nesByFiscal.get(inv.nroFiscal)||_nesByFiscal.get(inv.documento)||_nesByFiscal.get(inv.id);
+            if(!hit||hit.nes.length<=1) return [ne];
+            return hit.nes;
+          };
+          // ── Helpers de saldo con fecha de corte ────────────────────────
+          // tipo!=='IGTF': el IGTF es un cargo aparte (3% adicional al total de la factura, no
+          // un pago del propio total) — se excluye de Cobrado igual que ya se excluye de
+          // Retención, si no la NE queda con saldo "a favor" que no existe de verdad.
+          const _cobradoDirectoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+          const _saldoDirectoNE=(ne,fRef)=>parseNum(ne.total||ne.totalUSD||0)-_cobradoDirectoNEAtFecha(ne,fRef)-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
+          const getSaldoNEAtFecha = (ne, fRef) => {
+            const grupo=getGrupoInvoiceNEs(ne);
+            if(grupo.length<=1) return _saldoDirectoNE(ne,fRef);
+            // Solo se redistribuye si el GRUPO tiene alguna hermana en negativo (crédito "a favor"
+            // real) — si todas están en positivo (ej. una factura que consolida 3 NE y ninguna ha
+            // recibido su retención todavía), cada una conserva su propio cálculo tal cual, sin
+            // tocar nada. Redistribuir siempre por peso, aunque no haya anomalía, movía saldos que
+            // ya estaban bien (ej. $625,53 → $680,24) sin motivo.
+            const hayNegativa=grupo.some(n=>_saldoDirectoNE(n,fRef)<-0.01);
+            if(!hayNegativa) return _saldoDirectoNE(ne,fRef);
+            // Un cobro o anticipo aplicado NE por NE (en vez de proporcional al peso de cada una,
+            // como sí se hace con la retención) puede dejar a una hermana "a favor" y a otra
+            // "pendiente" por el mismo monto, aunque el grupo completo ya esté saldado — se
+            // calcula el saldo del grupo entero y se reparte proporcional, igual que la
+            // retención, en vez de depender de cómo haya quedado repartido cada cobro histórico.
+            // Sin Math.max(0,...): si queda negativo (crédito a favor), se muestra el valor real.
+            const totalGrupo=grupo.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+            const pesoNE=parseNum(ne.total||ne.totalUSD||0)/totalGrupo;
+            const saldoGrupo=grupo.reduce((s,n)=>s+_saldoDirectoNE(n,fRef),0);
+            return saldoGrupo*pesoNE;
           };
           // NC/ND en USD — O(1) usando mapa pre-computado
           const getNCUSDNEAtFecha=(ne,fRef)=>{
@@ -40013,7 +40040,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
             return ncsNe;
           };
-          const getSaldoNE = (ne) => {
+          const findInvForNEec=(ne)=>{
+            const rifOkEc2=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
+            return ne.facturaId
+              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkEc2(i))
+              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOkEc2(i));
+          };
+          // Grupo de NE que comparten una misma factura fiscal consolidada — mismo criterio que en CxC.
+          const getGrupoInvoiceNEsEc=(ne)=>{
+            const inv=findInvForNEec(ne);
+            if(!inv) return [ne];
+            const hit=_nesByFiscalEc.get(inv.nroFiscal)||_nesByFiscalEc.get(inv.documento)||_nesByFiscalEc.get(inv.id);
+            if(!hit||hit.nes.length<=1) return [ne];
+            return hit.nes;
+          };
+          const _saldoDirectoNEec=(ne)=>{
             // tipo!=='IGTF': cargo aparte (3% adicional, no un pago del propio total) — se excluye
             // de Cobrado igual que de Retención más abajo.
             const cobrado=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -40027,11 +40068,29 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               return s+(n.tipo==='NC'?u:-u);
             },0);
             const retD=getRetsDetalleNEec(ne);
-            // Sin Math.max(0,...): si la retención deja la cuenta en negativo (crédito a favor), se muestra el valor real.
             // igtfUSD se excluye del descuento: el IGTF es un cargo aparte, ya excluido arriba de
             // Cobrado también — contarlo en cualquiera de los dos lados deja un saldo "a favor"
             // que no existe de verdad.
             return parseNum(ne.total||ne.montoBase||0)-cobrado-nc-retD.ivaUSD-retD.otrasUSD+retD.igtfUSD;
+          };
+          const getSaldoNE = (ne) => {
+            const grupo=getGrupoInvoiceNEsEc(ne);
+            if(grupo.length<=1) return _saldoDirectoNEec(ne);
+            // Solo se redistribuye si el GRUPO tiene alguna hermana en negativo (crédito "a favor"
+            // real) — si todas están en positivo, cada una conserva su propio cálculo, sin tocar
+            // nada (evita mover saldos que ya estaban bien sin motivo).
+            const hayNegativa=grupo.some(n=>_saldoDirectoNEec(n)<-0.01);
+            if(!hayNegativa) return _saldoDirectoNEec(ne);
+            // Un cobro o anticipo aplicado NE por NE (en vez de proporcional al peso de cada una,
+            // como sí se hace con la retención) puede dejar a una hermana "a favor" y a otra
+            // "pendiente" por el mismo monto, aunque el grupo completo ya esté saldado — se
+            // calcula el saldo del grupo entero y se reparte proporcional, igual que la
+            // retención. Sin Math.max(0,...): si queda negativo (crédito a favor), se muestra el
+            // valor real en vez de forzarlo a $0,00.
+            const totalGrupo=grupo.reduce((s,n)=>s+parseNum(n.total||n.montoBase||0),0)||1;
+            const pesoNE=parseNum(ne.total||ne.montoBase||0)/totalGrupo;
+            const saldoGrupo=grupo.reduce((s,n)=>s+_saldoDirectoNEec(n),0);
+            return saldoGrupo*pesoNE;
           };
           const allNEs=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
