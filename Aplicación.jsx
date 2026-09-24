@@ -21449,6 +21449,16 @@ function App() {
   };
   // guardarOtraRet — scope de componente (modal se renderiza fuera del IIFE CxC)
   // guardarOtraRet: función simple (no useCallback) — evita TDZ con invoices
+  // El neOrigen guardado en una factura puede ser el id real de Firestore de la NE, o su
+  // "documento" (ej. "NE-00210"), según cómo haya quedado cargado — el resto de la app ya lo
+  // resuelve así en CxC/Estado de Cuenta (n.id===X||n.documento===X). Los registros que se
+  // buscan por match DIRECTO de neId (cobros_cxc, banco_movimientos) necesitan el id real, así
+  // que hay que resolverlo aquí explícitamente en vez de confiar en el valor crudo.
+  const resolverNEId=(neOrigenRaw)=>{
+    if(!neOrigenRaw) return '';
+    const neReal=(notasEntrega||[]).find(n=>n.id===neOrigenRaw||n.documento===neOrigenRaw);
+    return neReal?neReal.id:neOrigenRaw;
+  };
   const guardarOtraRet=async()=>{
     const {facturaId,nroComprobante,fechaComprobante,tipoId}=otraRetForm;
     const esIGTF=tipoId==='IGTF';
@@ -21500,7 +21510,7 @@ function App() {
             cuentaContableId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
             cuentaContableNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
             facturaId:f.id,nroFiscal:f.nroFiscal||'',
-            neId:f.neOrigen||'',neOrigen:f.neOrigen||'',
+            neId:resolverNEId(f.neOrigen),neOrigen:f.neOrigen||'',
             clientRif:f.clientRif||otraRetForm.clientRif||'',clientName:f.clientName||otraRetForm.clientName||'',
             _manualRif:'',_manualCliente:'',
             nroRetencion:facsSeleccionadas.length>1?`${nroComprobante}-${fi+1}`:nroComprobante,fechaComprobante,
@@ -21526,7 +21536,7 @@ function App() {
         cuentaContableId:otraRetForm.cuentaContableId||tipo.cuentaContableId||'',
         cuentaContableNombre:otraRetForm.cuentaContableNombre||tipo.cuentaContableNombre||'',
         facturaId:facturaIdFinal,nroFiscal:inv?.nroFiscal||'',
-        neId:inv?.neOrigen||'',neOrigen:inv?.neOrigen||'',
+        neId:resolverNEId(inv?.neOrigen),neOrigen:inv?.neOrigen||'',
         clientRif:inv?.clientRif||otraRetForm.clientRif||'',clientName:inv?.clientName||otraRetForm.clientName||'',
         _manualRif:esManualOtra?(otraRetForm.clientRif||''):'',_manualCliente:esManualOtra?(otraRetForm.clientName||''):'',
         nroRetencion:nroComprobante,fechaComprobante,
@@ -21552,7 +21562,7 @@ function App() {
         const ctaB=(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId);
         const facsTexto=facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', ')||inv?.nroFiscal||'';
         const clienteTexto=facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'';
-        const neOrigenTexto=facsSeleccionadas.length===1?(facsSeleccionadas[0]?.neOrigen||''):(inv?.neOrigen||'');
+        const neOrigenTexto=resolverNEId(facsSeleccionadas.length===1?(facsSeleccionadas[0]?.neOrigen||''):(inv?.neOrigen||''));
         const mvId=`MV-IGTF-${Date.now().toString(36).toUpperCase()}`;
         batch.set(getDocRef('banco_movimientos',mvId),{
           id:mvId,fecha:fechaComprobante,tipo:'Ingreso',origenIngreso:'IGTF Percibido',
@@ -21575,7 +21585,7 @@ function App() {
           const cobroIgtfId=`COB-IGTF-${Date.now().toString(36).toUpperCase()}-${fi}`;
           batch.set(getDocRef('cobros_cxc',cobroIgtfId),{
             id:cobroIgtfId,esAnticipo:false,grupoCobroId:grupoCobroIgtf,
-            neId:f.neOrigen||'',neDocumento:f.nroFiscal?`IGTF · Fac. ${f.nroFiscal}`:(facsTexto?`IGTF · Fac. ${facsTexto}`:'IGTF'),
+            neId:resolverNEId(f.neOrigen),neDocumento:f.nroFiscal?`IGTF · Fac. ${f.nroFiscal}`:(facsTexto?`IGTF · Fac. ${facsTexto}`:'IGTF'),
             clientName:f.clientName||clienteTexto,clientRif:f.clientRif||inv?.clientRif||otraRetForm.clientRif||'',
             monto:montoUSDf,montoBs:montoBsf,moneda:'USD',tasa,
             metodo:otraRetForm.referencia?`IGTF (${otraRetForm.referencia})`:'IGTF Percibido',
@@ -21596,6 +21606,13 @@ function App() {
   // reparto correcto, usando como fuente de verdad las retenciones IGTF hermanas (mismo
   // _repartidoDe/referencia/fecha), que sí quedaron bien repartidas desde el principio.
   const detectarCobrosIgtfSinRepartir=()=>(cobrosCxc||[]).filter(c=>c.tipo==='IGTF'&&!c.grupoCobroId&&(c.neDocumento||c.concepto||'').split(',').length>1);
+  // Segundo patrón, más sutil: cobros IGTF que YA quedaron uno por factura (grupoCobroId, un
+  // solo Fac. en neDocumento) pero cuyo neId no resuelve a ninguna NE real — pasaba cuando neId
+  // se tomaba del neOrigen crudo de la factura, que a veces es el "documento" de la NE (ej.
+  // "NE-00210") en vez de su id real de Firestore. La retención IGTF hermana de esa misma
+  // factura sí resuelve bien la NE (usa el motor de match de CxC), así que sirve de referencia
+  // para corregir — aquí solo se actualiza el campo neId, no se borra/recrea nada.
+  const detectarCobrosIgtfNeIdRoto=()=>(cobrosCxc||[]).filter(c=>c.tipo==='IGTF'&&c.neId&&!(notasEntrega||[]).some(n=>n.id===c.neId));
   const repararCobrosIgtf=async()=>{
     setReparandoCobroIgtf(true);
     try{
@@ -21614,7 +21631,7 @@ function App() {
           const nid=`COB-IGTF-${Date.now().toString(36).toUpperCase()}-fx${ci}-${ri}`;
           batch.set(getDocRef('cobros_cxc',nid),{
             id:nid,esAnticipo:false,grupoCobroId:grupoId,
-            neId:r.neOrigen||'',neDocumento:r.nroFiscal?`IGTF · Fac. ${r.nroFiscal}`:(c.neDocumento||'IGTF'),
+            neId:resolverNEId(r.neOrigen),neDocumento:r.nroFiscal?`IGTF · Fac. ${r.nroFiscal}`:(c.neDocumento||'IGTF'),
             clientName:r.clientName||c.clientName||'',clientRif:r.clientRif||c.clientRif||'',
             monto:parseNum(r.montoRetenidoUSD||0),montoBs:parseNum(r.montoRetenido||0),moneda:'USD',tasa:r.tasa||c.tasa||0,
             metodo:c.metodo||'IGTF Percibido',referencia:c.referencia||'',cuentaBancariaId:c.cuentaBancariaId||'',cuentaBancoNombre:c.cuentaBancoNombre||'',
@@ -21626,12 +21643,22 @@ function App() {
         facturasCubiertas+=siblings.length;
         reparados++;
       });
-      if(reparados===0){
-        setDialog({title:'Nada que reparar',text:'No se encontró ningún cobro IGTF sin repartir que coincida de forma segura con su grupo de retenciones.',type:'alert'});
+      let neIdCorregidos=0;
+      detectarCobrosIgtfNeIdRoto().forEach(c=>{
+        const sibling=(retenciones||[]).find(r=>r.tipo==='IGTF'&&r.referencia===c.referencia&&r.fechaComprobante===c.fecha&&r.nroFiscal&&(c.neDocumento||c.concepto||'').includes(r.nroFiscal));
+        if(!sibling) return; // no se encontró con qué corregirlo — no se toca
+        const neCorrecta=resolverNEId(sibling.neOrigen);
+        if(!neCorrecta||!(notasEntrega||[]).some(n=>n.id===neCorrecta)) return; // tampoco resuelve — no se toca
+        batch.update(getDocRef('cobros_cxc',c.id),{neId:neCorrecta});
+        neIdCorregidos++;
+      });
+      if(reparados===0&&neIdCorregidos===0){
+        setDialog({title:'Nada que reparar',text:'No se encontró ningún cobro IGTF que coincida de forma segura con su grupo de retenciones.',type:'alert'});
         setReparandoCobroIgtf(false);return;
       }
       await batch.commit();
-      setDialog({title:'✅ Reparado',text:`${reparados} cobro(s) IGTF re-repartidos en ${facturasCubiertas} factura(s) en total. El saldo de Banco/Caja no cambió — la transacción real ya estaba correcta, solo se corrigió cómo se reparte entre las NE.`,type:'alert'});
+      const partes=[reparados>0?`${reparados} cobro(s) re-repartidos en ${facturasCubiertas} factura(s)`:'',neIdCorregidos>0?`${neIdCorregidos} cobro(s) reconectados a su NE correcta`:''].filter(Boolean).join(' · ');
+      setDialog({title:'✅ Reparado',text:`${partes}. El saldo de Banco/Caja no cambió — la transacción real ya estaba correcta, solo se corrigió cómo/dónde se refleja en cada NE.`,type:'alert'});
     }catch(e){
       setDialog({title:'Error',text:e.message,type:'alert'});
     }finally{
@@ -42175,13 +42202,15 @@ ${resumenHtml}
                       </>):null;
                     })()}
                     {(()=>{
-                      const pendientesIgtf=detectarCobrosIgtfSinRepartir();
-                      return pendientesIgtf.length>0?(
-                        <button onClick={()=>setDialog({title:'Reparar cobros IGTF sin repartir',text:`Se encontraron ${pendientesIgtf.length} cobro(s) IGTF de un pago con varias facturas que quedaron con el monto COMPLETO acreditado a una sola NE, en vez de repartido entre todas (bug ya corregido para los cobros nuevos). Esto va a borrar esos cobros y crear uno por factura, con el mismo monto total pero bien repartido, usando sus retenciones IGTF hermanas como referencia. El movimiento de Banco/Caja y el saldo de la cuenta NO se tocan — ya estaban correctos. ¿Continuar?`,type:'confirm',onConfirm:repararCobrosIgtf})}
+                      const nSinRepartir=detectarCobrosIgtfSinRepartir().length;
+                      const nNeIdRoto=detectarCobrosIgtfNeIdRoto().length;
+                      const totalPendientes=nSinRepartir+nNeIdRoto;
+                      return totalPendientes>0?(
+                        <button onClick={()=>setDialog({title:'Reparar cobros IGTF',text:`Se encontraron ${totalPendientes} cobro(s) IGTF con problemas ya corregidos en el código para los cobros nuevos:${nSinRepartir>0?`\n· ${nSinRepartir} de un pago con varias facturas, con el monto COMPLETO acreditado a una sola NE en vez de repartido entre todas.`:''}${nNeIdRoto>0?`\n· ${nNeIdRoto} ya repartidos uno por factura, pero sin quedar conectados a ninguna NE (no aparecen como "Pago" en su fila).`:''}\nSe van a corregir usando sus retenciones IGTF hermanas como referencia. El movimiento de Banco/Caja y el saldo de la cuenta NO se tocan — ya estaban correctos. ¿Continuar?`,type:'confirm',onConfirm:repararCobrosIgtf})}
                           disabled={reparandoCobroIgtf}
                           className="bg-orange-100 text-orange-700 px-2.5 py-1 rounded-lg text-[10px] font-black hover:bg-orange-200 transition-all disabled:opacity-50"
-                          title="Cobros IGTF de un pago con varias facturas que quedaron enteros en una sola NE en vez de repartidos entre todas">
-                          🔧 {reparandoCobroIgtf?'Reparando...':`${pendientesIgtf.length} cobro(s) IGTF sin repartir — reparar`}
+                          title="Cobros IGTF con el monto completo en una sola NE, o ya repartidos pero sin conectar a su NE">
+                          🔧 {reparandoCobroIgtf?'Reparando...':`${totalPendientes} cobro(s) IGTF con problemas — reparar`}
                         </button>
                       ):null;
                     })()}
