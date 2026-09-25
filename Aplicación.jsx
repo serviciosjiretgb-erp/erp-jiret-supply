@@ -21777,6 +21777,7 @@ function App() {
   const [retBusqFact, setRetBusqFact] = useState('');
   const [retFactManual, setRetFactManual] = useState(false); // modo ingreso manual de factura
   const [retClientSearch, setRetClientSearch] = useState('');
+  const [retNDBusq, setRetNDBusq] = useState(''); // buscador de ND (retención pendiente) a vincular en modo manual
   const [grafVentasFiltros, setGrafVentasFiltros] = useState({ anio: '', mes: '', vendedor: '', categoria: '', tabActiva: 'productos' });
   const [retFiltMes2, setRetFiltMes2] = useState('');
   const [retFiltTipo2, setRetFiltTipo2] = useState('');
@@ -41494,6 +41495,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               }else{
                 await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               }
+              // Si se vinculó una ND (retención pendiente) desde el modo manual, esta retención YA
+              // llegó — se marca la ND como resuelta en vez de dejarla como pendiente para siempre.
+              if(retForm._ndVinculadaId){
+                await updateDoc(getDocRef('notasVentaCreditoDebito',retForm._ndVinculadaId),{
+                  montoCobrado:parseNum(retForm._ndVinculadaMonto||0),saldoPendiente:0,statusCxC:'COBRADA',
+                  _resueltaPorRetencionId:id,fechaUltimoCobro:retForm.fechaComprobante||getTodayDate(),
+                });
+              }
+              setRetNDBusq('');
               setShowRetModal(false);setRetBusqFact('');setRetFactManual(false);
               {const _ctaIVA=settings?.retClienteCuentasCfg?.IVA;setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA',cuentaContableRetId:_ctaIVA?.cuentaContableId||'',cuentaContableRetNombre:_ctaIVA?.cuentaContableNombre||''});}
               setDialog({title:'✅ Retención guardada',text:`Comprobante ${retForm.nroRetencion} ${isEditing?'actualizado':'registrado'}.`,type:'alert'});
@@ -41829,7 +41839,7 @@ ${resumenHtml}
                     <option value="1">I Quincena (01–15)</option>
                     <option value="2">II Quincena (16–{lastDay})</option>
                   </select></div>
-                <button onClick={()=>{const _ctaIVA=settings?.retClienteCuentasCfg?.IVA;setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA',cuentaContableRetId:_ctaIVA?.cuentaContableId||'',cuentaContableRetNombre:_ctaIVA?.cuentaContableNombre||''});setRetFactManual(false);setRetBusqFact('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
+                <button onClick={()=>{const _ctaIVA=settings?.retClienteCuentasCfg?.IVA;setRetForm({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:libroQuincena,tipoRetencion:'IVA',cuentaContableRetId:_ctaIVA?.cuentaContableId||'',cuentaContableRetNombre:_ctaIVA?.cuentaContableNombre||''});setRetFactManual(false);setRetBusqFact('');setRetNDBusq('');setShowRetModal(true);}} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-blue-700 flex items-center gap-2"><Plus size={14}/>Registrar Retención</button>
                 <button onClick={()=>{setAnulFiscalForm(initAnulFiscal());setAnulCliQuery('');setShowAnulFiscalModal(true);}} className="bg-red-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-red-700 flex items-center gap-2"><Ban size={14}/>Anulación Fiscal</button>
                 <button onClick={()=>setShowAnulHistorial(true)} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><History size={14}/>Historial Anulación {(invoices||[]).filter(f=>f.esAnulacionFiscal).length>0?`(${(invoices||[]).filter(f=>f.esAnulacionFiscal).length})`:''}</button>
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
@@ -42611,6 +42621,38 @@ ${resumenHtml}
                         </div>}
                         {retFactManual && <div className="space-y-2 bg-orange-50 border border-orange-200 rounded-xl p-3">
                           <div className="text-[9px] font-black text-orange-700 uppercase mb-2">Factura de otro período — Datos manuales</div>
+                          {(()=>{
+                            const ndsPendientesRet=(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(parseNum(n.monto||0)-parseNum(n.montoCobrado||0))>0.01);
+                            const ndsFiltRet=retNDBusq?ndsPendientesRet.filter(n=>(n.clientName||'').toUpperCase().includes(retNDBusq.toUpperCase())||(n.clientRif||'').toUpperCase().includes(retNDBusq.toUpperCase())||(n.concepto||'').toUpperCase().includes(retNDBusq.toUpperCase())):ndsPendientesRet;
+                            return(
+                            <div className="bg-purple-50 border border-purple-200 rounded-xl p-2 mb-1">
+                              <label className="text-[9px] font-black text-purple-700 uppercase block mb-1">🔗 Vincular ND (Retención Pendiente) — opcional</label>
+                              {retForm._ndVinculadaId ? (
+                                <div className="flex items-center justify-between bg-white border border-purple-300 rounded-lg px-2 py-1.5">
+                                  <span className="text-[9px] font-black text-purple-700">✓ ND {retForm._ndVinculadaNroFiscal} — {retForm._ndVinculadaConcepto||'sin concepto'} · Bs.{formatNum(retForm._ndVinculadaMonto||0)}</span>
+                                  <button type="button" onClick={()=>setRetForm(f=>({...f,_ndVinculadaId:'',_ndVinculadaConcepto:'',_ndVinculadaMonto:0,_ndVinculadaNroFiscal:''}))} className="text-purple-400 hover:text-red-500 font-black text-xs px-1">✕</button>
+                                </div>
+                              ):(<>
+                                <input value={retNDBusq} onChange={e=>setRetNDBusq(e.target.value)} placeholder="Buscar ND por cliente, RIF o concepto..." className="w-full border border-purple-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-purple-500 mb-1 bg-white"/>
+                                <div className="max-h-28 overflow-y-auto border border-purple-100 rounded-lg divide-y divide-purple-50 bg-white">
+                                  {ndsFiltRet.length===0&&<div className="px-2 py-2 text-[9px] text-gray-400 text-center">No hay ND pendientes{retNDBusq?' que coincidan':''}</div>}
+                                  {ndsFiltRet.slice(0,8).map(n=>{
+                                    const saldoNd=parseNum(n.monto||0)-parseNum(n.montoCobrado||0);
+                                    return(
+                                    <div key={n.id} onMouseDown={()=>setRetForm(f=>({...f,
+                                      _ndVinculadaId:n.id,_ndVinculadaConcepto:n.concepto||'',_ndVinculadaMonto:saldoNd,_ndVinculadaNroFiscal:n.nroFiscal||n.documento||n.id,
+                                      _manualCliente:f._manualCliente||n.clientName||'',_manualRif:f._manualRif||n.clientRif||'',
+                                      montoRetenido:f.montoRetenido||String(saldoNd.toFixed(2))
+                                    }))} className="cursor-pointer px-2 py-1.5 hover:bg-purple-50 text-[9px]">
+                                      <div className="flex justify-between"><span className="font-black">{n.clientName||'—'}</span><span className="font-black text-purple-600">Bs.{formatNum(saldoNd)}</span></div>
+                                      <div className="text-gray-400">{n.fecha||'—'} · {n.concepto||'Sin concepto'}</div>
+                                    </div>);
+                                  })}
+                                </div>
+                                <p className="text-[8px] text-purple-400 mt-1">Al guardar, esta ND se marca como resuelta por esta retención.</p>
+                              </>)}
+                            </div>);
+                          })()}
                           <div className="grid grid-cols-2 gap-2">
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Fecha</label><input type="date" value={retForm._manualFecha||getTodayDate()} onChange={e=>setRetForm(f=>({...f,_manualFecha:e.target.value,fechaComprobante:f.fechaComprobante||e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Fiscal</label><input value={retForm._manualNroFiscal||''} onChange={e=>setRetForm(f=>({...f,_manualNroFiscal:e.target.value,facturaId:'MANUAL-'+e.target.value}))} placeholder="00003025" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
@@ -42684,7 +42726,7 @@ ${resumenHtml}
                         })()}
                       </div>
                       <div className="flex gap-3 pt-2">
-                        <button onClick={()=>setShowRetModal(false)} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-100">Cancelar</button>
+                        <button onClick={()=>{setShowRetModal(false);setRetNDBusq('');}} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-100">Cancelar</button>
                         <button onClick={handleSaveRetencion} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700">✅ Guardar</button>
                       </div>
                     </div>
