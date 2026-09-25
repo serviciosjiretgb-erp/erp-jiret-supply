@@ -21665,6 +21665,41 @@ function App() {
       setReparandoCobroIgtf(false);
     }
   };
+  // ── Reparar ND vinculadas a una retención (Registrar Retención → Vincular ND) que se marcaron
+  // resueltas en sus propios campos pero se quedaron sin el cobros_cxc de cierre — es ESE cobro
+  // (neId='ND-'+id) el que el resto del sistema (CxC, Estado de Cuenta, Registrar Cobro) revisa
+  // para saber si una ND sigue pendiente, no los campos de la ND en sí.
+  const [reparandoNDsCierre, setReparandoNDsCierre] = useState(false);
+  const detectarNDsSinCobroCierre=()=>(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&n._resueltaPorRetencionId&&!(cobrosCxc||[]).some(c=>c.neId===`ND-${n.id}`));
+  const repararNDsSinCobroCierre=async()=>{
+    setReparandoNDsCierre(true);
+    try{
+      const pendientes=detectarNDsSinCobroCierre();
+      if(pendientes.length===0){
+        setDialog({title:'Nada que reparar',text:'No hay ND vinculadas a una retención que les falte su cobro de cierre.',type:'alert'});
+        setReparandoNDsCierre(false);return;
+      }
+      const batch=writeBatch(db);
+      pendientes.forEach((n,i)=>{
+        const tasaNd=parseNum(n.tasaFactura||0)||parseNum(tasaBCV||0)||1;
+        const montoUSDNd=parseNum(n.monto||0)/tasaNd;
+        const cobId=`COB-RETND-FIX-${Date.now()}-${i}`;
+        batch.set(getDocRef('cobros_cxc',cobId),{
+          id:cobId,neId:`ND-${n.id}`,neDocumento:`ND ${n.nroDocumento||n.id}`,
+          clientName:n.clientName||'',clientRif:n.clientRif||'',
+          monto:montoUSDNd,montoUSD:montoUSDNd,montoBs:parseFloat((montoUSDNd*tasaNd).toFixed(2)),tasa:tasaNd,moneda:'USD',
+          metodo:'Retención',referencia:'',concepto:'Cruce con retención recibida (reparación)',
+          fecha:n.fechaUltimoCobro||getTodayDate(),vendedor:'',timestamp:Date.now()
+        });
+      });
+      await batch.commit();
+      setDialog({title:'✅ Reparado',text:`${pendientes.length} ND cerradas correctamente — ya no deberían salir pendientes en CxC ni Estado de Cuenta.`,type:'alert'});
+    }catch(e){
+      setDialog({title:'Error',text:e.message,type:'alert'});
+    }finally{
+      setReparandoNDsCierre(false);
+    }
+  };
   const [cxcFechaRef, setCxcFechaRef] = useState(getTodayDate()); // fecha de corte del reporte
   const [cxcModo, setCxcModo] = useState('actual'); // 'actual' | 'fecha'
   const [cxcEditCobro, setCxcEditCobro] = useState(null); // cobro en edición
@@ -41496,12 +41531,33 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               }
               // Si se vinculó una ND (retención pendiente) desde el modo manual, esta retención YA
-              // llegó — se marca la ND como resuelta en vez de dejarla como pendiente para siempre.
+              // llegó — hay que CERRARLA de la misma forma en que el resto del sistema mide lo
+              // cobrado de una ND: un cobros_cxc con neId='ND-'+id (así lo buscan _manualNCPorCliente
+              // en CxC/Estado de Cuenta y ndsDirectas en Registrar Cobro). Actualizar solo los campos
+              // propios de la ND no bastaba — nadie los lee para decidir si sigue pendiente.
               if(retForm._ndVinculadaId){
-                await updateDoc(getDocRef('notasVentaCreditoDebito',retForm._ndVinculadaId),{
-                  montoCobrado:parseNum(retForm._ndVinculadaMonto||0),saldoPendiente:0,statusCxC:'COBRADA',
-                  _resueltaPorRetencionId:id,fechaUltimoCobro:retForm.fechaComprobante||getTodayDate(),
-                });
+                const ndLinked=(notasVentaCD||[]).find(n=>n.id===retForm._ndVinculadaId);
+                if(ndLinked){
+                  const tasaNd=parseNum(ndLinked.tasaFactura||0)||parseNum(tasaBCV||0)||1;
+                  const montoUSDNd=parseNum(ndLinked.monto||0)/tasaNd;
+                  const yaCobradoNd=(cobrosCxc||[]).filter(c=>c.neId===`ND-${ndLinked.id}`).reduce((s,c)=>s+parseNum(c.monto||0),0);
+                  const saldoUSDNd=Math.max(0,montoUSDNd-yaCobradoNd);
+                  if(saldoUSDNd>0.005){
+                    const cobIdNd=`COB-RETND-${Date.now()}-${Math.random().toString(36).substr(2,6)}`;
+                    await setDoc(getDocRef('cobros_cxc',cobIdNd),{
+                      id:cobIdNd,neId:`ND-${ndLinked.id}`,neDocumento:`ND ${ndLinked.nroDocumento||ndLinked.id}`,
+                      clientName:ndLinked.clientName||'',clientRif:ndLinked.clientRif||'',
+                      monto:saldoUSDNd,montoUSD:saldoUSDNd,montoBs:parseFloat((saldoUSDNd*tasaNd).toFixed(2)),tasa:tasaNd,moneda:'USD',
+                      metodo:'Retención',referencia:retForm.nroRetencion||'',
+                      concepto:`Cruce con retención ${retForm.nroRetencion||''} recibida`,
+                      fecha:retForm.fechaComprobante||getTodayDate(),vendedor:'',timestamp:Date.now()
+                    });
+                  }
+                  await updateDoc(getDocRef('notasVentaCreditoDebito',ndLinked.id),{
+                    montoCobrado:parseFloat((yaCobradoNd+saldoUSDNd).toFixed(2)),saldoPendiente:0,statusCxC:'COBRADA',
+                    _resueltaPorRetencionId:id,fechaUltimoCobro:retForm.fechaComprobante||getTodayDate(),
+                  });
+                }
               }
               setRetNDBusq('');
               setShowRetModal(false);setRetBusqFact('');setRetFactManual(false);
@@ -42321,6 +42377,17 @@ ${resumenHtml}
                           className="bg-orange-100 text-orange-700 px-2.5 py-1 rounded-lg text-[10px] font-black hover:bg-orange-200 transition-all disabled:opacity-50"
                           title="Cobros IGTF con el monto completo en una sola NE, o ya repartidos pero sin conectar a su NE">
                           🔧 {reparandoCobroIgtf?'Reparando...':`${totalPendientes} cobro(s) IGTF con problemas — reparar`}
+                        </button>
+                      ):null;
+                    })()}
+                    {(()=>{
+                      const ndsRotas=detectarNDsSinCobroCierre();
+                      return ndsRotas.length>0?(
+                        <button onClick={()=>setDialog({title:'Reparar cierre de ND',text:`Se encontraron ${ndsRotas.length} ND vinculadas a una retención (Registrar Retención → Vincular ND) que se marcaron resueltas pero les falta el cobro de cierre — por eso siguen saliendo pendientes en CxC/Estado de Cuenta. Se va a crear ese cobro para cada una (mismo monto, sin tocar Banco/Caja). ¿Continuar?`,type:'confirm',onConfirm:repararNDsSinCobroCierre})}
+                          disabled={reparandoNDsCierre}
+                          className="bg-purple-100 text-purple-700 px-2.5 py-1 rounded-lg text-[10px] font-black hover:bg-purple-200 transition-all disabled:opacity-50"
+                          title="ND vinculadas a una retención que se quedaron sin su cobro de cierre">
+                          🔧 {reparandoNDsCierre?'Reparando...':`${ndsRotas.length} ND sin cerrar del todo — reparar`}
                         </button>
                       ):null;
                     })()}
