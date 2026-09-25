@@ -21828,6 +21828,7 @@ function App() {
   const [notasVentaCD, setNotasVentaCD] = useState([]);
   const [showVentaNCModal, setShowVentaNCModal] = useState(false);
   const [ventaNCForm, setVentaNCForm] = useState({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',ivaBs:'',totalBs:'',fecha:'',nroDocumento:'',descripcion:'',nroControl:''});
+  const [reparandoNCTasa, setReparandoNCTasa] = useState(false); // reparación de NC/ND de ajuste financiero guardadas con tasa 0/1
   const [ventaNCBusq, setVentaNCBusq] = useState('');
   const [ventaNCBusqCli, setVentaNCBusqCli] = useState('');
   const [retForm, setRetForm] = useState({facturaId:'',montoRetenido:'',nroRetencion:'',fechaComprobante:'',quincena:'1'});
@@ -36505,6 +36506,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               return setDialog({title:'Falta cliente',text:'Busca y selecciona un cliente registrado.',type:'alert'});
             if(esUsdSinIva&&!parseNum(ventaNCForm.montoUSD||0))
               return setDialog({title:'Falta monto',text:'Ingresa el monto en USD.',type:'alert'});
+            if(esUsdSinIva){
+              const tasaCheck=parseNum(ventaNCForm.tasaDirecta||0)||parseNum(settings?.tasaBCV||0)||0;
+              if(tasaCheck<2)
+                return setDialog({title:'Tasa inválida',text:'La Tasa Bs/$ tiene que ser la tasa real (varios cientos de Bs. por dólar) — con 0 o 1 el sistema descarta el ajuste al calcular el saldo de la NE, y quedaría guardado sin ningún efecto ni aviso. Deja el campo vacío para usar la tasa BCV actual automáticamente, o escribe la tasa correcta.',type:'alert'});
+            }
             try {
               const esEdicionNC=!!ventaNCForm.id;
               const id=ventaNCForm.id||`VNC-${Date.now()}`;
@@ -36604,6 +36610,40 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
+          // ── Reparar NC/ND de Ajuste Financiero guardadas con Tasa Bs/$ inválida (0 o 1) —
+          // con esa tasa, getNCUSDNEAtFecha las descarta al calcular el saldo de la NE (por
+          // seguridad, cualquier tasa <2 se ignora), así que el ajuste queda guardado pero sin
+          // ningún efecto ni aviso. Como la tasa rota nunca es 0 (el código cae a 1 como último
+          // respaldo), el monto guardado equivale al monto en USD original — se recalcula el Bs.
+          // correcto con la tasa real que indiques, agrupando por fecha (la tasa cambia por día).
+          const detectarNCsTasaRota=()=>(notasVentaCD||[]).filter(n=>n.naturaleza==='NO_FISCAL'&&n.tieneIva===false&&parseNum(n.tasaFactura||0)<2);
+          const repararNCsTasaRota=async()=>{
+            const rotas=detectarNCsTasaRota();
+            if(rotas.length===0){ setDialog({title:'Nada que reparar',text:'No hay NC/ND de ajuste financiero con tasa inválida.',type:'alert'}); return; }
+            setReparandoNCTasa(true);
+            try{
+              const porFecha={};
+              rotas.forEach(n=>{ const f=n.fecha||'sin-fecha'; if(!porFecha[f]) porFecha[f]=[]; porFecha[f].push(n); });
+              const batchTasa=writeBatch(db);
+              let totalCorregidas=0;
+              for(const [fecha,docs] of Object.entries(porFecha)){
+                const tasaStr=window.prompt(`Tasa Bs/$ correcta para el ${fecha} (afecta ${docs.length} documento(s) — deja vacío o cancela para saltar este grupo):`);
+                const tasaNueva=parseNum(tasaStr||0);
+                if(!tasaNueva||tasaNueva<2) continue;
+                docs.forEach(n=>{
+                  const montoUSDOriginal=parseNum(n.monto||0); // con tasa 0/1, el monto guardado ya equivale al USD original
+                  const montoBsCorrecto=parseFloat((montoUSDOriginal*tasaNueva).toFixed(2));
+                  batchTasa.update(getDocRef('notasVentaCreditoDebito',n._fsId||n.id),{monto:montoBsCorrecto,tasaFactura:tasaNueva});
+                });
+                totalCorregidas+=docs.length;
+              }
+              if(totalCorregidas===0){ setDialog({title:'Nada corregido',text:'No se aplicó ninguna tasa (se canceló o quedó inválida en todos los grupos).',type:'alert'}); return; }
+              await batchTasa.commit();
+              setDialog({title:'✅ Reparado',text:`${totalCorregidas} documento(s) corregidos — ya deberían reflejarse en el saldo de CxC y Estado de Cuenta.`,type:'alert'});
+            }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+            finally{ setReparandoNCTasa(false); }
+          };
+
           const ncFiltradas=(notasVentaCD||[]).filter(n=>
             !ventaNCBusq||(n.nroDocumento||'').toUpperCase().includes(ventaNCBusq.toUpperCase())||
             ((invoices||[]).find(i=>i.id===n.facturaId)?.clientName||'').toUpperCase().includes(ventaNCBusq.toUpperCase())||
@@ -36634,6 +36674,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <div className="flex gap-2 flex-wrap">
                   <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder="Buscar..." className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-40"/>
                   <button onClick={exportNCExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-green-700"><Download size={13}/>Excel</button>
+                  {(()=>{
+                    const ncsTasaRota=detectarNCsTasaRota();
+                    return ncsTasaRota.length>0?(
+                      <button onClick={()=>setDialog({title:'Reparar tasa inválida',text:`Se encontraron ${ncsTasaRota.length} NC/ND de ajuste financiero guardadas con Tasa Bs/$ de 0 o 1 — con esa tasa, el sistema las descarta al calcular el saldo de la NE, así que quedaron sin ningún efecto en CxC/Estado de Cuenta. Se te va a pedir la tasa correcta (agrupadas por fecha) y se recalcula el monto en Bs. ¿Continuar?`,type:'confirm',onConfirm:repararNCsTasaRota})}
+                        disabled={reparandoNCTasa}
+                        className="bg-red-100 text-red-700 px-2.5 py-1 rounded-lg text-[10px] font-black hover:bg-red-200 transition-all disabled:opacity-50"
+                        title="NC/ND de ajuste financiero con Tasa Bs/$ de 0 o 1 — no afectan el saldo de la NE">
+                        🔧 {reparandoNCTasa?'Reparando...':`${ncsTasaRota.length} con tasa inválida — reparar`}
+                      </button>
+                    ):null;
+                  })()}
                   <button onClick={()=>{setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});setVentaNCBusq('');setVentaNCBusqCli('');setShowVentaNCModal(true);}} className="bg-orange-500 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 hover:bg-orange-600"><Plus size={13}/>Nueva NC / ND</button>
                 </div>
               </div>
