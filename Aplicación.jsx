@@ -21670,7 +21670,7 @@ function App() {
   // (neId='ND-'+id) el que el resto del sistema (CxC, Estado de Cuenta, Registrar Cobro) revisa
   // para saber si una ND sigue pendiente, no los campos de la ND en sí.
   const [reparandoNDsCierre, setReparandoNDsCierre] = useState(false);
-  const detectarNDsSinCobroCierre=()=>(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&n._resueltaPorRetencionId&&!(cobrosCxc||[]).some(c=>c.neId===`ND-${n.id}`));
+  const detectarNDsSinCobroCierre=()=>(notasVentaCD||[]).filter(n=>n.tipo==='ND'&&!n.neId&&!n.facturaId&&(n._resueltaPorRetencionId||n.statusCxC==='COBRADA')&&!(cobrosCxc||[]).some(c=>c.neId===`ND-${n.id}`));
   const repararNDsSinCobroCierre=async()=>{
     setReparandoNDsCierre(true);
     try{
@@ -37823,6 +37823,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const r of (retenciones||[])){
             const esManual=(r.facturaId||'').startsWith('MANUAL-');
             if(esManual){
+              // Si esta retención se usó para CERRAR una ND (Registrar Retención → Vincular ND), no
+              // se cuenta también aquí — cerrar la ND ya le quitó el +$X al saldo del cliente; si
+              // además se resta aquí, ese mismo monto se descuenta dos veces contra OTRA NE distinta.
+              if(r._ndVinculadaId) continue;
               const rif=(r._manualRif||r.clientRif||'').trim();
               if(!rif) continue;
               const tasa=parseNum(r.tasa||0)||parseNum(tasaBCV||0)||0;
@@ -40139,6 +40143,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const r of (retenciones||[])){
             const esManualEc=(r.facturaId||'').startsWith('MANUAL-');
             if(esManualEc){
+              // Misma razón que en CxC: si esta retención cerró una ND, no se cuenta también aquí.
+              if(r._ndVinculadaId) continue;
               const rif=(r._manualRif||r.clientRif||'').trim();
               if(!rif) continue;
               const tasa=parseNum(r.tasa||0)||tasaBCVec;
