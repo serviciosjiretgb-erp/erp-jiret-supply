@@ -41320,8 +41320,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // El Libro de Ventas (legal) solo refleja retenciones de IVA.
             // ISLR / Municipales / Otras se registran igual, pero no entran aquí.
             if((r.tipoRetencion||'IVA')!=='IVA') return false;
-            const f=r.fechaComprobante||r.fecha||'';
-            if(f.substring(0,7)!==`${libroAnio}-${mes2}`) return false; // mismo mes/año
+            // Si se asignó explícitamente a qué mes viajar (campo "Mes a Reflejar en Libro de
+            // Ventas" del modal), se respeta eso — así una retención recibida este mes pero de
+            // una factura de un mes anterior se puede aprovechar en el mes que corresponda, en
+            // vez de quedar fija al mes de la fecha del comprobante.
+            if(r.periodoLibroMes) { if(r.periodoLibroMes!==`${libroAnio}-${mes2}`) return false; }
+            else { const f=r.fechaComprobante||r.fecha||''; if(f.substring(0,7)!==`${libroAnio}-${mes2}`) return false; }
             // La quincena de una retención es la que se eligió al registrarla (campo QUINCENA
             // del modal) — no necesariamente la que marca su fecha. Se respeta esa elección aquí.
             if(libroQuincena!=='AMBAS'&&getQuincenaRet(r)!==libroQuincena) return false;
@@ -41482,6 +41486,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 neOrigen:_neIdRet,
                 clientRif:_clientRifRet,
                 tasa:_tasaRet,
+                periodoLibroMes:retForm.periodoLibroMes||(retForm.fechaComprobante||'').substring(0,7)||'',
               };
               const {id:_oldId,_fsId:_oldFs,...retDataClean}=retDataToSave;
               if(isEditing){
@@ -42620,6 +42625,7 @@ ${resumenHtml}
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Monto Retenido (Bs.)</label><input type="number" step="0.01" value={retForm.montoRetenido||''} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder="0.00" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Tasa Bs/$ (de esa fecha)</label><input type="number" step="0.0001" value={retForm.tasa||''} onChange={e=>setRetForm(f=>({...f,tasa:e.target.value}))} placeholder={String(parseNum(settings?.tasaBCV||0))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Quincena</label><select value={retForm.quincena||'1'} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"><option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–31)</option></select></div>
+                            <div><label className="text-[9px] font-black text-amber-600 uppercase block mb-0.5">Mes a Reflejar en Libro</label><input type="month" value={retForm.periodoLibroMes||(retForm.fechaComprobante||retForm._manualFecha||'').substring(0,7)||''} onChange={e=>setRetForm(f=>({...f,periodoLibroMes:e.target.value}))} className="w-full border border-amber-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-amber-500"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">N° Comprobante</label><input value={retForm.nroRetencion||''} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} placeholder="Nro. comprobante" className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-0.5">Fecha Comprobante</label><input type="date" value={retForm.fechaComprobante||''} onChange={e=>setRetForm(f=>({...f,fechaComprobante:e.target.value}))} className="w-full border border-gray-300 rounded-lg p-1.5 text-xs font-bold outline-none focus:border-orange-400"/></div>
                           </div>
@@ -42663,6 +42669,10 @@ ${resumenHtml}
                               <select value={retForm.quincena} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
                                 <option value="1">I Quincena (01–15)</option><option value="2">II Quincena (16–{lastDay})</option>
                               </select></div>
+                            <div><label className="text-[10px] font-black text-amber-600 uppercase block mb-1">Mes a Reflejar en Libro de Ventas</label>
+                              <input type="month" value={retForm.periodoLibroMes||(retForm.fechaComprobante||'').substring(0,7)||''} onChange={e=>setRetForm(f=>({...f,periodoLibroMes:e.target.value}))} className="w-full border-2 border-amber-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500"/>
+                              <span className="text-[9px] text-gray-400">Por si es de un mes anterior y se va a aprovechar ahora</span>
+                            </div>
                             <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">N° Comprobante</label>
                               <input value={retForm.nroRetencion} onChange={e=>setRetForm(f=>({...f,nroRetencion:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold outline-none focus:border-blue-400"/>
                             </div>
