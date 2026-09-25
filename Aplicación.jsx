@@ -36516,6 +36516,47 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const docSel=facAfect||neAfect;
               const esND = ventaNCForm.tipo==='ND';
               const modoOp = esND ? 'ajuste' : (ventaNCForm.modoOp||'devolucion');
+              // ── Modo multi-NE: una factura/NE consolidada puede cubrir varias NE — igual que
+              // pasa con retenciones e IGTF, un ajuste financiero puede afectar a más de una a la
+              // vez. Se reparte el monto proporcional al total de cada NE marcada (editable por
+              // NE), y se crea un documento independiente por cada una para que cada saldo cierre
+              // por separado. Solo aplica a NC/ND nuevas, No Fiscales, en modo Ajuste (no
+              // Devolución, que necesita una sola NE para la tabla de ítems a reversar).
+              const neIdsMulti=(ventaNCForm.naturaleza==='NO_FISCAL'&&!esClienteDirecto&&modoOp==='ajuste'&&!ventaNCForm.id)
+                ?(ventaNCForm.neIds||[]).filter(Boolean):[];
+              if(neIdsMulti.length>1){
+                const nesSelData=neIdsMulti.map(nid=>(notasEntrega||[]).find(n=>n.id===nid)).filter(Boolean);
+                const tasaMulti=parseNum(ventaNCForm.tasaDirecta||0)||parseNum(settings?.tasaBCV||0)||1;
+                const totalUSDMulti=parseNum(ventaNCForm.montoUSD||0);
+                const totalPesoMulti=nesSelData.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+                const distManualNC=ventaNCForm._distManualNC||{};
+                const grupoNCId=`GNC-${Date.now()}`;
+                const batchMulti=writeBatch(db);
+                let sumaAsignada=0;
+                nesSelData.forEach((ne,i)=>{
+                  const esUltimaNE=i===nesSelData.length-1;
+                  const montoUSDNE=distManualNC[ne.id]!=null
+                    ? parseNum(distManualNC[ne.id])
+                    : (esUltimaNE
+                        ? parseFloat((totalUSDMulti-sumaAsignada).toFixed(2))
+                        : parseFloat((totalUSDMulti*(parseNum(ne.total||ne.totalUSD||0)/totalPesoMulti)).toFixed(2)));
+                  sumaAsignada+=montoUSDNE;
+                  const montoBsNE=parseFloat((montoUSDNE*tasaMulti).toFixed(2));
+                  const idNc=`VNC-${Date.now()}-${i}-${Math.random().toString(36).substr(2,5)}`;
+                  batchMulti.set(getDocRef('notasVentaCreditoDebito',idNc),{
+                    id:idNc,tipo:ventaNCForm.tipo,naturaleza:'NO_FISCAL',neId:ne.id,
+                    monto:montoBsNE,tasaFactura:tasaMulti,tieneIva:false,
+                    fecha:ventaNCForm.fecha,nroDocumento:nesSelData.length>1?`${ventaNCForm.nroDocumento}-${i+1}`:ventaNCForm.nroDocumento,
+                    descripcion:ventaNCForm.descripcion||'',grupoNCId,modoAnulacion:'total',itemsRevertidos:[],
+                    timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
+                  });
+                });
+                await batchMulti.commit();
+                setShowVentaNCModal(false); setVentaNCBusq(''); setVentaNCBusqCli('');
+                setVentaNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',neId:'',neIds:[],_distManualNC:{},monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',itemsNC:undefined,modoAnulacion:'total',_prevDocId:'',_clienteDirecto:false,clientRif:'',clientName:'',montoUSD:'',tasaDirecta:''});
+                setDialog({title:'✅ Guardada',text:`${ventaNCForm.tipo} repartida entre ${nesSelData.length} NE — cada una quedó con su propio monto y puede cerrar su saldo por separado.`,type:'alert'});
+                return;
+              }
               const modoAnulacion=ventaNCForm.modoAnulacion||'total';
               const itemsNCForm=ventaNCForm.itemsNC||(docSel?.itemsFacturados||[]).map(it=>({...it,seleccionado:true,cantNC:parseNum(it.cantidad||0)}));
               const itemsARevertir=(modoOp==='devolucion'&&!esClienteDirecto)
@@ -36849,18 +36890,41 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             {/* Buscador */}
                             {!(!esFiscal&&ventaNCForm._clienteDirecto)&&(
                             <div>
-                              <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">{esFiscal?'Seleccionar Factura':'Seleccionar NE'}</label>
+                              <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">{esFiscal?'Seleccionar Factura':(modoOp==='ajuste'?'Seleccionar NE (puede marcar varias)':'Seleccionar NE')}</label>
                               <input value={ventaNCBusq} onChange={e=>setVentaNCBusq(e.target.value)} placeholder={esFiscal?'N° fiscal, cliente...':'N° NE, cliente...'} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 mb-2 bg-white"/>
                               {esFiscal
                                 ?<select value={ventaNCForm.facturaId} onChange={e=>setVentaNCForm(f=>({...f,facturaId:e.target.value,itemsNC:undefined,_prevDocId:''}))} size={10} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
                                     <option value="">— Seleccionar —</option>
                                     {factsFilt.slice(0,60).map(inv=>(<option key={inv.id} value={inv.id}>{inv.nroFiscal||inv.documento} · {inv.clientName}</option>))}
                                   </select>
-                                :<select value={ventaNCForm.neId} onChange={e=>setVentaNCForm(f=>({...f,neId:e.target.value,itemsNC:undefined,_prevDocId:''}))} size={10} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
+                                :modoOp==='devolucion'||ventaNCForm.id
+                                ?<select value={ventaNCForm.neId} onChange={e=>setVentaNCForm(f=>({...f,neId:e.target.value,itemsNC:undefined,_prevDocId:''}))} size={10} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
                                     <option value="">— Seleccionar —</option>
                                     {nesFilt.slice(0,60).map(ne=>(<option key={ne.id} value={ne.id}>{ne.documento||ne.id} · {ne.clientName}</option>))}
                                   </select>
+                                :(()=>{
+                                    const neIdsSel=ventaNCForm.neIds||(ventaNCForm.neId?[ventaNCForm.neId]:[]);
+                                    const toggleNE=(neId)=>setVentaNCForm(f=>{
+                                      const cur=f.neIds||(f.neId?[f.neId]:[]);
+                                      const next=cur.includes(neId)?cur.filter(x=>x!==neId):[...cur,neId];
+                                      return {...f,neIds:next,neId:next[0]||'',itemsNC:undefined,_prevDocId:''};
+                                    });
+                                    return(
+                                    <div className="max-h-56 overflow-y-auto border-2 border-orange-200 rounded-xl divide-y divide-orange-100 bg-white">
+                                      {nesFilt.slice(0,60).map(ne=>{
+                                        const checked=neIdsSel.includes(ne.id);
+                                        return(
+                                        <label key={ne.id} className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer text-[10px] ${checked?'bg-orange-50':'hover:bg-gray-50'}`}>
+                                          <input type="checkbox" checked={checked} onChange={()=>toggleNE(ne.id)} className="w-3.5 h-3.5 accent-orange-500 shrink-0"/>
+                                          <span className="flex-1 font-bold truncate">{ne.documento||ne.id} · {ne.clientName}</span>
+                                          <span className="text-gray-400 font-bold shrink-0">${formatNum(parseNum(ne.total||ne.totalUSD||0))}</span>
+                                        </label>);
+                                      })}
+                                      {nesFilt.length===0&&<div className="px-2 py-3 text-center text-gray-400 text-[9px]">Sin resultados</div>}
+                                    </div>);
+                                  })()
                               }
+                              {!esFiscal&&modoOp==='ajuste'&&(ventaNCForm.neIds||[]).length>1&&<p className="text-[8px] text-orange-600 font-bold mt-1">✓ {(ventaNCForm.neIds||[]).length} NE marcadas — el monto se reparte entre todas (ver abajo)</p>}
                             </div>
                             )}
 
@@ -37045,6 +37109,34 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   <p className="font-black text-purple-700 text-base">Bs. {formatNum(parseNum(ventaNCForm.montoUSD||0)*(parseNum(ventaNCForm.tasaDirecta||0)||(docSel&&tasaNC>1?tasaNC:0)||parseNum(settings?.tasaBCV||0)||1))}</p>
                                 </div>
                               )}
+                              {modoOp==='ajuste'&&!ventaNCForm._clienteDirecto&&(ventaNCForm.neIds||[]).length>1&&(()=>{
+                                const neIdsSel=ventaNCForm.neIds||[];
+                                const nesSelData=neIdsSel.map(nid=>(notasEntrega||[]).find(n=>n.id===nid)).filter(Boolean);
+                                const totalUSDIngresado=parseNum(ventaNCForm.montoUSD||0);
+                                const totalPeso=nesSelData.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+                                const distManualNC=ventaNCForm._distManualNC||{};
+                                const getMontoNE=(ne)=>distManualNC[ne.id]!=null?parseNum(distManualNC[ne.id]):parseFloat((totalUSDIngresado*(parseNum(ne.total||ne.totalUSD||0)/totalPeso)).toFixed(2));
+                                const sumaAsignada=nesSelData.reduce((s,ne)=>s+getMontoNE(ne),0);
+                                const cuadra=Math.abs(sumaAsignada-totalUSDIngresado)<0.02;
+                                return(
+                                <div className="bg-white border border-purple-200 rounded-xl p-3 space-y-1.5">
+                                  <p className="text-[8px] text-gray-400 uppercase font-bold">Reparto por NE — sin tocar, se reparte proporcional al total de cada una</p>
+                                  {nesSelData.map(ne=>(
+                                    <div key={ne.id} className="flex items-center justify-between gap-2 text-[9px]">
+                                      <span className="font-bold flex-1 truncate">{ne.documento||ne.id}</span>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-gray-400">$</span>
+                                        <input type="number" step="0.01" value={distManualNC[ne.id]!=null?distManualNC[ne.id]:getMontoNE(ne).toFixed(2)}
+                                          onChange={e=>setVentaNCForm(f=>({...f,_distManualNC:{...(f._distManualNC||{}),[ne.id]:e.target.value===''?null:parseNum(e.target.value)}}))}
+                                          className="w-20 border border-purple-200 rounded-lg px-1.5 py-0.5 font-black text-purple-700 outline-none focus:border-purple-500"/>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <div className={`flex justify-between pt-1 border-t border-gray-100 text-[9px] font-black ${cuadra?'text-gray-500':'text-red-500'}`}>
+                                    <span>Suma repartida{!cuadra?' ⚠':''}</span><span>${formatNum(sumaAsignada)} / ${formatNum(totalUSDIngresado)}</span>
+                                  </div>
+                                </div>);
+                              })()}
                               <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste financiero · sin IVA · sin movimiento de inventario{ventaNCForm._clienteDirecto?' · no asociado a NE':' · asociado a NE de referencia'}</div>
                             </div>
                           ):(
