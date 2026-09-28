@@ -4941,7 +4941,14 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
   const cuentaGenerica=(patron)=>{const c2=(planCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
   let contra;
-  if(m.tipoTercero==='Relacionado' && m.terceroId){
+  if(m.cuentaContableCreditoNombre){
+    // Contrapartida explícita ya resuelta al crear el movimiento (ej. IGTF Percibido) — tiene
+    // prioridad sobre inferir por el nombre del tercero, porque ese nombre en este caso es solo
+    // informativo (a quién se le cobró el IGTF), no significa que el movimiento sea una
+    // transacción normal de CxC/CxP con ese tercero.
+    const [codExp,nomExp]=m.cuentaContableCreditoNombre.split('—').map(s=>s.trim());
+    contra={codigo:m.cuentaContableCreditoId||codExp||'', cuenta:nomExp||m.cuentaContableCreditoNombre};
+  } else if(m.tipoTercero==='Relacionado' && m.terceroId){
     const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
     const codRel = (tercRel?.cuentaContableCod||'').trim();
     const nomRel = (tercRel?.cuentaContableNom||'').trim();
@@ -5260,6 +5267,11 @@ const construirLineasImpuestosPorEnterarCompartida = (mesKey, ctx) => {
 // Cuentas por Cobrar Clientes saliera distinta entre pantalla y reportes — además de que la
 // reclasificación no se aplicaba aquí.
 const construirLineasRetencionClienteCompartida = (r, ctx) => {
+  // El IGTF no es una retención que reduzca la Cuenta por Cobrar del cliente — es dinero real que
+  // entró a Banco/Caja, y su asiento (Debe Banco, Haber IGTF Percibido) ya lo genera el propio
+  // movimiento de Banco/Caja (ver construirLineasMovimientoBancoCaja). Generar aquí también un
+  // asiento Debe IGTF/Haber CxC lo duplicaba y además tocaba una cuenta que el IGTF nunca debería tocar.
+  if(r.tipo==='IGTF') return null;
   const {facturasVenta, clientes, retClienteCuentasCfg, planCuentas, tabId, aplicarReclas} = ctx;
   const tipo = r.tipoExtra ? (r.tipoLabel||r.tipo||'Otra') : (r.tipoRetencion||'IVA');
   const cuentaRetencionFallback = (tipoBuscado) => {
@@ -15302,10 +15314,11 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         facturasVenta:facturasVentaC, clientes:clientesC, retClienteCuentasCfg:settingsCC?.retClienteCuentasCfg,
         planCuentas:planCuentasC, tabId:'ret_cli', aplicarReclas:aplicarReclasLinea,
       });
+      if(!res) return null; // IGTF: su asiento ya lo genera el movimiento de Banco/Caja
       return { id: r.id, comprobante: res.nombreCliente, fecha: r.fechaComprobante||r.createdAt||'', doc: r.nroRetencion||'—',
         conc: `Retención ${res.tipo} — ${res.nombreCliente} · Fact. ${res.nroFactura}`, tasa: Number(r.tasa||1),
         lineas: res.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD})) };
-    });
+    }).filter(Boolean);
   };
 
   const construirLineas = (esBanco) => {
@@ -21099,6 +21112,7 @@ function App() {
         facturasVenta:invoices, clientes:clients, retClienteCuentasCfg:settings?.retClienteCuentasCfg,
         planCuentas:planDeCuentas, tabId:'ret_cli', aplicarReclas:aplicarReclasLinea,
       });
+      if(!res) return; // IGTF: su asiento ya lo genera el movimiento de Banco/Caja
       out.push({fecha:r.fechaComprobante||r.createdAt||'', comprobante:r.nroRetencion||r.id, modulo:'Retenciones a Clientes',
         concepto:`Retención ${res.tipo} — ${res.nombreCliente} · Fact. ${res.nroFactura}`, lineas:res.lineas});
     });
@@ -42722,12 +42736,59 @@ ${resumenHtml}
                               {nroFac}
                             </td>
                             <td className="py-2 px-3 uppercase">{cliente}</td>
-                            <td className="py-2 px-3 text-[9px] font-mono text-slate-500">{ret.cuentaContableRetNombre||<span className="text-gray-300">Automática</span>}</td>
+                            <td className="py-2 px-3 text-[9px] font-mono text-slate-500">{ret.cuentaContableRetNombre||ret.cuentaContableNombre||<span className="text-gray-300">Automática</span>}</td>
                             <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0))}</td>
                             <td className="py-2 px-3 text-right font-mono text-slate-500 text-[10px]">{retTasa>1?formatNum(retTasa):<span className="text-red-400 text-[9px]">Sin tasa</span>}</td>
                             <td className="py-2 px-3 text-right font-black text-green-700">{retMontoUSD>0?'$'+formatNum(retMontoUSD):<span className="text-red-400 text-[9px]">—</span>}</td>
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
+                              {ret.tipo==='IGTF'&&(
+                              <button onClick={()=>{
+                                const pct=parseNum(ret.porcentaje||3);
+                                const baseImpBsC=pct>0?parseFloat((parseNum(ret.montoRetenido||0)/(pct/100)).toFixed(2)):0;
+                                const baseImpUSDC=retTasa>1?baseImpBsC/retTasa:0;
+                                const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de IGTF</title>
+                                <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
+                                .hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
+                                .logo{color:#f97316;font-size:20px;font-weight:900;}.logo span{color:#fff;}
+                                .bar{background:#f97316;height:3px;}.body{padding:20px 24px;}
+                                .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+                                .kpi{border:1px solid #e2e8f0;border-radius:10px;padding:12px;text-align:center;}
+                                .kpi-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px;}
+                                .kpi-value{font-size:18px;font-weight:900;}
+                                .detalle{border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-top:14px;}
+                                .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;}
+                                .row:last-child{border-bottom:none;font-weight:900;background:#f8fafc;margin:-16px;padding:10px 16px;border-radius:0 0 10px 10px;}
+                                .footer{text-align:center;font-size:8px;color:#94a3b8;margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;}
+                                @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+                                <div class="hdr">
+                                  <div><div class="logo">Supply <span>G&B</span></div><div style="color:#94a3b8;font-size:9px;margin-top:2px">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div></div>
+                                  <div style="text-align:right"><h2 style="color:#fff;font-size:13px;font-weight:900;text-transform:uppercase">Comprobante de IGTF Percibido</h2><div style="color:#94a3b8;font-size:9px">Fecha: ${ret.fechaComprobante||getTodayDate()} · ID: ${ret.nroRetencion||ret.id}</div></div>
+                                </div>
+                                <div class="bar"></div>
+                                <div class="body">
+                                  <div class="kpis">
+                                    <div class="kpi"><div class="kpi-label">Cliente</div><div class="kpi-value" style="font-size:13px;color:#111">${cliente}</div></div>
+                                    <div class="kpi"><div class="kpi-label">IGTF Percibido USD</div><div class="kpi-value" style="color:#ea580c">$${formatNum(retMontoUSD)}</div></div>
+                                    <div class="kpi"><div class="kpi-label">IGTF Percibido Bs.</div><div class="kpi-value" style="color:#2563eb">Bs.${formatNum(parseNum(ret.montoRetenido||0))}</div></div>
+                                  </div>
+                                  <div class="detalle">
+                                    <div class="row"><span style="color:#64748b">RIF Cliente</span><span style="font-weight:700">${retRifDisplay}</span></div>
+                                    <div class="row"><span style="color:#64748b">Factura Afectada</span><span style="font-weight:700;color:#f97316">${nroFac}</span></div>
+                                    <div class="row"><span style="color:#64748b">Base Imponible (monto del pago)</span><span style="font-weight:700">Bs.${formatNum(baseImpBsC)} (≈ $${formatNum(baseImpUSDC)})</span></div>
+                                    <div class="row"><span style="color:#64748b">% IGTF Aplicado</span><span style="font-weight:700">${pct}%</span></div>
+                                    <div class="row"><span style="color:#64748b">N° Referencia / Comprobante</span><span style="font-weight:700;font-family:monospace">${ret.referencia||ret.nroRetencion||'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Banco / Cuenta</span><span style="font-weight:700">${ret.cuentaBancariaNombre||'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Tasa Bs/$</span><span style="font-weight:700">${retTasa>1?formatNum(retTasa):'—'}</span></div>
+                                    <div class="row"><span style="color:#64748b">Cuenta Contable</span><span style="font-weight:700">${ret.cuentaContableNombre||'Automática'}</span></div>
+                                    <div class="row"><span>MONTO IGTF PERCIBIDO</span><span style="color:#16a34a;font-size:14px">Bs.${formatNum(parseNum(ret.montoRetenido||0))} (≈ $${formatNum(retMontoUSD)})</span></div>
+                                  </div>
+                                  <div class="footer">Impuesto a las Grandes Transacciones Financieras (IGTF) percibido conforme a la ley vigente · Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}</div>
+                                </div>
+                                <script>window.onload=()=>window.print();</script></body></html>`;
+                                const w=window.open('','_blank','width=700,height=650');w.document.write(html);w.document.close();
+                              }} title="Comprobante de IGTF (PDF)" className="p-1.5 bg-gray-900 text-white rounded hover:bg-gray-700"><Printer size={13}/></button>
+                              )}
                               <button onClick={()=>{
                                 if(ret.tipoExtra){
                                   const esGrupoIGTF=ret.tipo==='IGTF'&&!!ret._repartidoDe;
