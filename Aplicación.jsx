@@ -3312,7 +3312,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
             const rifPrefix=(retRifDisplay||'').trim().charAt(0).toUpperCase();
             const tipoPersona=(rifPrefix==='V'||rifPrefix==='E')?'Persona Natural':'Persona Jurídica Domiciliada';
             const empresaNombre=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-            const empresaRif='J-412309374';
+            const empresaRif=settings?.empresaRif||'J-412309374';
             const empresaDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
             const ahora=new Date();
             const horaStr=ahora.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
@@ -3517,7 +3517,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
 
               const exportarIgtfDeclPDF=()=>{
                 const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-                const rif='J-412309374';
+                const rif=settings?.empresaRif||'J-412309374';
                 const filaConcepto=(alic,label,cant,base)=>`<tr><td style="text-align:center">${alic}%</td><td>${label}</td><td style="text-align:right">${fmtN(cant)}</td><td style="text-align:right">${fmtN(base)}</td></tr>`;
                 const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Declaración IGTF</title><style>
 @page{size:letter portrait;margin:12mm 10mm}
@@ -43303,7 +43303,7 @@ ${resumenHtml}
                                 const rifPrefix=(retRifDisplay||'').trim().charAt(0).toUpperCase();
                                 const tipoPersona=(rifPrefix==='V'||rifPrefix==='E')?'Persona Natural':'Persona Jurídica Domiciliada';
                                 const empresaNombre=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-                                const empresaRif='J-412309374';
+                                const empresaRif=settings?.empresaRif||'J-412309374';
                                 const empresaDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
                                 const ahora=new Date();
                                 const horaStr=ahora.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
