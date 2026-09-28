@@ -42797,8 +42797,34 @@ ${resumenHtml}
                                 const empresaDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
                                 const ahora=new Date();
                                 const horaStr=ahora.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
-                                const fFactura=fmtFecha(inv?.fecha||ret.fechaComprobante);
                                 const fContable=fmtFecha(ret.fechaComprobante);
+                                // Si esta retención es parte de un grupo (un mismo pago/IGTF repartido entre varias
+                                // facturas), el comprobante debe mostrar TODAS las facturas del grupo, no solo la de
+                                // este documento — es un solo pago con un solo IGTF, aunque internamente se haya
+                                // repartido en un documento por factura para que cada saldo cierre por separado.
+                                const esGrupoPDF=ret.tipo==='IGTF'&&!!ret._repartidoDe;
+                                const siblingsPDF=esGrupoPDF?(retenciones||[]).filter(r=>r.tipo==='IGTF'&&r._repartidoDe===ret._repartidoDe).sort((a,b)=>(a.nroRetencion||'').localeCompare(b.nroRetencion||'')):[ret];
+                                const filasPDF=siblingsPDF.map(r=>{
+                                  const invS=(invoices||[]).find(i=>i.id===r.facturaId);
+                                  const nroFacS=invS?(padNum(invS.nroFiscal,8)||invS.documento||'—'):(r.nroFiscal||'—');
+                                  const pctS=parseNum(r.porcentaje||3);
+                                  const tasaS=parseNum(r.tasa||r.tasaFactura||invS?.tasa||invS?.tasaFactura||0);
+                                  const montoUSDS=parseNum(r.montoRetenidoUSD||0);
+                                  const montoRetenidoS=parseNum(r.montoRetenido||0);
+                                  const baseImpBsS=pctS>0?parseFloat((montoRetenidoS/(pctS/100)).toFixed(2)):0;
+                                  const baseImpUSDS=tasaS>1?baseImpBsS/tasaS:0;
+                                  return {fFacturaS:fmtFecha(invS?.fecha||r.fechaComprobante),nroFacS,nroControlS:invS?.nroControl||'—',pctS,tasaS,montoUSDS,baseImpBsS,baseImpUSDS,montoRetenidoS};
+                                });
+                                const sumaUSD=filasPDF.reduce((s,f)=>s+f.baseImpUSDS,0), sumaBs=filasPDF.reduce((s,f)=>s+f.baseImpBsS,0);
+                                const sumaRetOrigen=filasPDF.reduce((s,f)=>s+f.montoRetenidoS,0), sumaMontoRet=filasPDF.reduce((s,f)=>s+f.montoUSDS,0);
+                                const nroComprobanteGrupo=esGrupoPDF?(ret.nroRetencion||'').replace(/-\d+$/,''):(ret.nroRetencion||ret.id);
+                                const filasHtmlPDF=filasPDF.map(f=>`<tr>
+                                  <td>${f.fFacturaS}</td><td>${fContable}</td><td>${f.nroFacS}</td><td>${f.nroControlS}</td>
+                                  <td></td><td></td><td>${f.nroFacS}</td>
+                                  <td class="num">${formatNum(f.baseImpUSDS)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${formatNum(f.baseImpBsS)}</div></td><td class="num">${formatNum(f.baseImpUSDS)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${formatNum(f.baseImpBsS)}</div></td><td>USD</td>
+                                  <td class="num">${formatNum(f.pctS)}</td><td class="num">${formatNum(f.montoRetenidoS)}</td><td>BCV</td>
+                                  <td class="num">${f.tasaS>1?formatNum(f.tasaS):'—'}</td><td class="num">${formatNum(f.montoUSDS)}</td>
+                                </tr>`).join('');
                                 const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Impuesto IGTF</title>
                                 <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;padding:28px;}
                                 h1{text-align:center;font-size:16px;font-weight:900;margin-bottom:22px;}
@@ -42820,7 +42846,7 @@ ${resumenHtml}
                                     <div>${empresaDir}</div>
                                   </div>
                                   <div style="text-align:right">
-                                    <div><span class="lbl">Nro. Comprobante:</span> ${ret.nroRetencion||ret.id}</div>
+                                    <div><span class="lbl">Nro. Comprobante:</span> ${nroComprobanteGrupo}</div>
                                     <div><span class="lbl">Fecha Comprobante:</span> ${fContable}</div>
                                   </div>
                                 </div>
@@ -42839,18 +42865,12 @@ ${resumenHtml}
                                     <th class="num">% Retención</th><th class="num">Ret. Origen</th><th>T. Conversión</th>
                                     <th class="num">Tasa</th><th class="num">Monto Ret.</th>
                                   </tr></thead>
-                                  <tbody><tr>
-                                    <td>${fFactura}</td><td>${fContable}</td><td>${nroFac}</td><td>${inv?.nroControl||'—'}</td>
-                                    <td></td><td></td><td>${nroFac}</td>
-                                    <td class="num">${formatNum(baseImpUSDC)}</td><td class="num">${formatNum(baseImpUSDC)}</td><td>USD</td>
-                                    <td class="num">${formatNum(pct)}</td><td class="num">${formatNum(parseNum(ret.montoRetenido||0))}</td><td>BCV</td>
-                                    <td class="num">${retTasa>1?formatNum(retTasa):'—'}</td><td class="num">${formatNum(retMontoUSD)}</td>
-                                  </tr></tbody>
+                                  <tbody>${filasHtmlPDF}</tbody>
                                   <tfoot><tr>
                                     <td colspan="7">Suma</td>
-                                    <td class="num">${formatNum(baseImpUSDC)}</td><td class="num">${formatNum(baseImpUSDC)}</td><td></td>
-                                    <td></td><td class="num">${formatNum(parseNum(ret.montoRetenido||0))}</td><td></td>
-                                    <td class="num">${retTasa>1?formatNum(retTasa):'—'}</td><td class="num">${formatNum(retMontoUSD)}</td>
+                                    <td class="num">${formatNum(sumaUSD)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${formatNum(sumaBs)}</div></td><td class="num">${formatNum(sumaUSD)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${formatNum(sumaBs)}</div></td><td></td>
+                                    <td></td><td class="num">${formatNum(sumaRetOrigen)}</td><td></td>
+                                    <td></td><td class="num">${formatNum(sumaMontoRet)}</td>
                                   </tr></tfoot>
                                 </table>
                                 <div style="margin-top:26px">Emitido: ${fmtFecha(getTodayDate())} ${horaStr} VET</div>
