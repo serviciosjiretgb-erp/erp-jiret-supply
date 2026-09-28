@@ -4357,6 +4357,29 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
                     }} className="bg-purple-600 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-purple-800">Guardar</button>
                   </div>
                 </div>
+                {/* Correlativo IGTF */}
+                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+                  <label className="text-[10px] font-black text-emerald-700 uppercase block mb-1">Comprobante IGTF</label>
+                  <p className="text-[9px] text-slate-500 mb-3">Formato: <span className="font-mono bg-white px-1 rounded border border-slate-200">{new Date().getFullYear()}{String(new Date().getMonth()+1).padStart(2,'0')}00<span className="text-emerald-600">NNNNNN</span></span> — 14 dígitos, mes/año de la Fecha Comprobante</p>
+                  <p className="text-[9px] text-slate-400 mb-2">Ejemplo: <span className="font-mono font-bold">{new Date().getFullYear()}{String(new Date().getMonth()+1).padStart(2,'0')}00{String(settings?.correlativoIGTF||1).padStart(6,'0')}</span></p>
+                  <label className="text-[9px] font-black text-slate-500 uppercase block mb-1">Próximo N° secuencial:</label>
+                  <div className="flex gap-2 items-center">
+                    <input type="number" min="1"
+                      defaultValue={settings?.correlativoIGTF||1}
+                      id="inp-corr-igtf"
+                      className="border-2 border-emerald-200 rounded-lg px-3 py-2 text-sm font-black outline-none focus:border-emerald-500 w-32"/>
+                    <button onClick={async()=>{
+                      try{
+                        let raw=String(document.getElementById('inp-corr-igtf').value||'').replace(/\D/g,'');
+                        if(raw.length>6) raw=raw.slice(-6);
+                        const v=parseInt(raw||'0',10);
+                        if(!(v>0)) return setDialog({title:'Aviso',text:'Ingrese solo el número secuencial (hasta 6 dígitos), no el comprobante completo.',type:'alert'});
+                        await setDoc(getDocRef('settings','general'),{correlativoIGTF:v},{merge:true});
+                        setDialog({title:'✅ Guardado',text:`Correlativo IGTF actualizado a ${v}. Próximo comprobante: ${new Date().getFullYear()}${String(new Date().getMonth()+1).padStart(2,'0')}00${String(v).padStart(6,'0')}`,type:'alert'});
+                      }catch(e){setDialog({title:'Error al guardar',text:e.message,type:'alert'});}
+                    }} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-800">Guardar</button>
+                  </div>
+                </div>
               </div>
             </div>
             {/* ── Firma y Sello Digital ── */}
@@ -21474,8 +21497,15 @@ function App() {
     return neReal?neReal.id:neOrigenRaw;
   };
   const guardarOtraRet=async()=>{
-    const {facturaId,nroComprobante,fechaComprobante,tipoId}=otraRetForm;
+    const {facturaId,fechaComprobante,tipoId}=otraRetForm;
     const esIGTF=tipoId==='IGTF';
+    // IGTF: número de comprobante interno, autogenerado — ya no se escribe a mano. Mismo formato
+    // (AAAAMM00NNNNNN) que el correlativo de Retención IVA (Impuestos → Configuración →
+    // Numeración de Comprobantes), pero con su propia secuencia independiente. El mes/año sale de
+    // la Fecha Comprobante (para que un registro atrasado no quede con el mes de hoy).
+    const nroComprobante=(esIGTF&&!otraRetForm._editId)
+      ? (()=>{const d=fechaComprobante?new Date(fechaComprobante+'T00:00:00'):new Date();return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}00${String(Math.max(1,parseInt(settings?.correlativoIGTF||1,10))).padStart(6,'0')}`;})()
+      : otraRetForm.nroComprobante;
     const montoRetenidoBs=otraRetForm.montoRetenidoBs;
     const esManualOtra=!facturaId; // sin factura seleccionada = modo manual
     if(esManualOtra&&!otraRetForm.clientRif)
@@ -21608,6 +21638,11 @@ function App() {
             timestamp:Date.now()
           });
         });
+      }
+      // Correlativo interno de IGTF — solo avanza en creación nueva, nunca al editar (si no, cada
+      // vez que se corrige algo del mismo comprobante se saltaría un número sin usar).
+      if(esIGTF&&!esEdicion){
+        batch.set(getDocRef('settings','general'),{correlativoIGTF:Math.max(1,parseInt(settings?.correlativoIGTF||1,10))+1},{merge:true});
       }
       await batch.commit();
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
@@ -41258,10 +41293,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 })()}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Comprobante *</label>
-                    <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
-                      value={otraRetForm.nroComprobante||''}
-                      onChange={e=>setOtraRetForm(f=>({...f,nroComprobante:e.target.value.toUpperCase()}))}/>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Comprobante *{otraRetForm.tipoId==='IGTF'?' (interno, automático)':''}</label>
+                    {otraRetForm.tipoId==='IGTF'?(
+                      <input className="w-full border-2 border-slate-200 bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold text-slate-500 outline-none cursor-not-allowed" readOnly
+                        value={otraRetForm._editId?(otraRetForm.nroComprobante||''):(()=>{const d=otraRetForm.fechaComprobante?new Date(otraRetForm.fechaComprobante+'T00:00:00'):new Date();return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}00${String(Math.max(1,parseInt(settings?.correlativoIGTF||1,10))).padStart(6,'0')}`;})()}/>
+                    ):(
+                      <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
+                        value={otraRetForm.nroComprobante||''}
+                        onChange={e=>setOtraRetForm(f=>({...f,nroComprobante:e.target.value.toUpperCase()}))}/>
+                    )}
                   </div>
                   <div>
                     <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha Comprobante *</label>
@@ -42747,46 +42787,76 @@ ${resumenHtml}
                                 const pct=parseNum(ret.porcentaje||3);
                                 const baseImpBsC=pct>0?parseFloat((parseNum(ret.montoRetenido||0)/(pct/100)).toFixed(2)):0;
                                 const baseImpUSDC=retTasa>1?baseImpBsC/retTasa:0;
-                                const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Comprobante de IGTF</title>
-                                <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#111;}
-                                .hdr{background:#0f172a;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}
-                                .logo{color:#f97316;font-size:20px;font-weight:900;}.logo span{color:#fff;}
-                                .bar{background:#f97316;height:3px;}.body{padding:20px 24px;}
-                                .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
-                                .kpi{border:1px solid #e2e8f0;border-radius:10px;padding:12px;text-align:center;}
-                                .kpi-label{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px;}
-                                .kpi-value{font-size:18px;font-weight:900;}
-                                .detalle{border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-top:14px;}
-                                .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;}
-                                .row:last-child{border-bottom:none;font-weight:900;background:#f8fafc;margin:-16px;padding:10px 16px;border-radius:0 0 10px 10px;}
-                                .footer{text-align:center;font-size:8px;color:#94a3b8;margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;}
+                                const fmtFecha=(f)=>{if(!f)return'—';const p=f.split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:f;};
+                                const clienteRec=(clients||[]).find(c=>(c.rif||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===(retRifDisplay||'').toUpperCase().replace(/[^A-Z0-9]/g,''));
+                                const dirCliente=clienteRec?.direccion||'';
+                                const rifPrefix=(retRifDisplay||'').trim().charAt(0).toUpperCase();
+                                const tipoPersona=(rifPrefix==='V'||rifPrefix==='E')?'Persona Natural':'Persona Jurídica Domiciliada';
+                                const empresaNombre=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                                const empresaRif='J-412309374';
+                                const empresaDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
+                                const ahora=new Date();
+                                const horaStr=ahora.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+                                const fFactura=fmtFecha(inv?.fecha||ret.fechaComprobante);
+                                const fContable=fmtFecha(ret.fechaComprobante);
+                                const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Impuesto IGTF</title>
+                                <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;padding:28px;}
+                                h1{text-align:center;font-size:16px;font-weight:900;margin-bottom:22px;}
+                                .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
+                                .lbl{font-weight:900;}
+                                table{width:100%;border-collapse:collapse;margin-top:12px;font-size:9px;}
+                                th,td{border:1px solid #333;padding:4px 6px;text-align:left;white-space:nowrap;}
+                                th{background:#f1f5f9;font-weight:900;}
+                                .num{text-align:right;}
+                                tfoot td{font-weight:900;font-style:italic;}
+                                .legal{margin-top:36px;font-size:9px;font-weight:700;line-height:1.4;}
                                 @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
-                                <div class="hdr">
-                                  <div><div class="logo">Supply <span>G&B</span></div><div style="color:#94a3b8;font-size:9px;margin-top:2px">SERVICIOS JIRET G&B, C.A. · RIF: J-412309374</div></div>
-                                  <div style="text-align:right"><h2 style="color:#fff;font-size:13px;font-weight:900;text-transform:uppercase">Comprobante de IGTF Percibido</h2><div style="color:#94a3b8;font-size:9px">Fecha: ${ret.fechaComprobante||getTodayDate()} · ID: ${ret.nroRetencion||ret.id}</div></div>
-                                </div>
-                                <div class="bar"></div>
-                                <div class="body">
-                                  <div class="kpis">
-                                    <div class="kpi"><div class="kpi-label">Cliente</div><div class="kpi-value" style="font-size:13px;color:#111">${cliente}</div></div>
-                                    <div class="kpi"><div class="kpi-label">IGTF Percibido USD</div><div class="kpi-value" style="color:#ea580c">$${formatNum(retMontoUSD)}</div></div>
-                                    <div class="kpi"><div class="kpi-label">IGTF Percibido Bs.</div><div class="kpi-value" style="color:#2563eb">Bs.${formatNum(parseNum(ret.montoRetenido||0))}</div></div>
+                                <h1>Impuesto IGTF (Débito CxC)</h1>
+                                <div class="top">
+                                  <div>
+                                    <div class="lbl">AGENTE DE RETENCIÓN:</div>
+                                    <div>Nombre: ${empresaNombre}</div>
+                                    <div>RIF: ${empresaRif}</div>
+                                    <div>${empresaDir}</div>
                                   </div>
-                                  <div class="detalle">
-                                    <div class="row"><span style="color:#64748b">RIF Cliente</span><span style="font-weight:700">${retRifDisplay}</span></div>
-                                    <div class="row"><span style="color:#64748b">Factura Afectada</span><span style="font-weight:700;color:#f97316">${nroFac}</span></div>
-                                    <div class="row"><span style="color:#64748b">Base Imponible (monto del pago)</span><span style="font-weight:700">Bs.${formatNum(baseImpBsC)} (≈ $${formatNum(baseImpUSDC)})</span></div>
-                                    <div class="row"><span style="color:#64748b">% IGTF Aplicado</span><span style="font-weight:700">${pct}%</span></div>
-                                    <div class="row"><span style="color:#64748b">N° Referencia / Comprobante</span><span style="font-weight:700;font-family:monospace">${ret.referencia||ret.nroRetencion||'—'}</span></div>
-                                    <div class="row"><span style="color:#64748b">Banco / Cuenta</span><span style="font-weight:700">${ret.cuentaBancariaNombre||'—'}</span></div>
-                                    <div class="row"><span style="color:#64748b">Tasa Bs/$</span><span style="font-weight:700">${retTasa>1?formatNum(retTasa):'—'}</span></div>
-                                    <div class="row"><span style="color:#64748b">Cuenta Contable</span><span style="font-weight:700">${ret.cuentaContableNombre||'Automática'}</span></div>
-                                    <div class="row"><span>MONTO IGTF PERCIBIDO</span><span style="color:#16a34a;font-size:14px">Bs.${formatNum(parseNum(ret.montoRetenido||0))} (≈ $${formatNum(retMontoUSD)})</span></div>
+                                  <div style="text-align:right">
+                                    <div><span class="lbl">Nro. Comprobante:</span> ${ret.nroRetencion||ret.id}</div>
+                                    <div><span class="lbl">Fecha Comprobante:</span> ${fContable}</div>
                                   </div>
-                                  <div class="footer">Impuesto a las Grandes Transacciones Financieras (IGTF) percibido conforme a la ley vigente · Supply ERP · SERVICIOS JIRET G&B, C.A. · Generado: ${getTodayDate()}</div>
                                 </div>
+                                <div style="margin-bottom:6px">
+                                  <div class="lbl">DATOS DEL CONTRIBUYENTE:</div>
+                                  <div>Nombre: ${cliente}</div>
+                                  <div>RIF: ${retRifDisplay}</div>
+                                  <div>Tipo de Persona: ${tipoPersona}</div>
+                                  ${dirCliente?`<div>${dirCliente}</div>`:''}
+                                </div>
+                                <table>
+                                  <thead><tr>
+                                    <th>F. Factura</th><th>F. Contable</th><th>Factura</th><th>No. Control</th>
+                                    <th>Nota de Crédito</th><th>Nota de Débito</th><th>Doc. Afectado</th>
+                                    <th class="num">Total General</th><th class="num">Pago</th><th>Moneda</th>
+                                    <th class="num">% Retención</th><th class="num">Ret. Origen</th><th>T. Conversión</th>
+                                    <th class="num">Tasa</th><th class="num">Monto Ret.</th>
+                                  </tr></thead>
+                                  <tbody><tr>
+                                    <td>${fFactura}</td><td>${fContable}</td><td>${nroFac}</td><td>${inv?.nroControl||'—'}</td>
+                                    <td></td><td></td><td>${nroFac}</td>
+                                    <td class="num">${formatNum(baseImpUSDC)}</td><td class="num">${formatNum(baseImpUSDC)}</td><td>USD</td>
+                                    <td class="num">${formatNum(pct)}</td><td class="num">${formatNum(parseNum(ret.montoRetenido||0))}</td><td>BCV</td>
+                                    <td class="num">${retTasa>1?formatNum(retTasa):'—'}</td><td class="num">${formatNum(retMontoUSD)}</td>
+                                  </tr></tbody>
+                                  <tfoot><tr>
+                                    <td colspan="7">Suma</td>
+                                    <td class="num">${formatNum(baseImpUSDC)}</td><td class="num">${formatNum(baseImpUSDC)}</td><td></td>
+                                    <td></td><td class="num">${formatNum(parseNum(ret.montoRetenido||0))}</td><td></td>
+                                    <td class="num">${retTasa>1?formatNum(retTasa):'—'}</td><td class="num">${formatNum(retMontoUSD)}</td>
+                                  </tr></tfoot>
+                                </table>
+                                <div style="margin-top:26px">Emitido: ${fmtFecha(getTodayDate())} ${horaStr} VET</div>
+                                <div class="legal">( Impuesto a las Grandes Transacciones Financieras (IGTF) percibido por este agente de percepción, Contribuyente Especial, sobre pagos recibidos en moneda distinta a la de curso legal en el país, conforme a la Ley de Impuesto a las Grandes Transacciones Financieras — Gaceta Oficial N° 6.687 Extraordinario de fecha 25 de febrero de 2022 — y su normativa vigente. )</div>
                                 <script>window.onload=()=>window.print();</script></body></html>`;
-                                const w=window.open('','_blank','width=700,height=650');w.document.write(html);w.document.close();
+                                const w=window.open('','_blank','width=900,height=700');w.document.write(html);w.document.close();
                               }} title="Comprobante de IGTF (PDF)" className="p-1.5 bg-gray-900 text-white rounded hover:bg-gray-700"><Printer size={13}/></button>
                               )}
                               <button onClick={()=>{
