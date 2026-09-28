@@ -2072,9 +2072,9 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     return()=>{u1();u2();};
   },[fbUser]);
 
-  // ── Datos de Ventas/Compras/Retenciones para Determinación de IVA e IGTF (solo si esas pestañas están activas) ──
+  // ── Datos de Ventas/Compras/Retenciones para Determinación de IVA, IGTF y Resumen Tributario (solo si esas pestañas están activas) ──
   useEffect(()=>{
-    if(!fbUser||(sec!=='det_iva'&&sec!=='igtf')) return;
+    if(!fbUser||(sec!=='det_iva'&&sec!=='igtf'&&sec!=='resumen_tributario')) return;
     const u1=onSnapshot(getColRef('maquilaInvoices'),s=>setDetInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('procura_facturas_compra'),s=>setDetFacturasCompra(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(getColRef('retencionesClientes'),s=>setDetRetVentas(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -4383,7 +4383,13 @@ td,th{border:1px solid #333;padding:5px 7px}
           // por eso este total suma todo el mes, no solo la quincena seleccionada arriba.
           const retIslrBs=(retISLR||[]).filter(_enMes).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           const anticipoIslrBs=parseFloat((ventasQ.totGravada*0.01).toFixed(2));
-          const igtfBs=pNum(rtManual.igtf||0);
+          // IGTF — antes era manual; ahora sale solo, sumando el IGTF realmente percibido y registrado
+          // (pestaña Impuestos → IGTF) cuyo período/quincena de libro caiga en la quincena seleccionada aquí.
+          const igtfBs=(detRetVentas||[]).filter(r=>{
+            if(r.tipo!=='IGTF') return false;
+            const f=r.periodoLibroMes?`${r.periodoLibroMes}-01`:(r.fechaComprobante||r.fecha||'');
+            return f>=qDesde&&f<=qHasta;
+          }).reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
 
           const salMinTotalPP=pNum(rtPP.cantidadEmpleados)*pNum(rtPP.salarioMinimoOficial);
           const montoPensionesPP=pNum(rtPP.minimoTributableUSD)*pNum(rtPP.tasaBcvCierre)*pNum(rtPP.cantidadEmpleados);
@@ -4402,7 +4408,7 @@ td,th{border:1px solid #333;padding:5px 7px}
           const filasNacional=[
             {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:retIvaBs,campo:'venceIva'},
             {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
-            {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:igtfBs,campo:'venceIgtf',editable:true},
+            {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:igtfBs,campo:'venceIgtf'},
             {label:'RETENCIONES DE ISLR',periodo:'MENSUAL',monto:retIslrBs,campo:'venceRetIslr'},
             {label:'PENSIONES',periodo:'MENSUAL',monto:pensionesBs,campo:'vencePensiones'},
             {label:'IMPUESTO SOBRE LA RENTA',periodo:'ANUAL',monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
