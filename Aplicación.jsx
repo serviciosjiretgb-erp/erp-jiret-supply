@@ -3291,9 +3291,9 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const MESES_LBL=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
           const igtfAll=(detRetVentas||[]).filter(r=>r.tipo==='IGTF');
           const igtfFilt=igtfAll.filter(r=>{
-            const f=r.fechaComprobante||r.fecha||'';
-            if(igtfAnio&&f.substring(0,4)!==igtfAnio) return false;
-            if(igtfMes!=='TODOS'&&f.substring(5,7)!==igtfMes) return false;
+            const per=r.periodoLibroMes||(r.fechaComprobante||r.fecha||'').substring(0,7);
+            if(igtfAnio&&per.substring(0,4)!==igtfAnio) return false;
+            if(igtfMes!=='TODOS'&&per.substring(5,7)!==igtfMes) return false;
             if(igtfQ!=='AMBAS'&&(r.quincena||'1')!==igtfQ) return false;
             if(igtfBusqueda&&!JSON.stringify(r).toLowerCase().includes(igtfBusqueda.toLowerCase())) return false;
             return true;
@@ -3495,10 +3495,13 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
               const lastDayD=new Date(parseInt(igtfDeclAnio),parseInt(igtfDeclMes),0).getDate();
               const desdeD=igtfDeclQ==='2'?`${igtfDeclAnio}-${igtfDeclMes}-16`:`${igtfDeclAnio}-${igtfDeclMes}-01`;
               const hastaD=igtfDeclQ==='1'?`${igtfDeclAnio}-${igtfDeclMes}-15`:`${igtfDeclAnio}-${igtfDeclMes}-${String(lastDayD).padStart(2,'0')}`;
-              // "Efectivo en moneda extranjera" (3%) — se calcula solo, de las IGTF reales de esta quincena (Fecha Comprobante o Mes a Reflejar en Libro, la que se haya elegido al registrar).
+              // "Efectivo en moneda extranjera" (3%) — se calcula solo, de las IGTF reales de esta quincena. Si el
+              // registro tiene periodoLibroMes explícito se compara ese mes + su propio campo quincena (no por
+              // rango de fechas, porque "periodoLibroMes-01" siempre cae en la I Quincena).
               const igtfQuincena=(detRetVentas||[]).filter(r=>{
                 if(r.tipo!=='IGTF') return false;
-                const f=r.periodoLibroMes?`${r.periodoLibroMes}-01`:(r.fechaComprobante||r.fecha||'');
+                if(r.periodoLibroMes) return r.periodoLibroMes===`${igtfDeclAnio}-${igtfDeclMes}`&&(r.quincena||'1')===igtfDeclQ;
+                const f=r.fechaComprobante||r.fecha||'';
                 return f>=desdeD&&f<=hastaD;
               });
               const cantFX=igtfQuincena.length;
@@ -4384,10 +4387,14 @@ td,th{border:1px solid #333;padding:5px 7px}
           const retIslrBs=(retISLR||[]).filter(_enMes).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           const anticipoIslrBs=parseFloat((ventasQ.totGravada*0.01).toFixed(2));
           // IGTF — antes era manual; ahora sale solo, sumando el IGTF realmente percibido y registrado
-          // (pestaña Impuestos → IGTF) cuyo período/quincena de libro caiga en la quincena seleccionada aquí.
+          // (pestaña Impuestos → IGTF) cuyo período/quincena de libro sea el seleccionado aquí. Cuando el
+          // registro tiene periodoLibroMes explícito, se compara ese mes + su propio campo quincena — NO por
+          // rango de fechas, porque "periodoLibroMes-01" siempre cae en la I Quincena y metía ahí registros
+          // que en realidad eran de la II.
           const igtfBs=(detRetVentas||[]).filter(r=>{
             if(r.tipo!=='IGTF') return false;
-            const f=r.periodoLibroMes?`${r.periodoLibroMes}-01`:(r.fechaComprobante||r.fecha||'');
+            if(r.periodoLibroMes) return r.periodoLibroMes===`${rtAnio}-${rtMes}`&&(r.quincena||'1')===rtQ;
+            const f=r.fechaComprobante||r.fecha||'';
             return f>=qDesde&&f<=qHasta;
           }).reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
 
