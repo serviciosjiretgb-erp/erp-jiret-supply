@@ -42837,7 +42837,7 @@ ${resumenHtml}
                                 tfoot td{font-weight:900;font-style:italic;}
                                 .legal{margin-top:36px;font-size:9px;font-weight:700;line-height:1.4;}
                                 @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
-                                <h1>Impuesto IGTF (Débito CxC)</h1>
+                                <h1>Impuesto IGTF</h1>
                                 <div class="top">
                                   <div>
                                     <div class="lbl">AGENTE DE RETENCIÓN:</div>
