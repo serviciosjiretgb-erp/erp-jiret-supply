@@ -33432,7 +33432,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (dashClienteFiltro==='todos'||d.cliente===dashClienteFiltro) &&
             (dashCanalFiltro==='todos'||d.canal===dashCanalFiltro) &&
             (!dashBusqueda || JSON.stringify(d).toLowerCase().includes(dashBusqueda.toLowerCase()))
-          );
+          ).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
           const totCantF=detalleFilt.reduce((s,d)=>s+d.cant,0);
           const totMontoF=detalleFilt.reduce((s,d)=>s+d.monto,0);
           const totComF=detalleFilt.reduce((s,d)=>s+d.comision,0);
