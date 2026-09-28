@@ -1972,6 +1972,11 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [detAnio,setDetAnio]=useState(String(new Date().getFullYear()));
   const [detMes,setDetMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
   const [detQ,setDetQ]=useState('1');
+  const [igtfAnio,setIgtfAnio]=useState(String(new Date().getFullYear()));
+  const [igtfMes,setIgtfMes]=useState('TODOS');
+  const [igtfQ,setIgtfQ]=useState('AMBAS');
+  const [igtfBusqueda,setIgtfBusqueda]=useState('');
+  const [igtfPage,setIgtfPage]=useState(0);
   const [detInvoices,setDetInvoices]=useState([]);
   const [detFacturasCompra,setDetFacturasCompra]=useState([]);
   const [detRetVentas,setDetRetVentas]=useState([]);
@@ -2055,9 +2060,9 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     return()=>{u1();u2();};
   },[fbUser]);
 
-  // ── Datos de Ventas/Compras/Retenciones para Determinación de IVA (solo si la pestaña está activa) ──
+  // ── Datos de Ventas/Compras/Retenciones para Determinación de IVA e IGTF (solo si esas pestañas están activas) ──
   useEffect(()=>{
-    if(!fbUser||sec!=='det_iva') return;
+    if(!fbUser||(sec!=='det_iva'&&sec!=='igtf')) return;
     const u1=onSnapshot(getColRef('maquilaInvoices'),s=>setDetInvoices(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(getColRef('procura_facturas_compra'),s=>setDetFacturasCompra(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(getColRef('retencionesClientes'),s=>setDetRetVentas(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -2376,6 +2381,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     {id:'tabla',    label:'Tabla ISLR',          icon:<BookOpen size={13}/>},
     {id:'ret_iva',  label:'Retenciones IVA',      icon:<Receipt size={13}/>, badge:retIVA.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
     {id:'ret_islr', label:'Retenciones ISLR',     icon:<DollarSign size={13}/>, badge:retISLR.filter(r=>r.status==='PENDIENTE').length||null, perm:'impuestos_retenciones'},
+    {id:'igtf',     label:'IGTF',                 icon:<CreditCard size={13}/>, perm:'impuestos_igtf'},
     {id:'det_iva',  label:'Determinación IVA',    icon:<Calculator size={13}/>, perm:'impuestos_determinacion'},
     {id:'act_economica', label:'Actividad Económica', icon:<Building2 size={13}/>, perm:'impuestos_act_economica'},
     {id:'prot_pensiones', label:'Protección Pensiones', icon:<ShieldCheck size={13}/>, perm:'impuestos_prot_pensiones'},
@@ -3228,6 +3234,192 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
             </div>
           </div>
         )}
+
+        {/* IGTF */}
+        {sec==='igtf'&&(()=>{
+          const MESES_I=['01','02','03','04','05','06','07','08','09','10','11','12'];
+          const MESES_LBL=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+          const igtfAll=(detRetVentas||[]).filter(r=>r.tipo==='IGTF');
+          const igtfFilt=igtfAll.filter(r=>{
+            const f=r.fechaComprobante||r.fecha||'';
+            if(igtfAnio&&f.substring(0,4)!==igtfAnio) return false;
+            if(igtfMes!=='TODOS'&&f.substring(5,7)!==igtfMes) return false;
+            if(igtfQ!=='AMBAS'&&(r.quincena||'1')!==igtfQ) return false;
+            if(igtfBusqueda&&!JSON.stringify(r).toLowerCase().includes(igtfBusqueda.toLowerCase())) return false;
+            return true;
+          }).sort((a,b)=>(b.fechaComprobante||b.fecha||'').localeCompare(a.fechaComprobante||a.fecha||''));
+          const PAGE_IGTF=15;
+          const totalPagIgtf=Math.ceil(igtfFilt.length/PAGE_IGTF)||1;
+          const pageIgtfSafe=Math.min(igtfPage,totalPagIgtf-1);
+          const igtfPag=igtfFilt.slice(pageIgtfSafe*PAGE_IGTF,(pageIgtfSafe+1)*PAGE_IGTF);
+          const totMontoUSD=igtfFilt.reduce((s,r)=>s+pNum(r.montoRetenidoUSD||0),0);
+          const totMontoBs=igtfFilt.reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
+
+          const imprimirComprobanteIgtf=(ret)=>{
+            const fmtFecha=(f)=>{if(!f)return'—';const p=f.split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:f;};
+            const retRifDisplay=ret._manualRif||ret.clientRif||'—';
+            const cliente=ret._manualCliente||ret.clientName||'—';
+            const rifPrefix=(retRifDisplay||'').trim().charAt(0).toUpperCase();
+            const tipoPersona=(rifPrefix==='V'||rifPrefix==='E')?'Persona Natural':'Persona Jurídica Domiciliada';
+            const empresaNombre=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+            const empresaRif='J-412309374';
+            const empresaDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
+            const ahora=new Date();
+            const horaStr=ahora.toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+            const fContable=fmtFecha(ret.fechaComprobante);
+            const esGrupoPDF=ret.tipo==='IGTF'&&!!ret._repartidoDe;
+            const siblingsPDF=esGrupoPDF?igtfAll.filter(r=>r._repartidoDe===ret._repartidoDe).sort((a,b)=>(a.nroRetencion||'').localeCompare(b.nroRetencion||'')):[ret];
+            const filasPDF=siblingsPDF.map(r=>{
+              const invS=(detInvoices||[]).find(inv=>inv.id===r.facturaId);
+              const nroFacS=r.nroFiscal||invS?.nroFiscal||invS?.documento||'—';
+              const pctS=pNum(r.porcentaje||3);
+              const tasaS=pNum(r.tasa||r.tasaFactura||invS?.tasa||invS?.tasaFactura||0);
+              const montoUSDS=pNum(r.montoRetenidoUSD||0);
+              const montoRetenidoS=pNum(r.montoRetenido||0);
+              const baseImpBsS=pctS>0?parseFloat((montoRetenidoS/(pctS/100)).toFixed(2)):0;
+              const baseImpUSDS=tasaS>1?baseImpBsS/tasaS:0;
+              return {fFacturaS:fmtFecha(invS?.fecha||r.fechaComprobante),nroFacS,nroControlS:invS?.nroControl||'—',pctS,tasaS,montoUSDS,baseImpBsS,baseImpUSDS,montoRetenidoS};
+            });
+            const sumaUSD=filasPDF.reduce((s,f)=>s+f.baseImpUSDS,0), sumaBs=filasPDF.reduce((s,f)=>s+f.baseImpBsS,0);
+            const sumaRetOrigen=filasPDF.reduce((s,f)=>s+f.montoRetenidoS,0), sumaMontoRet=filasPDF.reduce((s,f)=>s+f.montoUSDS,0);
+            const nroComprobanteGrupo=esGrupoPDF?(ret.nroRetencion||'').replace(/-\d+$/,''):(ret.nroRetencion||ret.id);
+            const filasHtmlPDF=filasPDF.map(f=>`<tr>
+              <td>${f.fFacturaS}</td><td>${fContable}</td><td>${f.nroFacS}</td><td>${f.nroControlS}</td>
+              <td></td><td></td><td>${f.nroFacS}</td>
+              <td class="num">${fmtN(f.baseImpUSDS)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${fmtN(f.baseImpBsS)}</div></td><td class="num">${fmtN(f.baseImpUSDS)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${fmtN(f.baseImpBsS)}</div></td><td>USD</td>
+              <td class="num">${fmtN(f.pctS)}</td><td class="num">${fmtN(f.montoRetenidoS)}</td><td>BCV</td>
+              <td class="num">${f.tasaS>1?fmtN(f.tasaS):'—'}</td><td class="num">${fmtN(f.montoUSDS)}</td>
+            </tr>`).join('');
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Impuesto IGTF</title>
+            <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;padding:28px;}
+            h1{text-align:center;font-size:16px;font-weight:900;margin-bottom:22px;}
+            .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
+            .lbl{font-weight:900;}
+            table{width:100%;border-collapse:collapse;margin-top:12px;font-size:9px;}
+            th,td{border:1px solid #333;padding:4px 6px;text-align:left;white-space:nowrap;}
+            th{background:#f1f5f9;font-weight:900;}
+            .num{text-align:right;}
+            tfoot td{font-weight:900;font-style:italic;}
+            .legal{margin-top:36px;font-size:9px;font-weight:700;line-height:1.4;}
+            @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}</style></head><body>
+            <h1>Impuesto IGTF</h1>
+            <div class="top">
+              <div>
+                <div class="lbl">AGENTE DE RETENCIÓN:</div>
+                <div>Nombre: ${empresaNombre}</div>
+                <div>RIF: ${empresaRif}</div>
+                <div>${empresaDir}</div>
+              </div>
+              <div style="text-align:right">
+                <div><span class="lbl">Nro. Comprobante:</span> ${nroComprobanteGrupo}</div>
+                <div><span class="lbl">Fecha Comprobante:</span> ${fContable}</div>
+              </div>
+            </div>
+            <div style="margin-bottom:6px">
+              <div class="lbl">DATOS DEL CONTRIBUYENTE:</div>
+              <div>Nombre: ${cliente}</div>
+              <div>RIF: ${retRifDisplay}</div>
+              <div>Tipo de Persona: ${tipoPersona}</div>
+            </div>
+            <table>
+              <thead><tr>
+                <th>F. Factura</th><th>F. Contable</th><th>Factura</th><th>No. Control</th>
+                <th>Nota de Crédito</th><th>Nota de Débito</th><th>Doc. Afectado</th>
+                <th class="num">Total General</th><th class="num">Pago</th><th>Moneda</th>
+                <th class="num">% Retención</th><th class="num">Ret. Origen</th><th>T. Conversión</th>
+                <th class="num">Tasa</th><th class="num">Monto Ret.</th>
+              </tr></thead>
+              <tbody>${filasHtmlPDF}</tbody>
+              <tfoot><tr>
+                <td colspan="7">Suma</td>
+                <td class="num">${fmtN(sumaUSD)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${fmtN(sumaBs)}</div></td><td class="num">${fmtN(sumaUSD)}<div style="font-size:8px;color:#666;font-weight:400">Bs.${fmtN(sumaBs)}</div></td><td></td>
+                <td></td><td class="num">${fmtN(sumaRetOrigen)}</td><td></td>
+                <td></td><td class="num">${fmtN(sumaMontoRet)}</td>
+              </tr></tfoot>
+            </table>
+            <div style="margin-top:26px">Emitido: ${fmtFecha(getTodayDate())} ${horaStr} VET</div>
+            <div class="legal">( Impuesto a las Grandes Transacciones Financieras (IGTF) percibido por este agente de percepción, Contribuyente Especial, sobre pagos recibidos en moneda distinta a la de curso legal en el país, conforme a la Ley de Impuesto a las Grandes Transacciones Financieras — Gaceta Oficial N° 6.687 Extraordinario de fecha 25 de febrero de 2022 — y su normativa vigente. )</div>
+            <script>window.onload=()=>window.print();</script></body></html>`;
+            const w=window.open('','_blank','width=900,height=700');w.document.write(html);w.document.close();
+          };
+
+          return (
+          <div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 mb-3 flex flex-wrap gap-2 items-end">
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Año</label>
+                <select value={igtfAnio} onChange={e=>{setIgtfAnio(e.target.value);setIgtfPage(0);}} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-orange-400">
+                  {[String(new Date().getFullYear()-1),String(new Date().getFullYear()),String(new Date().getFullYear()+1)].map(y=><option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes</label>
+                <select value={igtfMes} onChange={e=>{setIgtfMes(e.target.value);setIgtfPage(0);}} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-orange-400">
+                  <option value="TODOS">Todos</option>
+                  {MESES_I.map((m,i)=><option key={m} value={m}>{MESES_LBL[i]}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                <select value={igtfQ} onChange={e=>{setIgtfQ(e.target.value);setIgtfPage(0);}} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-orange-400">
+                  <option value="AMBAS">Ambas</option><option value="1">I Quincena</option><option value="2">II Quincena</option>
+                </select>
+              </div>
+              <div className="flex-1 min-w-[160px]">
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Buscar</label>
+                <input value={igtfBusqueda} onChange={e=>{setIgtfBusqueda(e.target.value);setIgtfPage(0);}} placeholder="Cliente, comprobante, factura..." className="w-full border-2 border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr style={{background:'#0f172a'}}>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">N° Comp.</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Cliente</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Factura</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Fecha</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Quincena</th>
+                  <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">%</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto USD</th>
+                  <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto Bs.</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Cuenta Contable</th>
+                  <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
+                </tr></thead>
+                <tbody>
+                  {igtfPag.length===0?<tr><td colSpan={10} className="py-10 text-center text-slate-400 text-xs">Sin registros de IGTF para los filtros aplicados</td></tr>:
+                  igtfPag.map((r,i)=>{
+                    const invR=(detInvoices||[]).find(inv=>inv.id===r.facturaId);
+                    const nroFacR=r.nroFiscal||invR?.nroFiscal||invR?.documento||'—';
+                    return (
+                    <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
+                      <td className="px-3 py-2 font-black text-orange-600">{r.nroRetencion||'—'}</td>
+                      <td className="px-3 py-2 font-black">{r._manualCliente||r.clientName||'—'}</td>
+                      <td className="px-3 py-2">{nroFacR}</td>
+                      <td className="px-3 py-2">{pD(r.fechaComprobante||r.fecha)}</td>
+                      <td className="px-3 py-2"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{(r.quincena||'1')==='1'?'I Quincena':'II Quincena'}</span></td>
+                      <td className="px-3 py-2 text-center font-black">{r.porcentaje||3}%</td>
+                      <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(r.montoRetenidoUSD)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{fmtN(r.montoRetenido)}</td>
+                      <td className="px-3 py-2 text-[9px] font-mono text-slate-500">{r.cuentaContableNombre||<span className="text-slate-300">Automática</span>}</td>
+                      <td className="px-3 py-2">
+                        <button onClick={()=>imprimirComprobanteIgtf(r)} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
+                          <Printer size={10}/> PDF
+                        </button>
+                      </td>
+                    </tr>);
+                  })}
+                </tbody>
+                {igtfFilt.length>0&&<tfoot><tr style={{background:'#1e293b'}}>
+                  <td colSpan={6} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({igtfFilt.length})</td>
+                  <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totMontoUSD)}</td>
+                  <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totMontoBs)}</td>
+                  <td colSpan={2}></td>
+                </tr></tfoot>}
+              </table>
+              {renderRetPaginacion(pageIgtfSafe,setIgtfPage,totalPagIgtf,igtfFilt.length)}
+            </div>
+          </div>
+          );
+        })()}
 
         {/* DETERMINACIÓN DE IVA */}
         {sec==='det_iva'&&(()=>{
@@ -14074,6 +14266,7 @@ const SYSTEM_MODULES = [
     submodules: [
       { id: 'impuestos_libros',    label: 'Libros de Ventas y Compras' },
       { id: 'impuestos_retenciones', label: 'Retenciones IVA / ISLR' },
+      { id: 'impuestos_igtf', label: 'IGTF' },
       { id: 'impuestos_determinacion', label: 'Determinación de IVA' },
       { id: 'impuestos_act_economica', label: 'Actividad Económica' },
       { id: 'impuestos_prot_pensiones', label: 'Protección de Pensiones' },
