@@ -1977,6 +1977,18 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [igtfQ,setIgtfQ]=useState('AMBAS');
   const [igtfBusqueda,setIgtfBusqueda]=useState('');
   const [igtfPage,setIgtfPage]=useState(0);
+  const [editIgtf,setEditIgtf]=useState(null); // el doc de retencionesClientes en edición
+  const [editIgtfForm,setEditIgtfForm]=useState({});
+  const [igtfSubTab,setIgtfSubTab]=useState('detalle'); // 'detalle' | 'declaracion'
+  const [igtfDeclAnio,setIgtfDeclAnio]=useState(String(new Date().getFullYear()));
+  const [igtfDeclMes,setIgtfDeclMes]=useState(String(new Date().getMonth()+1).padStart(2,'0'));
+  const [igtfDeclQ,setIgtfDeclQ]=useState('1');
+  const IGTF_DECL_DEF={tasaBcv:0,nroDeclaracion:'',
+    efectivo_cant:0,efectivo_base:0,especies_cant:0,especies_base:0,notaCredito_cant:0,notaCredito_base:0,
+    compensacion_cant:0,compensacion_base:0,novacion_cant:0,novacion_base:0,condonacion_cant:0,condonacion_base:0,
+    cesion_cant:0,cesion_base:0,criptomonedas_cant:0,criptomonedas_base:0,criptoactivos_cant:0,criptoactivos_base:0};
+  const [igtfDeclData,setIgtfDeclData]=useState(IGTF_DECL_DEF);
+  const [igtfDeclSaving,setIgtfDeclSaving]=useState(false);
   const [detInvoices,setDetInvoices]=useState([]);
   const [detFacturasCompra,setDetFacturasCompra]=useState([]);
   const [detRetVentas,setDetRetVentas]=useState([]);
@@ -2131,6 +2143,24 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     const u=onSnapshot(doc(db,'settings',`prot-pensiones-${mesKey}`),d=>setPpData(d.exists()?{...DEF,...d.data()}:DEF));
     return()=>u();
   },[fbUser,sec,ppAnio,ppMes]);
+
+  // ── IGTF — Declaración Quincenal: datos por quincena (tasa, nro declaración, conceptos manuales) ──
+  useEffect(()=>{
+    if(!fbUser||sec!=='igtf') return;
+    const qKey=`${igtfDeclAnio}-${igtfDeclMes}-Q${igtfDeclQ}`;
+    const u=onSnapshot(doc(db,'settings',`igtf-declaracion-${qKey}`),d=>setIgtfDeclData(d.exists()?{...IGTF_DECL_DEF,...d.data()}:IGTF_DECL_DEF));
+    return()=>u();
+  },[fbUser,sec,igtfDeclAnio,igtfDeclMes,igtfDeclQ]);
+
+  const guardarIgtfDecl=async()=>{
+    setIgtfDeclSaving(true);
+    try{
+      const qKey=`${igtfDeclAnio}-${igtfDeclMes}-Q${igtfDeclQ}`;
+      await setDoc(doc(db,'settings',`igtf-declaracion-${qKey}`),{...igtfDeclData,updatedAt:Date.now()},{merge:true});
+      setImpDialog({title:'✅ Guardado',text:`Declaración de IGTF de la quincena ${qKey} guardada, con su tasa de cambio.`,type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+    finally{setIgtfDeclSaving(false);}
+  };
 
   useEffect(()=>{
     if(!fbUser||(sec!=='prot_pensiones'&&sec!=='config')) return;
@@ -2357,6 +2387,26 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       await setDoc(getDocRef(col,editRet.doc.id),{...editRetForm,nroComprobante:editRetForm.nroComprobante||editRet.doc.nroComprobante,updatedAt:Date.now()},{merge:true});
       setEditRet(null);
       setImpDialog({title:'✅ Actualizado',text:'Comprobante actualizado correctamente.',type:'alert'});
+    }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
+  };
+
+  const guardarEditIgtf=async()=>{
+    if(!editIgtf) return;
+    try{
+      await setDoc(getDocRef('retencionesClientes',editIgtf.id),{
+        status:editIgtfForm.status||'PENDIENTE',
+        fechaComprobante:editIgtfForm.fecha||editIgtf.fechaComprobante,
+        porcentaje:pNum(editIgtfForm.porcentaje||3),
+        montoRetenidoUSD:pNum(editIgtfForm.montoRetenidoUSD||0),
+        montoRetenido:pNum(editIgtfForm.montoRetenido||0),
+        periodoLibroMes:editIgtfForm._periodoMes||'',
+        quincena:editIgtfForm._periodoQ||'1',
+        referencia:editIgtfForm.referencia||'',
+        cuentaBancariaNombre:editIgtfForm.cuentaBancariaNombre||'',
+        updatedAt:Date.now(),
+      },{merge:true});
+      setEditIgtf(null);
+      setImpDialog({title:'✅ Actualizado',text:'IGTF actualizado correctamente.',type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
@@ -3345,6 +3395,12 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
 
           return (
           <div>
+            <div className="flex gap-2 mb-3">
+              {[{k:'detalle',l:'📋 Detalle'},{k:'declaracion',l:'🧾 Declaración Quincenal'}].map(t=>(
+                <button key={t.k} onClick={()=>setIgtfSubTab(t.k)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${igtfSubTab===t.k?'bg-orange-500 text-white shadow-md':'bg-white text-slate-500 border-2 border-slate-200 hover:border-slate-300'}`}>{t.l}</button>
+              ))}
+            </div>
+            {igtfSubTab==='detalle'&&(<div>
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 mb-3 flex flex-wrap gap-2 items-end">
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Año</label>
@@ -3401,9 +3457,22 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                       <td className="px-3 py-2 text-right font-mono">{fmtN(r.montoRetenido)}</td>
                       <td className="px-3 py-2 text-[9px] font-mono text-slate-500">{r.cuentaContableNombre||<span className="text-slate-300">Automática</span>}</td>
                       <td className="px-3 py-2">
-                        <button onClick={()=>imprimirComprobanteIgtf(r)} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
-                          <Printer size={10}/> PDF
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={()=>imprimirComprobanteIgtf(r)} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
+                            <Printer size={10}/> PDF
+                          </button>
+                          <button onClick={()=>{
+                            setEditIgtf(r);
+                            setEditIgtfForm({
+                              status:r.status||'PENDIENTE',fecha:r.fechaComprobante||r.fecha||'',
+                              porcentaje:r.porcentaje||3,montoRetenidoUSD:r.montoRetenidoUSD||0,montoRetenido:r.montoRetenido||0,
+                              _periodoMes:r.periodoLibroMes||(r.fechaComprobante||'').substring(0,7)||'',_periodoQ:r.quincena||'1',
+                              referencia:r.referencia||'',cuentaBancariaNombre:r.cuentaBancariaNombre||'',
+                            });
+                          }} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                            <Edit size={10}/> Editar
+                          </button>
+                        </div>
                       </td>
                     </tr>);
                   })}
@@ -3417,6 +3486,169 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
               </table>
               {renderRetPaginacion(pageIgtfSafe,setIgtfPage,totalPagIgtf,igtfFilt.length)}
             </div>
+            </div>)}
+            {igtfSubTab==='declaracion'&&(()=>{
+              const MESES_ID=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+              const lastDayD=new Date(parseInt(igtfDeclAnio),parseInt(igtfDeclMes),0).getDate();
+              const desdeD=igtfDeclQ==='2'?`${igtfDeclAnio}-${igtfDeclMes}-16`:`${igtfDeclAnio}-${igtfDeclMes}-01`;
+              const hastaD=igtfDeclQ==='1'?`${igtfDeclAnio}-${igtfDeclMes}-15`:`${igtfDeclAnio}-${igtfDeclMes}-${String(lastDayD).padStart(2,'0')}`;
+              // "Efectivo en moneda extranjera" (3%) — se calcula solo, de las IGTF reales de esta quincena (Fecha Comprobante o Mes a Reflejar en Libro, la que se haya elegido al registrar).
+              const igtfQuincena=(detRetVentas||[]).filter(r=>{
+                if(r.tipo!=='IGTF') return false;
+                const f=r.periodoLibroMes?`${r.periodoLibroMes}-01`:(r.fechaComprobante||r.fecha||'');
+                return f>=desdeD&&f<=hastaD;
+              });
+              const cantFX=igtfQuincena.length;
+              const baseFXBs=igtfQuincena.reduce((s,r)=>{const p=pNum(r.porcentaje||3);return s+(p>0?pNum(r.montoRetenido||0)/(p/100):0);},0);
+              const setID=(campo,val)=>setIgtfDeclData(x=>({...x,[campo]:val}));
+              const CONCEPTOS_2=[{k:'efectivo',l:'Efectivo'},{k:'especies',l:'Especies'},{k:'notaCredito',l:'Nota de Crédito'},{k:'compensacion',l:'Compensación'},{k:'novacion',l:'Novación'},{k:'condonacion',l:'Condonación'},{k:'cesion',l:'Cesión'}];
+              const CONCEPTOS_3M=[{k:'criptomonedas',l:'Criptomonedas'},{k:'criptoactivos',l:'Criptoactivos'}];
+              const totalBase2=CONCEPTOS_2.reduce((s,c)=>s+pNum(igtfDeclData[c.k+'_base']),0);
+              const totalBase3=baseFXBs+CONCEPTOS_3M.reduce((s,c)=>s+pNum(igtfDeclData[c.k+'_base']),0);
+              const pagar2=totalBase2*0.02, pagar3=totalBase3*0.03, totalPagar=pagar2+pagar3;
+              const qKey=`${igtfDeclAnio}-${igtfDeclMes}-Q${igtfDeclQ}`;
+              const fVenceD=(()=>{const d=new Date(hastaD+'T00:00:00');d.setDate(d.getDate()+5);return d.toISOString().split('T')[0];})();
+
+              const exportarIgtfDeclPDF=()=>{
+                const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+                const rif='J-412309374';
+                const filaConcepto=(alic,label,cant,base)=>`<tr><td style="text-align:center">${alic}%</td><td>${label}</td><td style="text-align:right">${fmtN(cant)}</td><td style="text-align:right">${fmtN(base)}</td></tr>`;
+                const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Declaración IGTF</title><style>
+@page{size:letter portrait;margin:12mm 10mm}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+body{font-size:9px;color:#111}
+table{border-collapse:collapse;width:100%;margin-bottom:10px}
+td,th{border:1px solid #333;padding:5px 7px}
+.hdr{background:#f1f5f9;font-weight:900;text-align:center;padding:5px}
+</style></head><body>
+<table style="margin-bottom:0">
+  <tr>
+    <td style="width:28%;text-align:center;vertical-align:middle"><div style="font-weight:900;font-size:11px">SENIAT</div><div style="font-size:6px">SERVICIO NACIONAL INTEGRADO DE ADMINISTRACIÓN ADUANERA Y TRIBUTARIA</div></td>
+    <td style="width:44%;text-align:center"><b style="font-size:10px">IMPUESTO A LAS GRANDES TRANSACCIONES FINANCIERAS</b><br/><span style="font-size:9px">FORMA 99021</span></td>
+    <td style="width:28%;text-align:center"><b>N° DECLARACIÓN</b><br/>${igtfDeclData.nroDeclaracion||'—'}</td>
+  </tr>
+</table>
+<table>
+  <tr><td style="width:25%;text-align:center;font-weight:900">N° R.I.F.</td><td style="text-align:center;font-weight:900" colspan="3">NOMBRE DEL CONTRIBUYENTE O RAZÓN SOCIAL</td></tr>
+  <tr><td style="text-align:center">${rif}</td><td style="text-align:center" colspan="3">${emp}</td></tr>
+  <tr><td style="text-align:center;font-weight:900">TIPO DE DECLARACIÓN</td><td style="text-align:center;font-weight:900">PERÍODO</td><td style="text-align:center;font-weight:900">QUINCENA</td><td style="text-align:center;font-weight:900">FECHA DE DECLARACIÓN</td></tr>
+  <tr><td style="text-align:center">ORIGINARIA</td><td style="text-align:center">${igtfDeclMes}/${igtfDeclAnio}</td><td style="text-align:center">${pD(desdeD)} al ${pD(hastaD)}</td><td style="text-align:center">${pD(getTodayDate())}</td></tr>
+</table>
+<div class="hdr">IMPUESTO A LAS GRANDES TRANSACCIONES FINANCIERAS ALICUOTA DEL 2% y 3%</div>
+<table>
+  <tr><th style="width:10%">Alícuota</th><th>Concepto</th><th style="width:20%">Cantidad de Operaciones</th><th style="width:22%">Base Imponible (Bs.)</th></tr>
+  ${CONCEPTOS_2.map(c=>filaConcepto(2,c.l,igtfDeclData[c.k+'_cant'],igtfDeclData[c.k+'_base'])).join('')}
+  <tr style="font-weight:900;background:#f8fafc"><td colspan="3" style="text-align:right">Monto Total de la Base Imponible (Bs.) 2%</td><td style="text-align:right">${fmtN(totalBase2)}</td></tr>
+  ${filaConcepto(3,'Efectivo en moneda extranjera (automático, de IGTF percibido)',cantFX,baseFXBs)}
+  ${CONCEPTOS_3M.map(c=>filaConcepto(3,c.l,igtfDeclData[c.k+'_cant'],igtfDeclData[c.k+'_base'])).join('')}
+  <tr style="font-weight:900;background:#f8fafc"><td colspan="3" style="text-align:right">Monto Total de la Base Imponible (Bs.) 3%</td><td style="text-align:right">${fmtN(totalBase3)}</td></tr>
+</table>
+<div class="hdr">III.- IMPUESTO A PAGAR</div>
+<table>
+  <tr><td>Monto a Pagar Alícuota 2%</td><td style="text-align:right">${fmtN(pagar2)}</td></tr>
+  <tr><td>Monto a Pagar Alícuota 3%</td><td style="text-align:right">${fmtN(pagar3)}</td></tr>
+  <tr style="font-weight:900"><td>Total Impuesto a Pagar (Bs.)</td><td style="text-align:right">${fmtN(totalPagar)}</td></tr>
+  <tr><td>Equivalente (USD, tasa ${fmtN(igtfDeclData.tasaBcv)})</td><td style="text-align:right">${fmtN(pNum(igtfDeclData.tasaBcv)>0?totalPagar/pNum(igtfDeclData.tasaBcv):0)}</td></tr>
+</table>
+<table style="margin-top:0">
+  <tr><td style="width:50%;font-size:7px">Juro que los datos contenidos en esta declaración han sido determinados con base a las disposiciones legales y examinados por mi persona: ${emp}<br/><br/>Fecha: ${pD(getTodayDate())}</td>
+  <td style="font-size:7px">Yo, ${emp}, con el RIF N° ${rif}. Declaro que los datos y cifras que aparecen en la declaración son una copia fiel y exacta de los datos contenidos en los registros de contabilidad y control tributario que han sido llenados conforme a la ley.</td></tr>
+</table>
+<p style="margin-top:8px;font-size:7px;color:#666">Tasa BCV de la quincena: Bs. ${fmtN(igtfDeclData.tasaBcv)} · ${cantFX} operación(es) de IGTF percibido en esta quincena, Base Bs. ${fmtN(baseFXBs)}</p>
+<script>window.onload=()=>window.print();<\/script>
+</body></html>`;
+                const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+              };
+
+              return (
+              <div className="space-y-3">
+                <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                      <h3 className="font-black text-sm uppercase">Impuesto a las Grandes Transacciones Financieras</h3>
+                      <p className="text-[10px] text-slate-400">Forma 99021 · SENIAT · Alícuota 2% y 3%</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <select value={igtfDeclMes} onChange={e=>setIgtfDeclMes(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                        {MESES_ID.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                      </select>
+                      <select value={igtfDeclAnio} onChange={e=>setIgtfDeclAnio(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                        {[parseInt(igtfDeclAnio)-1,parseInt(igtfDeclAnio),parseInt(igtfDeclAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
+                      </select>
+                      <select value={igtfDeclQ} onChange={e=>setIgtfDeclQ(e.target.value)} className="border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold">
+                        <option value="1">I Quincena (1-15)</option><option value="2">II Quincena (16-fin)</option>
+                      </select>
+                      <button onClick={exportarIgtfDeclPDF} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
+                      <button disabled={igtfDeclSaving} onClick={guardarIgtfDecl} className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-500 text-white rounded-lg text-[10px] font-black uppercase hover:bg-orange-600 disabled:opacity-50"><Save size={12}/>{igtfDeclSaving?'Guardando...':`Guardar Q${igtfDeclQ} ${MESES_ID[parseInt(igtfDeclMes,10)-1]}`}</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Declaración</label>
+                      <input value={igtfDeclData.nroDeclaracion||''} onChange={e=>setID('nroDeclaracion',e.target.value)} placeholder="N° de declaración SENIAT" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+                    </div>
+                    <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Tasa BCV de la Quincena (Bs./$)</label>
+                      <input type="number" step="0.01" value={igtfDeclData.tasaBcv||0} onChange={e=>setID('tasaBcv',parseFloat(e.target.value)||0)} className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-xs font-black text-orange-600 outline-none focus:border-orange-500"/>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead><tr style={{background:'#0f172a'}}>
+                      <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">Alícuota</th>
+                      <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Concepto</th>
+                      <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Cant. Operaciones</th>
+                      <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Base Imponible (Bs.)</th>
+                    </tr></thead>
+                    <tbody>
+                      {CONCEPTOS_2.map((c,i)=>(
+                        <tr key={c.k} className={i%2===0?'bg-white':'bg-slate-50'}>
+                          <td className="px-3 py-2 text-center font-black text-slate-500">2%</td>
+                          <td className="px-3 py-2 font-bold">{c.l}</td>
+                          <td className="px-3 py-2 text-right"><input type="number" value={igtfDeclData[c.k+'_cant']||0} onChange={e=>setID(c.k+'_cant',parseFloat(e.target.value)||0)} className="w-20 text-right bg-transparent outline-none border-b-2 border-transparent focus:border-orange-400"/></td>
+                          <td className="px-3 py-2 text-right"><input type="number" step="0.01" value={igtfDeclData[c.k+'_base']||0} onChange={e=>setID(c.k+'_base',parseFloat(e.target.value)||0)} className="w-28 text-right bg-transparent font-bold outline-none border-b-2 border-transparent focus:border-orange-400"/></td>
+                        </tr>
+                      ))}
+                      <tr style={{background:'#1e293b'}}>
+                        <td colSpan={3} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Monto Total de la Base Imponible (Bs.) 2%</td>
+                        <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totalBase2)}</td>
+                      </tr>
+                      <tr className="bg-emerald-50">
+                        <td className="px-3 py-2 text-center font-black text-emerald-700">3%</td>
+                        <td className="px-3 py-2 font-bold text-emerald-700">Efectivo en moneda extranjera <span className="text-[8px] font-normal text-emerald-500">(automático · IGTF percibido)</span></td>
+                        <td className="px-3 py-2 text-right font-black text-emerald-700">{cantFX}</td>
+                        <td className="px-3 py-2 text-right font-black text-emerald-700">{fmtN(baseFXBs)}</td>
+                      </tr>
+                      {CONCEPTOS_3M.map((c,i)=>(
+                        <tr key={c.k} className={i%2===0?'bg-white':'bg-slate-50'}>
+                          <td className="px-3 py-2 text-center font-black text-slate-500">3%</td>
+                          <td className="px-3 py-2 font-bold">{c.l}</td>
+                          <td className="px-3 py-2 text-right"><input type="number" value={igtfDeclData[c.k+'_cant']||0} onChange={e=>setID(c.k+'_cant',parseFloat(e.target.value)||0)} className="w-20 text-right bg-transparent outline-none border-b-2 border-transparent focus:border-orange-400"/></td>
+                          <td className="px-3 py-2 text-right"><input type="number" step="0.01" value={igtfDeclData[c.k+'_base']||0} onChange={e=>setID(c.k+'_base',parseFloat(e.target.value)||0)} className="w-28 text-right bg-transparent font-bold outline-none border-b-2 border-transparent focus:border-orange-400"/></td>
+                        </tr>
+                      ))}
+                      <tr style={{background:'#1e293b'}}>
+                        <td colSpan={3} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Monto Total de la Base Imponible (Bs.) 3%</td>
+                        <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totalBase3)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-4 py-2.5 font-black text-xs uppercase" style={{background:'#1e3a8a',color:'#fff'}}>Resumen — Impuesto a Pagar</div>
+                  <table className="w-full text-xs">
+                    <tbody>
+                      <tr className="border-b border-slate-100"><td className="px-4 py-2 font-bold">Monto a Pagar Alícuota 2%</td><td className="px-4 py-2 text-right font-mono font-black">{fmtN(pagar2)}</td></tr>
+                      <tr className="border-b border-slate-100"><td className="px-4 py-2 font-bold">Monto a Pagar Alícuota 3%</td><td className="px-4 py-2 text-right font-mono font-black">{fmtN(pagar3)}</td></tr>
+                      <tr className="bg-orange-50"><td className="px-4 py-2 font-black uppercase">Total Impuesto a Pagar (Bs.)</td><td className="px-4 py-2 text-right font-mono font-black text-orange-600 text-sm">{fmtN(totalPagar)}</td></tr>
+                      <tr><td className="px-4 py-2 font-bold text-slate-500">Equivalente (USD, tasa {fmtN(igtfDeclData.tasaBcv)})</td><td className="px-4 py-2 text-right font-mono">{fmtN(pNum(igtfDeclData.tasaBcv)>0?totalPagar/pNum(igtfDeclData.tasaBcv):0)}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              );
+            })()}
           </div>
           );
         })()}
@@ -4881,6 +5113,75 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
             <div className="px-5 pb-5 flex justify-end gap-3">
               <button onClick={()=>setEditRet(null)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
               <button onClick={guardarEditRet} className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600 flex items-center gap-2"><Save size={13}/> Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editIgtf&&(
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="px-6 py-4 flex justify-between items-center" style={{background:'#0f172a',borderBottom:'3px solid #f97316'}}>
+              <div>
+                <h3 className="font-black text-white text-sm uppercase tracking-wide">Editar IGTF</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">{editIgtf.nroRetencion||'—'} · {editIgtf._manualCliente||editIgtf.clientName||'—'}</p>
+              </div>
+              <button onClick={()=>setEditIgtf(null)} className="text-slate-400 hover:text-white"><X size={16}/></button>
+            </div>
+            <div className="p-5 grid grid-cols-2 gap-3">
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Comprobante</label>
+                <input disabled className="w-full border-2 border-slate-100 bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold text-slate-400 outline-none cursor-not-allowed" value={editIgtf.nroRetencion||'—'} readOnly/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Status</label>
+                <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.status||'PENDIENTE'} onChange={e=>setEditIgtfForm(f=>({...f,status:e.target.value}))}>
+                  <option value="PENDIENTE">PENDIENTE</option><option value="DECLARADO">DECLARADO</option>
+                </select>
+              </div>
+              <div className="col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Factura Afectada</label>
+                <input disabled className="w-full border-2 border-slate-100 bg-slate-50 rounded-xl px-3 py-2 text-xs font-bold text-slate-400 outline-none cursor-not-allowed" value={editIgtf.nroFiscal||'—'} readOnly/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Fecha</label>
+                <input type="date" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.fecha||''} onChange={e=>setEditIgtfForm(f=>({...f,fecha:e.target.value}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">% IGTF</label>
+                <input type="number" step="0.1" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.porcentaje||3} onChange={e=>setEditIgtfForm(f=>({...f,porcentaje:parseFloat(e.target.value)||0}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto USD</label>
+                <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.montoRetenidoUSD||0} onChange={e=>setEditIgtfForm(f=>({...f,montoRetenidoUSD:parseFloat(e.target.value)||0}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Monto Bs.</label>
+                <input type="number" step="0.01" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.montoRetenido||0} onChange={e=>setEditIgtfForm(f=>({...f,montoRetenido:parseFloat(e.target.value)||0}))}/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Mes a Reflejar en Libro</label>
+                <input type="month" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm._periodoMes||''} onChange={e=>setEditIgtfForm(f=>({...f,_periodoMes:e.target.value}))}/>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Quincena</label>
+                <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm._periodoQ||'1'} onChange={e=>setEditIgtfForm(f=>({...f,_periodoQ:e.target.value}))}>
+                  <option value="1">I Quincena (1-15)</option>
+                  <option value="2">II Quincena (16-fin)</option>
+                </select>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">N° Referencia</label>
+                <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.referencia||''} onChange={e=>setEditIgtfForm(f=>({...f,referencia:e.target.value}))}/>
+              </div>
+              <div><label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Banco / Cuenta</label>
+                <input className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"
+                  value={editIgtfForm.cuentaBancariaNombre||''} onChange={e=>setEditIgtfForm(f=>({...f,cuentaBancariaNombre:e.target.value}))}/>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex justify-end gap-3">
+              <button onClick={()=>setEditIgtf(null)} className="px-5 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-black uppercase hover:bg-slate-50">Cancelar</button>
+              <button onClick={guardarEditIgtf} className="px-5 py-2.5 bg-orange-500 text-white rounded-xl text-xs font-black uppercase hover:bg-orange-600 flex items-center gap-2"><Save size={13}/> Guardar</button>
             </div>
           </div>
         </div>
