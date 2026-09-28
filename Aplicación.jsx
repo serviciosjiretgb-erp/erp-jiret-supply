@@ -3433,6 +3433,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Cliente</th>
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Factura</th>
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Fecha</th>
+                  <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Período</th>
                   <th className="px-3 py-2.5 text-left text-[8px] text-orange-400 font-black uppercase">Quincena</th>
                   <th className="px-3 py-2.5 text-center text-[8px] text-orange-400 font-black uppercase">%</th>
                   <th className="px-3 py-2.5 text-right text-[8px] text-orange-400 font-black uppercase">Monto USD</th>
@@ -3441,16 +3442,18 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   <th className="px-3 py-2.5 text-[8px] text-orange-400 font-black uppercase">Acción</th>
                 </tr></thead>
                 <tbody>
-                  {igtfPag.length===0?<tr><td colSpan={10} className="py-10 text-center text-slate-400 text-xs">Sin registros de IGTF para los filtros aplicados</td></tr>:
+                  {igtfPag.length===0?<tr><td colSpan={11} className="py-10 text-center text-slate-400 text-xs">Sin registros de IGTF para los filtros aplicados</td></tr>:
                   igtfPag.map((r,i)=>{
                     const invR=(detInvoices||[]).find(inv=>inv.id===r.facturaId);
                     const nroFacR=r.nroFiscal||invR?.nroFiscal||invR?.documento||'—';
+                    const periodoR=r.periodoLibroMes||(r.fechaComprobante||r.fecha||'').substring(0,7)||'';
                     return (
                     <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
                       <td className="px-3 py-2 font-black text-orange-600">{r.nroRetencion||'—'}</td>
                       <td className="px-3 py-2 font-black">{r._manualCliente||r.clientName||'—'}</td>
                       <td className="px-3 py-2">{nroFacR}</td>
                       <td className="px-3 py-2">{pD(r.fechaComprobante||r.fecha)}</td>
+                      <td className="px-3 py-2 font-bold text-slate-600">{periodoR?periodoR.split('-').reverse().join('/'):'—'}</td>
                       <td className="px-3 py-2"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{(r.quincena||'1')==='1'?'I Quincena':'II Quincena'}</span></td>
                       <td className="px-3 py-2 text-center font-black">{r.porcentaje||3}%</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(r.montoRetenidoUSD)}</td>
@@ -3478,7 +3481,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                   })}
                 </tbody>
                 {igtfFilt.length>0&&<tfoot><tr style={{background:'#1e293b'}}>
-                  <td colSpan={6} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({igtfFilt.length})</td>
+                  <td colSpan={7} className="px-3 py-2 text-right text-[9px] font-black text-white uppercase">Totales ({igtfFilt.length})</td>
                   <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totMontoUSD)}</td>
                   <td className="px-3 py-2 text-right font-mono font-black text-orange-400">{fmtN(totMontoBs)}</td>
                   <td colSpan={2}></td>
