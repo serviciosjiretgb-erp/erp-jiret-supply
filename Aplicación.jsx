@@ -1107,16 +1107,53 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
-          <h3 className="text-[10px] font-black text-gray-400 uppercase mb-1">4. Tabulador de Sueldos y Cargos</h3>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase">4. Tabulador de Sueldos y Cargos</h3>
+            <button onClick={()=>{
+              const filas=tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||''));
+              const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+              const rifEmp=settings?.empresaRif||'J-412309374';
+              const hoy=new Date().toLocaleDateString('es-VE');
+              const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Tabulador de Sueldos y Cargos</title><style>
+              *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif}
+              body{padding:28px;font-size:11px;color:#111}
+              h1{font-size:15px;font-weight:900;margin-bottom:2px}
+              .sub{font-size:10px;color:#555;margin-bottom:16px}
+              table{width:100%;border-collapse:collapse}
+              th,td{border:1px solid #333;padding:6px 10px;text-align:left}
+              th{background:#0f172a;color:#fff;font-size:9px;text-transform:uppercase}
+              td.num{text-align:right;font-weight:700}
+              tr:nth-child(even) td{background:#f8fafc}
+              </style></head><body>
+              <h1>Tabulador de Sueldos y Cargos</h1>
+              <div class="sub">${emp} · RIF ${rifEmp} · Generado ${hoy}</div>
+              <table><thead><tr><th>Cargo</th><th style="text-align:right">Salario Base $</th></tr></thead><tbody>
+              ${filas.map(c=>`<tr><td>${c.cargo||''}</td><td class="num">$${(parseFloat(c.salarioBase)||0).toFixed(2)}</td></tr>`).join('')}
+              </tbody></table>
+              <script>window.onload=()=>window.print();</script></body></html>`;
+              const w=window.open('','_blank','width=700,height=800'); if(w){w.document.write(html);w.document.close();}
+            }} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
+          </div>
           <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Cargo sale de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto.</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
-            {tabuladorCargos.length===0 && <p className="text-xs text-gray-400 text-center py-6 md:col-span-2">Sin cargos aún — agrega el primero abajo</p>}
-            {tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||'')).map(c=>(
-              <div key={c.id} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2 border border-gray-200">
-                <input defaultValue={c.cargo} onBlur={e=>actualizarCargoTab(c,{cargo:e.target.value.toUpperCase()})} className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold uppercase outline-none focus:border-cyan-500 bg-white"/>
-                <span className="text-gray-400 text-xs flex-shrink-0">$</span>
-                <input type="number" defaultValue={c.salarioBase} onBlur={e=>actualizarCargoTab(c,{salarioBase:parseFloat(e.target.value)||0})} className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500 text-right flex-shrink-0 bg-white"/>
-                <button onClick={()=>eliminarCargoTab(c)} className="text-red-400 hover:text-red-600 flex-shrink-0"><Trash2 size={13}/></button>
+          <div className="border border-gray-200 rounded-xl overflow-hidden mb-3">
+            <div className="grid grid-cols-[1fr_140px_56px] bg-gray-900 text-cyan-400 text-[9px] font-black uppercase">
+              <div className="px-3 py-2">Cargo</div>
+              <div className="px-3 py-2 text-right">Salario $</div>
+              <div className="px-3 py-2 text-center">Acción</div>
+            </div>
+            {tabuladorCargos.length===0 && <p className="text-xs text-gray-400 text-center py-6">Sin cargos aún — agrega el primero abajo</p>}
+            {tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||'')).map((c,i)=>(
+              <div key={c.id} className={`grid grid-cols-[1fr_140px_56px] items-center border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                <div className="px-3 py-1.5">
+                  <input defaultValue={c.cargo} onBlur={e=>actualizarCargoTab(c,{cargo:e.target.value.toUpperCase()})} className="w-full border border-transparent hover:border-gray-200 rounded-lg px-2 py-1 text-[11px] font-bold uppercase outline-none focus:border-cyan-500 bg-transparent focus:bg-white"/>
+                </div>
+                <div className="px-3 py-1.5 flex items-center justify-end gap-1">
+                  <span className="text-gray-400 text-xs">$</span>
+                  <input type="number" defaultValue={c.salarioBase} onBlur={e=>actualizarCargoTab(c,{salarioBase:parseFloat(e.target.value)||0})} className="w-20 border border-transparent hover:border-gray-200 rounded-lg px-2 py-1 text-[11px] font-bold outline-none focus:border-cyan-500 text-right bg-transparent focus:bg-white"/>
+                </div>
+                <div className="px-3 py-1.5 flex items-center justify-center">
+                  <button onClick={()=>eliminarCargoTab(c)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
+                </div>
               </div>
             ))}
           </div>
