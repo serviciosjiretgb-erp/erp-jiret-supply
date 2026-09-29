@@ -570,6 +570,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [repTrabajadorSel,setRepTrabajadorSel]=useState(null);
   const [repBusqTrab,setRepBusqTrab]=useState('');
   const [agregarConceptoBusq,setAgregarConceptoBusq]=useState('');
+  const [cargarTrabBusq,setCargarTrabBusq]=useState('');
   const [busyNomina,setBusyNomina]=useState(false);
   const crearNomina = async () => {
     if(!nominaForm.concepto.trim()) return alert('Escribe el concepto de este pago');
@@ -1868,18 +1869,30 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · Tasa {nominaActiva.tasa}</p>
             </div>
 
-            {nominaActiva.estado==='abierta' && trabajadoresPendientes.length>0 && (
+            {nominaActiva.estado==='abierta' && trabajadoresPendientes.length>0 && (()=>{
+                const coincidenciasTrab = cargarTrabBusq.trim() ? trabajadoresPendientes.filter(t=>(t.nombre||'').toUpperCase().includes(cargarTrabBusq.toUpperCase())||(t.cedula||'').includes(cargarTrabBusq)).slice(0,8) : [];
+                return (
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
-                <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Cargar Trabajador</h3>
-                <div className="flex flex-wrap gap-2">
-                  {trabajadoresPendientes.map(t=>(
-                    <button key={t.id} onClick={()=>abrirCargarTrabajador(t)} className="flex items-center gap-2 bg-gray-50 hover:bg-cyan-50 border border-gray-200 hover:border-cyan-300 rounded-xl px-3 py-2 text-xs font-bold">
-                      <UserPlus size={13}/> {t.nombre} <span className="text-gray-400">· {nombreDepto(t.departamentoId)}</span>
-                    </button>
-                  ))}
+                <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Cargar Trabajador — buscar por cédula o nombre</h3>
+                <div className="relative max-w-md">
+                  <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
+                  <input value={cargarTrabBusq} onChange={e=>setCargarTrabBusq(e.target.value)} placeholder="Cédula de Identidad o Nombre..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-cyan-500"/>
+                  {cargarTrabBusq.trim() && (
+                    <div className="absolute z-10 left-0 right-0 mt-1 border-2 border-gray-100 rounded-xl bg-white shadow-lg max-h-56 overflow-y-auto">
+                      {coincidenciasTrab.map(t=>(
+                        <div key={t.id} onClick={()=>{abrirCargarTrabajador(t);setCargarTrabBusq('');}} className="flex items-center gap-2 px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0">
+                          <UserPlus size={13} className="text-cyan-500 flex-shrink-0"/>
+                          <span className="text-xs font-bold">{t.nombre}</span>
+                          <span className="text-[10px] text-gray-400">{t.cedula} · {nombreDepto(t.departamentoId)}</span>
+                        </div>
+                      ))}
+                      {coincidenciasTrab.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
+                );
+            })()}
 
             <div className="bg-white rounded-2xl border border-gray-200 p-4">
               <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Trabajadores Cargados ({detalles.length}) — Total ${formatNum(totalNetoUSD)}</h3>
