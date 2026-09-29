@@ -651,12 +651,90 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
 
   const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
+  // Rango de fechas (desde/hasta) de la quincena de una nómina, y días calendario que tiene.
+  const periodoQuincena = (nomina) => {
+    const [añoM, mesM] = String(nomina?.mes||'').split('-');
+    if(!añoM||!mesM) return {desde:'', hasta:'', diasQuincena:15, esQ2:false};
+    const lastDay = new Date(parseInt(añoM),parseInt(mesM),0).getDate();
+    const esQ2 = /2/.test(nomina.quincena||'');
+    const desde = `${añoM}-${mesM}-${esQ2?'16':'01'}`;
+    const hasta = `${añoM}-${mesM}-${esQ2?String(lastDay).padStart(2,'0'):'15'}`;
+    const diasQuincena = esQ2 ? (lastDay-15) : 15;
+    return {desde, hasta, diasQuincena, esQ2};
+  };
+  // Días realmente trabajados por el trabajador en esta quincena — completos, salvo que haya
+  // ingresado (fechaIngreso) DENTRO de la quincena, en cuyo caso solo cuentan desde su ingreso.
+  const diasTrabajadosQuincena = (trabajador, nomina) => {
+    const {desde, hasta, diasQuincena} = periodoQuincena(nomina);
+    if(!desde||!trabajador?.fechaIngreso||trabajador.fechaIngreso<=desde) return diasQuincena;
+    if(trabajador.fechaIngreso>hasta) return 0;
+    const dIngreso = new Date(trabajador.fechaIngreso+'T00:00:00'), dHasta = new Date(hasta+'T00:00:00');
+    return Math.round((dHasta-dIngreso)/86400000)+1;
+  };
+  // Arma las 3 deducciones legales (IVSS, RPE, FAOV) ya con incluida:true — se usa al abrir un
+  // trabajador, y también desde el botón "Recalcular" si cambia el Sueldo después.
+  const recalcularDeduccionesLegales = (asignaciones, centroCostoId) => {
+    const tasa = Number(nominaActiva?.tasa||0);
+    const conceptosActivos = conceptos.filter(c=>c.activo!==false && c.tipo==='D');
+    const cIVSSc = conceptosActivos.find(conceptoEsIVSS), cRPEc = conceptosActivos.find(conceptoEsRPE), cFAOVc = conceptosActivos.find(conceptoEsFAOV);
+    const aCuenta = (c) => { const cu=c?cuentaDeConcepto(c,centroCostoId):null; return {codigoCuenta:cu?.codigo||'', nombreCuenta:cu?.nombre||''}; };
+    const {hayBase, mkSemanal, mkFaov} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
+    if(!hayBase) return [];
+    return [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true}));
+  };
+  const toggleDeduccionLegal = (idx) => setCargarTrabModal(m=>({...m, deduccionesLegales:m.deduccionesLegales.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
+  const actualizarMontoDeduccionLegal = (idx, montoUSD) => {
+    setCargarTrabModal(m=>{
+      const tasaCambio = Number(nominaActiva?.tasa||0);
+      const deduccionesLegales = m.deduccionesLegales.map((d,i)=>i===idx?{...d, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasaCambio).toFixed(2))}:d);
+      return {...m, deduccionesLegales};
+    });
+  };
+  const recalcularLegalesAhora = () => setCargarTrabModal(m=>m?{...m, deduccionesLegales:recalcularDeduccionesLegales(m.asignaciones, m.trabajador.centroCostoId)}:m);
+  // Ubica en el catálogo de Conceptos (rrhh_conceptos) el que representa "Días Trabajados"/Sueldo —
+  // por código 00001 (el mismo que usa tu pantalla de referencia) o, si no calza, por nombre.
+  const conceptoEsSueldo = (c) => c.codigo==='00001' || /d[ií]as trabajados|sueldo\s*b[aá]sico/i.test(c.nombre||'');
+  const conceptoEsIVSS = (c) => c.codigo==='20000' || /ivss|seg(uridad)?\.?\s*y\s*salud/i.test(c.nombre||'');
+  const conceptoEsRPE = (c) => c.codigo==='20010' || /rpe|paro forzoso|prestacional de empleo/i.test(c.nombre||'');
+  const conceptoEsFAOV = (c) => c.codigo==='20030' || /faov|banavih|vivienda y h[aá]bita/i.test(c.nombre||'');
+  const cuentaDeConcepto = (c, centroCostoId) => c.cuentasPorCentro?.[centroCostoId] || null;
   const abrirCargarTrabajador = (trabajador) => {
-    const cuentasDepto = cuentasNomina.filter(c=>c.departamentoId===trabajador.departamentoId);
-    const asignacionesCfg = cuentasDepto.filter(c=>c.tipo==='asignacion');
-    const deduccionesCfgManual = cuentasDepto.filter(c=>c.tipo==='deduccion' && !/ivss|rpe|paro forzoso|faov|inces/i.test(c.concepto));
-    const asignaciones = asignacionesCfg.map(c=>({concepto:c.concepto, incluida:false, montoUSD:c.concepto==='Sueldo Básico'?Number(trabajador.salarioBase||0):0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}));
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual: deduccionesCfgManual.map(c=>({concepto:c.concepto, incluida:false, montoUSD:0, montoBs:0, codigoCuenta:c.codigoCuenta, nombreCuenta:c.nombreCuenta}))});
+    // Predeterminados: tomados del catálogo real de Conceptos (Recursos Humanos → Conceptos), el
+    // mismo con el que se arma la nómina — no una lista aparte.
+    const conceptosActivos = conceptos.filter(c=>c.activo!==false);
+    const asignacionesCfg = conceptosActivos.filter(c=>c.tipo==='A');
+    const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c));
+    // Si el trabajador ya tiene un detalle guardado en esta nómina (lo estamos re-abriendo, p.ej. con
+    // Anterior/Siguiente), recargamos sus montos ya guardados en vez de empezar de cero.
+    const detalleExistente = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
+    const {diasQuincena} = periodoQuincena(nominaActiva);
+    const tasaDiariaDef = diasQuincena>0 ? parseFloat((Number(trabajador.salarioBase||0)/diasQuincena).toFixed(4)) : 0;
+    const cantidadDiasDef = diasTrabajadosQuincena(trabajador, nominaActiva);
+    const asignaciones = asignacionesCfg.map(c=>{
+      const esSueldo = conceptoEsSueldo(c);
+      const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
+      const guardada = detalleExistente?.asignaciones?.find(a=>a.codigo===c.codigo);
+      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', cantidadDias:guardada.cantidadDias??(esSueldo?cantidadDiasDef:undefined), tasaDiaria:guardada.tasaDiaria??(esSueldo?tasaDiariaDef:undefined)};
+      // Predeterminado: "Días Trabajados"/Sueldo entra ya incluido, como Cantidad de Días × Tasa
+      // Diaria (el salario del trabajador dividido entre los días de la quincena) — así una quincena
+      // incompleta (ingreso a mitad de quincena) sale correcta sola. El resto de asignaciones del
+      // catálogo quedan disponibles para agregar a mano si aplican.
+      return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo, montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
+    });
+    const deduccionesManual = deduccionesCfgManual.map(c=>{
+      const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
+      const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal);
+      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||''};
+      return {concepto:c.nombre, codigo:c.codigo, incluida:false, montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||''};
+    });
+    // Deducciones legales (IVSS, RPE, FAOV): predeterminadas y calculadas solas, PERO igual de
+    // editables y quitables que cualquier otro concepto — que sean "automáticas" no significa que
+    // estén bloqueadas. Si el trabajador ya tenía un detalle guardado, se recargan sus valores
+    // guardados (por si las editó); si no, se calculan de cero con la fórmula legal.
+    const deduccionesLegales = detalleExistente?.deducciones?.some(d=>d.esLegal)
+      ? detalleExistente.deducciones.filter(d=>d.esLegal).map(d=>({...d, incluida:true}))
+      : recalcularDeduccionesLegales(asignaciones, trabajador.centroCostoId);
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, _nroReciboExistente:detalleExistente?.nroRecibo||null});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
@@ -664,6 +742,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
       const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasa).toFixed(2))}:a);
+      return {...m, asignaciones};
+    });
+  };
+  // Para el Sueldo Básico: recalcula el monto en USD a partir de Cantidad de Días × Tasa Diaria.
+  const actualizarCantidadTasaAsignacion = (idx, campo, valor) => {
+    setCargarTrabModal(m=>{
+      const tasaCambio = Number(nominaActiva?.tasa||0);
+      const asignaciones = m.asignaciones.map((a,i)=>{
+        if(i!==idx) return a;
+        const upd = {...a, [campo]:Number(valor)||0};
+        const montoUSD = parseFloat((Number(upd.cantidadDias||0)*Number(upd.tasaDiaria||0)).toFixed(2));
+        return {...upd, montoUSD, montoBs:parseFloat((montoUSD*tasaCambio).toFixed(2))};
+      });
       return {...m, asignaciones};
     });
   };
@@ -677,34 +768,38 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const guardarDetalleNomina = async () => {
     if(!cargarTrabModal || !nominaActiva) return;
     const tasa = Number(nominaActiva.tasa||0);
-    const cuentasDepto = cuentasNomina.filter(c=>c.departamentoId===cargarTrabModal.trabajador.departamentoId);
-    const cIVSS = cuentasDepto.find(c=>c.tipo==='deduccion' && /ivss/i.test(c.concepto));
-    const cRPE = cuentasDepto.find(c=>c.tipo==='deduccion' && /rpe|paro forzoso/i.test(c.concepto));
-    const cFAOV = cuentasDepto.find(c=>c.tipo==='deduccion' && /faov/i.test(c.concepto));
     const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
-    const {hayBase, mkSemanal, mkFaov} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva.concepto, nominaActiva.mes, nominaActiva.quincena);
-    const deduccionesLegales = hayBase ? [
-      mkSemanal('IVSS', configParafiscal.ivss, cIVSS),
-      mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, cRPE),
-      mkFaov(cFAOV),
-    ] : [];
+    // Las deducciones legales se toman tal como quedaron en pantalla (el usuario pudo haberlas
+    // editado o quitado) — no se vuelven a calcular de cero aquí.
+    const deduccionesLegales = (cargarTrabModal.deduccionesLegales||[]).filter(d=>d.incluida).map(({incluida,...d})=>d);
     const deduccionesManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).map(({incluida,...d})=>({...d, esLegal:false}));
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
     const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual].reduce((s,d)=>s+d.montoUSD,0);
     const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
+    const {desde:periodoDesde, hasta:periodoHasta, esQ2} = periodoQuincena(nominaActiva);
+    const mesM = String(nominaActiva.mes||'').split('-')[1], añoM = String(nominaActiva.mes||'').split('-')[0];
     setBusyNomina(true);
     try{
       const t = cargarTrabModal.trabajador;
       const key = `${nominaActiva.id}_${t.id}`;
-      await setDoc(getDocRef('rrhh_nomina_detalles',key),{
+      let nroRecibo = cargarTrabModal._nroReciboExistente;
+      const batchRecibo = writeBatch(db);
+      if(!nroRecibo){
+        const qNum = esQ2?'2':'1';
+        const correlativo = Math.max(1, parseInt(settings?.correlativoReciboNomina||1,10));
+        nroRecibo = `${qNum}Q-${mesM}${añoM}-${String(correlativo).padStart(3,'0')}`;
+        batchRecibo.set(getDocRef('settings','general'),{correlativoReciboNomina:correlativo+1},{merge:true});
+      }
+      batchRecibo.set(getDocRef('rrhh_nomina_detalles',key),{
         nominaId:nominaActiva.id, trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula,
         centroCostoId:t.centroCostoId, departamentoId:t.departamentoId,
         asignaciones, deducciones:[...deduccionesLegales,...deduccionesManual],
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
         totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
         netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
-        tasa, updatedAt:Date.now(),
-      });
+        tasa, nroRecibo, periodoDesde, periodoHasta, updatedAt:Date.now(),
+      },{merge:true});
+      await batchRecibo.commit();
       setCargarTrabModal(null);
     } catch(e){ alert('Error al guardar: '+e.message); }
     finally{ setBusyNomina(false); }
@@ -788,30 +883,95 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const _escRH = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const _reciboCss = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:520px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:14px;text-transform:uppercase;}.membrete p{font-size:9px;opacity:.9;margin-top:1px;}.membrete .tit{font-size:11px;font-weight:900;text-transform:uppercase;text-align:right;}.btn-print{display:block;margin:14px 16px;padding:10px 0;background:#0891b2;color:#fff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 32px);}.contenido{padding:0 16px 16px;}.fila-top{display:flex;justify-content:space-between;margin-bottom:10px;}.fila-top p{font-size:10px;color:#6b7280;margin:1px 0 0;}.fila-top .nom{font-size:13px;font-weight:900;}table{width:100%;font-size:11px;border-collapse:collapse;}td{padding:3px 0;}.lbl{color:#6b7280;}.neg{color:#dc2626;}tr.tot td{border-top:1px solid #e5e7eb;padding-top:6px;font-weight:900;}.firma{font-size:9px;color:#9ca3af;margin-top:14px;padding-top:8px;border-top:1px solid #e5e7eb;}@media print{@page{margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
 
-  const exportarReciboPDF = (d, nomina, tipo) => {
-    const {empresa, rif, dir} = _empresaDatos();
-    const esEmpresa = tipo==='empresa';
-    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Recibo - ${_escRH(d.trabajadorNombre)}</title><style>${_reciboCss}</style></head><body><div class="wrap">
-      <div class="membrete"><div><h1>${_escRH(empresa)}</h1><p>RIF: ${_escRH(rif)}</p></div><div class="tit">Recibo de pago<br/>${esEmpresa?'Copia empresa':'Copia trabajador'}</div></div>
-      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
-      <div class="contenido">
-        <p style="font-size:9px;color:#9ca3af;margin-bottom:8px">${_escRH(dir)}</p>
-        <div class="fila-top">
-          <div><p class="nom">${_escRH(d.trabajadorNombre)}</p><p>${_escRH(d.trabajadorCedula||'')} · ${_escRH(nombreDepto(d.departamentoId))}</p></div>
-          <div style="text-align:right"><p>${_escRH(nomina.mes)} · ${_escRH(nomina.quincena)}</p><p>Emitido ${_escRH(contDd(nomina.fechaPago))}${esEmpresa?' · Tasa '+_escRH(nomina.tasa):''}</p></div>
+  const exportarReciboPDF = (d, nomina) => {
+    const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
+    const rif = settings?.empresaRif || 'J-412309374';
+    const dir = settings?.empresaDireccion || 'AV. CIRCUNVALACIÓN N° 02, C.C. EL DIVIDIVI, MARACAIBO';
+    const tel = settings?.empresaTelefono || '0414-6930342';
+    const t = trabajadores.find(tr=>tr.id===d.trabajadorId) || {};
+    const [añoM, mesM] = String(nomina.mes||'').split('-');
+    const qNum = /2/.test(nomina.quincena||'') ? '2' : '1';
+    const nroRecibo = d.nroRecibo || `${qNum}Q-${mesM}${añoM}-${String(correlativoNominaPreview()).padStart(3,'0')}`;
+    const salarioPeriodoBs = d.asignaciones.reduce((s,a)=>s+Number(a.montoBs||0),0);
+    const totalAsigBs = d.asignaciones.reduce((s,a)=>s+Number(a.montoBs||0),0);
+    const totalDedBs = d.deducciones.reduce((s,x)=>s+Number(x.montoBs||0),0);
+    const netoBs = totalAsigBs - totalDedBs;
+    const filaC = (cod,desc,asigBs,dedBs)=>`<tr><td>${_escRH(cod)}</td><td>${_escRH(desc)}</td><td class="num">${asigBs?('BS. '+formatNum(asigBs)):''}</td><td class="num">${dedBs?('BS. -'+formatNum(dedBs)):''}</td></tr>`;
+    const filasConceptos = [
+      ...d.asignaciones.map((a,i)=>filaC(`A${String(i+1).padStart(3,'0')}`, a.concepto.toUpperCase(), a.montoBs, 0)),
+      ...d.deducciones.map((x,i)=>filaC(`R${String(i+1).padStart(3,'0')}`, x.concepto.toUpperCase(), 0, x.montoBs)),
+    ].join('');
+    const stub = `<div class="stub">
+      <div class="hdr">
+        <div class="box logo-box">Supply<br/><span>G&amp;B</span></div>
+        <div class="box empresa-box">
+          <b>${_escRH(empresa)}</b><br/>
+          R.I.F.: ${_escRH(rif)}<br/>
+          DIRECCIÓN: ${_escRH(dir)}<br/>
+          TELÉFONOS: ${_escRH(tel)}
         </div>
-        <table>
-          <tr><td class="lbl">Concepto</td>${esEmpresa?'<td style="text-align:right" class="lbl">USD</td>':''}<td style="text-align:right" class="lbl">Bs.</td></tr>
-          ${d.asignaciones.map(a=>`<tr><td>${_escRH(a.concepto)}</td>${esEmpresa?`<td style="text-align:right">$${formatNum(a.montoUSD)}</td>`:''}<td style="text-align:right">${formatNum(a.montoBs)}</td></tr>`).join('')}
-          ${d.deducciones.map(ded=>`<tr><td class="neg">(-) ${_escRH(ded.concepto)}</td>${esEmpresa?`<td style="text-align:right" class="neg">-$${formatNum(ded.montoUSD)}</td>`:''}<td style="text-align:right" class="neg">-${formatNum(ded.montoBs)}</td></tr>`).join('')}
-          <tr class="tot"><td>Neto a pagar</td>${esEmpresa?`<td style="text-align:right">$${formatNum(d.netoUSD)}</td>`:''}<td style="text-align:right">${esEmpresa?'':'Bs. '}${formatNum(d.netoBs)}</td></tr>
-        </table>
-        <p class="firma">${esEmpresa?'Firma del trabajador (recibí conforme): ________________________':'Sello y firma de recursos humanos: ________________________'}</p>
+        <div class="box recibo-box">RECIBO DE<br/>PAGO<br/>N° ${_escRH(nroRecibo)}</div>
       </div>
-    </div></body></html>`;
+      <table class="box datos-table">
+        <tr><td class="lbl">CÉDULA:</td><td>${_escRH(t.cedula||d.trabajadorCedula||'—')}</td><td class="lbl">FECHA DE<br/>INGRESO:</td><td>${contDd(t.fechaIngreso)}</td></tr>
+        <tr><td class="lbl">NOMBRE:</td><td>${_escRH((t.nombre||d.trabajadorNombre||'').toUpperCase())}</td><td class="lbl">DEPARTAMENTO:</td><td>${_escRH(nombreDepto(d.departamentoId).toUpperCase())}</td></tr>
+        <tr><td class="lbl">CARGO:</td><td>${_escRH((t.cargo||'—').toUpperCase())}</td><td class="lbl">SALARIO<br/>PERÍODO:</td><td>BS. ${formatNum(salarioPeriodoBs)}</td></tr>
+        <tr><td class="lbl">FECHA DE<br/>PAGO:</td><td>${contDd(nomina.fechaPago)}</td><td class="lbl">PERÍODO DE<br/>PAGO:</td><td>DEL ${contDd(d.periodoDesde)} AL ${contDd(d.periodoHasta)}</td></tr>
+      </table>
+      <table class="box conceptos-table">
+        <thead><tr><th>CONCEPTO</th><th>DESCRIPCIÓN</th><th>ASIGNACIÓN</th><th>DEDUC/RETEN</th></tr></thead>
+        <tbody>${filasConceptos}</tbody>
+      </table>
+      <table class="box total-table"><tr><td>TOTAL:</td><td class="num">BS. ${formatNum(totalAsigBs)}</td><td class="num">BS. -${formatNum(totalDedBs)}</td></tr></table>
+      <table class="box neto-table"><tr><td>NETO:</td><td class="num">BS. ${formatNum(netoBs)}</td></tr></table>
+      <div class="box obs-box">OBSERVACIONES: RECIBO DE LA NÓMINA N° ${_escRH(nroRecibo)}</div>
+      <div class="firma-wrap">
+        <p class="rc">RECIBE CONFORME:</p>
+        <div class="firma-line"></div>
+        <b>${_escRH((t.nombre||d.trabajadorNombre||'').toUpperCase())}</b><br/>C.I. ${_escRH(t.cedula||d.trabajadorCedula||'—')}
+      </div>
+    </div>`;
+    const css = `*{margin:0;padding:0;box-sizing:border-box;}
+      @page{size:11in 8.5in;margin:0;}
+      body{font-family:Arial,Helvetica,sans-serif;font-size:12.3pt;text-transform:uppercase;color:#111;width:11in;height:8.5in;padding:0.55in 0.3in;display:flex;align-items:flex-start;}
+      .stub{width:4.85in;}
+      .cut{width:0.7in;display:flex;justify-content:center;align-self:stretch;}
+      .cut::before{content:'';border-left:2px dashed #999;}
+      .box{border:1.5px solid #111;border-radius:11px;overflow:hidden;margin-bottom:0.09in;}
+      .hdr{display:grid;grid-template-columns:1.05in 1fr 1.15in;gap:0.08in;margin-bottom:0.09in;}
+      .logo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:13pt;color:#0891b2;text-align:center;line-height:1.15;}
+      .logo-box span{color:#111;}
+      .empresa-box{padding:0.08in 0.1in;font-size:8.3pt;line-height:1.42;font-weight:700;}
+      .recibo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:9.5pt;text-align:center;line-height:1.3;}
+      .datos-table{width:100%;border-collapse:collapse;font-size:8.3pt;}
+      .datos-table td{border-top:1px solid #111;padding:0.04in 0.08in;vertical-align:middle;}
+      .datos-table tr:first-child td{border-top:none;}
+      .datos-table .lbl{font-weight:900;width:1.1in;font-size:7.6pt;line-height:1.15;}
+      .datos-table td:nth-child(2){font-weight:700;width:1.35in;}
+      .datos-table td:nth-child(3){font-weight:900;width:1.05in;font-size:7.6pt;line-height:1.15;}
+      .conceptos-table{width:100%;border-collapse:collapse;font-size:8pt;}
+      .conceptos-table th{background:#111;color:#fff;text-align:left;padding:0.05in 0.08in;font-size:7.6pt;}
+      .conceptos-table th.num,.conceptos-table td.num{text-align:right;}
+      .conceptos-table td{padding:0.035in 0.08in;border-top:1px solid #ddd;}
+      .conceptos-table tbody tr:first-child td{border-top:none;}
+      table.num,.num{text-align:right;font-weight:700;}
+      .total-table,.neto-table{width:100%;border-collapse:collapse;font-size:8.6pt;font-weight:900;}
+      .total-table td,.neto-table td{padding:0.05in 0.1in;}
+      .neto-table{font-size:9.8pt;}
+      .neto-table td:first-child{width:1.3in;}
+      .obs-box{padding:0.05in 0.1in;font-size:7.6pt;font-weight:700;min-height:0.22in;}
+      .firma-wrap{margin-top:0.14in;font-size:7.8pt;}
+      .rc{font-weight:900;margin-bottom:0.28in;}
+      .firma-line{border-top:1px solid #111;width:2.6in;margin-bottom:0.03in;}
+      @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Recibo de Pago - ${_escRH(t.nombre||d.trabajadorNombre)}</title><style>${css}</style></head>
+      <body>${stub}<div class="cut"></div>${stub}<script>window.onload=()=>window.print();</script></body></html>`;
     const w = window.open('', '_blank');
     if(w){ w.document.write(html); w.document.close(); }
   };
+  // Correlativo (informativo) para previsualizar el próximo N° de recibo antes de guardar — el
+  // número final y estable se asigna recién al guardar el detalle (guardarDetalleNomina).
+  const correlativoNominaPreview = () => Math.max(1, parseInt(settings?.correlativoReciboNomina||1,10));
 
   const exportarReporteNominaPDF = (nomina) => {
     const {empresa, rif, dir} = _empresaDatos();
@@ -1510,7 +1670,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </>
         )}
 
-        {nominaActiva && (()=>{
+        {nominaActiva && !cargarTrabModal && (()=>{
           const detalles = nominaDetalles.filter(d=>d.nominaId===nominaActiva.id);
           const trabajadoresActivos = trabajadores.filter(t=>t.estado!=='Egresado' && t.departamentoId);
           const trabajadoresPendientes = trabajadoresActivos.filter(t=>!detalles.some(d=>d.trabajadorId===t.id));
@@ -1558,8 +1718,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-black text-cyan-600 text-sm">${formatNum(d.netoUSD)}</span>
-                      <button onClick={()=>exportarReciboPDF(d,nominaActiva,'empresa')} title="Recibo copia empresa (multimoneda)" className="text-orange-400 hover:text-orange-600"><FileText size={14}/></button>
-                      <button onClick={()=>exportarReciboPDF(d,nominaActiva,'trabajador')} title="Recibo copia trabajador (solo Bs.)" className="text-blue-400 hover:text-blue-600"><Printer size={14}/></button>
+                      <button onClick={()=>exportarReciboPDF(d,nominaActiva)} title="Imprimir Recibo de Pago" className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button>
                       <button onClick={()=>setDetalleVerModal(d)} className="text-gray-400 hover:text-gray-600"><Eye size={14}/></button>
                       {nominaActiva.estado==='abierta' && <button onClick={()=>eliminarDetalleNomina(d)} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>}
                     </div>
@@ -1600,86 +1759,145 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           );
         })()}
 
-        {/* Modal: cargar trabajador (asignación manual + deducción legal automática) */}
-        {cargarTrabModal && (
-          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setCargarTrabModal(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 space-y-4 max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
-              <div className="flex items-center justify-between">
-                <div><p className="font-black text-gray-800">{cargarTrabModal.trabajador.nombre}</p><p className="text-[10px] text-gray-400">{nombreDepto(cargarTrabModal.trabajador.departamentoId)} · Tasa {nominaActiva?.tasa}</p></div>
-                <button onClick={()=>setCargarTrabModal(null)} className="text-gray-400 hover:text-gray-600"><X size={18}/></button>
-              </div>
+        {/* Pantalla completa: Elaboración de Nómina para un trabajador de la nómina activa */}
+        {nominaActiva && cargarTrabModal && (()=>{
+          const tasa = Number(nominaActiva?.tasa||0);
+          const t = cargarTrabModal.trabajador;
+          const legalesTodos = (cargarTrabModal.deduccionesLegales||[]).map((d,i)=>({...d,_idx:i,_tipo:'leg'}));
+          const legalesIncluidas = legalesTodos.filter(d=>d.incluida);
+          const legalesDisponibles = legalesTodos.filter(d=>!d.incluida);
+          const asigIncluidas = cargarTrabModal.asignaciones.map((a,i)=>({...a,_idx:i,_tipo:'asig'})).filter(a=>a.incluida);
+          const asigDisponibles = cargarTrabModal.asignaciones.map((a,i)=>({...a,_idx:i,_tipo:'asig'})).filter(a=>!a.incluida);
+          const dedIncluidas = cargarTrabModal.deduccionesManual.map((d,i)=>({...d,_idx:i,_tipo:'ded'})).filter(d=>d.incluida);
+          const dedDisponibles = cargarTrabModal.deduccionesManual.map((d,i)=>({...d,_idx:i,_tipo:'ded'})).filter(d=>!d.incluida);
+          const totalAsig = asigIncluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
+          const totalDedManual = dedIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
+          const totalDedLegal = legalesIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
+          const totalDed = totalDedManual+totalDedLegal;
+          const neto = totalAsig - totalDed;
+          const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length;
+          // Navegación Anterior/Siguiente entre los trabajadores de esta nómina (mismo orden que la lista)
+          const listaNav = trabajadores.filter(w=>w.estado!=='Egresado' && w.departamentoId).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+          const idxNav = listaNav.findIndex(w=>w.id===t.id);
+          const irA = (dir) => {
+            const ni = idxNav+dir;
+            if(ni<0||ni>=listaNav.length) return;
+            abrirCargarTrabajador(listaNav[ni]);
+          };
+          const previewData = () => {
+            const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
+            const deducciones = [
+              ...legalesIncluidas.map(({_idx,_tipo,incluida,...d})=>d),
+              ...dedIncluidas.map(({_idx,_tipo,incluida,...d})=>({...d, montoBs:parseFloat((d.montoUSD*tasa).toFixed(2)), esLegal:false})),
+            ];
+            return {trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula, departamentoId:t.departamentoId, asignaciones, deducciones, nroRecibo:cargarTrabModal._nroReciboExistente};
+          };
+          return (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <button onClick={()=>setCargarTrabModal(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
+              <p className="text-[10px] text-gray-400 font-bold uppercase">{nominaActiva.concepto} · {nominaActiva.mes} · {nominaActiva.quincena} · Tasa {nominaActiva.tasa}</p>
+            </div>
 
-              <div>
-                <p className="text-[10px] font-black text-cyan-600 uppercase mb-2">Asignaciones — elige cuáles aplican, en dólares</p>
-                {cargarTrabModal.asignaciones.length===0 && <p className="text-[11px] text-gray-400">Este departamento no tiene asignaciones configuradas. Ve a Configuración para agregarlas.</p>}
-                {cargarTrabModal.asignaciones.map((a,i)=>(
-                  <div key={i} className={`grid grid-cols-[24px_1fr_90px_100px] gap-2 items-center mb-1.5 ${a.incluida?'':'opacity-40'}`}>
-                    <input type="checkbox" checked={a.incluida} onChange={()=>toggleAsignacion(i)}/>
-                    <span className="text-xs font-bold text-gray-700">{a.concepto}</span>
-                    <input type="number" step="0.01" value={a.montoUSD} disabled={!a.incluida} onChange={e=>actualizarMontoAsignacion(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right disabled:bg-gray-50"/>
-                    <span className="text-[11px] text-gray-400 text-right">Bs.{formatNum(a.montoBs)}</span>
-                  </div>
-                ))}
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 grid grid-cols-[1fr_220px] gap-4">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <div><p className="text-[9px] font-black text-gray-400 uppercase">Cédula</p><p className="text-sm font-bold">{t.cedula||'—'}</p></div>
+                <div><p className="text-[9px] font-black text-gray-400 uppercase">Fecha de Ingreso</p><p className="text-sm font-bold">{contDd(t.fechaIngreso)}</p></div>
+                <div className="col-span-2"><p className="text-[9px] font-black text-gray-400 uppercase">Nombre</p><p className="text-base font-black text-gray-800">{t.nombre}</p></div>
+                <div><p className="text-[9px] font-black text-gray-400 uppercase">Departamento</p><p className="text-sm font-bold">{nombreDepto(t.departamentoId)}</p></div>
+                <div><p className="text-[9px] font-black text-gray-400 uppercase">Cargo</p><p className="text-sm font-bold">{t.cargo||'—'}</p></div>
               </div>
+              <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-1.5">
+                <div className="flex justify-between text-xs"><span className="text-gray-500">Asignaciones</span><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-gray-500">Deducciones</span><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span></div>
+                <div className="flex justify-between text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span></div>
+                <div className="flex justify-between text-[10px] text-gray-400"><span>Items:</span><span>{itemsCount}</span></div>
+              </div>
+            </div>
 
-              {cargarTrabModal.deduccionesManual.length>0 && (
-                <div>
-                  <p className="text-[10px] font-black text-orange-600 uppercase mb-2">Otras Deducciones — elige cuáles aplican</p>
-                  {cargarTrabModal.deduccionesManual.map((d,i)=>(
-                    <div key={i} className={`grid grid-cols-[24px_1fr_90px_100px] gap-2 items-center mb-1.5 ${d.incluida?'':'opacity-40'}`}>
-                      <input type="checkbox" checked={d.incluida} onChange={()=>toggleDeduccionManual(i)}/>
-                      <span className="text-xs font-bold text-gray-700">{d.concepto}</span>
-                      <input type="number" step="0.01" value={d.montoUSD} disabled={!d.incluida} onChange={e=>actualizarMontoDeduccionManual(i,e.target.value)} className="border-2 border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right disabled:bg-gray-50"/>
-                      <span className="text-[11px] text-gray-400 text-right">Bs.{formatNum(d.montoBs)}</span>
-                    </div>
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-xs">
+                <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+                  <th className="text-left py-2 px-3">Concepto</th>
+                  <th className="text-right py-2 px-3">Asignación $</th>
+                  <th className="text-right py-2 px-3">Deducción $</th>
+                  <th className="text-center py-2 px-3 w-10">Acc.</th>
+                </tr></thead>
+                <tbody>
+                  {asigIncluidas.map(a=>{
+                    const esSueldo = a.cantidadDias!==undefined;
+                    return (
+                    <tr key={'a'+a._idx} className="border-t border-gray-100">
+                      <td className="py-1.5 px-3 font-bold">
+                        {esSueldo ? (
+                          <div className="flex items-center gap-1.5">
+                            <span>Días Trabajados</span>
+                            <input type="number" step="0.5" value={a.cantidadDias} onChange={e=>actualizarCantidadTasaAsignacion(a._idx,'cantidadDias',e.target.value)} className="w-14 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                            <span className="text-gray-400 text-[10px]">días ×</span>
+                            <input type="number" step="0.01" value={a.tasaDiaria} onChange={e=>actualizarCantidadTasaAsignacion(a._idx,'tasaDiaria',e.target.value)} className="w-20 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                            <span className="text-gray-400 text-[10px]">tasa diaria</span>
+                          </div>
+                        ) : a.concepto}
+                      </td>
+                      <td className="py-1.5 px-3 text-right">
+                        {esSueldo ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
+                        : <input type="number" step="0.01" value={a.montoUSD} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>}
+                      </td>
+                      <td className="py-1.5 px-3"></td>
+                      <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleAsignacion(a._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
+                    </tr>
+                    );
+                  })}
+                  {legalesIncluidas.map(d=>(
+                    <tr key={'leg'+d._idx} className="border-t border-gray-100 bg-green-50/50">
+                      <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span></td>
+                      <td className="py-1.5 px-3"></td>
+                      <td className="py-1.5 px-3 text-right"><input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionLegal(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></td>
+                      <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionLegal(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
+                    </tr>
                   ))}
+                  {dedIncluidas.map(d=>(
+                    <tr key={'d'+d._idx} className="border-t border-gray-100">
+                      <td className="py-1.5 px-3 font-bold">{d.concepto}</td>
+                      <td className="py-1.5 px-3"></td>
+                      <td className="py-1.5 px-3 text-right"><input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></td>
+                      <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionManual(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
+                    </tr>
+                  ))}
+                  {asigIncluidas.length+dedIncluidas.length===0 && <tr><td colSpan={4} className="py-8 text-center text-gray-400">Sin conceptos incluidos — agrega uno abajo.</td></tr>}
+                </tbody>
+              </table>
+              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0) && (
+                <div className="border-t border-gray-100 p-3 flex flex-wrap gap-2 items-center">
+                  <span className="text-[9px] font-black text-gray-400 uppercase self-center mr-1">Agregar:</span>
+                  {asigDisponibles.map(a=>(
+                    <button key={'aa'+a._idx} onClick={()=>toggleAsignacion(a._idx)} className="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-lg text-[10px] font-bold"><Plus size={11}/>{a.concepto}</button>
+                  ))}
+                  {legalesDisponibles.map(d=>(
+                    <button key={'al'+d._idx} onClick={()=>toggleDeduccionLegal(d._idx)} className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1 rounded-lg text-[10px] font-bold"><Plus size={11}/>{d.concepto}</button>
+                  ))}
+                  {dedDisponibles.map(d=>(
+                    <button key={'ad'+d._idx} onClick={()=>toggleDeduccionManual(d._idx)} className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1 rounded-lg text-[10px] font-bold"><Plus size={11}/>{d.concepto}</button>
+                  ))}
+                  <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-lg text-[10px] font-bold ml-auto"><RefreshCw size={11}/>Recalcular legales</button>
                 </div>
               )}
+            </div>
 
-              {(()=>{
-                const tasa = Number(nominaActiva?.tasa||0);
-                const {hayBase, salarioNormal, lunes, mkSemanal, mkFaov} = calcularDeduccionesLegales(cargarTrabModal.asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
-                const legales = hayBase ? [
-                  mkSemanal('IVSS', configParafiscal.ivss),
-                  mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe),
-                  mkFaov(),
-                ] : [];
-                const totalAsig = cargarTrabModal.asignaciones.filter(a=>a.incluida).reduce((s,a)=>s+Number(a.montoUSD||0),0);
-                const totalDedManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).reduce((s,d)=>s+Number(d.montoUSD||0),0);
-                const totalDedLegal = legales.reduce((s,d)=>s+d.montoUSD,0);
-                const totalPatronal = legales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
-                const neto = totalAsig - totalDedManual - totalDedLegal;
-                return (
-                <>
-                  <div>
-                    <p className="text-[10px] font-black text-green-600 uppercase mb-2">Deducciones Legales {lunes>0 && `(${lunes} lunes en esta quincena)`}</p>
-                    {!hayBase && <p className="text-[11px] text-gray-400">Incluye "Sueldo Básico" arriba para que se calculen.</p>}
-                    {legales.map((d,i)=>(
-                      <div key={i} className="flex justify-between items-center text-xs py-0.5">
-                        <span className="text-gray-500">{d.concepto}</span>
-                        <span className="flex items-center gap-3">
-                          <span className="font-bold text-red-500">Trab. -${formatNum(d.montoUSD)}</span>
-                          <span className="font-bold text-amber-600">Patr. ${formatNum(d.montoPatronalUSD)}</span>
-                        </span>
-                      </div>
-                    ))}
-                    {hayBase && <p className="text-[9px] text-gray-400 mt-1">Base salario normal: ${formatNum(salarioNormal)} · Aporte patronal total: ${formatNum(totalPatronal)} (no se le descuenta al trabajador, es costo/gasto de la empresa)</p>}
-                  </div>
-                  <div className="border-t border-gray-100 pt-3 flex justify-between items-center">
-                    <span className="text-xs font-black text-gray-600 uppercase">Neto a Pagar</span>
-                    <span className="font-mono font-black text-cyan-600 text-lg">${formatNum(neto)}</span>
-                  </div>
-                </>
-                );
-              })()}
-
-              <div className="flex gap-2 pt-2">
-                <button onClick={()=>setCargarTrabModal(null)} className="flex-1 bg-gray-200 text-gray-700 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-gray-300">Cancelar</button>
-                <button onClick={guardarDetalleNomina} disabled={busyNomina} className="flex-1 bg-cyan-600 text-white py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Guardando...':'Confirmar Trabajador'}</button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-2">
+                <button onClick={()=>irA(-1)} disabled={idxNav<=0} className="flex items-center gap-1.5 bg-white border-2 border-gray-200 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-50 disabled:opacity-40"><ArrowLeft size={13}/> Anterior</button>
+                <button onClick={()=>irA(1)} disabled={idxNav<0||idxNav>=listaNav.length-1} className="flex items-center gap-1.5 bg-white border-2 border-gray-200 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-50 disabled:opacity-40">Siguiente <ArrowRight size={13}/></button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>exportarReciboPDF(previewData(),nominaActiva)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-100"><Eye size={13}/> Preliminar</button>
+                <button onClick={()=>setCargarTrabModal(null)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                <button onClick={guardarDetalleNomina} disabled={busyNomina} className="flex items-center gap-1.5 bg-cyan-600 text-white px-5 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-cyan-700 disabled:opacity-50"><Save size={13}/>{busyNomina?'Guardando...':'Guardar'}</button>
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Modal: ver detalle de un trabajador ya cargado */}
         {detalleVerModal && (
