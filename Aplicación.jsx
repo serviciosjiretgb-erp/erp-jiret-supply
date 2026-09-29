@@ -569,6 +569,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [repNominaSel,setRepNominaSel]=useState(null);
   const [repTrabajadorSel,setRepTrabajadorSel]=useState(null);
   const [repBusqTrab,setRepBusqTrab]=useState('');
+  const [agregarConceptoBusq,setAgregarConceptoBusq]=useState('');
   const [busyNomina,setBusyNomina]=useState(false);
   const crearNomina = async () => {
     if(!nominaForm.concepto.trim()) return alert('Escribe el concepto de este pago');
@@ -1981,9 +1982,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div><p className="text-[9px] font-black text-gray-400 uppercase">Cargo</p><p className="text-sm font-bold">{t.cargo||'—'}</p></div>
               </div>
               <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-1.5">
-                <div className="flex justify-between text-xs"><span className="text-gray-500">Asignaciones</span><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-gray-500">Deducciones</span><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span></div>
-                <div className="flex justify-between text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span></div>
+                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Asignaciones</span><span className="text-right"><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalAsig*tasa)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Deducciones</span><span className="text-right"><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalDed*tasa)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="text-right"><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(neto*tasa)}</span></span></div>
                 <div className="flex justify-between text-[10px] text-gray-400"><span>Items:</span><span>{itemsCount}</span></div>
               </div>
             </div>
@@ -1992,8 +1993,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <table className="w-full text-xs">
                 <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
                   <th className="text-left py-2 px-3">Concepto</th>
-                  <th className="text-right py-2 px-3">Asignación $</th>
-                  <th className="text-right py-2 px-3">Deducción $</th>
+                  <th className="text-right py-2 px-3">Asignación $ / Bs.</th>
+                  <th className="text-right py-2 px-3">Deducción $ / Bs.</th>
                   <th className="text-center py-2 px-3 w-10">Acc.</th>
                 </tr></thead>
                 <tbody>
@@ -2015,6 +2016,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3 text-right">
                         {esSueldo ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
                         : <input type="number" step="0.01" value={a.montoUSD} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>}
+                        <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(a.montoUSD*tasa)}</div>
                       </td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleAsignacion(a._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
@@ -2025,7 +2027,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <tr key={'leg'+d._idx} className="border-t border-gray-100 bg-green-50/50">
                       <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span></td>
                       <td className="py-1.5 px-3"></td>
-                      <td className="py-1.5 px-3 text-right"><input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionLegal(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></td>
+                      <td className="py-1.5 px-3 text-right">
+                        <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionLegal(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/>
+                        <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(d.montoUSD*tasa)}</div>
+                      </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionLegal(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
                   ))}
@@ -2033,28 +2038,45 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <tr key={'d'+d._idx} className="border-t border-gray-100">
                       <td className="py-1.5 px-3 font-bold">{d.concepto}</td>
                       <td className="py-1.5 px-3"></td>
-                      <td className="py-1.5 px-3 text-right"><input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></td>
+                      <td className="py-1.5 px-3 text-right">
+                        <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>
+                        <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(d.montoUSD*tasa)}</div>
+                      </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionManual(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
                   ))}
                   {asigIncluidas.length+dedIncluidas.length===0 && <tr><td colSpan={4} className="py-8 text-center text-gray-400">Sin conceptos incluidos — agrega uno abajo.</td></tr>}
                 </tbody>
               </table>
-              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0) && (
-                <div className="border-t border-gray-100 p-3 flex flex-wrap gap-2 items-center">
-                  <span className="text-[9px] font-black text-gray-400 uppercase self-center mr-1">Agregar:</span>
-                  {asigDisponibles.map(a=>(
-                    <button key={'aa'+a._idx} onClick={()=>toggleAsignacion(a._idx)} className="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-lg text-[10px] font-bold"><Plus size={11}/>{a.concepto}</button>
-                  ))}
-                  {legalesDisponibles.map(d=>(
-                    <button key={'al'+d._idx} onClick={()=>toggleDeduccionLegal(d._idx)} className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1 rounded-lg text-[10px] font-bold"><Plus size={11}/>{d.concepto}</button>
-                  ))}
-                  {dedDisponibles.map(d=>(
-                    <button key={'ad'+d._idx} onClick={()=>toggleDeduccionManual(d._idx)} className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1 rounded-lg text-[10px] font-bold"><Plus size={11}/>{d.concepto}</button>
-                  ))}
-                  <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-lg text-[10px] font-bold ml-auto"><RefreshCw size={11}/>Recalcular legales</button>
+              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0) && (()=>{
+                const todosDisponibles = [...asigDisponibles.map(a=>({...a,_grupo:'asig'})), ...legalesDisponibles.map(d=>({...d,_grupo:'leg'})), ...dedDisponibles.map(d=>({...d,_grupo:'ded'}))];
+                const coincidencias = agregarConceptoBusq.trim() ? todosDisponibles.filter(c=>c.concepto.toUpperCase().includes(agregarConceptoBusq.toUpperCase())).slice(0,8) : [];
+                const agregarYLimpiar = (c) => {
+                  if(c._grupo==='asig') toggleAsignacion(c._idx);
+                  else if(c._grupo==='leg') toggleDeduccionLegal(c._idx);
+                  else toggleDeduccionManual(c._idx);
+                  setAgregarConceptoBusq('');
+                };
+                return (
+                <div className="border-t border-gray-100 p-3">
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 max-w-sm">
+                      <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400"/>
+                      <input value={agregarConceptoBusq} onChange={e=>setAgregarConceptoBusq(e.target.value)} placeholder={`Buscar concepto para agregar... (${todosDisponibles.length} disponibles)`} className="w-full pl-8 pr-3 py-1.5 border-2 border-gray-200 rounded-lg text-xs font-bold outline-none focus:border-cyan-500"/>
+                    </div>
+                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>
+                  </div>
+                  {agregarConceptoBusq.trim() && (
+                    <div className="mt-1.5 border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm">
+                      {coincidencias.map(c=>(
+                        <div key={c._grupo+c._idx} onClick={()=>agregarYLimpiar(c)} className={`px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px] font-bold flex items-center gap-1.5 ${c._grupo==='asig'?'text-emerald-700':'text-red-600'}`}><Plus size={11}/>{c.concepto}</div>
+                      ))}
+                      {coincidencias.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                    </div>
+                  )}
                 </div>
-              )}
+                );
+              })()}
             </div>
 
             <div className="flex items-center justify-between gap-2">
