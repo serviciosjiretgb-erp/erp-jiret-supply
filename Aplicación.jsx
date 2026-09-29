@@ -562,6 +562,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||'')});
   const [nominaForm,setNominaForm]=useState(initNominaForm());
   const [nominaActiva,setNominaActiva]=useState(null);
+  const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador'
+  const [repAnio,setRepAnio]=useState(String(new Date().getFullYear()));
+  const [repMes,setRepMes]=useState('TODOS');
+  const [repQ,setRepQ]=useState('AMBAS');
+  const [repNominaSel,setRepNominaSel]=useState(null);
+  const [repTrabajadorSel,setRepTrabajadorSel]=useState(null);
+  const [repBusqTrab,setRepBusqTrab]=useState('');
   const [busyNomina,setBusyNomina]=useState(false);
   const crearNomina = async () => {
     if(!nominaForm.concepto.trim()) return alert('Escribe el concepto de este pago');
@@ -1126,7 +1133,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             };
             return [
               {id:'config', label:'Configuración', icon:<Settings size={13}/>, perm:'rrhh_configuracion'},
-              {id:'nomina', label:'Registro de Nómina', icon:<DollarSign size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null, perm:'rrhh_nomina'},
+              {id:'elaboracion', label:'Elaboración de Nómina', icon:<Calculator size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null, perm:'rrhh_nomina'},
+              {id:'nomina', label:'Reporte de Nómina', icon:<DollarSign size={13}/>, perm:'rrhh_nomina'},
               {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>, perm:'rrhh_parafiscales'},
               {id:'conceptos', label:'Conceptos', icon:<Calculator size={13}/>, badge:conceptos.length||null, perm:'rrhh_conceptos'},
               {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null, perm:'rrhh_trabajadores'},
@@ -1624,7 +1632,172 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       </div>
       )}
 
-      {rhTab==='nomina' && (
+      {rhTab==='nomina' && (()=>{
+        const MESES_LBL=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+        const nominasFiltradas = nominas.filter(n=>{
+          if(!n.mes) return false;
+          if(repAnio && n.mes.substring(0,4)!==repAnio) return false;
+          if(repMes!=='TODOS' && n.mes.substring(5,7)!==repMes) return false;
+          if(repQ!=='AMBAS' && !(n.quincena||'').includes(repQ)) return false;
+          return true;
+        }).sort((a,b)=>(b.mes||'').localeCompare(a.mes||'')||(b.quincena||'').localeCompare(a.quincena||''));
+        const trabajadoresFiltrados = trabajadores.filter(t=>!repBusqTrab || (t.nombre||'').toUpperCase().includes(repBusqTrab.toUpperCase()) || (t.cedula||'').includes(repBusqTrab));
+
+        return (
+        <div className="p-6 space-y-4">
+          <div className="flex gap-2">
+            <button onClick={()=>{setRepModo('nomina');setRepTrabajadorSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='nomina'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>📋 Por Nómina</button>
+            <button onClick={()=>{setRepModo('trabajador');setRepNominaSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='trabajador'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>👤 Por Trabajador</button>
+          </div>
+
+          {repModo==='nomina' && !repNominaSel && (<>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap gap-2 items-end">
+              <div><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Año</label>
+                <select value={repAnio} onChange={e=>setRepAnio(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  {[String(new Date().getFullYear()-1),String(new Date().getFullYear()),String(new Date().getFullYear()+1)].map(y=><option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Mes</label>
+                <select value={repMes} onChange={e=>setRepMes(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  <option value="TODOS">Todos</option>
+                  {MESES_LBL.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+                </select>
+              </div>
+              <div><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Quincena</label>
+                <select value={repQ} onChange={e=>setRepQ(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  <option value="AMBAS">Ambas</option><option value="1">Quincena 1</option><option value="2">Quincena 2</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {nominasFiltradas.map(n=>{
+                const detalles = nominaDetalles.filter(d=>d.nominaId===n.id);
+                const totalUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+                return (
+                  <div key={n.id} onClick={()=>setRepNominaSel(n)} className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 flex items-center justify-between">
+                    <div>
+                      <p className="font-black text-sm text-gray-800">{n.concepto}</p>
+                      <p className="text-[10px] text-gray-400">{n.mes} · {n.quincena} · {detalles.length} trabajador(es) · Tasa {n.tasa} · Pago {contDd(n.fechaPago)}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-black text-cyan-600">${formatNum(totalUSD)}</span>
+                      <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${n.estado==='cerrada'?'bg-gray-100 text-gray-500':'bg-green-100 text-green-600'}`}>{n.estado}</span>
+                      <ChevronRight size={16} className="text-gray-300"/>
+                    </div>
+                  </div>
+                );
+              })}
+              {nominasFiltradas.length===0 && <p className="text-center text-gray-400 text-sm py-12">Sin nóminas para estos filtros.</p>}
+            </div>
+          </>)}
+
+          {repModo==='nomina' && repNominaSel && (()=>{
+            const detalles = nominaDetalles.filter(d=>d.nominaId===repNominaSel.id);
+            const totalAsigUSD = detalles.reduce((s,d)=>s+d.totalAsignacionesUSD,0);
+            const totalDedUSD = detalles.reduce((s,d)=>s+d.totalDeduccionesUSD,0);
+            const totalNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+            return (
+            <div className="space-y-3">
+              <button onClick={()=>setRepNominaSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <p className="font-black text-lg text-gray-800">{repNominaSel.concepto}</p>
+                <p className="text-xs text-gray-500">{repNominaSel.mes} · {repNominaSel.quincena} · Fecha de pago {contDd(repNominaSel.fechaPago)} · Tasa {repNominaSel.tasa}</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+                    <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Departamento</th>
+                    <th className="text-right py-2 px-3">Asig. $</th><th className="text-right py-2 px-3">Ded. $</th>
+                    <th className="text-right py-2 px-3">Neto $</th><th className="text-center py-2 px-3 w-10">PDF</th>
+                  </tr></thead>
+                  <tbody>
+                    {detalles.map((d,i)=>(
+                      <tr key={d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                        <td className="py-1.5 px-3 font-bold">{d.trabajadorNombre}</td>
+                        <td className="py-1.5 px-3 text-gray-500">{nombreDepto(d.departamentoId)}</td>
+                        <td className="py-1.5 px-3 text-right font-mono">${formatNum(d.totalAsignacionesUSD)}</td>
+                        <td className="py-1.5 px-3 text-right font-mono text-red-500">-${formatNum(d.totalDeduccionesUSD)}</td>
+                        <td className="py-1.5 px-3 text-right font-mono font-black text-cyan-600">${formatNum(d.netoUSD)}</td>
+                        <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(d,repNominaSel)} className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
+                      </tr>
+                    ))}
+                    {detalles.length===0 && <tr><td colSpan={6} className="py-8 text-center text-gray-400">Ningún trabajador cargado en esta nómina.</td></tr>}
+                  </tbody>
+                  {detalles.length>0 && <tfoot><tr className="bg-gray-100 font-black">
+                    <td colSpan={2} className="py-2 px-3 uppercase text-[10px]">Totales ({detalles.length})</td>
+                    <td className="py-2 px-3 text-right font-mono">${formatNum(totalAsigUSD)}</td>
+                    <td className="py-2 px-3 text-right font-mono text-red-500">-${formatNum(totalDedUSD)}</td>
+                    <td className="py-2 px-3 text-right font-mono text-cyan-700">${formatNum(totalNetoUSD)}</td>
+                    <td></td>
+                  </tr></tfoot>}
+                </table>
+              </div>
+            </div>
+            );
+          })()}
+
+          {repModo==='trabajador' && !repTrabajadorSel && (<>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
+              <input value={repBusqTrab} onChange={e=>setRepBusqTrab(e.target.value)} placeholder="Buscar trabajador por nombre o cédula..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-cyan-500"/>
+            </div>
+            <div className="space-y-1.5">
+              {trabajadoresFiltrados.map(t=>(
+                <div key={t.id} onClick={()=>setRepTrabajadorSel(t)} className="bg-white rounded-xl border border-gray-200 p-3 cursor-pointer hover:border-cyan-300 flex items-center justify-between">
+                  <div><p className="text-xs font-black text-gray-800">{t.nombre}</p><p className="text-[10px] text-gray-400">{t.cedula} · {t.cargo||'—'} · {nombreDepto(t.departamentoId)}</p></div>
+                  <ChevronRight size={16} className="text-gray-300"/>
+                </div>
+              ))}
+              {trabajadoresFiltrados.length===0 && <p className="text-center text-gray-400 text-sm py-12">Sin resultados.</p>}
+            </div>
+          </>)}
+
+          {repModo==='trabajador' && repTrabajadorSel && (()=>{
+            const historial = nominaDetalles.filter(d=>d.trabajadorId===repTrabajadorSel.id)
+              .map(d=>({...d, _nomina:nominas.find(n=>n.id===d.nominaId)}))
+              .filter(d=>d._nomina)
+              .sort((a,b)=>(b._nomina.mes||'').localeCompare(a._nomina.mes||'')||(b._nomina.quincena||'').localeCompare(a._nomina.quincena||''));
+            const totalHistNetoUSD = historial.reduce((s,d)=>s+d.netoUSD,0);
+            return (
+            <div className="space-y-3">
+              <button onClick={()=>setRepTrabajadorSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <p className="font-black text-lg text-gray-800">{repTrabajadorSel.nombre}</p>
+                <p className="text-xs text-gray-500">{repTrabajadorSel.cedula} · {repTrabajadorSel.cargo||'—'} · {nombreDepto(repTrabajadorSel.departamentoId)}</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+                    <th className="text-left py-2 px-3">Período</th><th className="text-left py-2 px-3">Concepto</th>
+                    <th className="text-right py-2 px-3">Neto $</th><th className="text-right py-2 px-3">Neto Bs.</th><th className="text-center py-2 px-3 w-10">PDF</th>
+                  </tr></thead>
+                  <tbody>
+                    {historial.map((d,i)=>(
+                      <tr key={d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                        <td className="py-1.5 px-3 font-bold">{d._nomina.mes} · {d._nomina.quincena}</td>
+                        <td className="py-1.5 px-3 text-gray-500">{d._nomina.concepto}</td>
+                        <td className="py-1.5 px-3 text-right font-mono font-black text-cyan-600">${formatNum(d.netoUSD)}</td>
+                        <td className="py-1.5 px-3 text-right font-mono">{formatNum(d.netoBs)}</td>
+                        <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(d,d._nomina)} className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
+                      </tr>
+                    ))}
+                    {historial.length===0 && <tr><td colSpan={5} className="py-8 text-center text-gray-400">Sin recibos registrados para este trabajador.</td></tr>}
+                  </tbody>
+                  {historial.length>0 && <tfoot><tr className="bg-gray-100 font-black">
+                    <td colSpan={2} className="py-2 px-3 uppercase text-[10px]">Total acumulado ({historial.length} recibo(s))</td>
+                    <td className="py-2 px-3 text-right font-mono text-cyan-700">${formatNum(totalHistNetoUSD)}</td>
+                    <td colSpan={2}></td>
+                  </tr></tfoot>}
+                </table>
+              </div>
+            </div>
+            );
+          })()}
+        </div>
+        );
+      })()}
+
+      {rhTab==='elaboracion' && (
       <div className="p-6">
         {!nominaActiva && (
           <>
