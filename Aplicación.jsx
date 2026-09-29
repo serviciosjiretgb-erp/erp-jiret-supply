@@ -113,6 +113,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [parametrosFormula,setParametrosFormula]=useState([]);
   const [mostrarParametros,setMostrarParametros]=useState(false);
   const [nuevoParametro,setNuevoParametro]=useState({codigo:'',valor:'',nota:''});
+  const [mostrarCalculadora,setMostrarCalculadora]=useState(false);
+  const [calcTrabajadorId,setCalcTrabajadorId]=useState('');
+  const [calcPeriodo,setCalcPeriodo]=useState('');
+  const [calcValores,setCalcValores]=useState({});
+  const [calcBusqTrab,setCalcBusqTrab]=useState('');
+  const [tabuladorCargos,setTabuladorCargos]=useState([]);
+  const [nuevoCargoTab,setNuevoCargoTab]=useState({cargo:'',salarioBase:''});
   const [trabajadores,setTrabajadores]=useState([]);
   const [configParafiscal,setConfigParafiscal]=useState({
     salarioMinimo: 130,
@@ -163,6 +170,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s5=onSnapshot(getColRef('rrhh_trabajadores'),s=>setTrabajadores(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s9=onSnapshot(getColRef('rrhh_conceptos'),s=>setConceptos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s10=onSnapshot(getColRef('rrhh_parametros_formula'),s=>setParametrosFormula(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s11=onSnapshot(getColRef('rrhh_tabulador_cargos'),s=>setTabuladorCargos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{
       if(!d.exists()) return;
       const cargado = d.data();
@@ -176,7 +184,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();};
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -309,6 +317,67 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     try{ await updateDoc(getDocRef('rrhh_conceptos', c.codigo), {[`cuentasPorCentro.${centroId}`]: null}); }
     catch(e){ alert('Error: '+e.message); }
   };
+  // ── Motor de cálculo de fórmulas de Conceptos ──────────────────────────────
+  // Una fórmula tiene la forma "{cantidad} TEXTO x {tarifa}" — a veces solo tiene
+  // un {bloque} (sin multiplicación), a veces ninguno (texto fijo, sin cálculo).
+  const parsearNumFormula = (s) => parseFloat(String(s||'0').replace(/,/g,'.').trim())||0;
+  const resolverVariableFormula = (token, ctx) => {
+    // token viene tal cual aparece en la fórmula, ej: "CE00001", "RF03", "CN30000"
+    const t = token.trim().toUpperCase();
+    if (t==='CE00001') return parsearNumFormula(ctx.salarioBase); // el salario siempre viene del trabajador, no se captura a mano
+    if (/^REFCE\d+/.test(t)) return parsearNumFormula(ctx.valores['CE'+t.replace(/^REFCE/,'')]); // REFCE00012 → mismo dato que CE00012
+    if (/^REF\d+/.test(t)) return parsearNumFormula(ctx.valores['CE'+t.replace(/^REF/,'')]); // REF00013 → mismo dato que CE00013
+    if (/^CN\d+/.test(t)) { // CN30000 → resultado ya calculado del concepto 30000 en esta misma corrida; si no se ha calculado, usa el parámetro fijo
+      const codConcepto = t.replace(/^CN/,'');
+      if (ctx.resultados[codConcepto]!=null) return ctx.resultados[codConcepto];
+      return parsearNumFormula(ctx.parametros[t]);
+    }
+    if (/^(CE|N)\d+/.test(t)) return parsearNumFormula(ctx.valores[t]); // datos capturados por trabajador/período
+    if (/^(RF|CNR|DFSERIE)\d+/.test(t)) return parsearNumFormula(ctx.parametros[t]); // valores fijos configurados en Parámetros
+    return parsearNumFormula(ctx.parametros[t]); // cualquier otro prefijo: intenta como parámetro fijo
+  };
+  const evaluarExpresionFormula = (expr, ctx) => {
+    if (!expr || !expr.trim()) return null;
+    let limpio = expr.replace(/,/g,'.'); // decimales venezolanos con coma → punto
+    limpio = limpio.replace(/[A-Za-z]+\d+/g, (m)=>String(resolverVariableFormula(m, ctx)));
+    limpio = limpio.replace(/[^0-9.+\-*/() ]/g,''); // solo queda aritmética pura y segura
+    if (!limpio.trim()) return null;
+    try { const v = Function('"use strict";return ('+limpio+')')(); return isFinite(v)?v:null; }
+    catch(e){ return null; }
+  };
+  const evaluarFormulaConcepto = (formato, ctx) => {
+    const bloques = [...(formato||'').matchAll(/\{([^}]*)\}/g)].map(m=>m[1]);
+    if (bloques.length===0) return null; // sin {llaves}: no hay fórmula, es texto fijo o se llena a mano
+    if (bloques.length===1) return evaluarExpresionFormula(bloques[0], ctx);
+    const cantidad = evaluarExpresionFormula(bloques[0], ctx);
+    const tarifa = evaluarExpresionFormula(bloques[bloques.length-1], ctx);
+    if (cantidad==null || tarifa==null) return null;
+    return cantidad * tarifa;
+  };
+  const calcularTodosLosConceptos = (trabajador, valoresCapturados, parametrosMap) => {
+    const ctx = {salarioBase: trabajador?.salarioBase||0, valores: valoresCapturados||{}, parametros: parametrosMap||{}, resultados: {}};
+    const activos = conceptos.filter(c=>c.activo!==false).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
+    const out = [];
+    activos.forEach(c=>{
+      const valor = evaluarFormulaConcepto(c.formato, ctx);
+      if (valor!=null) ctx.resultados[c.codigo] = valor; // queda disponible para que otro concepto lo referencie como CN#####
+      out.push({...c, valorCalculado: valor});
+    });
+    return out;
+  };
+  const tokensUsadosEnFormulas = () => {
+    // Junta todos los CE##### y N##### (menos CE00001, que es automático) que aparecen
+    // en las fórmulas activas — son los datos que hay que capturar a mano por trabajador.
+    const set = new Set();
+    conceptos.filter(c=>c.activo!==false).forEach(c=>{
+      const matches = (c.formato||'').match(/[A-Za-z]+\d+/g)||[];
+      matches.forEach(m=>{
+        const t = m.toUpperCase();
+        if (/^(CE|N)\d+/.test(t) && t!=='CE00001') set.add(t);
+      });
+    });
+    return Array.from(set).sort();
+  };
   const cargarCatalogoEstandar = async () => {
     const faltantes = CATALOGO_CONCEPTOS_ESTANDAR.filter(c=>!conceptos.some(x=>x.codigo===c.codigo));
     if(faltantes.length===0) return alert('Ya tienes todos los conceptos del catálogo estándar cargados.');
@@ -338,6 +407,25 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const eliminarParametro = async (p) => {
     if(!window.confirm(`¿Eliminar el parámetro "${p.codigo}"?`)) return;
     try{ await deleteDoc(getDocRef('rrhh_parametros_formula', p.codigo)); }
+    catch(e){ alert('Error al eliminar: '+e.message); }
+  };
+  const agregarCargoTab = async () => {
+    const cargo = nuevoCargoTab.cargo.trim().toUpperCase();
+    if(!cargo) return alert('Escribe el nombre del cargo');
+    if(tabuladorCargos.some(c=>(c.cargo||'').toUpperCase()===cargo)) return alert('Ese cargo ya existe en el tabulador');
+    try{
+      const id=`CARGO-${Date.now()}`;
+      await setDoc(getDocRef('rrhh_tabulador_cargos', id), {id, cargo, salarioBase:parseFloat(nuevoCargoTab.salarioBase)||0, createdAt:Date.now()});
+      setNuevoCargoTab({cargo:'',salarioBase:''});
+    } catch(e){ alert('Error al agregar: '+e.message); }
+  };
+  const actualizarCargoTab = async (c, patch) => {
+    try{ await updateDoc(getDocRef('rrhh_tabulador_cargos', c.id), patch); }
+    catch(e){ alert('Error al actualizar: '+e.message); }
+  };
+  const eliminarCargoTab = async (c) => {
+    if(!window.confirm(`¿Eliminar el cargo "${c.cargo}" del tabulador?`)) return;
+    try{ await deleteDoc(getDocRef('rrhh_tabulador_cargos', c.id)); }
     catch(e){ alert('Error al eliminar: '+e.message); }
   };
   const CuentaPorCentroRow = ({centro, cuenta, onAsignar, onQuitar}) => {
@@ -1017,6 +1105,28 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </div>
 
         </div>
+
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
+          <h3 className="text-[10px] font-black text-gray-400 uppercase mb-1">4. Tabulador de Sueldos y Cargos</h3>
+          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Cargo sale de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+            {tabuladorCargos.length===0 && <p className="text-xs text-gray-400 text-center py-6 md:col-span-2">Sin cargos aún — agrega el primero abajo</p>}
+            {tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||'')).map(c=>(
+              <div key={c.id} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2 border border-gray-200">
+                <input defaultValue={c.cargo} onBlur={e=>actualizarCargoTab(c,{cargo:e.target.value.toUpperCase()})} className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold uppercase outline-none focus:border-cyan-500 bg-white"/>
+                <span className="text-gray-400 text-xs flex-shrink-0">$</span>
+                <input type="number" defaultValue={c.salarioBase} onBlur={e=>actualizarCargoTab(c,{salarioBase:parseFloat(e.target.value)||0})} className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500 text-right flex-shrink-0 bg-white"/>
+                <button onClick={()=>eliminarCargoTab(c)} className="text-red-400 hover:text-red-600 flex-shrink-0"><Trash2 size={13}/></button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input value={nuevoCargoTab.cargo} onChange={e=>setNuevoCargoTab(f=>({...f,cargo:e.target.value}))} placeholder="Ej: VENDEDOR, SUPERVISOR..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+            <input type="number" value={nuevoCargoTab.salarioBase} onChange={e=>setNuevoCargoTab(f=>({...f,salarioBase:e.target.value}))} placeholder="Salario $" className="w-28 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+            <button onClick={agregarCargoTab} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
+          </div>
+        </div>
+
       </div>
       )}
 
@@ -1155,6 +1265,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 </div>
               </div>
             )}
+            <button onClick={()=>{setMostrarCalculadora(true);setConceptoSelCod(null);}} className="w-full bg-cyan-50 text-cyan-700 border-2 border-cyan-200 rounded-xl py-2 text-[10px] font-black uppercase hover:bg-cyan-100 flex items-center justify-center gap-1 mb-3"><Calculator size={13}/> Calculadora — Probar un Trabajador</button>
             <input value={busqConcepto} onChange={e=>setBusqConcepto(e.target.value)} placeholder="Buscar por código o nombre..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 mb-2"/>
             <select value={filtroTipoConcepto} onChange={e=>setFiltroTipoConcepto(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white mb-3">
               <option value="">Todos los tipos</option>
@@ -1178,7 +1289,57 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </div>
 
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
-            {!conceptoForm ? (
+            {mostrarCalculadora ? (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-black text-gray-700 uppercase">Calculadora de Conceptos</h3>
+                  <button onClick={()=>setMostrarCalculadora(false)} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
+                </div>
+                <div className="mb-4">
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Trabajador</label>
+                  <input value={calcBusqTrab} onChange={e=>setCalcBusqTrab(e.target.value)} placeholder="Buscar trabajador..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 mb-2"/>
+                  <select value={calcTrabajadorId} onChange={e=>setCalcTrabajadorId(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                    <option value="">— Selecciona —</option>
+                    {trabajadores.filter(t=>!calcBusqTrab||(t.nombre||'').toUpperCase().includes(calcBusqTrab.toUpperCase())).map(t=>(
+                      <option key={t.id} value={t.id}>{t.nombre} · ${formatNum(t.salarioBase||0)}</option>
+                    ))}
+                  </select>
+                </div>
+                {!calcTrabajadorId ? (
+                  <p className="text-xs text-gray-400 text-center py-10">Selecciona un trabajador para probar el cálculo</p>
+                ) : (()=>{
+                  const trab = trabajadores.find(t=>t.id===calcTrabajadorId);
+                  const tokens = tokensUsadosEnFormulas();
+                  const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
+                  const resultados = calcularTodosLosConceptos(trab, calcValores, paramMap);
+                  return (<>
+                    <div className="bg-cyan-50 border-2 border-cyan-100 rounded-xl p-3 mb-4">
+                      <p className="text-[9px] font-black text-cyan-700 uppercase mb-2">Datos a capturar (por este trabajador, este período)</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {tokens.length===0 && <p className="text-[10px] text-gray-400 col-span-3">Ningún concepto activo usa datos capturados — solo CE00001 (salario, automático).</p>}
+                        {tokens.map(tok=>(
+                          <div key={tok}>
+                            <label className="text-[8px] font-black text-cyan-700 font-mono block mb-0.5">{tok}</label>
+                            <input type="number" value={calcValores[tok]||''} onChange={e=>setCalcValores(v=>({...v,[tok]:e.target.value}))} className="w-full border border-cyan-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 text-right"/>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1 max-h-[45vh] overflow-y-auto">
+                      {resultados.map(c=>(
+                        <div key={c.codigo} className={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl ${c.valorCalculado==null?'opacity-40':''}`}>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-bold text-gray-700 truncate"><span className="font-mono text-cyan-600 mr-1">{c.codigo}</span>{c.nombre}</p>
+                            <p className="text-[8px] text-gray-400 font-mono truncate">{c.formato||'(sin fórmula — se llenaría a mano)'}</p>
+                          </div>
+                          <span className="font-mono font-black text-sm flex-shrink-0">{c.valorCalculado==null?'—':'$'+formatNum(c.valorCalculado)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>);
+                })()}
+              </div>
+            ) : !conceptoForm ? (
               <p className="text-xs text-gray-400 text-center py-16">Selecciona un concepto de la lista o crea uno nuevo</p>
             ) : (
               <>
@@ -1676,7 +1837,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <option value="">— Departamento —</option>
                     {deptosDisponibles.map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
                   </select>
-                  <input value={f.cargo} onChange={e=>set({cargo:e.target.value})} placeholder="Cargo" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  {tabuladorCargos.length>0 ? (
+                    <select value={f.cargo} onChange={e=>{
+                      const ct=tabuladorCargos.find(c=>c.cargo===e.target.value);
+                      set({cargo:e.target.value, salarioBase: ct ? String(ct.salarioBase) : f.salarioBase});
+                    }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                      <option value="">— Cargo —</option>
+                      {tabuladorCargos.map(c=><option key={c.id} value={c.cargo}>{c.cargo} · ${formatNum(c.salarioBase)}</option>)}
+                    </select>
+                  ) : (
+                    <input value={f.cargo} onChange={e=>set({cargo:e.target.value})} placeholder="Cargo (configura el Tabulador de Sueldos en Configuración para elegir de una lista)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <input type="date" value={f.fechaIngreso} onChange={e=>set({fechaIngreso:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
                     <select value={f.tipoContrato} onChange={e=>set({tipoContrato:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Indefinido</option><option>Determinado</option><option>Obra o labor</option></select>
