@@ -379,15 +379,15 @@ const BModal = ({ open, onClose, title, children, footer, wide, xlwide, xwide, n
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6" style={{ background: 'rgba(15,23,42,.85)', backdropFilter: 'blur(4px)' }} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className={`bg-white w-full ${xwide ? 'w-[98vw] max-w-[98vw] h-[98vh]' : xlwide ? 'max-w-[92vw] max-h-[92vh]' : wide ? 'max-w-[95vw] md:max-w-3xl max-h-[90vh]' : 'max-w-[95vw] sm:max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl relative ${noClip ? '' : 'overflow-hidden'}`}>
+      <div className={`bg-white w-full ${xwide ? 'w-[98vw] max-w-[98vw] h-[98vh]' : xlwide ? 'max-w-[92vw] max-h-[92vh]' : wide ? 'max-w-[95vw] md:max-w-3xl max-h-[90vh]' : 'max-w-[95vw] sm:max-w-lg max-h-[90vh]'} rounded-2xl flex flex-col shadow-2xl relative min-h-0 ${noClip ? '' : 'overflow-hidden'}`}>
         {!noHeader && (
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0" style={{ background: 'linear-gradient(135deg,#0f172a,#1e293b)' }}>
             <h2 className="font-black text-white uppercase tracking-widest text-sm">{title}</h2>
             <button onClick={onClose} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"><X size={16} className="text-white" /></button>
           </div>
         )}
-        <div className="flex-1 overflow-hidden flex flex-col relative">
-          {noHeader ? children : <div className="overflow-y-auto flex-1 p-7">{children}</div>}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
+          {noHeader ? children : <div className={`overflow-y-auto flex-1 min-h-0 ${(xlwide||xwide)?'p-4':'p-7'}`}>{children}</div>}
         </div>
         {footer && <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 flex-shrink-0 bg-slate-50 rounded-b-2xl">{footer}</div>}
       </div>
@@ -395,6 +395,7 @@ const BModal = ({ open, onClose, title, children, footer, wide, xlwide, xwide, n
   );
 };
 
+const nomT = (t) => (t&&(t.razonSocial||t.nombre||t.clientName||t.name))||'';
 const BFG = ({ label, children, full }) => <div className={full ? 'col-span-2' : ''}><label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">{label}</label>{children}</div>;
 const inp = "w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-xs font-semibold outline-none focus:border-orange-500 transition-colors bg-white text-slate-900 placeholder:text-slate-300";
 const sel = "w-full border-2 border-slate-200 rounded-xl px-4 py-2.5 text-xs font-semibold outline-none focus:border-orange-500 transition-colors bg-white text-slate-900";
@@ -3465,9 +3466,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           tasa,montoNativo:mNat,montoBs,montoUSD,
           saldoAnterior:Number(cuenta.saldo),saldoResultante:nuevoSaldo,
           aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
-          terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
+          terceroId:tercero?.id||'',terceroNombre:nomT(tercero),
           facturaId:factura?.id||'',facturaNumero:factura?.numero||'',
-          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSD:0,
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito,asientoCredito,
           asientoContableId:asientoId,
@@ -3543,7 +3544,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(form.aplicaTercero&&form.tipoTercero==='Relacionado'&&form.terceroId){
           const idPagoRel=bancoGid();
           batch.set(getDocRef('cxp_pagos_relacionados',idPagoRel),{
-            id:idPagoRel,terceroId:form.terceroId,terceroNombre:tercero?.nombre||'',
+            id:idPagoRel,terceroId:form.terceroId,terceroNombre:nomT(tercero),
             fecha:form.fecha,concepto:form.concepto,referencia:form.referencia,
             monto:form.tipo==='Ingreso'?-montoUSD:montoUSD,
             origen:'banco',movimientoId:id,ts:serverTimestamp()
@@ -3562,7 +3563,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           totHaberBs:todasLineas.reduce((a,l)=>a+l.haberBs,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.haberBs,0),
           totDebeUSD:todasLineas.reduce((a,l)=>a+l.debeUSD,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.debeUSD,0),
           totHaberUSD:todasLineas.reduce((a,l)=>a+l.haberUSD,0)+lineasDestinoParaComprobante.reduce((a,l)=>a+l.haberUSD,0),
-          terceroNombre:tercero?.nombre||'',
+          terceroNombre:nomT(tercero),
         };
         bdbg('🔒 CIERRE via: BANCO: save() exitoso');setModal(false); setForm(initF()); setBusqCtas({});
         setComprobante(comp);
@@ -3604,8 +3605,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           concepto:form.concepto,referencia:form.referencia,
           tasa,montoNativo:mNat,montoBs,montoUSD,saldoResultante:nuevoSaldo,
           aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
-          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
-          terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSD:0,
+          terceroId:tercero?.id||'',terceroNombre:nomT(tercero),
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
           asientoCredito:form.tipo==='Ingreso'?ctaContra:ctaBanco,
@@ -3615,7 +3616,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // duplicar ni perder el ajuste.
         {
           const oldAntId = movOriginal?.anticipoVinculadoId||'';
-          const oldMontoAnt = Number(movOriginal?.montoUSD||0);
+          const oldMontoAnt = Number(movOriginal?.anticipoAplicadoMonto||0); // movimientos viejos sin este campo = nunca se aplic  al anticipo
           const newAntId = (form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'';
           if(oldAntId===newAntId){
             if(newAntId){
@@ -3654,7 +3655,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           batch.update(getDocRef('cont_asientos', movOriginal.asientoContableId), {
             fecha:form.fecha, tipo:form.tipo==='Ingreso'?'Ingreso':'Egreso', subTipo:form.tipo,
             nroDocumento:form.referencia||'', descripcion:form.concepto.toUpperCase(), tasa,
-            terceroNombre:tercero?.nombre||'', lineas:lineasEdit,
+            terceroNombre:nomT(tercero), lineas:lineasEdit,
             totalDebeBs:lineasEdit.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasEdit.reduce((a,l)=>a+l.haberBs,0),
             totalDebeUSD:lineasEdit.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasEdit.reduce((a,l)=>a+l.haberUSD,0),
           });
@@ -3874,6 +3875,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const batch=writeBatch(_bancoDB);
         batch.delete(getDocRef('banco_movimientos',docId));
         if(cuenta) batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:Number(cuenta.saldo)+signo*Number(m.montoNativo||0)});
+        if(m.anticipoVinculadoId && Number(m.anticipoAplicadoMonto||0)>0){ const antDel=cobrosCxcTodos.find(x=>x.id===m.anticipoVinculadoId); if(antDel) batch.update(getDocRef('cobros_cxc',m.anticipoVinculadoId),{montoAplicado:Math.max(0,Number(antDel.montoAplicado||0)-Number(m.anticipoAplicadoMonto||0))}); }
         await batch.commit();
         setPwdModal(null); setDetalle(null); setAdminPwd('');
       } catch(e) {
@@ -3934,7 +3936,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
         tasa:String(m.tasa||tasaActiva),montoNativo:String(m.montoNativo||''),
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||'',
         cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId});
     };
@@ -4134,7 +4136,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               </div>
             ) : editId ? (
               /* MODO EDICIÓN COMPLETO */
-              <div className="space-y-5">
+              <div className="space-y-3">
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-center gap-2">
                   <Settings size={14} className="text-blue-600"/><p className="text-[10px] font-black text-blue-700 uppercase">Editando todos los campos del movimiento</p>
                 </div>
@@ -4252,10 +4254,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       <button key={t} onClick={()=>setForm({...form,tipoTercero:t,terceroId:''})} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase border-2 ${form.tipoTercero===t?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200'}`}>{t==='Relacionado'?'CxP Relac.':t}</button>
                     ))}</div></BFG>
                     <BFG label="Tercero">
-                      <select className={sel} value={form.terceroId} onChange={e=>setForm({...form,terceroId:e.target.value})}>
-                        <option value="">— Seleccione —</option>
-                        {form.tipoTercero==='Cliente'?clientes.map(c=><option key={c.id} value={c.id}>{c.rif} · {c.nombre}</option>):form.tipoTercero==='Proveedor'?provs.map(p=><option key={p.id} value={p.id}>{p.rif||''} · {p.nombre}</option>):tercerosRel.map(r=><option key={r.id} value={r.id}>{r.cedulaRif||''} · {r.nombre}</option>)}
-                      </select>
+                      <input value={searchTercero} onChange={e=>setSearchTercero(e.target.value)} placeholder="Buscar por RIF o nombre..." className={`${inp} mb-1.5`}/><select className={sel} value={form.terceroId} onChange={e=>{setForm({...form,terceroId:e.target.value});setSearchTercero('');}}><option value="">-- Seleccione --</option>{(form.tipoTercero==='Cliente'?clientes:form.tipoTercero==='Proveedor'?provs:tercerosRel).filter(t=>!searchTercero||t.id===form.terceroId||((((t.rif||t.cedulaRif||'')+' '+nomT(t))).toUpperCase().includes(searchTercero.toUpperCase()))).map(t=><option key={t.id} value={t.id}>{(t.rif||t.cedulaRif||'')+' \u00b7 '+nomT(t)}</option>)}</select>
                     </BFG>
                   </div>}
                   {form.aplicaTercero&&<label className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 cursor-pointer">
@@ -4264,7 +4263,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   </label>}
                   {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&(()=>{
                     const clienteSel=clientes.find(c=>c.id===form.terceroId);
-                    const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&(Number(a.monto||0)-Number(a.montoAplicado||0))>0.01);
+                    const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&((Number(a.monto||0)-Number(a.montoAplicado||0))>0.01||a.id===form.anticipoVinculadoId));
                     return (
                     <BFG label="¿Corresponde a un anticipo sin aplicar? (opcional)">
                       <select className={sel} value={form.anticipoVinculadoId||''} onChange={e=>setForm({...form,anticipoVinculadoId:e.target.value})}>
@@ -5028,7 +5027,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           <div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={searchTercero} onChange={e=>setSearchTercero(e.target.value)} placeholder={`Buscar ${form.tipoTercero==='Relacionado'?'tercero':form.tipoTercero.toLowerCase()}...`} className={`${inp} pl-8`}/></div>
                           <select className={sel} value={form.terceroId} onChange={e=>{setForm({...form,terceroId:e.target.value,facturaId:''});setSearchTercero('');}}>
                             <option value="">— Seleccione —</option>
-                            {(form.tipoTercero==='Cliente'?clientes.filter(c=>!searchTercero||(c.rif+' '+c.nombre).toUpperCase().includes(searchTercero.toUpperCase())):form.tipoTercero==='Proveedor'?provs.filter(p=>!searchTercero||((p.rif||'')+' '+(p.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase())):tercerosRel.filter(r=>!searchTercero||((r.cedulaRif||'')+' '+(r.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase()))).map(x=><option key={x.id} value={x.id}>{x.rif||x.cedulaRif} · {x.nombre}</option>)}
+                            {(form.tipoTercero==='Cliente'?clientes.filter(c=>!searchTercero||((c.rif||'')+' '+nomT(c)).toUpperCase().includes(searchTercero.toUpperCase())):form.tipoTercero==='Proveedor'?provs.filter(p=>!searchTercero||((p.rif||'')+' '+(p.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase())):tercerosRel.filter(r=>!searchTercero||((r.cedulaRif||'')+' '+(r.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase()))).map(x=><option key={x.id} value={x.id}>{x.rif||x.cedulaRif} · {x.nombre}</option>)}
                           </select>
                         </div>
                       </BFG>
@@ -6327,8 +6326,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           concepto:form.concepto, referencia:form.referencia,
           tasa, monto:mNat, montoBs, montoUSD,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
-          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
-          terceroId:tercero?.id||'', terceroNombre:tercero?.nombre||'',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSD:0,
+          terceroId:tercero?.id||'', terceroNombre:nomT(tercero),
           facturaId:factura?.id||'', facturaNumero:factura?.numero||'',
           asientoContableId:asientoId, estatus:'No Conciliado', ts:serverTimestamp()
         });
@@ -6381,7 +6380,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(form.aplicaTercero&&form.tipoTercero==='Relacionado'&&form.terceroId){
           const idPagoRel=bancoGid();
           batch.set(getDocRef('cxp_pagos_relacionados',idPagoRel),{
-            id:idPagoRel,terceroId:form.terceroId,terceroNombre:tercero?.nombre||'',
+            id:idPagoRel,terceroId:form.terceroId,terceroNombre:nomT(tercero),
             fecha:form.fecha,concepto:form.concepto,referencia:form.referencia,
             monto:form.tipo==='Ingreso'?-montoUSD:montoUSD,
             origen:'caja',movimientoId:id,ts:serverTimestamp()
@@ -6446,7 +6445,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setCajaEdit(true);
       setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',
         motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),cajaId:m.cajaId||'',
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
     };
 
@@ -6472,8 +6471,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           motivoEgreso:form.motivoEgreso, cajaId:form.cajaId||cajaDet.cajaId, cajaNombre:cajaObjEdit?.nombre||cajaDet.cajaNombre||'',
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
-          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
-          terceroId:terceroEdit?.id||'', terceroNombre:terceroEdit?.nombre||'',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSDEdit:0,
+          terceroId:terceroEdit?.id||'', terceroNombre:nomT(terceroEdit),
           ctaContraId:form.ctaContraId, ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaCajaEdit:ctaContraEdit,
           asientoCredito:form.tipo==='Ingreso'?ctaContraEdit:ctaCajaEdit,
@@ -6482,7 +6481,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // Reconciliar el saldo del anticipo vinculado (agregado, quitado o cambiado en esta edición).
         {
           const oldAntId = cajaDet.anticipoVinculadoId||'';
-          const oldMontoAnt = Number(cajaDet.montoUSD||0);
+          const oldMontoAnt = Number(cajaDet.anticipoAplicadoMonto||0); // movimientos viejos sin este campo = nunca se aplic  al anticipo
           const newAntId = (form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'';
           if(oldAntId===newAntId){
             if(newAntId){
@@ -6521,7 +6520,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           batch.update(getDocRef('cont_asientos', cajaDet.asientoContableId), {
             fecha:form.fecha, tipo:form.tipo==='Ingreso'?'Ingreso':'Egreso', subTipo:form.tipo,
             nroDocumento:form.referencia||'', descripcion:form.concepto.toUpperCase(), tasa:tasaEdit,
-            terceroNombre:terceroEdit?.nombre||'', lineas:lineasEdit,
+            terceroNombre:nomT(terceroEdit), lineas:lineasEdit,
             totalDebeBs:lineasEdit.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasEdit.reduce((a,l)=>a+l.haberBs,0),
             totalDebeUSD:lineasEdit.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasEdit.reduce((a,l)=>a+l.haberUSD,0),
           });
@@ -6547,7 +6546,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           await deleteDoc(getDocRef('procura_pagos_cxp', m.id));
         } else {
           // Movimiento manual de caja
-          await deleteDoc(getDocRef('caja_movimientos', m.id));
+          if(m.anticipoVinculadoId && Number(m.anticipoAplicadoMonto||0)>0){
+            const antDelC=cobrosCxcTodos.find(x=>x.id===m.anticipoVinculadoId);
+            const bDel=writeBatch(_bancoDB);
+            bDel.delete(getDocRef('caja_movimientos', m.id));
+            if(antDelC) bDel.update(getDocRef('cobros_cxc',m.anticipoVinculadoId),{montoAplicado:Math.max(0,Number(antDelC.montoAplicado||0)-Number(m.anticipoAplicadoMonto||0))});
+            await bDel.commit();
+          } else await deleteDoc(getDocRef('caja_movimientos', m.id));
         }
         setCajaPwdModal(null); setCajaPwd('');
       } finally { setBusy(false); }
@@ -6947,7 +6952,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         {/* ── MODAL VER / EDITAR MOVIMIENTO CAJA ── */}
         {cajaDet&&(
           <BModal open={!!cajaDet} onClose={()=>{setCajaDet(null);setCajaEdit(false);setForm(initF());}}
-            title={cajaEdit?`✏ Editando — ${cajaDet.concepto}`:`Movimiento — ${cajaDet.concepto}`} wide
+            title={cajaEdit?`✏ Editando — ${cajaDet.concepto}`:`Movimiento — ${cajaDet.concepto}`} {...(cajaEdit?{xlwide:true}:{wide:true})}
             footer={cajaEdit
               ?<><BBo onClick={()=>{setCajaEdit(false);setForm(initF());}}>Cancelar</BBo><BBg onClick={guardarEditCaja} disabled={busy}>{busy?'Guardando...':'Guardar Cambios'}</BBg></>
               :<><BBd onClick={()=>{if(cajaDet._fromBanco)return alert('Este movimiento viene de CxC/CxP. Elim. desde el módulo origen.');setCajaPwdModal(cajaDet);setCajaDet(null);}}>🗑 Eliminar</BBd><div className="flex-1"/>{!cajaDet._fromBanco&&<BBg onClick={()=>abrirEditCaja(cajaDet)}>✏ Editar</BBg>}</>
@@ -7033,10 +7038,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       <select className={`${sel} w-32`} value={form.tipoTercero} onChange={e=>setForm({...form,tipoTercero:e.target.value,terceroId:''})}>
                         <option value="Cliente">Cliente</option><option value="Proveedor">Proveedor</option><option value="Relacionado">CxP Relac.</option>
                       </select>
-                      <select className={sel} value={form.terceroId} onChange={e=>setForm({...form,terceroId:e.target.value})}>
-                        <option value="">— Seleccionar —</option>
-                        {(form.tipoTercero==='Cliente'?clientes:form.tipoTercero==='Proveedor'?provs:tercerosRel).map(t=><option key={t.id} value={t.id}>{(t.rif||t.cedulaRif||'')+(t.rif||t.cedulaRif?' · ':'')+t.nombre}</option>)}
-                      </select>
+                      <input value={searchTercero} onChange={e=>setSearchTercero(e.target.value)} placeholder="Buscar RIF o nombre..." className={`${inp} w-44`}/><select className={sel} value={form.terceroId} onChange={e=>{setForm({...form,terceroId:e.target.value});setSearchTercero('');}}><option value="">-- Seleccionar --</option>{(form.tipoTercero==='Cliente'?clientes:form.tipoTercero==='Proveedor'?provs:tercerosRel).filter(t=>!searchTercero||t.id===form.terceroId||((((t.rif||t.cedulaRif||'')+' '+nomT(t))).toUpperCase().includes(searchTercero.toUpperCase()))).map(t=><option key={t.id} value={t.id}>{(t.rif||t.cedulaRif||'')+' \u00b7 '+nomT(t)}</option>)}</select>
                     </>)}
                   </div>
                 </BFG>
@@ -7046,7 +7048,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 </label>}
                 {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&(()=>{
                   const clienteSel=clientes.find(c=>c.id===form.terceroId);
-                  const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&(Number(a.monto||0)-Number(a.montoAplicado||0))>0.01);
+                  const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&((Number(a.monto||0)-Number(a.montoAplicado||0))>0.01||a.id===form.anticipoVinculadoId));
                   return (
                   <BFG label="¿Corresponde a un anticipo sin aplicar? (opcional)">
                     <select className={sel} value={form.anticipoVinculadoId||''} onChange={e=>setForm({...form,anticipoVinculadoId:e.target.value})}>
@@ -7457,7 +7459,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           <div className="relative"><Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={searchTercero} onChange={e=>setSearchTercero(e.target.value)} placeholder={`Buscar ${form.tipoTercero==='Relacionado'?'tercero':form.tipoTercero.toLowerCase()}...`} className={`${inp} pl-8`}/></div>
                           <select className={sel} value={form.terceroId} onChange={e=>{setForm({...form,terceroId:e.target.value,facturaId:''});setSearchTercero('');}}>
                             <option value="">— Seleccione —</option>
-                            {(form.tipoTercero==='Cliente'?clientes.filter(c=>!searchTercero||(c.rif+' '+c.nombre).toUpperCase().includes(searchTercero.toUpperCase())):form.tipoTercero==='Proveedor'?provs.filter(p=>!searchTercero||((p.rif||'')+' '+(p.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase())):tercerosRel.filter(r=>!searchTercero||((r.cedulaRif||'')+' '+(r.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase()))).map(x=><option key={x.id} value={x.id}>{x.rif||x.cedulaRif} · {x.nombre}</option>)}
+                            {(form.tipoTercero==='Cliente'?clientes.filter(c=>!searchTercero||((c.rif||'')+' '+nomT(c)).toUpperCase().includes(searchTercero.toUpperCase())):form.tipoTercero==='Proveedor'?provs.filter(p=>!searchTercero||((p.rif||'')+' '+(p.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase())):tercerosRel.filter(r=>!searchTercero||((r.cedulaRif||'')+' '+(r.nombre||'')).toUpperCase().includes(searchTercero.toUpperCase()))).map(x=><option key={x.id} value={x.id}>{x.rif||x.cedulaRif} · {x.nombre}</option>)}
                           </select>
                         </div>
                       </BFG>
