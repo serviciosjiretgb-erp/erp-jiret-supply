@@ -41695,7 +41695,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
           if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor)||(cl.vendedor||'').toUpperCase()===ecVendedor);
-          const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(_anticiposPorClienteEc.get(cl.clientRif)||[]).reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
+          // Ajustes a CxC (Banco/Caja marcados como "esAjusteCxC", tercero=Cliente) — movimientos
+          // que NO son cobro de factura ni anticipo formal (ej. reintegro a un cliente), pero sí
+          // afectan lo que ese cliente nos debe. Mismo patrón que Procura usa para CxP: Egreso
+          // (le devolvimos dinero) resta del saldo que nos debe; Ingreso (nos pagó algo fuera de
+          // factura) suma. Se muestran como línea aparte para no duplicar lo que ya cuentan las NE.
+          const _ajustesCxcPorClienteEc=(()=>{
+            const m=new Map();
+            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId).forEach(a=>{
+              // terceroId es el id de Firestore del cliente — se resuelve a su RIF, que es como
+              // este Estado de Cuenta agrupa a los clientes.
+              const rifCliente=(clients.find(c=>c.id===a.terceroId)?.rif||a.terceroNombre||'').trim();
+              if(!rifCliente) return;
+              if(!m.has(rifCliente)) m.set(rifCliente,[]);
+              const esIngreso=a.tipo==='Ingreso';
+              const montoUSD=Number(a.montoUSD||0)*(esIngreso?1:-1);
+              m.get(rifCliente).push({...a,_montoUSD:montoUSD});
+            });
+            return m;
+          })();
+          const getAjustesCxcClienteEc=(cl)=>_ajustesCxcPorClienteEc.get(cl.clientRif)||[];
+          const getAjustesCxcClienteTotalEc=(cl)=>getAjustesCxcClienteEc(cl).reduce((s,a)=>s+a._montoUSD,0);
+          const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(_anticiposPorClienteEc.get(cl.clientRif)||[]).reduce((s,a)=>s+Math.max(0,a._saldoAnt),0)+getAjustesCxcClienteTotalEc(cl);
           if(ecEstado==='SALDADO') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)<0.01);
           if(ecEstado==='PENDIENTE') cliList=cliList.filter(cl=>getSaldoClienteTotalEc(cl)>=0.01);
           const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
@@ -41721,7 +41742,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const manualNCSignedUSDcl=manualNCCl.reduce((s,n)=>s+n._signedUSD,0);
               const anticiposCl=_anticiposPorClienteEc.get(cl.clientRif)||[];
               const anticiposUSDcl=anticiposCl.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
-              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl+manualNCSignedUSDcl-anticiposUSDcl;
+              const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl+manualNCSignedUSDcl-anticiposUSDcl+getAjustesCxcClienteTotalEc(cl);
               const facturadoCl=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
               const cobradoCl=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
               const isEnCredito=saldoCl<-0.01;
@@ -41905,7 +41926,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualNCSignedUSDclX=manualNCClX.reduce((s,n)=>s+n._signedUSD,0);
                 const anticiposClX=_anticiposPorClienteEc.get(cl.clientRif)||[];
                 const anticiposUSDclX=anticiposClX.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
-                const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX+manualNCSignedUSDclX-anticiposUSDclX;
+                const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX+manualNCSignedUSDclX-anticiposUSDclX+getAjustesCxcClienteTotalEc(cl);
                 const facturadoClX=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoClX=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaClX=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
@@ -42013,7 +42034,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const manualNCSignedUSDcli=manualNCCli.reduce((s,n)=>s+n._signedUSD,0);
                 const anticiposCli=_anticiposPorClienteEc.get(cl.clientRif)||[];
                 const anticiposUSDcli=anticiposCli.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
-                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli+manualNCSignedUSDcli-anticiposUSDcli;
+                const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli+manualNCSignedUSDcli-anticiposUSDcli+getAjustesCxcClienteTotalEc(cl);
                 const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
                 const cobradoCli=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaCli=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
