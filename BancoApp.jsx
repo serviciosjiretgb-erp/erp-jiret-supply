@@ -2460,6 +2460,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // Combinar: primero el prop (más confiable), luego el local
   const systemUsers = systemUsersProp.length > 0 ? systemUsersProp : systemUsersLocal;
   const [cobrosCajaCxc, setCobrosCajaCxc] = useState([]); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
+  const [cobrosCxcTodos, setCobrosCxcTodos] = useState([]); // TODOS los cobros_cxc — para vincular reintegros a anticipos de cliente
   const [pagosCajaCxP,  setPagosCajaCxP]  = useState([]); // procura_pagos_cxp donde cuentaId empieza con CAJA::
   const [pagosCxPTodos, setPagosCxPTodos] = useState([]); // TODOS los procura_pagos_cxp — para Pagos por Identificar
 
@@ -2468,7 +2469,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const subs = [
       onSnapshot(getColRef('users'), s => setSystemUsersLocal(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('cobros_cxc'), orderBy('fecha','desc')), s => {
-        setCobrosCajaCxc(s.docs.map(d=>d.data()).filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
+        const todos = s.docs.map(d=>d.data());
+        setCobrosCajaCxc(todos.filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
+        setCobrosCxcTodos(todos);
       }),
       onSnapshot(query(getColRef('procura_pagos_cxp'), orderBy('fecha','desc')), s => {
         const todos = s.docs.map(d=>d.data());
@@ -3464,12 +3467,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
           facturaId:factura?.id||'',facturaNumero:factura?.numero||'',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito,asientoCredito,
           asientoContableId:asientoId,
           estatus:'No Conciliado',ts:serverTimestamp()
         });
         batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:nuevoSaldo});
+        // Si el ajuste está vinculado a un anticipo sin aplicar, ese reintegro "consume" parte del
+        // anticipo — igual que si se hubiera aplicado a una factura — para no contar el mismo
+        // crédito dos veces (una como anticipo sin usar y otra como reintegro aparte).
+        if(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId){
+          const antVinc=cobrosCxcTodos.find(a=>a.id===form.anticipoVinculadoId);
+          if(antVinc) batch.update(getDocRef('cobros_cxc',form.anticipoVinculadoId),{montoAplicado:Number(antVinc.montoAplicado||0)+montoUSD});
+        }
         // Líneas del lado DESTINO, para agregarlas también al comprobante imprimible de abajo —
         // así el comprobante de un Traslado muestra el asiento COMPLETO (los 2 bancos), no solo
         // el lado origen. Se llena dentro del bloque de traslado, si aplica.
@@ -3593,6 +3604,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           concepto:form.concepto,referencia:form.referencia,
           tasa,montoNativo:mNat,montoBs,montoUSD,saldoResultante:nuevoSaldo,
           aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
           terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
@@ -3955,7 +3967,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       );
     };
 
-    const movFiltAll = movBanco.filter(m=>{
+    const movFiltAll = useMemo(()=>movBanco.filter(m=>{
       if(filtC     && m.cuentaId!==filtC)   return false;
       if(filtTipo  && m.tipo!==filtTipo)    return false;
       if(filtDesde && m.fecha<filtDesde)     return false;
@@ -3972,17 +3984,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         }
       }
       return true;
-    });
+    }),[movBanco,filtC,filtTipo,filtDesde,filtHasta,busqCli,busqRef,busqMonto]);
     // Split by moneda de la cuenta
     const movFilt     = movFiltAll; // kept for compat (tfoot balance)
-    const movFiltBS   = movFiltAll.filter(m=>{
+    const movFiltBS   = useMemo(()=>movFiltAll.filter(m=>{
       const c=cuentas.find(x=>x.id===m.cuentaId);
       return c?.moneda==='BS'||c?.tipoBanco==='Nacional-Bs';
-    });
-    const movFiltUSD  = movFiltAll.filter(m=>{
+    }),[movFiltAll,cuentas]);
+    const movFiltUSD  = useMemo(()=>movFiltAll.filter(m=>{
       const c=cuentas.find(x=>x.id===m.cuentaId);
       return c?.moneda!=='BS'&&c?.tipoBanco!=='Nacional-Bs';
-    });
+    }),[movFiltAll,cuentas]);
 
     // Balance del mes seleccionado, respetando la cuenta filtrada (o todas). Se ancla en
     // saldoInicial (el punto fijo que el usuario declaró para mesSaldoInicial — nunca lo toca
@@ -4213,13 +4225,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     </button>
                   </div>
                   {form.aplicaTercero&&<div className="grid grid-cols-2 gap-3">
-                    <BFG label="Tipo"><div className="flex gap-1">{['Cliente','Proveedor'].map(t=>(
-                      <button key={t} onClick={()=>setForm({...form,tipoTercero:t,terceroId:''})} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase border-2 ${form.tipoTercero===t?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
+                    <BFG label="Tipo"><div className="flex gap-1">{['Cliente','Proveedor','Relacionado'].map(t=>(
+                      <button key={t} onClick={()=>setForm({...form,tipoTercero:t,terceroId:''})} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase border-2 ${form.tipoTercero===t?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200'}`}>{t==='Relacionado'?'CxP Relac.':t}</button>
                     ))}</div></BFG>
                     <BFG label="Tercero">
                       <select className={sel} value={form.terceroId} onChange={e=>setForm({...form,terceroId:e.target.value})}>
                         <option value="">— Seleccione —</option>
-                        {form.tipoTercero==='Cliente'?clientes.map(c=><option key={c.id} value={c.id}>{c.rif} · {c.nombre}</option>):provs.map(p=><option key={p.id} value={p.id}>{p.rif||''} · {p.nombre}</option>)}
+                        {form.tipoTercero==='Cliente'?clientes.map(c=><option key={c.id} value={c.id}>{c.rif} · {c.nombre}</option>):form.tipoTercero==='Proveedor'?provs.map(p=><option key={p.id} value={p.id}>{p.rif||''} · {p.nombre}</option>):tercerosRel.map(r=><option key={r.id} value={r.id}>{r.cedulaRif||''} · {r.nombre}</option>)}
                       </select>
                     </BFG>
                   </div>}
@@ -4227,6 +4239,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked})}/>
                     <span className="text-[11px] text-amber-800"><b>Es un ajuste a {form.tipoTercero==='Proveedor'?'Cuentas por Pagar':'Cuentas por Cobrar'}</b> — marca esto si el movimiento NO es un pago de factura ni un anticipo formal (ej. reintegro de retención, nota de ajuste). Aparecerá como línea aparte en el Estado de Cuenta de este tercero.</span>
                   </label>}
+                  {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&(()=>{
+                    const clienteSel=clientes.find(c=>c.id===form.terceroId);
+                    const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&(Number(a.monto||0)-Number(a.montoAplicado||0))>0.01);
+                    return (
+                    <BFG label="¿Corresponde a un anticipo sin aplicar? (opcional)">
+                      <select className={sel} value={form.anticipoVinculadoId||''} onChange={e=>setForm({...form,anticipoVinculadoId:e.target.value})}>
+                        <option value="">No — es un ajuste aparte</option>
+                        {antsDisponibles.map(a=><option key={a.id} value={a.id}>{a.fecha} · {a.referencia||a.concepto||'Anticipo'} · disp. ${(Number(a.monto||0)-Number(a.montoAplicado||0)).toFixed(2)}</option>)}
+                      </select>
+                      {antsDisponibles.length===0&&<p className="text-[9px] text-slate-400 mt-1">Este cliente no tiene anticipos sin aplicar.</p>}
+                    </BFG>
+                    );
+                  })()}
                 </div>
               </div>
             ) : (
@@ -6027,7 +6052,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // para banco. Antes se excluía cualquier cobro con grupoCobroId asumiendo que YA tenía su
     // movimiento directo, pero eso solo es cierto si ESE grupoCobroId de verdad aparece en
     // caja_movimientos — si no, el cobro simplemente desaparecía sin haberse contado nunca.
-    const movDesdeCobrosCaja = cobrosCajaCxc.filter(c=>!(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId))).map(c=>{
+    const movDesdeCobrosCaja = useMemo(()=>cobrosCajaCxc.filter(c=>!(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId))).map(c=>{
       const cajaId = (c.cuentaBancariaId||'').replace('CAJA::','');
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(c.tasa||tasaActiva)||tasaActiva;
@@ -6048,11 +6073,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         _fromBanco: true, origen:'CxC',
         timestamp: c.timestamp||0
       };
-    });
+    }),[cobrosCajaCxc,movCaja,cajas,tasaActiva]);
 
     // ── Pagos CxP registrados a través de cajas (procura_pagos_cxp con CAJA::) ──
     // Mismo criterio que arriba: excluir solo si el grupoPagoId de verdad aparece en caja_movimientos.
-    const movDesdePagosCaja = pagosCajaCxP.filter(p=>!(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId))).map(p=>{
+    const movDesdePagosCaja = useMemo(()=>pagosCajaCxP.filter(p=>!(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId))).map(p=>{
       const cajaId = (p.cuentaId||'').replace('CAJA::','');
       const caja   = cajas.find(ca=>ca.id===cajaId);
       const tasa   = Number(p.tasa||tasaActiva)||tasaActiva;
@@ -6072,15 +6097,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         _fromBanco: true, origen:'CxP',
         timestamp: p.timestamp||0
       };
-    });
+    }),[pagosCajaCxP,movCaja,cajas,tasaActiva]);
 
     // allMovsCajaBase: SOLO movimientos que realmente pasaron por cajas físicas
     // NO incluir movBancoEnCaja (esos son cobros/pagos bancarios, van en módulo Banco)
-    const allMovsCajaBase = [
+    const allMovsCajaBase = useMemo(()=>[
       ...movCaja,           // entradas manuales de caja
       ...movDesdeCobrosCaja, // cobros CxC que fueron a CAJA:: (cobros_cxc)
       ...movDesdePagosCaja,  // pagos CxP que fueron a CAJA:: (procura_pagos_cxp)
-    ].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0));
+    ].sort((a,b)=>(b.ts?.seconds||b.timestamp||0)-(a.ts?.seconds||a.timestamp||0)),[movCaja,movDesdeCobrosCaja,movDesdePagosCaja]);
 
     // Saldo actual de una caja = saldoInicial + suma de sus movimientos (misma fórmula que
     // CuentasCajaView.getSaldoCaja, aquí en su propia moneda para mostrar en el panel derecho).
@@ -6095,7 +6120,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
 
     // Aplicar filtros
-    const allMovsCaja = allMovsCajaBase.filter(m=>{
+    const allMovsCaja = useMemo(()=>allMovsCajaBase.filter(m=>{
       if(cajFiltMoneda==='BS'  && m.moneda!=='BS')  return false;
       if(cajFiltMoneda==='USD' && m.moneda==='BS')  return false;
       if(cajFiltTipo && m.tipo!==cajFiltTipo) return false;
@@ -6116,7 +6141,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         }
       }
       return true;
-    });
+    }),[allMovsCajaBase,cajFiltMoneda,cajFiltTipo,cajFiltCaja,cajFiltDesde,cajFiltHasta,cajBusqCli,cajBusqRef,cajBusqMonto]);
     // Balance del mes filtrado, respetando la caja filtrada — el saldo inicial de un mes
     // es el saldo inicial de la(s) caja(s) más todo lo acumulado ANTES de ese mes, así que
     // el disponible de un mes queda automáticamente como el inicial del mes siguiente.
@@ -6279,10 +6304,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           concepto:form.concepto, referencia:form.referencia,
           tasa, monto:mNat, montoBs, montoUSD,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
           terceroId:tercero?.id||'', terceroNombre:tercero?.nombre||'',
           facturaId:factura?.id||'', facturaNumero:factura?.numero||'',
           asientoContableId:asientoId, estatus:'No Conciliado', ts:serverTimestamp()
         });
+        if(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId){
+          const antVinc=cobrosCxcTodos.find(a=>a.id===form.anticipoVinculadoId);
+          if(antVinc) batch.update(getDocRef('cobros_cxc',form.anticipoVinculadoId),{montoAplicado:Number(antVinc.montoAplicado||0)+montoUSD});
+        }
 
         if(esTransferencia&&cuentaDest){
           const comisionNativo=esMonedaLocal?comisionBs:comisionUSD;
@@ -6419,6 +6449,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           motivoEgreso:form.motivoEgreso, cajaId:form.cajaId||cajaDet.cajaId, cajaNombre:cajaObjEdit?.nombre||cajaDet.cajaNombre||'',
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
+          anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',
           terceroId:terceroEdit?.id||'', terceroNombre:terceroEdit?.nombre||'',
           ctaContraId:form.ctaContraId, ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaCajaEdit:ctaContraEdit,
@@ -6956,11 +6987,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     </button>
                     {form.aplicaTercero&&(<>
                       <select className={`${sel} w-32`} value={form.tipoTercero} onChange={e=>setForm({...form,tipoTercero:e.target.value,terceroId:''})}>
-                        <option value="Cliente">Cliente</option><option value="Proveedor">Proveedor</option>
+                        <option value="Cliente">Cliente</option><option value="Proveedor">Proveedor</option><option value="Relacionado">CxP Relac.</option>
                       </select>
                       <select className={sel} value={form.terceroId} onChange={e=>setForm({...form,terceroId:e.target.value})}>
                         <option value="">— Seleccionar —</option>
-                        {(form.tipoTercero==='Cliente'?clientes:provs).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+                        {(form.tipoTercero==='Cliente'?clientes:form.tipoTercero==='Proveedor'?provs:tercerosRel).map(t=><option key={t.id} value={t.id}>{(t.rif||t.cedulaRif||'')+(t.rif||t.cedulaRif?' · ':'')+t.nombre}</option>)}
                       </select>
                     </>)}
                   </div>
@@ -6969,6 +7000,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked})}/>
                   <span className="text-[11px] text-amber-800"><b>Es un ajuste a {form.tipoTercero==='Proveedor'?'Cuentas por Pagar':'Cuentas por Cobrar'}</b> — marca esto si el movimiento NO es un pago de factura ni un anticipo formal. Aparecerá como línea aparte en el Estado de Cuenta de este tercero.</span>
                 </label>}
+                {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&(()=>{
+                  const clienteSel=clientes.find(c=>c.id===form.terceroId);
+                  const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&(Number(a.monto||0)-Number(a.montoAplicado||0))>0.01);
+                  return (
+                  <BFG label="¿Corresponde a un anticipo sin aplicar? (opcional)">
+                    <select className={sel} value={form.anticipoVinculadoId||''} onChange={e=>setForm({...form,anticipoVinculadoId:e.target.value})}>
+                      <option value="">No — es un ajuste aparte</option>
+                      {antsDisponibles.map(a=><option key={a.id} value={a.id}>{a.fecha} · {a.referencia||a.concepto||'Anticipo'} · disp. ${(Number(a.monto||0)-Number(a.montoAplicado||0)).toFixed(2)}</option>)}
+                    </select>
+                    {antsDisponibles.length===0&&<p className="text-[9px] text-slate-400 mt-1">Este cliente no tiene anticipos sin aplicar.</p>}
+                  </BFG>
+                  );
+                })()}
               </div>
               );
             })():(
