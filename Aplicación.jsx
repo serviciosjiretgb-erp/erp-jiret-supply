@@ -654,14 +654,18 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const topeUSD = tasa>0 ? topeBs/tasa : topeBs;
       const baseValidada = Math.min(base, topeUSD);
       const semanal = (baseValidada*12)/52;
-      return parseFloat(((semanal*pct/100)*lunes).toFixed(2));
+      // Sin redondear todavía — estos montos son tan chiquitos (por el tope de salario mínimo) que
+      // redondear aquí a 2 decimales en USD y recién después convertir a Bs. perdía casi toda la
+      // precisión (ej. $0,0139 redondeado a $0,01 se traduce mal a Bs.). El redondeo va al final,
+      // en cada moneda por separado.
+      return (semanal*pct/100)*lunes;
     };
     const mkSemanal = (nombre, cfgSeccion, cuenta) => {
       if(!hayBase || lunes===0) return {concepto:nombre, montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true};
       const pctPatronal = nombre==='IVSS' ? RIESGO_PCT[configParafiscal.ivss.riesgo] : cfgSeccion.pctPatronal;
-      const montoUSD = calcSemanal(salarioNormal, cfgSeccion.pctTrabajador, cfgSeccion.topeMultiplo);
-      const montoPatronalUSD = calcSemanal(salarioNormal, pctPatronal, cfgSeccion.topeMultiplo);
-      return {concepto:nombre, montoUSD, montoPatronalUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((montoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true, lunesUsados:lunes};
+      const crudoUSD = calcSemanal(salarioNormal, cfgSeccion.pctTrabajador, cfgSeccion.topeMultiplo);
+      const crudoPatronalUSD = calcSemanal(salarioNormal, pctPatronal, cfgSeccion.topeMultiplo);
+      return {concepto:nombre, montoUSD:parseFloat(crudoUSD.toFixed(2)), montoPatronalUSD:parseFloat(crudoPatronalUSD.toFixed(2)), montoBs:parseFloat((crudoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((crudoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true, lunesUsados:lunes};
     };
     const mkFaov = (cuenta) => {
       const cfg = configParafiscal.faov;
@@ -830,7 +834,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const tasa = Number(nominaActiva?.tasa||0);
       const montoBs = pNumComa(montoBsInput);
       const montoUSD = tasa>0 ? parseFloat((montoBs/tasa).toFixed(2)) : 0;
-      const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD, montoBs:parseFloat(montoBs.toFixed(2))}:a);
+      // Se guarda también el texto tal cual se escribió (con la coma, aunque esté "a medias" como
+      // "16348," o "16348,5") — si solo guardáramos el número, la coma desaparecería de la pantalla
+      // en cuanto se escribiera, porque 16348 no tiene coma que mostrar.
+      const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD, montoBs:parseFloat(montoBs.toFixed(2)), montoBsTexto:montoBsInput}:a);
       return {...m, asignaciones};
     });
   };
@@ -864,7 +871,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const tasa = Number(nominaActiva?.tasa||0);
       const montoBs = pNumComa(montoBsInput);
       const montoUSD = tasa>0 ? parseFloat((montoBs/tasa).toFixed(2)) : 0;
-      const deduccionesManual = m.deduccionesManual.map((d,i)=>i===idx?{...d, montoUSD, montoBs:parseFloat(montoBs.toFixed(2))}:d);
+      const deduccionesManual = m.deduccionesManual.map((d,i)=>i===idx?{...d, montoUSD, montoBs:parseFloat(montoBs.toFixed(2)), montoBsTexto:montoBsInput}:d);
       return {...m, deduccionesManual};
     });
   };
@@ -2127,7 +2134,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       </td>
                       <td className="py-1.5 px-3 text-right">
                         {(esSueldo||a.token) ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
-                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={String(a.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
+                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={a.montoBsTexto??String(a.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
                         <div className="text-[9px] text-gray-400 font-normal">{(esSueldo||a.token)?`Bs.${formatNum(a.montoUSD*tasa)}`:`≈ $${formatNum(a.montoUSD)}`}</div>
                       </td>
                       <td className="py-1.5 px-3"></td>
@@ -2159,7 +2166,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
                         {d.token ? <span className="font-mono font-black text-red-500">${formatNum(d.montoUSD)}</span>
-                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
+                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={d.montoBsTexto??String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
                         <div className="text-[9px] text-gray-400 font-normal">{d.token?`Bs.${formatNum(d.montoUSD*tasa)}`:`≈ $${formatNum(d.montoUSD)}`}</div>
                       </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionManual(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
