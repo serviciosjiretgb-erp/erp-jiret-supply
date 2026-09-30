@@ -641,7 +641,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina, mes, quincena) => {
     const incluidas = asignaciones.filter(a=>a.incluida);
     const totalAsig = incluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
-    const sueldoBasicoItem = incluidas.find(a=>/sueldo b[aá]sico/i.test(a.concepto));
+    const sueldoBasicoItem = incluidas.find(a=>a.codigo==='00001');
     const hayBase = !!sueldoBasicoItem;
     const basico = Number(sueldoBasicoItem?.montoUSD||0);
     // Salario Normal = todas las incluidas MENOS Utilidades y Bono Vacacional (no cuentan para IVSS/RPE)
@@ -818,10 +818,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
-  const actualizarMontoAsignacion = (idx, montoUSD) => {
+  // Los montos manuales (sin fórmula — Diferencia de Sueldo, y cualquier otro que se agregue a
+  // mano) se escriben en Bs., que es como naturalmente se conocen esos montos — el USD se calcula
+  // solo dividiendo entre la tasa de la nómina.
+  const actualizarMontoAsignacion = (idx, montoBsInput) => {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
-      const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasa).toFixed(2))}:a);
+      const montoBs = Number(montoBsInput)||0;
+      const montoUSD = tasa>0 ? parseFloat((montoBs/tasa).toFixed(2)) : 0;
+      const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD, montoBs:parseFloat(montoBs.toFixed(2))}:a);
       return {...m, asignaciones};
     });
   };
@@ -850,10 +855,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     return {...m, [lista]:items};
   });
-  const actualizarMontoDeduccionManual = (idx, montoUSD) => {
+  const actualizarMontoDeduccionManual = (idx, montoBsInput) => {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
-      const deduccionesManual = m.deduccionesManual.map((d,i)=>i===idx?{...d, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasa).toFixed(2))}:d);
+      const montoBs = Number(montoBsInput)||0;
+      const montoUSD = tasa>0 ? parseFloat((montoBs/tasa).toFixed(2)) : 0;
+      const deduccionesManual = m.deduccionesManual.map((d,i)=>i===idx?{...d, montoUSD, montoBs:parseFloat(montoBs.toFixed(2))}:d);
       return {...m, deduccionesManual};
     });
   };
@@ -2116,8 +2123,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       </td>
                       <td className="py-1.5 px-3 text-right">
                         {(esSueldo||a.token) ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
-                        : <input type="number" step="0.01" value={a.montoUSD} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>}
-                        <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(a.montoUSD*tasa)}</div>
+                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="number" step="0.01" value={a.montoBs||0} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
+                        <div className="text-[9px] text-gray-400 font-normal">{(esSueldo||a.token)?`Bs.${formatNum(a.montoUSD*tasa)}`:`≈ $${formatNum(a.montoUSD)}`}</div>
                       </td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleAsignacion(a._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
@@ -2148,8 +2155,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
                         {d.token ? <span className="font-mono font-black text-red-500">${formatNum(d.montoUSD)}</span>
-                        : <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>}
-                        <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(d.montoUSD*tasa)}</div>
+                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="number" step="0.01" value={d.montoBs||0} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
+                        <div className="text-[9px] text-gray-400 font-normal">{d.token?`Bs.${formatNum(d.montoUSD*tasa)}`:`≈ $${formatNum(d.montoUSD)}`}</div>
                       </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionManual(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
