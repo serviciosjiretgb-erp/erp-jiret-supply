@@ -666,8 +666,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const mkFaov = (cuenta) => {
       const cfg = configParafiscal.faov;
       if(!hayBase) return {concepto:'FAOV', montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
-      const montoUSD = parseFloat((basico*cfg.pctTrabajador/100).toFixed(2));
-      const montoPatronalUSD = parseFloat((basico*cfg.pctPatronal/100).toFixed(2));
+      // FAOV se calcula sobre el Salario Normal completo (todas las asignaciones incluidas, misma
+      // base que usan IVSS y RPE) — no solo sobre el básico/Días Trabajados.
+      const montoUSD = parseFloat((salarioNormal*cfg.pctTrabajador/100).toFixed(2));
+      const montoPatronalUSD = parseFloat((salarioNormal*cfg.pctPatronal/100).toFixed(2));
       return {concepto:'FAOV', montoUSD, montoPatronalUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((montoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
     };
     return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov};
