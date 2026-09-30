@@ -359,7 +359,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const activos = conceptos.filter(c=>c.activo!==false).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     const out = [];
     activos.forEach(c=>{
-      const valor = evaluarFormulaConcepto(c.formato, ctx);
+      const valor = evaluarFormulaConcepto(c.formula||c.formato, ctx);
       if (valor!=null) ctx.resultados[c.codigo] = valor; // queda disponible para que otro concepto lo referencie como CN#####
       out.push({...c, valorCalculado: valor});
     });
@@ -370,7 +370,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // en las fórmulas activas — son los datos que hay que capturar a mano por trabajador.
     const set = new Set();
     conceptos.filter(c=>c.activo!==false).forEach(c=>{
-      const matches = (c.formato||'').match(/[A-Za-z]+\d+/g)||[];
+      const matches = (c.formula||c.formato||'').match(/[A-Za-z]+\d+/g)||[];
       matches.forEach(m=>{
         const t = m.toUpperCase();
         if (/^(CE|N)\d+/.test(t) && t!=='CE00001') set.add(t);
@@ -384,7 +384,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const tokensNominaRegular = () => {
     const set = new Set();
     conceptos.filter(c=>c.activo!==false && (c.tipo==='A'||c.tipo==='D') && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c)).forEach(c=>{
-      const matches = (c.formato||'').match(/[A-Za-z]+\d+/g)||[];
+      const matches = (c.formula||c.formato||'').match(/[A-Za-z]+\d+/g)||[];
       matches.forEach(m=>{
         const t = m.toUpperCase();
         if (/^(CE|N)\d+/.test(t) && t!=='CE00001' && t!=='CE00003') set.add(t);
@@ -740,12 +740,36 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const conceptoEsIVSS = (c) => c.codigo==='20000' || /ivss|seg(uridad)?\.?\s*y\s*salud/i.test(c.nombre||'');
   const conceptoEsRPE = (c) => c.codigo==='20010' || /rpe|paro forzoso|prestacional de empleo/i.test(c.nombre||'');
   const conceptoEsFAOV = (c) => c.codigo==='20030' || /faov|banavih|vivienda y h[aá]bita/i.test(c.nombre||'');
+  // Un concepto "tiene fórmula" cuando su texto trae Cantidad × Tarifa (2+ bloques {...}) — esos se
+  // capturan y calculan desde el panel de Novedades, no se agregan sueltos a mano.
+  // "Tiene fórmula" (va por Novedades, no por +Agregar) solo aplica a tipo A/D — los de Vacaciones/
+  // Prestaciones (V/L) siguen disponibles para agregar a mano hasta que se arme su Fase 2.
+  const esConceptoCalculable = (c) => (c.tipo==='A'||c.tipo==='D') && [...((c.formula||c.formato||'').matchAll(/\{([^}]*)\}/g))].length>=2;
+  // El token CE/N principal de un concepto (el que se captura a mano) — el primero que aparece en
+  // su fórmula. Ej: "{ CE00013 } DIA DESCANSO TRABAJADO x {...}" → 'CE00013'.
+  const tokenPrincipalDe = (c) => {
+    const m = (c.formula||c.formato||'').match(/[A-Za-z]+\d+/g)||[];
+    return m.map(t=>t.toUpperCase()).find(t=>/^(CE|N)\d+/.test(t) && t!=='CE00001') || null;
+  };
+  // Evalúa la fórmula de un concepto en vivo, dado el valor de cantidad que el usuario acaba de
+  // escribir para su token principal — así el monto se recalcula al momento, sin panel aparte.
+  const evaluarConceptoEnVivo = (c, cantidad, trabajador) => {
+    const token = tokenPrincipalDe(c);
+    if(!token) return 0;
+    const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
+    const ctx = {salarioBase:trabajador?.salarioBase||0, valores:{[token]:cantidad}, parametros:paramMap, resultados:{}};
+    const v = evaluarFormulaConcepto(c.formula||c.formato, ctx);
+    return v==null?0:v;
+  };
   const cuentaDeConcepto = (c, centroCostoId) => c.cuentasPorCentro?.[centroCostoId] || null;
   const abrirCargarTrabajador = (trabajador) => {
     // Predeterminados: tomados del catálogo real de Conceptos (Recursos Humanos → Conceptos), el
     // mismo con el que se arma la nómina — no una lista aparte.
     const conceptosActivos = conceptos.filter(c=>c.activo!==false);
-    const asignacionesCfg = conceptosActivos.filter(c=>c.tipo==='A');
+    // Disponibles para "+Agregar" a mano: Asignación, Vacaciones y Prestaciones (son montos que se le
+    // pagan al trabajador). Patronal y Resultado quedan fuera — son costo de la empresa o totales
+    // calculados, no líneas que se agreguen sueltas a un recibo.
+    const asignacionesCfg = conceptosActivos.filter(c=>['A','V','L'].includes(c.tipo));
     const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c));
     // Si el trabajador ya tiene un detalle guardado en esta nómina (lo estamos re-abriendo, p.ej. con
     // Anterior/Siguiente), recargamos sus montos ya guardados en vez de empezar de cero.
@@ -757,20 +781,25 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const cantidadDiasDef = diasTrabajadosQuincena(trabajador, nominaActiva);
     const asignaciones = asignacionesCfg.map(c=>{
       const esSueldo = conceptoEsSueldo(c);
+      const tieneFormula = !esSueldo && esConceptoCalculable(c);
+      const token = tieneFormula ? tokenPrincipalDe(c) : null;
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
       const guardada = detalleExistente?.asignaciones?.find(a=>a.codigo===c.codigo);
-      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', cantidadDias:guardada.cantidadDias??(esSueldo?cantidadDiasDef:undefined), tasaDiaria:guardada.tasaDiaria??(esSueldo?tasaDiariaDef:undefined)};
+      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad, cantidadDias:guardada.cantidadDias??(esSueldo?cantidadDiasDef:undefined), tasaDiaria:guardada.tasaDiaria??(esSueldo?tasaDiariaDef:undefined)};
       // Predeterminado: "Días Trabajados"/Sueldo entra ya incluido, como Cantidad de Días × Tasa
       // Diaria (el salario del trabajador dividido entre los días de la quincena) — así una quincena
       // incompleta (ingreso a mitad de quincena) sale correcta sola. El resto de asignaciones del
-      // catálogo quedan disponibles para agregar a mano si aplican.
-      return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo, montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
+      // catálogo quedan disponibles para agregar a mano si aplican, y si tienen fórmula, entran con
+      // su propio campo de cantidad (igual que Días Trabajados), no un monto plano.
+      return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo, montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
     });
     const deduccionesManual = deduccionesCfgManual.map(c=>{
+      const tieneFormula = esConceptoCalculable(c);
+      const token = tieneFormula ? tokenPrincipalDe(c) : null;
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
       const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal);
-      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||''};
-      return {concepto:c.nombre, codigo:c.codigo, incluida:false, montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||''};
+      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
+      return {concepto:c.nombre, codigo:c.codigo, incluida:false, montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
     // Deducciones legales (IVSS, RPE, FAOV): predeterminadas y calculadas solas, PERO igual de
     // editables y quitables que cualquier otro concepto — que sean "automáticas" no significa que
@@ -803,6 +832,18 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       return {...m, asignaciones};
     });
   };
+  // Para cualquier concepto con fórmula propia (token): al cambiar la cantidad, recalcula el monto
+  // en el momento con esa misma fórmula — sin panel aparte ni botón "Calcular".
+  const actualizarCantidadConcepto = (lista, idx, valor) => setCargarTrabModal(m=>{
+    const tasaCambio = Number(nominaActiva?.tasa||0);
+    const items = m[lista].map((x,i)=>{
+      if(i!==idx) return x;
+      const cantidad = Number(valor)||0;
+      const montoUSD = parseFloat(evaluarConceptoEnVivo({formula:x._formula}, cantidad, m.trabajador).toFixed(2));
+      return {...x, cantidad, montoUSD, montoBs:parseFloat((montoUSD*tasaCambio).toFixed(2)), incluida:true};
+    });
+    return {...m, [lista]:items};
+  });
   const actualizarMontoDeduccionManual = (idx, montoUSD) => {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
@@ -1573,7 +1614,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                         <div key={c.codigo} className={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl ${c.valorCalculado==null?'opacity-40':''}`}>
                           <div className="min-w-0 flex-1">
                             <p className="text-[10px] font-bold text-gray-700 truncate"><span className="font-mono text-cyan-600 mr-1">{c.codigo}</span>{c.nombre}</p>
-                            <p className="text-[8px] text-gray-400 font-mono truncate">{c.formato||'(sin fórmula — se llenaría a mano)'}</p>
+                            <p className="text-[8px] text-gray-400 font-mono truncate">{c.formula||c.formato||'(sin fórmula — se llenaría a mano)'}</p>
                           </div>
                           <span className="font-mono font-black text-sm flex-shrink-0">{c.valorCalculado==null?'—':'$'+formatNum(c.valorCalculado)}</span>
                         </div>
@@ -2038,32 +2079,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
             </div>
 
-            {(()=>{
-              const tokens = tokensNominaRegular();
-              if(tokens.length===0) return null;
-              const labelDeToken = (tok) => {
-                const c = conceptos.find(x=>(x.formato||'').toUpperCase().includes(tok));
-                return c ? c.nombre : tok;
-              };
-              return (
-              <div className="bg-cyan-50 border-2 border-cyan-100 rounded-2xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] font-black text-cyan-700 uppercase">Novedades de esta quincena — cuántos de cada uno tuvo este trabajador</p>
-                  <button onClick={calcularNovedadesAhora} className="flex items-center gap-1.5 bg-cyan-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-cyan-700"><Calculator size={12}/>Calcular</button>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                  {tokens.map(tok=>(
-                    <div key={tok}>
-                      <label className="text-[9px] font-bold text-cyan-800 block mb-0.5 truncate" title={labelDeToken(tok)}>{labelDeToken(tok)}</label>
-                      <input type="number" step="0.5" value={cargarTrabModal.novedadesValores?.[tok]||''} onChange={e=>actualizarNovedadValor(tok,e.target.value)} placeholder="0" className="w-full border-2 border-cyan-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right bg-white"/>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[9px] text-cyan-600 mt-2">Escribe las cantidades y dale "Calcular" — actualiza los montos abajo según la fórmula de cada concepto. Sigue siendo editable/quitable después.</p>
-              </div>
-              );
-            })()}
-
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
               <table className="w-full text-xs">
                 <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
@@ -2086,10 +2101,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                             <input type="number" step="0.01" value={a.tasaDiaria} onChange={e=>actualizarCantidadTasaAsignacion(a._idx,'tasaDiaria',e.target.value)} className="w-20 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
                             <span className="text-gray-400 text-[10px]">tasa diaria</span>
                           </div>
+                        ) : a.token ? (
+                          <div className="flex items-center gap-1.5">
+                            <span>{a.concepto}</span>
+                            <input type="number" step="0.5" value={a.cantidad||0} onChange={e=>actualizarCantidadConcepto('asignaciones',a._idx,e.target.value)} className="w-16 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                          </div>
                         ) : a.concepto}
                       </td>
                       <td className="py-1.5 px-3 text-right">
-                        {esSueldo ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
+                        {(esSueldo||a.token) ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
                         : <input type="number" step="0.01" value={a.montoUSD} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>}
                         <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(a.montoUSD*tasa)}</div>
                       </td>
@@ -2111,10 +2131,18 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   ))}
                   {dedIncluidas.map(d=>(
                     <tr key={'d'+d._idx} className="border-t border-gray-100">
-                      <td className="py-1.5 px-3 font-bold">{d.concepto}</td>
+                      <td className="py-1.5 px-3 font-bold">
+                        {d.token ? (
+                          <div className="flex items-center gap-1.5">
+                            <span>{d.concepto}</span>
+                            <input type="number" step="0.5" value={d.cantidad||0} onChange={e=>actualizarCantidadConcepto('deduccionesManual',d._idx,e.target.value)} className="w-16 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                          </div>
+                        ) : d.concepto}
+                      </td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
-                        <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>
+                        {d.token ? <span className="font-mono font-black text-red-500">${formatNum(d.montoUSD)}</span>
+                        : <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/>}
                         <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(d.montoUSD*tasa)}</div>
                       </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionManual(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
