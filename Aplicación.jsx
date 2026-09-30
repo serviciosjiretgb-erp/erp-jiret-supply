@@ -712,10 +712,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     return [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true}));
   };
   const toggleDeduccionLegal = (idx) => setCargarTrabModal(m=>({...m, deduccionesLegales:m.deduccionesLegales.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
-  const actualizarMontoDeduccionLegal = (idx, montoUSD) => {
+  const actualizarMontoDeduccionLegal = (idx, montoBsInput) => {
     setCargarTrabModal(m=>{
       const tasaCambio = Number(nominaActiva?.tasa||0);
-      const deduccionesLegales = m.deduccionesLegales.map((d,i)=>i===idx?{...d, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasaCambio).toFixed(2)), editadoManual:true}:d);
+      const montoBs = pNumComa(montoBsInput);
+      const montoUSD = tasaCambio>0 ? parseFloat((montoBs/tasaCambio).toFixed(2)) : 0;
+      const deduccionesLegales = m.deduccionesLegales.map((d,i)=>i===idx?{...d, montoUSD, montoBs:parseFloat(montoBs.toFixed(2)), montoBsTexto:montoBsInput, editadoManual:true}:d);
       return {...m, deduccionesLegales};
     });
   };
@@ -2152,8 +2154,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span></td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
-                        <input type="number" step="0.01" value={d.montoUSD} onChange={e=>actualizarMontoDeduccionLegal(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/>
-                        <div className="text-[9px] text-gray-400 font-normal">Bs.{formatNum(d.montoUSD*tasa)}</div>
+                        <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={d.montoBsTexto??String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoDeduccionLegal(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></div>
+                        <div className="text-[9px] text-gray-400 font-normal">≈ ${formatNum(d.montoUSD)}</div>
                       </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionLegal(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
