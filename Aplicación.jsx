@@ -41863,6 +41863,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   +'<td style="padding:3px 6px;text-align:center">'+badge('A favor','#f0fdfa','#0f766e')+'</td>'
                   +'</tr>';
               });
+              getAjustesCxcClienteEc(cl).forEach(a=>{
+                const esReintegro=a._montoUSD<0;
+                const colorAj=esReintegro?'#0e7490':'#b45309', bgAj=esReintegro?'#ecfeff':'#fffbeb', borderAj=esReintegro?'#a5f3fc':'#fde68a';
+                neRowsHtml+='<tr style="background:'+bgAj+';border-bottom:1px solid '+borderAj+'">'
+                  +'<td style="padding:3px 6px;color:'+colorAj+';font-weight:900;font-size:9px">'+(esReintegro?'\u21a9\ufe0f REINTEGRO':'\u26a0\ufe0f AJUSTE')+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:'+colorAj+'">'+fD(a.fecha)+'</td>'
+                  +'<td style="padding:3px 6px">'+badge('Ajuste CxC',bgAj,colorAj)+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:'+colorAj+'">'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:'+colorAj+'">'+(!esReintegro?'$'+fmtN(Math.abs(a._montoUSD)):'\u2014')+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">\u2014</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:'+colorAj+'">'+(esReintegro?'$'+fmtN(Math.abs(a._montoUSD)):'\u2014')+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:'+colorAj+'">'+(esReintegro?'-':'+')+'$'+fmtN(Math.abs(a._montoUSD))+'</td>'
+                  +'<td style="padding:3px 6px;text-align:center">'+badge(esReintegro?'Reintegrado':'Cargo',bgAj,colorAj)+'</td>'
+                  +'</tr>';
+              });
               // Client section
               bodyHtml+='<div style="margin-bottom:16px;page-break-inside:avoid;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">'
                 +'<div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">'
@@ -41964,6 +41979,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 });
                 anticiposClX.forEach(a=>{
                   bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\ud83d\udcb0 ANTICIPO</td><td>'+(a.fecha||'')+'</td><td>Anticipo</td><td>'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>$'+fmtN2(a.monto||0)+'</td><td colspan="3">'+(a._aplicadoHasta>0.01?'Aplicado $'+fmtN2(a._aplicadoHasta):'')+'</td><td style="color:#0f766e;font-weight:bold">-$'+fmtN2(Math.max(0,a._saldoAnt))+'</td></tr>';
+                });
+                getAjustesCxcClienteEc(cl).forEach(a=>{
+                  const esReintegro=a._montoUSD<0, colorAj=esReintegro?'#0e7490':'#b45309';
+                  bodyXls+='<tr><td style="padding-left:16px;color:'+colorAj+';font-weight:bold">'+(esReintegro?'\u21a9\ufe0f REINTEGRO':'\u26a0\ufe0f AJUSTE')+'</td><td>'+(a.fecha||'')+'</td><td>Ajuste CxC</td><td>'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>'+(!esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td colspan="2"></td><td>'+(esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td style="color:'+colorAj+';font-weight:bold">'+(esReintegro?'-':'+')+'$'+fmtN2(Math.abs(a._montoUSD))+'</td></tr>';
                 });
                 bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(manualNCSignedUSDclX!==0?' / NC-ND '+(manualNCSignedUSDclX<0?'-$'+fmtN2(Math.abs(manualNCSignedUSDclX)):'+$'+fmtN2(manualNCSignedUSDclX)):'')+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
                 bodyXls+='<tr><td colspan="9"></td></tr>';
@@ -42237,10 +42256,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <td className="py-2 px-3 text-center">{Math.max(0,a._saldoAnt)>0.01?<span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">A favor</span>:<span className="bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded text-[8px] font-black">Aplicado</span>}</td>
                             </tr>
                           ))}
+                          {getAjustesCxcClienteEc(cl).map((a,aj)=>{
+                            const esReintegro=a._montoUSD<0; // Egreso: le devolvimos dinero, reduce lo que nos debe
+                            return (
+                            <tr key={a._docId||`ajc-${aj}`} className={`border-b ${esReintegro?'border-cyan-100':'border-amber-100'}`} style={{background:esReintegro?'#ecfeff':'#fffbeb'}}>
+                              <td className={`py-2 px-3 font-black ${esReintegro?'text-cyan-700':'text-amber-700'}`}>{esReintegro?'↩️ REINTEGRO':'⚠️ AJUSTE'}</td>
+                              <td className={`py-2 px-3 ${esReintegro?'text-cyan-600':'text-amber-600'}`}>{contDd(a.fecha)||'—'}</td>
+                              <td className="py-2 px-3"></td>
+                              <td className="py-2 px-3"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${esReintegro?'bg-cyan-50 text-cyan-700':'bg-amber-50 text-amber-700'}`}>Ajuste CxC</span></td>
+                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa')}{a.referencia?` · Ref. ${a.referencia}`:''}</td>
+                              <td className="py-2 px-3 text-right font-mono text-amber-700">{!esReintegro?'$'+formatNum(Math.abs(a._montoUSD)):'—'}</td>
+                              <td className="py-2 px-3 text-right text-gray-300">—</td>
+                              <td className="py-2 px-3 text-right font-mono text-cyan-700">{esReintegro?'$'+formatNum(Math.abs(a._montoUSD)):'—'}</td>
+                              <td className={`py-2 px-3 text-right font-black ${esReintegro?'text-cyan-700':'text-amber-700'}`}>{esReintegro?'-':'+'}${formatNum(Math.abs(a._montoUSD))}</td>
+                              <td className="py-2 px-3 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${esReintegro?'bg-cyan-50 text-cyan-700':'bg-amber-50 text-amber-700'}`}>{esReintegro?'Reintegrado':'Cargo'}</span></td>
+                            </tr>
+                            );
+                          })}
                         </tbody>
                         <tfoot>
                           <tr style={{background:'#0f172a'}} className="text-[9px]">
-                            <td colSpan={5} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}</td>
+                            <td colSpan={5} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}{getAjustesCxcClienteEc(cl).length>0?' + '+getAjustesCxcClienteEc(cl).length+' ajuste(s)':''}</td>
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
                             <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(manualNCSignedUSDcli))>0?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(manualNCSignedUSDcli!==0?' / NC-ND $'+formatNum(manualNCSignedUSDcli):''):'—'}</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
