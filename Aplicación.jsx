@@ -736,7 +736,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   });
   // Ubica en el catálogo de Conceptos (rrhh_conceptos) el que representa "Días Trabajados"/Sueldo —
   // por código 00001 (el mismo que usa tu pantalla de referencia) o, si no calza, por nombre.
-  const conceptoEsSueldo = (c) => c.codigo==='00001' || /d[ií]as trabajados|sueldo\s*b[aá]sico/i.test(c.nombre||'');
+  // Solo por código — el nombre "DIAS TRABAJADOS" también lo usa otro concepto distinto (33009, de
+  // Prestaciones) y si se matcheaba por nombre salían los dos duplicados como Sueldo.
+  const conceptoEsSueldo = (c) => c.codigo==='00001';
+  // Los mismos conceptos que ya tenías configurados en tu sistema anterior para que salgan
+  // predeterminados en toda nómina — editables y quitables, igual que el resto. (00001 Sueldo y
+  // 20010/20000/20030 IVSS-RPE-FAOV ya se manejan aparte, no hace falta repetirlos aquí).
+  const CODIGOS_PREDETERMINADOS = ['00010','00020','01001','24000'];
   const conceptoEsIVSS = (c) => c.codigo==='20000' || /ivss|seg(uridad)?\.?\s*y\s*salud/i.test(c.nombre||'');
   const conceptoEsRPE = (c) => c.codigo==='20010' || /rpe|paro forzoso|prestacional de empleo/i.test(c.nombre||'');
   const conceptoEsFAOV = (c) => c.codigo==='20030' || /faov|banavih|vivienda y h[aá]bita/i.test(c.nombre||'');
@@ -791,7 +797,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       // incompleta (ingreso a mitad de quincena) sale correcta sola. El resto de asignaciones del
       // catálogo quedan disponibles para agregar a mano si aplican, y si tienen fórmula, entran con
       // su propio campo de cantidad (igual que Días Trabajados), no un monto plano.
-      return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo, montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
+      return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo||CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
     });
     const deduccionesManual = deduccionesCfgManual.map(c=>{
       const tieneFormula = esConceptoCalculable(c);
@@ -799,7 +805,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
       const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal);
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
-      return {concepto:c.nombre, codigo:c.codigo, incluida:false, montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
+      return {concepto:c.nombre, codigo:c.codigo, incluida:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
     // Deducciones legales (IVSS, RPE, FAOV): predeterminadas y calculadas solas, PERO igual de
     // editables y quitables que cualquier otro concepto — que sean "automáticas" no significa que
