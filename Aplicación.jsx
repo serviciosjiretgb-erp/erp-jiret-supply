@@ -22715,6 +22715,17 @@ function App() {
   const [pvFiltDoc, setPvFiltDoc] = useState('');
   const [cotizaciones, setCotizaciones] = useState([]);
   const [cobrosCxc, setCobrosCxc] = useState([]);
+  // Reintegros a clientes (Banco/Caja con esAjusteCxC) vinculados a un anticipo sin aplicar: consumen
+  // el saldo de ese anticipo - se calculan desde los movimientos, asi siguen bien al editar o eliminar.
+  const _reintegrosPorAnticipo = useMemo(()=>{
+    const m=new Map();
+    [...(movBancoApp||[]),...(movCajaApp||[])].filter(x=>x.esAjusteCxC&&x.anticipoVinculadoId).forEach(x=>{
+      if(!m.has(x.anticipoVinculadoId)) m.set(x.anticipoVinculadoId,[]);
+      m.get(x.anticipoVinculadoId).push(x);
+    });
+    return m;
+  },[movBancoApp,movCajaApp]);
+  const reintegroAnticipoHasta = (antId, fechaCorte) => (_reintegrosPorAnticipo.get(antId)||[]).filter(x=>!fechaCorte||(x.fecha||'')<=fechaCorte).reduce((t,x)=>t+(parseFloat(x.montoUSD)||0),0);
   const [cuentasBanco, setCuentasBanco] = useState([]); // banco_cuentas para selector en modal cobro
   const [cajasCuentas, setCajasCuentas] = useState([]); // caja_cuentas para selector en modal cobro
   const [bancoMovsFin, setBancoMovsFin] = useState([]); // banco_movimientos para Reporte de Reciprocidad de Banco (Finanzas)
@@ -39399,12 +39410,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const a of (cobrosCxc||[]).filter(c=>c.esAnticipo)){
             if(fechaRef&&(a.fecha||'')>fechaRef) continue;
             const aplicadoHasta=(cobrosCxc||[]).filter(c=>!c.esAnticipo&&(c.cuentaBancariaId||'')===`ANTICIPO::${a.id}`&&(!fechaRef||(c.fecha||'')<=fechaRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            const saldoAnt=parseNum(a.monto||0)-aplicadoHasta;
+            const reintegrado=reintegroAnticipoHasta(a.id,fechaRef);
+            const saldoAnt=parseNum(a.monto||0)-aplicadoHasta-reintegrado;
             if(saldoAnt<=0.01) continue;
             const rif=(a.clientRif||a.clientName||'').trim();
             if(!rif) continue;
             if(!_anticiposPorCliente.has(rif)) _anticiposPorCliente.set(rif,[]);
-            _anticiposPorCliente.get(rif).push({...a,_saldoAnt:saldoAnt});
+            _anticiposPorCliente.get(rif).push({...a,_saldoAnt:saldoAnt,_reintegrado:reintegrado});
           }
           for(const [rif,ants] of _anticiposPorCliente){
             const _nm=ants[0]?.clientName||rif;
@@ -40951,7 +40963,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             <td className="py-1.5 px-2 text-center text-gray-400">—</td>
                                             <td className="py-1.5 px-2 text-center text-gray-400">{a.referencia||'—'}</td>
                                             <td className="py-1.5 px-2 text-right font-mono text-teal-700">${formatNum(a.monto||0)}</td>
-                                            <td className="py-1.5 px-2 text-right font-mono text-gray-400">{parseNum(a.montoAplicado||0)>0?`Aplicado $${formatNum(a.montoAplicado)}`:'—'}</td>
+                                            <td className="py-1.5 px-2 text-right font-mono text-gray-400">{a._reintegrado>0.01?`\u21a9\ufe0f Reintegrado $${formatNum(a._reintegrado)}`:(parseNum(a.montoAplicado||0)>0?`Aplicado $${formatNum(a.montoAplicado)}`:'—')}</td>
                                             <td className="py-1.5 px-2 text-right text-gray-400">—</td>
                                             <td className="py-1.5 px-2 text-right text-gray-400">—</td>
                                             <td className="py-1.5 px-2 text-right font-mono font-black text-teal-700">-${formatNum(a._saldoAnt)}</td>
@@ -41674,11 +41686,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(ecDesde&&(a.fecha||'')<ecDesde) continue;
             // Aplicado hasta la fecha de corte: cobros que usaron este anticipo
             const aplicadoHasta=(cobrosCxc||[]).filter(c=>!c.esAnticipo&&(c.cuentaBancariaId||'')===`ANTICIPO::${a.id}`&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-            const saldoAnt=parseNum(a.monto||0)-aplicadoHasta;
+            const reintegrado=reintegroAnticipoHasta(a.id,ecHasta);
+            const saldoAnt=parseNum(a.monto||0)-aplicadoHasta-reintegrado;
             const rif=(a.clientRif||a.clientName||'').trim();
             if(!rif) continue;
             if(!_anticiposPorClienteEc.has(rif)) _anticiposPorClienteEc.set(rif,[]);
-            _anticiposPorClienteEc.get(rif).push({...a,_saldoAnt:saldoAnt,_aplicadoHasta:aplicadoHasta});
+            _anticiposPorClienteEc.get(rif).push({...a,_saldoAnt:saldoAnt,_aplicadoHasta:aplicadoHasta,_reintegrado:reintegrado});
           }
           const porCli={};
           allNEs.forEach(ne=>{
@@ -41866,7 +41879,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   +'<td style="padding:3px 6px;color:#0f766e;font-weight:900;font-size:9px">\ud83d\udcb0 ANTICIPO</td>'
                   +'<td style="padding:3px 6px;font-size:8px;color:#0f766e">'+fD(a.fecha)+'</td>'
                   +'<td style="padding:3px 6px">'+badge('Anticipo','#f0fdfa','#0f766e')+'</td>'
-                  +'<td style="padding:3px 6px;font-size:8px;color:#0f766e">'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+(a._aplicadoHasta>0.01?' \u00b7 Aplicado $'+fmtN(a._aplicadoHasta):'')+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:#0f766e">'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+(a._aplicadoHasta>0.01?' \u00b7 Aplicado $'+fmtN(a._aplicadoHasta):'')+(a._reintegrado>0.01?' \\u00b7 \\u21a9\\ufe0f Reintegrado $'+fmtN(a._reintegrado):'')+'</td>'
                   +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:#0f766e">$'+fmtN(a.monto||0)+'</td>'
                   +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">\u2014</td>'
                   +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">\u2014</td>'
@@ -41989,7 +42002,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   bodyXls+='<tr><td style="padding-left:16px;color:#7c3aed;font-weight:bold">\u21b3 '+(n.tipo||'NC')+' \u00b7 '+(n.nroDocumento||'')+'</td><td>'+(n.fecha||'')+'</td><td>'+(n.tipo==='NC'?'Nota Cr\u00e9dito':'Nota D\u00e9bito')+' (sin NE)</td><td>'+(n.descripcion||'Cliente directo')+'</td><td>'+valTxtNx+'</td><td colspan="3"></td><td>'+(n._sinTasa?'—':valTxtNx)+'</td></tr>';
                 });
                 anticiposClX.forEach(a=>{
-                  bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\ud83d\udcb0 ANTICIPO</td><td>'+(a.fecha||'')+'</td><td>Anticipo</td><td>'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>$'+fmtN2(a.monto||0)+'</td><td colspan="3">'+(a._aplicadoHasta>0.01?'Aplicado $'+fmtN2(a._aplicadoHasta):'')+'</td><td style="color:#0f766e;font-weight:bold">-$'+fmtN2(Math.max(0,a._saldoAnt))+'</td></tr>';
+                  bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\ud83d\udcb0 ANTICIPO</td><td>'+(a.fecha||'')+'</td><td>Anticipo</td><td>'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>$'+fmtN2(a.monto||0)+'</td><td colspan="3">'+((a._aplicadoHasta>0.01?'Aplicado $'+fmtN2(a._aplicadoHasta)+' ':'')+(a._reintegrado>0.01?'Reintegrado $'+fmtN2(a._reintegrado):''))+'</td><td style="color:#0f766e;font-weight:bold">-$'+fmtN2(Math.max(0,a._saldoAnt))+'</td></tr>';
                 });
                 getAjustesCxcClienteEc(cl).forEach(a=>{
                   const esReintegro=a._montoUSD<0, colorAj=esReintegro?'#0e7490':'#b45309';
@@ -42259,7 +42272,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <td className="py-2 px-3 text-teal-600">{a.fecha||'—'}</td>
                               <td className="py-2 px-3"></td>
                               <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Anticipo</span></td>
-                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||'Anticipo de cliente'}{a.referencia?` · Ref. ${a.referencia}`:''}{a._aplicadoHasta>0.01?` · Aplicado $${formatNum(a._aplicadoHasta)}`:''}</td>
+                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||'Anticipo de cliente'}{a.referencia?` · Ref. ${a.referencia}`:''}{a._aplicadoHasta>0.01?` · Aplicado $${formatNum(a._aplicadoHasta)}`:''}{a._reintegrado>0.01?`  \u21a9\ufe0f Reintegrado $${formatNum(a._reintegrado)}`:''}</td>
                               <td className="py-2 px-3 text-right font-mono text-teal-700">${formatNum(a.monto||0)}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
