@@ -378,6 +378,20 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     return Array.from(set).sort();
   };
+  // Igual que tokensUsadosEnFormulas, pero solo de conceptos tipo Asignación/Deducción (nómina
+  // regular) — deja fuera Vacaciones/Prestaciones/Patronal/Resultado (Fase 2, más adelante) y
+  // CE00003 (Días Trabajados, que ya tiene su propio campo en la tabla).
+  const tokensNominaRegular = () => {
+    const set = new Set();
+    conceptos.filter(c=>c.activo!==false && (c.tipo==='A'||c.tipo==='D') && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c)).forEach(c=>{
+      const matches = (c.formato||'').match(/[A-Za-z]+\d+/g)||[];
+      matches.forEach(m=>{
+        const t = m.toUpperCase();
+        if (/^(CE|N)\d+/.test(t) && t!=='CE00001' && t!=='CE00003') set.add(t);
+      });
+    });
+    return Array.from(set).sort();
+  };
   const cargarCatalogoEstandar = async () => {
     const faltantes = CATALOGO_CONCEPTOS_ESTANDAR.filter(c=>!conceptos.some(x=>x.codigo===c.codigo));
     if(faltantes.length===0) return alert('Ya tienes todos los conceptos del catálogo estándar cargados.');
@@ -700,6 +714,26 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
   };
   const recalcularLegalesAhora = () => setCargarTrabModal(m=>m?{...m, deduccionesLegales:recalcularDeduccionesLegales(m.asignaciones, m.trabajador.centroCostoId)}:m);
+  const actualizarNovedadValor = (token, valor) => setCargarTrabModal(m=>m?{...m, novedadesValores:{...m.novedadesValores, [token]:valor}}:m);
+  // Corre el motor de fórmulas (el mismo de "Probar un Trabajador") con los valores capturados en el
+  // panel de Novedades, y sincroniza el resultado con las filas de asignaciones/deducciones de
+  // nómina regular — incluidas si dan un monto, disponibles para agregar a mano si no.
+  const calcularNovedadesAhora = () => setCargarTrabModal(m=>{
+    if(!m) return m;
+    const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
+    const ctxValores = {...m.novedadesValores};
+    const sueldo = m.asignaciones.find(a=>a.cantidadDias!==undefined);
+    if(sueldo) ctxValores.CE00003 = sueldo.cantidadDias; // por si alguna fórmula también referencia días trabajados
+    const resultados = calcularTodosLosConceptos(m.trabajador, ctxValores, paramMap);
+    const porCodigo = {}; resultados.forEach(r=>{porCodigo[r.codigo]=r.valorCalculado;});
+    const sync = (lista) => lista.map(x=>{
+      if(x.codigo==null || x.codigo==='00001' || porCodigo[x.codigo]===undefined) return x; // sin fórmula, o es el Sueldo (tiene su propio campo) → no se toca
+      const v = porCodigo[x.codigo];
+      if(v==null || v===0) return {...x, incluida:false, montoUSD:0};
+      return {...x, incluida:true, montoUSD:parseFloat(v.toFixed(2))};
+    });
+    return {...m, asignaciones:sync(m.asignaciones), deduccionesManual:sync(m.deduccionesManual)};
+  });
   // Ubica en el catálogo de Conceptos (rrhh_conceptos) el que representa "Días Trabajados"/Sueldo —
   // por código 00001 (el mismo que usa tu pantalla de referencia) o, si no calza, por nombre.
   const conceptoEsSueldo = (c) => c.codigo==='00001' || /d[ií]as trabajados|sueldo\s*b[aá]sico/i.test(c.nombre||'');
@@ -717,7 +751,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // Anterior/Siguiente), recargamos sus montos ya guardados en vez de empezar de cero.
     const detalleExistente = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
     const {diasQuincena} = periodoQuincena(nominaActiva);
-    const tasaDiariaDef = diasQuincena>0 ? parseFloat((Number(trabajador.salarioBase||0)/diasQuincena).toFixed(4)) : 0;
+    // Tasa diaria: /30 fijo, igual que la fórmula oficial del concepto 00001 (SALARIO Diario) del
+    // catálogo de Conceptos — no entre los días reales de la quincena (14/15/16 según el mes).
+    const tasaDiariaDef = parseFloat((Number(trabajador.salarioBase||0)/30).toFixed(4));
     const cantidadDiasDef = diasTrabajadosQuincena(trabajador, nominaActiva);
     const asignaciones = asignacionesCfg.map(c=>{
       const esSueldo = conceptoEsSueldo(c);
@@ -743,7 +779,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const deduccionesLegales = detalleExistente?.deducciones?.some(d=>d.esLegal)
       ? detalleExistente.deducciones.filter(d=>d.esLegal).map(d=>({...d, incluida:true}))
       : recalcularDeduccionesLegales(asignaciones, trabajador.centroCostoId);
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, _nroReciboExistente:detalleExistente?.nroRecibo||null});
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
@@ -806,7 +842,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
         totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
         netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
-        tasa, nroRecibo, periodoDesde, periodoHasta, updatedAt:Date.now(),
+        tasa, nroRecibo, periodoDesde, periodoHasta, novedades:cargarTrabModal.novedadesValores||{}, updatedAt:Date.now(),
       },{merge:true});
       await batchRecibo.commit();
       setCargarTrabModal(null);
@@ -2001,6 +2037,32 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="flex justify-between text-[10px] text-gray-400"><span>Items:</span><span>{itemsCount}</span></div>
               </div>
             </div>
+
+            {(()=>{
+              const tokens = tokensNominaRegular();
+              if(tokens.length===0) return null;
+              const labelDeToken = (tok) => {
+                const c = conceptos.find(x=>(x.formato||'').toUpperCase().includes(tok));
+                return c ? c.nombre : tok;
+              };
+              return (
+              <div className="bg-cyan-50 border-2 border-cyan-100 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] font-black text-cyan-700 uppercase">Novedades de esta quincena — cuántos de cada uno tuvo este trabajador</p>
+                  <button onClick={calcularNovedadesAhora} className="flex items-center gap-1.5 bg-cyan-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-cyan-700"><Calculator size={12}/>Calcular</button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+                  {tokens.map(tok=>(
+                    <div key={tok}>
+                      <label className="text-[9px] font-bold text-cyan-800 block mb-0.5 truncate" title={labelDeToken(tok)}>{labelDeToken(tok)}</label>
+                      <input type="number" step="0.5" value={cargarTrabModal.novedadesValores?.[tok]||''} onChange={e=>actualizarNovedadValor(tok,e.target.value)} placeholder="0" className="w-full border-2 border-cyan-200 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right bg-white"/>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[9px] text-cyan-600 mt-2">Escribe las cantidades y dale "Calcular" — actualiza los montos abajo según la fórmula de cada concepto. Sigue siendo editable/quitable después.</p>
+              </div>
+              );
+            })()}
 
             <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
               <table className="w-full text-xs">
