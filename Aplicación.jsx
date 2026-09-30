@@ -821,10 +821,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // Los montos manuales (sin fórmula — Diferencia de Sueldo, y cualquier otro que se agregue a
   // mano) se escriben en Bs., que es como naturalmente se conocen esos montos — el USD se calcula
   // solo dividiendo entre la tasa de la nómina.
+  // Convierte "234,56" (coma decimal, como el teclado numérico en español) a un número real.
+  const pNumComa = (s) => parseFloat(String(s||'0').replace(/[^0-9,.-]/g,'').replace(',','.'))||0;
   const actualizarMontoAsignacion = (idx, montoBsInput) => {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
-      const montoBs = Number(montoBsInput)||0;
+      const montoBs = pNumComa(montoBsInput);
       const montoUSD = tasa>0 ? parseFloat((montoBs/tasa).toFixed(2)) : 0;
       const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD, montoBs:parseFloat(montoBs.toFixed(2))}:a);
       return {...m, asignaciones};
@@ -858,7 +860,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const actualizarMontoDeduccionManual = (idx, montoBsInput) => {
     setCargarTrabModal(m=>{
       const tasa = Number(nominaActiva?.tasa||0);
-      const montoBs = Number(montoBsInput)||0;
+      const montoBs = pNumComa(montoBsInput);
       const montoUSD = tasa>0 ? parseFloat((montoBs/tasa).toFixed(2)) : 0;
       const deduccionesManual = m.deduccionesManual.map((d,i)=>i===idx?{...d, montoUSD, montoBs:parseFloat(montoBs.toFixed(2))}:d);
       return {...m, deduccionesManual};
@@ -2123,7 +2125,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       </td>
                       <td className="py-1.5 px-3 text-right">
                         {(esSueldo||a.token) ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
-                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="number" step="0.01" value={a.montoBs||0} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
+                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={String(a.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoAsignacion(a._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
                         <div className="text-[9px] text-gray-400 font-normal">{(esSueldo||a.token)?`Bs.${formatNum(a.montoUSD*tasa)}`:`≈ $${formatNum(a.montoUSD)}`}</div>
                       </td>
                       <td className="py-1.5 px-3"></td>
@@ -2155,7 +2157,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
                         {d.token ? <span className="font-mono font-black text-red-500">${formatNum(d.montoUSD)}</span>
-                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="number" step="0.01" value={d.montoBs||0} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
+                        : <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoDeduccionManual(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500"/></div>}
                         <div className="text-[9px] text-gray-400 font-normal">{d.token?`Bs.${formatNum(d.montoUSD*tasa)}`:`≈ $${formatNum(d.montoUSD)}`}</div>
                       </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionManual(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
