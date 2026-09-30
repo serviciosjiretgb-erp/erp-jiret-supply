@@ -40291,6 +40291,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   }catch(e){ alert('Error: '+e.message); }
                                 }}
                                   style={{fontSize:7,fontWeight:900,padding:'3px 6px',borderRadius:6,border:'1px solid #f59e0b',background:'#fffbeb',color:'#b45309',cursor:'pointer',textTransform:'uppercase',whiteSpace:'nowrap'}}>↺ Corregir</button>}
+                                <button title="Corregir: marcar este anticipo como ya utilizado antes — no toca banco, caja ni facturas, solo su saldo disponible" onClick={async()=>{
+                                  if(!window.confirm(`¿Marcar como ya usado?\n\nEsto deja "$${formatNum(a._saldoAnt)} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" en $0 disponible.\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo. Úsalo cuando el anticipo ya se había usado antes y solo quieres que deje de aparecer aquí.`)) return;
+                                  try{
+                                    await updateDoc(getDocRef('cobros_cxc',a.id),{montoAplicado:parseNum(a.monto||0)});
+                                    logAuditoria(appUser,'Cuentas por Cobrar','EDICIÓN',`Anticipo ${a.id} (${a.clientName||''}) marcado manualmente como ya usado — saldo corregido a $0, sin tocar banco/caja/facturas.`);
+                                  }catch(e){ alert('Error: '+e.message); }
+                                }}
+                                  style={{fontSize:8,fontWeight:900,padding:'3px 6px',borderRadius:6,border:'1px solid #dc2626',background:'#fff',color:'#dc2626',cursor:'pointer'}}>🚫</button>
                                 <button disabled={yaEnLineas} onClick={()=>setCxcPagoModal(m=>({...m,lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:getTodayDate(),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                                   style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                               </div>
@@ -41702,7 +41710,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // factura) suma. Se muestran como línea aparte para no duplicar lo que ya cuentan las NE.
           const _ajustesCxcPorClienteEc=(()=>{
             const m=new Map();
-            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId).forEach(a=>{
+            // Los ajustes vinculados a un anticipo (anticipoVinculadoId) NO se cuentan aquí aparte —
+            // ya están reflejados al reducir el saldo disponible de ese anticipo (mismo mecanismo que
+            // aplicar un anticipo a una factura). Contarlos también aquí duplicaría el crédito.
+            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId && !a.anticipoVinculadoId).forEach(a=>{
               // terceroId es el id de Firestore del cliente — se resuelve a su RIF, que es como
               // este Estado de Cuenta agrupa a los clientes.
               const rifCliente=(clients.find(c=>c.id===a.terceroId)?.rif||a.terceroNombre||'').trim();
