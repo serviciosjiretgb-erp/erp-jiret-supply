@@ -715,7 +715,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const actualizarMontoDeduccionLegal = (idx, montoUSD) => {
     setCargarTrabModal(m=>{
       const tasaCambio = Number(nominaActiva?.tasa||0);
-      const deduccionesLegales = m.deduccionesLegales.map((d,i)=>i===idx?{...d, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasaCambio).toFixed(2))}:d);
+      const deduccionesLegales = m.deduccionesLegales.map((d,i)=>i===idx?{...d, montoUSD:Number(montoUSD)||0, montoBs:parseFloat(((Number(montoUSD)||0)*tasaCambio).toFixed(2)), editadoManual:true}:d);
       return {...m, deduccionesLegales};
     });
   };
@@ -813,13 +813,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
       return {concepto:c.nombre, codigo:c.codigo, incluida:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
-    // Deducciones legales (IVSS, RPE, FAOV): predeterminadas y calculadas solas, PERO igual de
-    // editables y quitables que cualquier otro concepto — que sean "automáticas" no significa que
-    // estén bloqueadas. Si el trabajador ya tenía un detalle guardado, se recargan sus valores
-    // guardados (por si las editó); si no, se calculan de cero con la fórmula legal.
-    const deduccionesLegales = detalleExistente?.deducciones?.some(d=>d.esLegal)
-      ? detalleExistente.deducciones.filter(d=>d.esLegal).map(d=>({...d, incluida:true}))
-      : recalcularDeduccionesLegales(asignaciones, trabajador.centroCostoId);
+    // Deducciones legales (IVSS, RPE, FAOV): se recalculan SOLAS cada vez que se abre el trabajador —
+    // así, si se corrige la fórmula o la configuración, se refleja de inmediato sin tener que darle a
+    // "Recalcular" a mano. Solo se respeta lo guardado en dos casos: (a) el usuario editó el monto a
+    // mano (editadoManual:true), o (b) el usuario había quitado esa legal (no aparece en lo guardado,
+    // aunque el trabajador sí tenga detalle guardado) — eso también se respeta.
+    const legalesFrescas = recalcularDeduccionesLegales(asignaciones, trabajador.centroCostoId);
+    const legalesGuardadas = detalleExistente?.deducciones?.filter(d=>d.esLegal) || null;
+    const deduccionesLegales = legalesFrescas.map(fresca=>{
+      const guardada = legalesGuardadas?.find(g=>g.concepto===fresca.concepto);
+      if(guardada?.editadoManual) return {...guardada, incluida:true};
+      if(legalesGuardadas && !guardada) return {...fresca, incluida:false}; // la había quitado
+      return fresca; // recalculada sola, sin editar a mano
+    });
     setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
@@ -2088,12 +2094,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 p-4 grid grid-cols-[1fr_220px] gap-4">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                <div><p className="text-[9px] font-black text-gray-400 uppercase">Cédula</p><p className="text-sm font-bold">{t.cedula||'—'}</p></div>
-                <div><p className="text-[9px] font-black text-gray-400 uppercase">Fecha de Ingreso</p><p className="text-sm font-bold">{contDd(t.fechaIngreso)}</p></div>
-                <div className="col-span-2"><p className="text-[9px] font-black text-gray-400 uppercase">Nombre</p><p className="text-base font-black text-gray-800">{t.nombre}</p></div>
-                <div><p className="text-[9px] font-black text-gray-400 uppercase">Departamento</p><p className="text-sm font-bold">{nombreDepto(t.departamentoId)}</p></div>
-                <div><p className="text-[9px] font-black text-gray-400 uppercase">Cargo</p><p className="text-sm font-bold">{t.cargo||'—'}</p></div>
+              <div className="space-y-2.5">
+                <div className="flex items-baseline gap-2"><span className="text-[10px] font-bold text-gray-400 w-36 flex-shrink-0 uppercase">Cédula de Identidad:</span><span className="text-sm font-bold">{t.cedula||'—'}</span></div>
+                <div className="flex items-baseline gap-2 flex-wrap"><span className="text-[10px] font-bold text-gray-400 w-36 flex-shrink-0 uppercase">Apellidos, Nombre:</span><span className="text-base font-black text-gray-800">{t.nombre}</span><span className="text-[10px] text-gray-400 ml-2">Cargo: <b className="text-gray-600">{t.cargo||'—'}</b></span></div>
+                <div className="flex items-baseline gap-2 flex-wrap"><span className="text-[10px] font-bold text-gray-400 w-36 flex-shrink-0 uppercase">Fecha de Ingreso:</span><span className="text-sm font-bold">{contDd(t.fechaIngreso)}</span><span className="text-[10px] text-gray-500 font-bold ml-2">{antiguedadTexto(t.fechaIngreso, nominaActiva?.fechaPago)}</span></div>
+                <div className="flex items-baseline gap-2"><span className="text-[10px] font-bold text-gray-400 w-36 flex-shrink-0 uppercase">Departamento:</span><span className="text-sm font-bold">{nombreDepto(t.departamentoId)}</span></div>
               </div>
               <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-1.5">
                 <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Asignaciones</span><span className="text-right"><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalAsig*tasa)}</span></span></div>
@@ -16057,6 +16062,22 @@ const ccExportPDFHTML = (titulo, subtitulo, tree, currency, filaExtra, totalBase
 };
 const ccAbrirVentana = (html) => { const w = window.open('', '_blank'); if (w) { w.document.write(html); w.document.close(); } else alert('Permite las ventanas emergentes para ver el reporte.'); };
 const contDd = (s) => { if (!s) return '—'; const [y, m, d] = String(s).split('-'); return `${d}/${m}/${y}`; };
+// "X Años Y Meses Z Días" de antigüedad, desde fechaIngreso hasta fechaRef (la fecha de pago de la
+// nómina, o hoy si no hay ninguna) — igual que muestra el sistema de referencia junto a Fecha de Ingreso.
+const antiguedadTexto = (fechaIngreso, fechaRef) => {
+  if(!fechaIngreso) return '';
+  const ini = new Date(fechaIngreso+'T00:00:00');
+  const fin = new Date((fechaRef||new Date().toISOString().split('T')[0])+'T00:00:00');
+  if(isNaN(ini)||isNaN(fin)||fin<ini) return '';
+  let anios = fin.getFullYear()-ini.getFullYear(), meses = fin.getMonth()-ini.getMonth(), dias = fin.getDate()-ini.getDate();
+  if(dias<0){ meses--; dias += new Date(fin.getFullYear(), fin.getMonth(), 0).getDate(); }
+  if(meses<0){ anios--; meses += 12; }
+  const partes = [];
+  if(anios>0) partes.push(`${anios} Año${anios!==1?'s':''}`);
+  partes.push(`${meses} Mes${meses!==1?'es':''}`);
+  partes.push(`${dias} Día${dias!==1?'s':''}`);
+  return partes.join(' ');
+};
 const contNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const partesCtaCC = (str) => { const p=(str||'').split('—'); return { codigo:(p[0]||'').trim(), nombre:p.slice(1).join('—').trim() }; };
 
