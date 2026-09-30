@@ -3610,6 +3610,29 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
           asientoCredito:form.tipo==='Ingreso'?ctaContra:ctaBanco,
         });
+        // Si el vínculo a un anticipo cambió (se agregó, se quitó, o el monto se editó), reconciliar
+        // el saldo de ese/esos anticipo(s) — revertir el efecto viejo y aplicar el nuevo, sin
+        // duplicar ni perder el ajuste.
+        {
+          const oldAntId = movOriginal?.anticipoVinculadoId||'';
+          const oldMontoAnt = Number(movOriginal?.montoUSD||0);
+          const newAntId = (form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'';
+          if(oldAntId===newAntId){
+            if(newAntId){
+              const ant=cobrosCxcTodos.find(a=>a.id===newAntId);
+              if(ant) batch.update(getDocRef('cobros_cxc',newAntId),{montoAplicado:Math.max(0,Number(ant.montoAplicado||0)-oldMontoAnt+montoUSD)});
+            }
+          } else {
+            if(oldAntId){
+              const antOld=cobrosCxcTodos.find(a=>a.id===oldAntId);
+              if(antOld) batch.update(getDocRef('cobros_cxc',oldAntId),{montoAplicado:Math.max(0,Number(antOld.montoAplicado||0)-oldMontoAnt)});
+            }
+            if(newAntId){
+              const antNew=cobrosCxcTodos.find(a=>a.id===newAntId);
+              if(antNew) batch.update(getDocRef('cobros_cxc',newAntId),{montoAplicado:Number(antNew.montoAplicado||0)+montoUSD});
+            }
+          }
+        }
 
         // ── Regenerar el asiento contable real vinculado (cont_asientos), no solo las etiquetas ──
         if (movOriginal?.asientoContableId && form.ctaContraId) {
@@ -6456,6 +6479,27 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           asientoCredito:form.tipo==='Ingreso'?ctaContraEdit:ctaCajaEdit,
           updatedAt:Date.now(),
         });
+        // Reconciliar el saldo del anticipo vinculado (agregado, quitado o cambiado en esta edición).
+        {
+          const oldAntId = cajaDet.anticipoVinculadoId||'';
+          const oldMontoAnt = Number(cajaDet.montoUSD||0);
+          const newAntId = (form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'';
+          if(oldAntId===newAntId){
+            if(newAntId){
+              const ant=cobrosCxcTodos.find(a=>a.id===newAntId);
+              if(ant) batch.update(getDocRef('cobros_cxc',newAntId),{montoAplicado:Math.max(0,Number(ant.montoAplicado||0)-oldMontoAnt+montoUSDEdit)});
+            }
+          } else {
+            if(oldAntId){
+              const antOld=cobrosCxcTodos.find(a=>a.id===oldAntId);
+              if(antOld) batch.update(getDocRef('cobros_cxc',oldAntId),{montoAplicado:Math.max(0,Number(antOld.montoAplicado||0)-oldMontoAnt)});
+            }
+            if(newAntId){
+              const antNew=cobrosCxcTodos.find(a=>a.id===newAntId);
+              if(antNew) batch.update(getDocRef('cobros_cxc',newAntId),{montoAplicado:Number(antNew.montoAplicado||0)+montoUSDEdit});
+            }
+          }
+        }
 
         // ── Regenerar el asiento contable real vinculado (cont_asientos), no solo las etiquetas ──
         if (cajaDet.asientoContableId && form.ctaContraId) {
