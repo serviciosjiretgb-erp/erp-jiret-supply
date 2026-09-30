@@ -3461,7 +3461,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           concepto:form.concepto,referencia:form.referencia,
           tasa,montoNativo:mNat,montoBs,montoUSD,
           saldoAnterior:Number(cuenta.saldo),saldoResultante:nuevoSaldo,
-          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP,
+          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
           facturaId:factura?.id||'',facturaNumero:factura?.numero||'',
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
@@ -3592,7 +3592,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           origenIngreso:form.origenIngreso,motivoEgreso:form.motivoEgreso,
           concepto:form.concepto,referencia:form.referencia,
           tasa,montoNativo:mNat,montoBs,montoUSD,saldoResultante:nuevoSaldo,
-          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP,
+          aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           terceroId:tercero?.id||'',terceroNombre:tercero?.nombre||'',
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
@@ -3899,7 +3899,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
         tasa:String(m.tasa||tasaActiva),montoNativo:String(m.montoNativo||''),
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||false,
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||'',
         cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId});
     };
@@ -6278,7 +6278,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           id, fecha:form.fecha, tipo: esTransferencia?'Egreso':form.tipo, cajaId:caja.id, cajaNombre:caja.nombre, moneda:caja.moneda,
           concepto:form.concepto, referencia:form.referencia,
           tasa, monto:mNat, montoBs, montoUSD,
-          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP,
+          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           terceroId:tercero?.id||'', terceroNombre:tercero?.nombre||'',
           facturaId:factura?.id||'', facturaNumero:factura?.numero||'',
           asientoContableId:asientoId, estatus:'No Conciliado', ts:serverTimestamp()
@@ -6393,7 +6393,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setCajaEdit(true);
       setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',
         motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),cajaId:m.cajaId||'',
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||false,
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
     };
 
@@ -6418,7 +6418,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           fecha:form.fecha, tipo:form.tipo, moneda:form.moneda, concepto:form.concepto, referencia:form.referencia,
           motivoEgreso:form.motivoEgreso, cajaId:form.cajaId||cajaDet.cajaId, cajaNombre:cajaObjEdit?.nombre||cajaDet.cajaNombre||'',
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
-          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP,
+          aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           terceroId:terceroEdit?.id||'', terceroNombre:terceroEdit?.nombre||'',
           ctaContraId:form.ctaContraId, ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaCajaEdit:ctaContraEdit,
