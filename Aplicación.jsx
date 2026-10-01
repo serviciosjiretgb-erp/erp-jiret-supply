@@ -11,7 +11,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDocs, query, where, orderBy, arrayUnion } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDoc, getDocs, query, where, orderBy, arrayUnion } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
@@ -3335,11 +3335,11 @@ th,td{border:1px solid #888;padding:3px 5px;vertical-align:top}
   <tbody>
     <tr>
       <td>${fF(ret.fechaFactura)}</td>
-      <td style="font-weight:bold">${ret.nroFactura||'—'}</td>
-      <td></td>
-      <td></td>
+      <td style="font-weight:bold">${(ret.tipoDocumento==='NC'||ret.tipoDocumento==='ND')?'':(ret.nroFactura||'—')}</td>
+      <td style="font-weight:bold">${ret.tipoDocumento==='NC'?(ret.nroFactura||''):''}</td>
+      <td style="font-weight:bold">${ret.tipoDocumento==='ND'?(ret.nroFactura||''):''}</td>
       <td>${ret.nroControl||'—'}</td>
-      <td></td>
+      <td>${(ret.tipoDocumento==='NC'||ret.tipoDocumento==='ND')?(ret.facturaAfectada||''):''}</td>
       <td style="text-align:center">01-reg</td>
       <td class="num">${fV(total)}</td>
       <td class="num">${fV(exento)}</td>
@@ -3655,7 +3655,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     if(lista.length===0){setImpDialog({title:'Sin registros',text:`No hay retenciones IVA para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`,type:'alert'});return;}
     const rifAgente=_soloRif(settings?.empresaRif||'J-41230937-4');
     const periodoAAAAMM=txtMes.replace('-','');
-    const N2=n=>(parseFloat(n)||0).toFixed(2);
+    const N2=n=>Math.abs(parseFloat(n)||0).toFixed(2);
     const lineas=lista.map(r=>{
       const montoRet=pNum(r.montoBs||0);
       const pctRetUsado=(pNum(r.pctRetencion||75)/100)||0.75;
@@ -3675,14 +3675,14 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         periodoAAAAMM,
         r.fecha||'',
         'C',
-        '01',
+        (r.tipoDocumento==='NC'?'03':(r.tipoDocumento==='ND'?'02':'01')),
         _soloRif(r.rifProveedor),
         (r.nroFactura||'').toString().trim(),
         (r.nroControl||'').toString().trim(),
         N2(total),
         N2(base16),
         N2(montoRet),
-        '0',
+        ((r.tipoDocumento==='NC'||r.tipoDocumento==='ND')?((r.facturaAfectada||'').toString().trim()||'0'):'0'),
         (r.nroComprobante||'').toString().trim(),
         N2(exento),
         N2(PCT_IVA),
@@ -3942,7 +3942,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                     <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
                       <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
                       <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
-                      <td className="px-3 py-2">{r.nroFactura||'—'}</td>
+                      <td className="px-3 py-2">{r.nroFactura||''}{(r.tipoDocumento==='NC'||r.tipoDocumento==='ND')&&<span className={`ml-1 px-1.5 py-0.5 rounded-full text-[8px] font-black ${r.tipoDocumento==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoDocumento}</span>}{(r.tipoDocumento==='NC'||r.tipoDocumento==='ND')&&r.facturaAfectada&&<div className="text-[9px] text-slate-400">{'Afecta fact. '+r.facturaAfectada}</div>}</td>
                       <td className="px-3 py-2">{pD(r.fecha)}</td>
                       <td className="px-3 py-2">{r.periodo||'—'}</td>
                       <td className="px-3 py-2 text-center font-black">{r.pctRetencion||75}%</td>
@@ -4003,7 +4003,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                     <tr key={r.id||i} className={i%2===0?'bg-white hover:bg-slate-50':'bg-slate-50 hover:bg-slate-100'}>
                       <td className="px-3 py-2 font-black text-orange-600">{r.nroComprobante||'—'}</td>
                       <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
-                      <td className="px-3 py-2">{r.nroFactura||'—'}</td>
+                      <td className="px-3 py-2">{r.nroFactura||''}{(r.tipoDocumento==='NC'||r.tipoDocumento==='ND')&&<span className={`ml-1 px-1.5 py-0.5 rounded-full text-[8px] font-black ${r.tipoDocumento==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoDocumento}</span>}{(r.tipoDocumento==='NC'||r.tipoDocumento==='ND')&&r.facturaAfectada&&<div className="text-[9px] text-slate-400">{'Afecta fact. '+r.facturaAfectada}</div>}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{_mesLabel(r)}</td>
                       <td className="px-3 py-2"><span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-[9px] mr-1">{r.codConcepto}</span>{r.concepto||'—'}</td>
                       <td className="px-3 py-2 text-center font-black text-purple-600">{r.pct||0}%</td>
@@ -13451,6 +13451,35 @@ ${body}
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO: NOTAS DE CRÉDITO / DÉBITO — COMPRAS (espejo de Ventas)
 // ══════════════════════════════════════════════════════════════════════
+// --- Retenciones sobre NC/ND fiscales de compras (mismo criterio que la factura) ---
+const calcRetNotaCompra=(form,subBs,ivaBs)=>{
+  const r2=v=>parseFloat((v||0).toFixed(2));
+  const num=v=>{const n=parseFloat(String(v==null?'':v).replace(',','.'));return isNaN(n)?0:n;};
+  const pctIva=num(form.pctRetIVA||75);
+  const retIVABs=(form.aplicaRetIVA&&ivaBs>0)?r2(ivaBs*pctIva/100):0;
+  const islr=(form.islrRetenciones||[]).filter(r=>r.activo!==false&&r.codigo).map(r=>{
+    const c=ISLR_CONCEPTOS.find(x=>x.codPJD===r.codigo||x.codPNR===r.codigo||x.codPJND===r.codigo||x.codPNNR===r.codigo);
+    if(!c) return {...r,montoBs:0,baseImponibleBs:0,error:'Concepto no encontrado'};
+    const tc=r.tipoContrib||'PJD';
+    let pct,basePorc;
+    if(tc==='PNR'){pct=c.pctPNR;basePorc=c.basePNR;}
+    else if(tc==='PJND'){pct=c.pctPJND;basePorc=c.basePJND;}
+    else if(tc==='PNNR'){pct=c.pctPNNR;basePorc=c.basePNNR;}
+    else{pct=c.pctPJD;basePorc=c.basePJD;}
+    if(!pct||pct==='T2'||!basePorc) return {...r,montoBs:0,baseImponibleBs:0,pct:pct||'T2',concepto:c.concepto,error:(pct==='T2'?'Tarifa N2: requiere calculo manual':'Sin datos para este tipo')};
+    const baseAuto=r2(subBs*(basePorc/100));
+    const baseImp=(r.baseImponibleBsManual!=null&&r.baseImponibleBsManual!=='')?num(r.baseImponibleBsManual):baseAuto;
+    return {...r,pct,basePorc,concepto:c.concepto,baseAuto,baseImponibleBs:r2(baseImp),montoBs:r2(baseImp*pct/100)};
+  });
+  return {retIVABs,pctIva,islr,totalISLRBs:r2(islr.reduce((s,x)=>s+x.montoBs,0))};
+};
+// Al elegir la factura afectada, se heredan sus retenciones (IVA % y conceptos ISLR) como punto de partida.
+const prefillRetNota=(fc)=>{
+  if(!fc) return {aplicaRetIVA:false,pctRetIVA:75,islrRetenciones:[]};
+  const lista=(fc.islrRetenciones||[]).filter(r=>r.codigo).map(r=>({id:'R'+Math.random().toString(36).slice(2,9),codigo:r.codigo,tipoContrib:r.tipoContrib||'PJD',activo:true,baseImponibleBsManual:null}));
+  return {aplicaRetIVA:!!fc.aplicaRetIVA,pctRetIVA:fc.pctRetIVA||75,islrRetenciones:lista};
+};
+
 const NotasCompraNCView = ({
   dialog, setDialog, proveedores, facturasCompra, notasCompraCD, settings, tasaBCV, appUser,
   compraNCForm, setCompraNCForm,
@@ -13465,7 +13494,7 @@ const NotasCompraNCView = ({
   // ── Guardar NC/ND Compra (crea nueva, o actualiza si compraNCForm._editId está presente) ──
   const handleSaveCompraNC = async () => {
     if(!compraNCForm.fecha||!compraNCForm.nroDocumento)
-      return setDialog({title:'Datos incompletos',text:'Completa N° documento y fecha.',type:'alert'});
+      return setDialog({title:'Datos incompletos',text:'Completa N\u00b0 documento y fecha.',type:'alert'});
     if(compraNCForm.naturaleza==='FISCAL'&&!compraNCForm.facturaId)
       return setDialog({title:'Falta factura',text:'Selecciona la factura de compra a la que aplica.',type:'alert'});
     const esProvDirecto=compraNCForm.naturaleza==='NO_FISCAL'&&compraNCForm._provDirecto;
@@ -13476,6 +13505,7 @@ const NotasCompraNCView = ({
     if(esProvDirecto&&!pNum(compraNCForm.montoUSD||0))
       return setDialog({title:'Falta monto',text:'Ingresa el monto.',type:'alert'});
     try{
+      const r2=v=>parseFloat((v||0).toFixed(2));
       const editId=compraNCForm._editId||'';
       const id=editId||`CNC-${Date.now()}`;
       const facAfect=(facturasCompra||[]).find(i=>i.id===compraNCForm.facturaId);
@@ -13483,40 +13513,126 @@ const NotasCompraNCView = ({
         ?(pNum(compraNCForm.tasaDirecta||0)||pNum(settings?.tasaBCV||0)||1)
         :(pNum(facAfect?.tasa||0)||pNum(settings?.tasaBCV||0)||1);
       const esND=compraNCForm.tipo==='ND';
-      const modoOp=esND?'ajuste':(compraNCForm.modoOp||'ajuste');
+      const esFiscalNota=compraNCForm.naturaleza==='FISCAL'&&!esProvDirecto;
+      const gravadaBs=esProvDirecto?0:(compraNCForm.monto?pNum(compraNCForm.monto):0);
+      const exentoBs=esFiscalNota?(compraNCForm.exentoBs?pNum(compraNCForm.exentoBs):0):0;
+      // monto = subtotal sin IVA (gravado + exento): es lo que ya usa CxP / Estado de Cuenta
       const montoFinal=esProvDirecto
         ?parseFloat((pNum(compraNCForm.montoUSD||0)*tasaAfect).toFixed(2))
-        :(compraNCForm.monto?pNum(compraNCForm.monto):0);
+        :r2(gravadaBs+exentoBs);
+      const ivaFinal=esProvDirecto?0:(compraNCForm.ivaBs?pNum(compraNCForm.ivaBs):r2(gravadaBs*0.16));
+      const totalFinal=esProvDirecto?montoFinal:(compraNCForm.totalBs?pNum(compraNCForm.totalBs):r2(gravadaBs+exentoBs+ivaFinal));
       const {facturaCompraItemsNC:_i,_prevDocId:_p,montoUSD:_m,tasaDirecta:_t,_editId:_e,_fsId:_f,id:_idc,...formSafe}=compraNCForm;
       if(!esProvDirecto && !formSafe.provRif && facAfect){
         formSafe.provRif=facAfect.rif||'';
         formSafe.provName=facAfect.proveedor||facAfect.provName||'';
       }
-      const cleanForm=Object.fromEntries(Object.entries({...formSafe}).filter(([,v])=>v!==undefined));
+      // --- Retenciones (solo NC/ND fiscales ligadas a factura) ---
+      const ret=esFiscalNota?calcRetNotaCompra(compraNCForm,gravadaBs+exentoBs,ivaFinal):{retIVABs:0,pctIva:75,islr:[],totalISLRBs:0};
+      const islrValidas=ret.islr.filter(r=>r.montoBs>0);
+      const signo=esND?1:-1;
+      const islrGuardar=(compraNCForm.islrRetenciones||[]).map(r=>({id:r.id||'',codigo:r.codigo||'',tipoContrib:r.tipoContrib||'PJD',activo:r.activo!==false,baseImponibleBsManual:(r.baseImponibleBsManual!=null&&r.baseImponibleBsManual!=='')?String(r.baseImponibleBsManual):null}));
+      const extra={
+        exentoBs:exentoBs,baseGravadaBs:gravadaBs,
+        ivaBs:esProvDirecto?'':String(ivaFinal),totalBs:esProvDirecto?'':String(totalFinal),
+        aplicaRetIVA:!!compraNCForm.aplicaRetIVA&&ret.retIVABs>0,pctRetIVA:pNum(compraNCForm.pctRetIVA||75),
+        islrRetenciones:esFiscalNota?islrGuardar:[],
+        retIVABs:ret.retIVABs,retISLRBs:ret.totalISLRBs
+      };
+      const cleanForm=Object.fromEntries(Object.entries({...formSafe,...extra}).filter(([,v])=>v!==undefined));
+      const tieneIva=esProvDirecto?false:(ivaFinal>0);
       const batch=writeBatch(db);
       if(editId){
         batch.update(getDocRef('notasCompraCreditoDebito',id),{
           ...cleanForm,monto:montoFinal,tasaFactura:tasaAfect,
-          tieneIva:esProvDirecto?false:true,
+          tieneIva:tieneIva,
           updatedAt:Date.now(),updatedBy:appUser?.name||'Sistema'
         });
       } else {
         batch.set(getDocRef('notasCompraCreditoDebito',id),{
           ...cleanForm,id,monto:montoFinal,tasaFactura:tasaAfect,
-          tieneIva:esProvDirecto?false:true,
+          tieneIva:tieneIva,
           timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
         });
       }
+      // --- Comprobantes de retencion vinculados a la nota (procura_ret_iva / procura_ret_islr) ---
+      let msgRet='';
+      if(esFiscalNota||editId){
+        const [qIva,qIslr]=editId
+          ?await Promise.all([getDocs(query(getColRef('procura_ret_iva'),where('notaId','==',id))),getDocs(query(getColRef('procura_ret_islr'),where('notaId','==',id)))])
+          :[{docs:[]},{docs:[]}];
+        const bloqueadas=[...qIva.docs,...qIslr.docs].some(d=>{const s=d.data().status;return s&&s!=='PENDIENTE';});
+        if(bloqueadas){
+          msgRet=' (Sus retenciones ya estan declaradas/pagadas: no se modificaron.)';
+        } else {
+          const sSnap=await getDoc(getDocRef('settings','general'));
+          const sData=sSnap.exists()?sSnap.data():{};
+          let seqIVA=Math.max(1,parseInt(sData.correlativoIVA||settings?.correlativoIVA||1,10));
+          let seqISLR=Math.max(1,parseInt(sData.correlativoISLR||settings?.correlativoISLR||1,10));
+          const hoy=new Date(); const yr=hoy.getFullYear(); const mo=String(hoy.getMonth()+1).padStart(2,'0');
+          const perFecha=compraNCForm.periodoLibroMes?`${compraNCForm.periodoLibroMes}-${String(compraNCForm.periodoLibroQ||'1')==='2'?'16':'01'}`:compraNCForm.fecha;
+          const [py,pm,pd]=String(perFecha||getTodayDate()).split('-').map(x=>parseInt(x,10));
+          const periodoTxt=`${pd<=15?'1ra Q':'2da Q'} ${new Date(py,(pm||1)-1,1).toLocaleString('es-VE',{month:'long'})} ${py}`;
+          const prov=(proveedores||[]).find(p=>p.id===facAfect?.proveedorId||(compraNCForm.provRif&&p.rif===compraNCForm.provRif));
+          const baseRet={
+            notaId:id,tipoDocumento:compraNCForm.tipo,signo,facturaId:'',
+            facturaAfectadaId:facAfect?.id||'',facturaAfectada:facAfect?.nroFactura||'',
+            nroFactura:compraNCForm.nroDocumento,nroControl:compraNCForm.nroControl||'',
+            proveedor:formSafe.provName||facAfect?.proveedor||prov?.nombre||'',rifProveedor:prov?.rif||formSafe.provRif||facAfect?.rif||'',
+            proveedorId:facAfect?.proveedorId||prov?.id||'',
+            fechaFactura:compraNCForm.fecha,tasa:tasaAfect,
+            totalFacturaBs:totalFinal*signo,base16Bs:gravadaBs*signo,base8Bs:0,iva16Bs:ivaFinal*signo,exentoBs:exentoBs*signo,
+            domicilioProveedor:prov?.direccion||'',periodo:periodoTxt,updatedAt:Date.now()
+          };
+          const usd=v=>r2(v/tasaAfect);
+          let incIVA=0,incISLR=0;
+          // IVA
+          if(ret.retIVABs>0){
+            const datosIva={...baseRet,pctRetencion:ret.pctIva,baseIVABs:ivaFinal*signo,baseIVAUSD:usd(ivaFinal)*signo,montoBs:ret.retIVABs*signo,monto:usd(ret.retIVABs)*signo};
+            if(qIva.docs.length>0){
+              batch.update(qIva.docs[0].ref,datosIva);
+              qIva.docs.slice(1).forEach(d=>batch.delete(d.ref));
+            } else {
+              const retId=`RET-IVA-N${Date.now()}`;
+              batch.set(getDocRef('procura_ret_iva',retId),{...datosIva,id:retId,nroComprobante:`${yr}${mo}00${String(seqIVA).padStart(6,'0')}`,fecha:getTodayDate(),status:'PENDIENTE',timestamp:Date.now()});
+              incIVA=1; msgRet+=` Ret. IVA generada (${signo<0?'-':'+'}Bs. ${ret.retIVABs.toFixed(2)}).`;
+            }
+          } else {
+            qIva.docs.forEach(d=>batch.delete(d.ref));
+          }
+          // ISLR
+          const valorUT=pNum(settings?.valorUT||43);
+          islrValidas.forEach((r,i)=>{
+            const datosIslr={...baseRet,codConcepto:r.codigo,concepto:r.concepto||'',tipoContrib:r.tipoContrib||'PJD',pct:r.pct,sustraendoBs:0,
+              baseImponibleBs:r.baseImponibleBs*signo,montoBs:r.montoBs*signo,monto:usd(r.montoBs)*signo,valorUT};
+            if(qIslr.docs[i]){
+              batch.update(qIslr.docs[i].ref,datosIslr);
+            } else {
+              const retId=`RET-ISLR-N${Date.now()}-${i}`;
+              batch.set(getDocRef('procura_ret_islr',retId),{...datosIslr,id:retId,nroComprobante:String(seqISLR+incISLR).padStart(8,'0'),fecha:getTodayDate(),status:'PENDIENTE',timestamp:Date.now()});
+              incISLR++;
+            }
+          });
+          qIslr.docs.slice(islrValidas.length).forEach(d=>batch.delete(d.ref));
+          if(incISLR>0) msgRet+=` ${incISLR} Ret. ISLR generada(s).`;
+          if(incIVA>0||incISLR>0){
+            const inc={}; if(incIVA>0) inc.correlativoIVA=seqIVA+incIVA; if(incISLR>0) inc.correlativoISLR=seqISLR+incISLR;
+            batch.set(getDocRef('settings','general'),inc,{merge:true});
+          }
+        }
+      }
       await batch.commit();
-      if(editId) logAuditoria(appUser,'Notas de Crédito/Débito Compra','EDICIÓN',`${compraNCForm.tipo} ${compraNCForm.nroDocumento} (compras) editada.`);
+      if(editId) logAuditoria(appUser,'Notas de Cr\u00e9dito/D\u00e9bito Compra','EDICI\u00d3N',`${compraNCForm.tipo} ${compraNCForm.nroDocumento} (compras) editada.`);
       setShowCompraNCModal(false);setCompraNCBusq('');setCompraNCBusqCli('');
-      setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:''});
-      setDialog({title:editId?'✅ Actualizada':'✅ Guardada',text:`${compraNCForm.tipo} ${compraNCForm.nroDocumento} de compras ${editId?'actualizada':'registrada'}.`,type:'alert'});
+      setCompraNCForm({tipo:'NC',naturaleza:'FISCAL',facturaId:'',monto:'',exentoBs:'',ivaBs:'',totalBs:'',fecha:getTodayDate(),nroDocumento:'',descripcion:'',nroControl:'',_provDirecto:false,provRif:'',provName:'',montoUSD:'',tasaDirecta:'',aplicaRetIVA:false,pctRetIVA:75,islrRetenciones:[]});
+      setDialog({title:editId?'\u2705 Actualizada':'\u2705 Guardada',text:`${compraNCForm.tipo} ${compraNCForm.nroDocumento} de compras ${editId?'actualizada':'registrada'}.${msgRet}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
   const abrirEditarCompraNC = (n) => {
-    setCompraNCForm({...n,_editId:n.id,montoUSD:'',tasaDirecta:n.tasaFactura?String(n.tasaFactura):''});
+    const exe=pNum(n.exentoBs||0);
+    const grav=(n.baseGravadaBs!=null&&n.baseGravadaBs!=='')?pNum(n.baseGravadaBs):Math.max(0,pNum(n.monto||0)-exe);
+    setCompraNCForm({...n,_editId:n.id,monto:String(grav),exentoBs:exe?String(exe):'',montoUSD:'',tasaDirecta:n.tasaFactura?String(n.tasaFactura):''});
     setShowCompraNCModal(true);
   };
 
@@ -13524,9 +13640,10 @@ const NotasCompraNCView = ({
     const fc=(facturasCompra||[]).find(i=>i.id===n.facturaId);
     const prov=(proveedores||[]).find(p=>p.id===fc?.proveedorId||p.rif===n.provRif);
     const t=pNum(n.tasaFactura||0)||1;
-    const baseBs=pNum(n.monto||0);
+    const exeBsP=pNum(n.exentoBs||0);
+    const baseBs=(n.baseGravadaBs!=null&&n.baseGravadaBs!=='')?pNum(n.baseGravadaBs):Math.max(0,pNum(n.monto||0)-exeBsP);
     const ivaBs=pNum(n.ivaBs||0)||(n.tieneIva===false?0:baseBs*0.16);
-    const totalBs=pNum(n.totalBs||0)||(baseBs+ivaBs);
+    const totalBs=pNum(n.totalBs||0)||(baseBs+exeBsP+ivaBs);
     const usd=t>1?totalBs/t:pNum(n.montoUSD||0);
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -13546,7 +13663,10 @@ const NotasCompraNCView = ({
         <div class="fila"><span>N° Control</span><span>${esc(n.nroControl||'—')}</span></div>
         <div class="fila"><span>Tasa</span><span>${t>1?fN(t)+' Bs/$':'—'}</span></div>
         <div class="fila"><span>Base Imponible</span><span>Bs.${fN(baseBs)}</span></div>
+        ${exeBsP>0?`<div class="fila"><span>Monto exento (sin derecho a CF)</span><span>Bs.${fN(exeBsP)}</span></div>`:''}
         ${ivaBs>0?`<div class="fila"><span>IVA</span><span>Bs.${fN(ivaBs)}</span></div>`:''}
+        ${pNum(n.retIVABs||0)>0?`<div class="fila"><span>Retenci\u00f3n IVA (${pNum(n.pctRetIVA||75)}%)</span><span>Bs.${fN(pNum(n.retIVABs))}</span></div>`:''}
+        ${pNum(n.retISLRBs||0)>0?`<div class="fila"><span>Retenci\u00f3n ISLR</span><span>Bs.${fN(pNum(n.retISLRBs))}</span></div>`:''}
         <div class="fila"><span>Tipo de operación</span><span>${n.modoOp==='ajuste'?'Ajuste financiero (sin inventario)':'Devolución de productos'}</span></div>
         <div class="montos">
           <div class="monto"><span style="font-size:9px;text-transform:uppercase;font-weight:700">Total Bs.</span><b>${n.tipo==='NC'?'-':'+'}Bs.${fN(totalBs)}</b></div>
@@ -13569,8 +13689,17 @@ const NotasCompraNCView = ({
       type:'confirm',
       onConfirm: async ()=>{
         try{
+          const [_qI,_qL]=await Promise.all([getDocs(query(getColRef('procura_ret_iva'),where('notaId','==',n.id))),getDocs(query(getColRef('procura_ret_islr'),where('notaId','==',n.id)))]);
+          const _retDocs=[..._qI.docs,..._qL.docs];
+          if(_retDocs.some(d=>{const st=d.data().status;return st&&st!=='PENDIENTE';})){
+            setDialog({title:'No se puede eliminar',text:'Esta nota tiene retenciones ya declaradas o pagadas. Reversa primero esas retenciones.',type:'alert'});
+            return;
+          }
           await archivarEnPapelera('notasCompraCreditoDebito', n.id, n, `${n.tipo} ${n.nroDocumento||n.id} — ${fc?.proveedor||n.provName||''}`, appUser);
-          await deleteDoc(getDocRef('notasCompraCreditoDebito',n.id));
+          const _bDel=writeBatch(db);
+          _bDel.delete(getDocRef('notasCompraCreditoDebito',n.id));
+          _retDocs.forEach(d=>_bDel.delete(d.ref));
+          await _bDel.commit();
           logAuditoria(appUser,'Notas de Crédito/Débito Compra','ELIMINACIÓN',`${n.tipo} ${n.nroDocumento||n.id} (compras) eliminada — proveedor ${fc?.proveedor||n.provName||'—'}, $${fN(usd)}.`);
           setDialog({title:'✅ Eliminada',text:'La nota se eliminó y su efecto en Cuentas por Pagar y Libro de Compras ya se revirtió.',type:'alert'});
         }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
@@ -13646,7 +13775,7 @@ const NotasCompraNCView = ({
                   <td className="p-3 text-blue-600 font-bold">{fc?.nroFactura||'—'}</td>
                   <td className="p-3">{fc?.proveedor||n.provName||'—'}</td>
                   <td className="p-3 text-right font-mono font-black">{n.tipo==='NC'?'-':'+'}{fN(usd)}</td>
-                  <td className="p-3 text-gray-500 text-[10px]">{n.descripcion||'—'}</td>
+                  <td className="p-3 text-gray-500 text-[10px]">{n.descripcion||'—'}{pNum(n.exentoBs||0)>0&&<span className="ml-1 px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-700 text-[8px] font-black">EXENTO</span>}{pNum(n.retIVABs||0)>0&&<span className="ml-1 px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[8px] font-black">RET IVA</span>}{pNum(n.retISLRBs||0)>0&&<span className="ml-1 px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[8px] font-black">RET ISLR</span>}</td>
                   <td className="p-3">
                     <div className="flex gap-1 justify-center">
                       <button onClick={()=>exportarNCCompraPDF(n)} title="Ver PDF" className="w-7 h-7 flex items-center justify-center bg-orange-50 text-orange-600 hover:bg-orange-600 hover:text-white rounded-lg transition-all"><FileText size={11}/></button>
@@ -13695,8 +13824,10 @@ const NotasCompraNCView = ({
         const baseImpBs=compraNCForm.monto?pNum(compraNCForm.monto):0;
         const ivaBs16Calc=parseFloat((baseImpBs*0.16).toFixed(2));
         const ivaBs16=compraNCForm.ivaBs?pNum(compraNCForm.ivaBs):ivaBs16Calc;
-        const totalBsCalc=baseImpBs+ivaBs16;
+        const exentoBsN=(esFiscal&&!esProvDirecto&&compraNCForm.exentoBs)?pNum(compraNCForm.exentoBs):0;
+        const totalBsCalc=baseImpBs+exentoBsN+ivaBs16;
         const totalBs=compraNCForm.totalBs?pNum(compraNCForm.totalBs):totalBsCalc;
+        const retCalc=(esFiscal&&!esProvDirecto)?calcRetNotaCompra(compraNCForm,baseImpBs+exentoBsN,ivaBs16):null;
 
         return(
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3">
@@ -13765,7 +13896,7 @@ const NotasCompraNCView = ({
                       <div>
                         <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2">Seleccionar Factura de Compra</label>
                         <input value={compraNCBusq} onChange={e=>setCompraNCBusq(e.target.value)} placeholder="N° factura, proveedor..." className="w-full border-2 border-orange-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none focus:border-orange-500 mb-2 bg-white"/>
-                        <select value={compraNCForm.facturaId} onChange={e=>setCompraNCForm(f=>({...f,facturaId:e.target.value}))} size={8} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
+                        <select value={compraNCForm.facturaId} onChange={e=>{const v=e.target.value;const fcSel=(facturasCompra||[]).find(i=>i.id===v);setCompraNCForm(f=>({...f,facturaId:v,...(f._editId?{}:prefillRetNota(fcSel))}));}} size={8} className="w-full border-2 border-orange-200 rounded-xl px-2 py-1 text-[10px] font-bold outline-none bg-white">
                           <option value="">— Seleccionar —</option>
                           {factsFilt.slice(0,60).map(f=>(<option key={f.id} value={f.id}>{f.nroFactura||f.id} · {f.proveedor}</option>))}
                         </select>
@@ -13831,6 +13962,14 @@ const NotasCompraNCView = ({
                         <input type="number" step="0.01" value={compraNCForm.monto||''} onChange={e=>setCompraNCForm(f=>({...f,monto:e.target.value}))}
                           placeholder="0,00" className="w-full border-2 border-orange-300 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500"/>
                       </div>
+                      {esFiscal&&(
+                        <div>
+                          <label className="text-[9px] font-black text-teal-700 uppercase block mb-1">{'Monto exento / sin derecho a cr\u00e9dito fiscal (Bs.)'} <span className="text-gray-400 font-normal">{'\u2014 opcional'}</span></label>
+                          <input type="number" step="0.01" value={compraNCForm.exentoBs||''} onChange={e=>setCompraNCForm(f=>({...f,exentoBs:e.target.value}))}
+                            placeholder="0,00" className="w-full border-2 border-teal-200 bg-white rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-teal-500"/>
+                          <p className="text-[8px] text-gray-400 font-bold mt-1">{'Va al Libro de Compras en la columna "Sin Derecho a CF". No lleva IVA.'}</p>
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVA 16% (Bs.) <span className="text-gray-400 font-normal">— editable</span></label>
@@ -13870,6 +14009,94 @@ const NotasCompraNCView = ({
                           placeholder={String(pNum(settings?.tasaBCV||0))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-400"/>
                       </div>
                       <div className="bg-amber-50 border border-amber-200 rounded-xl p-2 text-[8px] text-amber-700 font-bold">⚖ Ajuste directo al proveedor · sin IVA · sin movimiento de inventario</div>
+                    </div>
+                  )}
+
+                  {esFiscal&&!esProvDirecto&&retCalc&&(
+                    <div className="bg-white border-2 border-purple-100 rounded-2xl p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <p className="text-[9px] font-black text-purple-600 uppercase tracking-widest">{'Retenciones sobre la '}{compraNCForm.tipo}</p>
+                        <span className="text-[8px] font-bold text-gray-400">{compraNCForm.tipo==='NC'?'La NC revierte retenciones (se registran en negativo)':'La ND suma retenciones'}</span>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap bg-orange-50 border border-orange-200 rounded-xl p-3">
+                        <button onClick={()=>setCompraNCForm(f=>({...f,aplicaRetIVA:!f.aplicaRetIVA}))}
+                          className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase ${compraNCForm.aplicaRetIVA?'bg-orange-500 text-white':'bg-slate-200 text-slate-500'}`}>
+                          {compraNCForm.aplicaRetIVA?'Ret. IVA activa':'Ret. IVA inactiva'}
+                        </button>
+                        <select value={compraNCForm.pctRetIVA||75} onChange={e=>setCompraNCForm(f=>({...f,pctRetIVA:pNum(e.target.value)}))} disabled={!compraNCForm.aplicaRetIVA}
+                          className="border-2 border-orange-200 rounded-lg px-2 py-1 text-[10px] font-bold bg-white outline-none disabled:opacity-40">
+                          <option value={75}>75% del IVA</option>
+                          <option value={100}>100% del IVA</option>
+                        </select>
+                        <div className="ml-auto text-right">
+                          <p className="text-[8px] font-black text-orange-500 uppercase">{'IVA base Bs. '}{fN(ivaBs16)}</p>
+                          <p className="font-black font-mono text-orange-700 text-xs">{'Retenci\u00f3n: Bs. '}{fN(retCalc.retIVABs)}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-purple-600 uppercase">{'Retenciones ISLR'}</span>
+                        <button onClick={()=>setCompraNCForm(f=>({...f,islrRetenciones:[...(f.islrRetenciones||[]),{id:'R'+Math.random().toString(36).slice(2,9),codigo:'',tipoContrib:'PJD',activo:true,baseImponibleBsManual:null}]}))}
+                          className="px-3 py-1 rounded-lg bg-purple-600 text-white text-[9px] font-black uppercase">{'+ Agregar retenci\u00f3n'}</button>
+                      </div>
+                      {(compraNCForm.islrRetenciones||[]).length===0&&<p className="text-[9px] text-gray-400 text-center py-1">{'Sin retenciones ISLR'}</p>}
+                      {(compraNCForm.islrRetenciones||[]).map((r,idx)=>{
+                        const cd=retCalc.islr.find(x=>x.id===r.id)||{};
+                        const tc=r.tipoContrib||'PJD';
+                        return(
+                          <div key={r.id||idx} className="border border-purple-100 rounded-xl p-3 bg-purple-50/30 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-black text-purple-600 uppercase">{'Retenci\u00f3n ISLR #'}{idx+1}</span>
+                              <button onClick={()=>setCompraNCForm(f=>({...f,islrRetenciones:f.islrRetenciones.filter((_,i)=>i!==idx)}))} className="text-red-400 hover:text-red-600 font-black text-xs">{'\u2715'}</button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <select value={tc} onChange={e=>setCompraNCForm(f=>({...f,islrRetenciones:f.islrRetenciones.map((x,i)=>i===idx?{...x,tipoContrib:e.target.value,codigo:''}:x)}))}
+                                className="border-2 border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold bg-white outline-none">
+                                <option value="PJD">{'PJD \u2014 Jur\u00eddica domiciliada'}</option>
+                                <option value="PNR">{'PNR \u2014 Natural residente'}</option>
+                                <option value="PJND">{'PJND \u2014 Jur\u00eddica no domiciliada'}</option>
+                                <option value="PNNR">{'PNNR \u2014 Natural no residente'}</option>
+                              </select>
+                              <select value={r.codigo||''} onChange={e=>setCompraNCForm(f=>({...f,islrRetenciones:f.islrRetenciones.map((x,i)=>i===idx?{...x,codigo:e.target.value}:x)}))}
+                                className="border-2 border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold bg-white outline-none">
+                                <option value="">{'\u2014 Concepto SENIAT \u2014'}</option>
+                                {ISLR_CONCEPTOS.filter(c=>{
+                                  if(tc==='PJD')return c.codPJD&&typeof c.pctPJD==='number';
+                                  if(tc==='PNR')return c.codPNR&&typeof c.pctPNR==='number';
+                                  if(tc==='PJND')return c.codPJND&&typeof c.pctPJND==='number';
+                                  return c.codPNNR&&typeof c.pctPNNR==='number';
+                                }).map((c,ci)=>{
+                                  const cod=tc==='PJD'?c.codPJD:tc==='PNR'?c.codPNR:tc==='PJND'?c.codPJND:c.codPNNR;
+                                  const pct=tc==='PJD'?c.pctPJD:tc==='PNR'?c.pctPNR:tc==='PJND'?c.pctPJND:c.pctPNNR;
+                                  return <option key={ci} value={cod}>{cod}{' \u2014 '}{c.concepto}{' ('}{pct}{'%)'}</option>;
+                                })}
+                              </select>
+                            </div>
+                            {r.codigo&&(
+                              <div className="bg-purple-900 rounded-lg p-2.5 space-y-2">
+                                {cd.error&&<div className="text-amber-300 text-[9px] font-black">{cd.error}</div>}
+                                <div className="grid grid-cols-3 gap-2 items-end">
+                                  <div className="col-span-2">
+                                    <label className="text-[8px] text-purple-300 font-black uppercase block mb-0.5">{'Base imponible Bs.'}{cd.basePorc?` (${cd.basePorc}% del subtotal)`:''} <span className="text-purple-400 normal-case font-normal">{'(editable)'}</span></label>
+                                    <input type="number" value={r.baseImponibleBsManual!=null?r.baseImponibleBsManual:''} placeholder={String(cd.baseAuto||0)}
+                                      onChange={e=>setCompraNCForm(f=>({...f,islrRetenciones:f.islrRetenciones.map((x,i2)=>i2===idx?{...x,baseImponibleBsManual:e.target.value===''?null:e.target.value}:x)}))}
+                                      className="w-full bg-purple-800 border border-purple-600 rounded px-2 py-1 text-white text-[10px] font-mono outline-none focus:border-orange-400"/>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-[8px] text-purple-300 font-black uppercase">{cd.pct||0}{'% = Retenci\u00f3n'}</p>
+                                    <p className="text-white font-black font-mono text-xs">{'Bs. '}{fN(cd.montoBs||0)}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {(retCalc.retIVABs>0||retCalc.totalISLRBs>0)&&(
+                        <div className="bg-slate-900 rounded-xl p-3 text-[9px] font-black text-white space-y-1">
+                          {retCalc.retIVABs>0&&<div className="flex justify-between"><span className="text-orange-300 uppercase">{'Ret. IVA'}</span><span className="font-mono">{compraNCForm.tipo==='NC'?'-':'+'}{'Bs. '}{fN(retCalc.retIVABs)}</span></div>}
+                          {retCalc.totalISLRBs>0&&<div className="flex justify-between"><span className="text-purple-300 uppercase">{'Ret. ISLR'}</span><span className="font-mono">{compraNCForm.tipo==='NC'?'-':'+'}{'Bs. '}{fN(retCalc.totalISLRBs)}</span></div>}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -14068,17 +14295,29 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, notasCompr
     const prov = (proveedores||[]).find(p=>p.id===fc?.proveedorId);
     const rif = n.provRif || prov?.rif || fc?.rif || '';
     const tasa = pNum(n.tasaFactura||0) || pNum(fc?.tasa||0) || 1;
-    const baseBs = pNum(n.monto||0);
+    const exeBs = pNum(n.exentoBs||0);
+    const baseBs = (n.baseGravadaBs!=null&&n.baseGravadaBs!=='') ? pNum(n.baseGravadaBs) : Math.max(0,pNum(n.monto||0)-exeBs);
     const ivaBs = pNum(n.ivaBs||0) || (n.tieneIva===false?0:baseBs*0.16);
-    const totalBs = pNum(n.totalBs||0) || (baseBs+ivaBs);
+    const totalBs = pNum(n.totalBs||0) || (baseBs+exeBs+ivaBs);
     const signo = n.tipo==='NC' ? -1 : 1;
     rows.push({
       fecha:n.fecha||'', rif, nombre: n.provName||fc?.proveedor||prov?.nombre||'—',
       tipo:n.tipo, nroFactura:n.nroDocumento||n.id, nroControl:n.nroControl||'',
       impFechaAplic:'', impPlanilla:'', impExpediente:'', impTotal:0, impBase:0, impIVA:0,
-      ciTotal: totalBs*signo, ciSinDer:0, ciBase: baseBs*signo, ciCred: ivaBs*signo,
+      ciTotal: totalBs*signo, ciSinDer: exeBs*signo, ciBase: baseBs*signo, ciCred: ivaBs*signo,
       crTotal:0, crBase:0, crCred:0,
       retPct:'', retMonto:0, retFact:fc?.nroFactura||'', retComp:'', _id:n.id,
+    });
+    // Retencion de IVA de la nota (se registra en negativo si es NC): intercalada como las de factura
+    const retN = (retIVACompra||[]).find(r => r.notaId === n.id);
+    if(retN) rows.push({
+      fecha:retN.fecha||n.fecha||'', rif:retN.rifProveedor||rif, nombre:retN.proveedor||n.provName||fc?.proveedor||'',
+      tipo:'RETENCI\u00d3N', nroFactura:'', nroControl:'',
+      impTotal:0, impBase:0, impIVA:0,
+      ciTotal:0, ciSinDer:0, ciBase:0, ciCred:0,
+      crTotal:0, crBase:0, crCred:0,
+      retPct:`${pNum(retN.pctRetencion||75)}%`, retMonto:pNum(retN.montoBs||0),
+      retFact:retN.nroFactura||n.nroDocumento||'', retComp:retN.nroComprobante||'',
     });
   });
   // Orden cronológico real: cada fila (factura o retención) por su propia fecha —
