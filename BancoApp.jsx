@@ -2288,6 +2288,266 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   </div>);
 }
 
+// ConciliacionCajaView: mismo flujo que la conciliacion de Banco, pero sobre las cajas registradas.
+// Componente de nivel superior (no anidado) para que su estado local no se pierda al re-renderizar BancoApp.
+function construirMovsCaja(movCaja, cobrosCajaCxc, pagosCajaCxP, tasaActiva){
+  const hayManual=(campo,grupo)=>(movCaja||[]).some(m=>m[campo]===grupo);
+  const desdeCobros=(cobrosCajaCxc||[]).filter(c=>!(c.grupoCobroId&&hayManual('grupoCobroId',c.grupoCobroId))).map(c=>{
+    const tasa=Number(c.tasa||tasaActiva)||tasaActiva;
+    const mUSD=Number(c.monto||0);
+    const mBs=Number(c.montoBs||0)||(mUSD*tasa);
+    return {id:c.id,fecha:c.fecha,tipo:'Ingreso',moneda:c.moneda==='BS'?'BS':'USD',montoBs:mBs,montoUSD:mUSD,tasa,
+      concepto:c.concepto||`Cobro ${c.metodo||''} ${c.neDocumento||''}`,referencia:c.referencia||'',
+      _tercero:c.clientName||'',_cajaId:(c.cuentaBancariaId||'').replace('CAJA::',''),_derivado:true,origen:'CxC'};
+  });
+  const desdePagos=(pagosCajaCxP||[]).filter(p=>!(p.grupoPagoId&&hayManual('grupoPagoId',p.grupoPagoId))).map(p=>{
+    const tasa=Number(p.tasa||tasaActiva)||tasaActiva;
+    const mUSD=Number(p.monto||0);
+    const mBs=Number(p.montoBs||0)||(mUSD*tasa);
+    return {id:p.id,fecha:p.fecha,tipo:'Egreso',moneda:p.moneda==='BS'?'BS':'USD',montoBs:mBs,montoUSD:mUSD,tasa,
+      concepto:p.concepto||`Pago ${p.proveedor||''} ${p.referencia||''}`,referencia:p.referencia||'',
+      _tercero:p.proveedor||'',_cajaId:(p.cuentaId||'').replace('CAJA::',''),_derivado:true,origen:'CxP'};
+  });
+  return [...(movCaja||[]),...desdeCobros,...desdePagos];
+}
+
+function ConciliacionCajaView({ cajas, movCaja, cobrosCajaCxc, pagosCajaCxP, tasaActiva, concils, validarClaveAdmin }) {
+  const [cajaId,setCajaId]=useState('');
+  const [desde,setDesde]=useState(bancoMesActual()+'-01');
+  const [hasta,setHasta]=useState(getTodayDate());
+  const [saldoContado,setSaldoContado]=useState('');
+  const [marcados,setMarcados]=useState({});
+  const [busy,setBusy]=useState(false);
+  const [histEdit,setHistEdit]=useState(null);
+  const [histEditForm,setHistEditForm]=useState({fecha:'',saldoContado:''});
+  const [pwdPrompt,setPwdPrompt]=useState(null);
+  const [pwdInput,setPwdInput]=useState('');
+  const [pwdError,setPwdError]=useState(false);
+  const caja=(cajas||[]).find(c=>c.id===cajaId);
+  const esCajaBs=String(caja?.moneda||'').toUpperCase()==='BS';
+  const simb=esCajaBs?'Bs.':'$';
+  const todosMovs=useMemo(()=>construirMovsCaja(movCaja,cobrosCajaCxc,pagosCajaCxP,tasaActiva),[movCaja,cobrosCajaCxc,pagosCajaCxP,tasaActiva]);
+  const idsConciliados=useMemo(()=>{const s=new Set();(concils||[]).forEach(c=>(c.movimientoIds||[]).forEach(id=>s.add(id)));return s;},[concils]);
+  const esBsMov=m=>String(m.moneda||'').toUpperCase()==='BS';
+  const movsDeCaja=caja?todosMovs.filter(m=>(m._cajaId||m.cajaId||'')===cajaId&&(esCajaBs?esBsMov(m):!esBsMov(m))):[];
+  const nativo=m=>esCajaBs?Number(m.montoBs||0):Number(m.montoUSD||0);
+  const signo=m=>m.tipo==='Ingreso'?1:-1; // todo lo que no sea Ingreso sale de la caja
+  const saldoActualDe=(c)=>{
+    const bsC=String(c.moneda||'').toUpperCase()==='BS';
+    const mv=todosMovs.filter(m=>(m._cajaId||m.cajaId||'')===c.id&&(bsC?esBsMov(m):!esBsMov(m)));
+    return Number(c.saldoInicial||0)+mv.reduce((s,m)=>s+(m.tipo==='Ingreso'?1:-1)*(bsC?Number(m.montoBs||0):Number(m.montoUSD||0)),0);
+  };
+  const todos=movsDeCaja
+    .filter(m=>m.estatus!=='Conciliado'&&!idsConciliados.has(m.id)&&(!desde||(m.fecha||'')>=desde)&&(!hasta||(m.fecha||'')<=hasta))
+    .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  const toggle=id=>setMarcados(p=>({...p,[id]:p[id]===false?true:false}));
+  const marcarTodos=()=>{const n={};todos.forEach(m=>n[m.id]=true);setMarcados(p=>({...p,...n}));};
+  const desmarcarTodos=()=>{const n={};todos.forEach(m=>n[m.id]=false);setMarcados(p=>({...p,...n}));};
+  const todosMarcados=todos.length>0&&todos.every(m=>marcados[m.id]!==false);
+  const egTrans=todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+  const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+  // Saldo inicial del periodo = saldo inicial de la caja + todo lo ocurrido antes de "Desde" (misma base que Cuentas de Caja)
+  const saldoIniCaja=Number(caja?.saldoInicial||0);
+  const netoAntes=movsDeCaja.filter(m=>desde&&(m.fecha||'')<desde).reduce((s,m)=>s+signo(m)*nativo(m),0);
+  const saldoInicialNativo=saldoIniCaja+netoAntes;
+  const entradasNativo=todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+nativo(m),0);
+  const salidasNativo=todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+nativo(m),0);
+  const saldoLibrosNativo=saldoInicialNativo+entradasNativo-salidasNativo;
+  const aUSD=v=>esCajaBs?v/(tasaActiva||1):v;
+  const aBs=v=>esCajaBs?v:v*(tasaActiva||1);
+  const saldoLibrosUSD=caja?aUSD(saldoLibrosNativo):0;
+  const sbNum=Number(saldoContado)||0;
+  const sbTecleado=String(saldoContado??'').trim()!=='';
+  const diff=sbNum-saldoLibrosNativo;
+  const OK=Math.abs(diff)<0.01&&sbTecleado;
+  const aprobar=async()=>{
+    if(!OK) return alert('La diferencia debe ser 0,00');
+    if(!window.confirm('\u00bfAprobar conciliaci\u00f3n de caja? Podr\u00e1s editarla o eliminarla luego con la clave de administrador si necesitas corregir algo.')) return;
+    setBusy(true);
+    try{
+      const batch=writeBatch(_bancoDB);
+      const movsConc=todos.filter(m=>marcados[m.id]!==false);
+      const ids=movsConc.map(m=>m.id);
+      const idsManuales=new Set((movCaja||[]).map(m=>m.id));
+      ids.filter(id=>idsManuales.has(id)).forEach(id=>batch.update(getDocRef('caja_movimientos',id),{estatus:'Conciliado'}));
+      const movimientosDetalle=movsConc.map(m=>({fecha:m.fecha||'',tipo:m.tipo||'',concepto:m.concepto||'',referencia:m.referencia||'',montoUSD:Number(m.montoUSD||0),montoBs:Number(m.montoBs||0)})).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      const ent=movsConc.filter(m=>m.tipo==='Ingreso').reduce((s,m)=>s+nativo(m),0);
+      const sal=movsConc.filter(m=>m.tipo!=='Ingreso').reduce((s,m)=>s+nativo(m),0);
+      const id=bancoGid();
+      batch.set(getDocRef('caja_conciliaciones',id),{
+        id,cajaId,cajaNombre:caja.nombre,moneda:caja.moneda||'USD',desde,hasta,
+        saldoContado:sbNum,saldoLibros:saldoLibrosNativo,saldoLibrosUSD,saldoConcil:saldoLibrosNativo,diff,egTrans,ingTrans,
+        count:ids.length,movimientoIds:ids,movimientosDetalle,
+        entradasReconc:ent,salidasReconc:sal,saldoInicialReconc:saldoLibrosNativo-(ent-sal),
+        fecha:getTodayDate(),ts:serverTimestamp()
+      });
+      await batch.commit();
+      setMarcados({});setSaldoContado('');alert(`${ids.length} movimiento(s) conciliados.`);
+    }catch(e){ alert('No se pudo aprobar: '+(e?.message||e)); }
+    finally{setBusy(false);}
+  };
+  const historial=(concils||[]).filter(c=>c.cajaId===cajaId).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  const exportarPDF=(c)=>{
+    const bsC=String(c.moneda||'').toUpperCase()==='BS';
+    const f=v=>(bsC?'Bs.':'$')+bancoFmt(v);
+    const detalle=c.movimientosDetalle||[];
+    const filas=detalle.length>0?detalle.map(m=>`<tr><td>${bancoDd(m.fecha)}</td><td>${m.tipo}</td><td>${m.concepto}${m.referencia?' \u00b7 Ref. '+m.referencia:''}</td><td style="text-align:right;color:${m.tipo==='Ingreso'?'#16a34a':'#dc2626'}">${m.tipo==='Ingreso'?'':'-'}${bsC?'Bs.'+bancoFmt(m.montoBs):'$'+bancoFmt(m.montoUSD)}</td></tr>`).join(''):'<tr><td colspan="4" style="text-align:center;color:#94a3b8">Sin detalle guardado.</td></tr>';
+    const html=bancoLetterheadOpen(`Conciliaci\u00f3n de Caja \u2014 ${c.cajaNombre}`,`Conciliaci\u00f3n realizada el ${bancoDd(c.fecha)} \u00b7 Per\u00edodo del ${bancoDd(c.desde)} al ${bancoDd(c.hasta)}`)+
+      `<table><thead><tr><th>Concepto</th><th>Monto</th></tr></thead><tbody>
+        <tr><td>Saldo en Libros (Sistema)</td><td style="text-align:right">${f(c.saldoLibros)}</td></tr>
+        <tr><td>Efectivo contado en caja</td><td style="text-align:right">${f(c.saldoContado)}</td></tr>
+        <tr><td><strong>Diferencia</strong></td><td style="text-align:right"><strong>${f(c.diff)}</strong></td></tr>
+      </tbody></table>
+      <h3 style="margin-top:20px;font-size:11px;color:#1e3a5f;text-transform:uppercase;letter-spacing:2px">Resumen del Per\u00edodo Conciliado</h3>
+      <table><thead><tr><th>Saldo Inicial</th><th>Entradas</th><th>Salidas</th><th>Saldo Final</th></tr></thead><tbody>
+        <tr><td>${f(c.saldoInicialReconc||0)}</td><td style="color:#16a34a">${f(c.entradasReconc||0)}</td><td style="color:#dc2626">${f(c.salidasReconc||0)}</td><td><strong>${f((c.saldoInicialReconc||0)+(c.entradasReconc||0)-(c.salidasReconc||0))}</strong></td></tr>
+      </tbody></table>
+      <h3 style="margin-top:20px;font-size:11px;color:#1e3a5f;text-transform:uppercase;letter-spacing:2px">Detalle de Movimientos Conciliados (${c.count})</h3>
+      <table><thead><tr><th>Fecha</th><th>Tipo</th><th>Concepto</th><th>Monto</th></tr></thead><tbody>${filas}</tbody></table>`+
+      bancoLetterheadClose(`Conciliaci\u00f3n aprobada el ${bancoDd(c.fecha)}`);
+    bancoPrintWindow(html);
+  };
+  const abrirEdit=(c)=>{setHistEdit(c);setHistEditForm({fecha:c.fecha||'',saldoContado:String(c.saldoContado??'')});};
+  const guardarEditReal=async()=>{
+    const nuevo=Number(histEditForm.saldoContado)||0;
+    await updateDoc(getDocRef('caja_conciliaciones',histEdit.id),{fecha:histEditForm.fecha,saldoContado:nuevo,diff:nuevo-Number(histEdit.saldoLibros||0)});
+    setHistEdit(null);
+  };
+  const eliminarReal=async(c)=>{
+    const batch=writeBatch(_bancoDB);
+    const idsValidos=new Set((movCaja||[]).map(m=>m.id));
+    (c.movimientoIds||[]).filter(id=>idsValidos.has(id)).forEach(id=>batch.update(getDocRef('caja_movimientos',id),{estatus:'No Conciliado'}));
+    batch.delete(getDocRef('caja_conciliaciones',c.id));
+    await batch.commit();
+  };
+  const eliminar=(c)=>{
+    if(!window.confirm(`\u00bfEliminar esta conciliaci\u00f3n del ${bancoDd(c.fecha)}? Los ${(c.movimientoIds||[]).length} movimiento(s) volver\u00e1n a estar "No Conciliado".`)) return;
+    setPwdPrompt({accion:'eliminar',c});
+  };
+  const confirmarPwd=async()=>{
+    const ok=await validarClaveAdmin(pwdInput);
+    if(!ok){setPwdError(true);setPwdInput('');return;}
+    try{
+      if(pwdPrompt.accion==='editar') await guardarEditReal();
+      if(pwdPrompt.accion==='eliminar') await eliminarReal(pwdPrompt.c);
+      setPwdPrompt(null);setPwdInput('');setPwdError(false);
+    }catch(e){ alert('No se pudo completar la acci\u00f3n: '+(e?.message||e)); }
+  };
+  const fN=v=>bancoFmt(v);
+  return(<div className="space-y-5">
+    <BCard title={'Par\u00e1metros de Conciliaci\u00f3n de Caja'}><div className="grid grid-cols-4 gap-4">
+      <BFG label="Caja" full><select className={sel} value={cajaId} onChange={e=>{setCajaId(e.target.value);setMarcados({});setSaldoContado('');}}>
+        <option value="">{'\u2014 Seleccione la caja a conciliar \u2014'}</option>
+        {(cajas||[]).filter(c=>c.activo!==false).map(c=><option key={c.id} value={c.id}>{c.nombre}{' \u00b7 '}{String(c.moneda||'').toUpperCase()==='BS'?'Bs.':'$'}{' '}{fN(saldoActualDe(c))}</option>)}
+      </select></BFG>
+      <BFG label="Desde"><input type="date" className={inp} value={desde} onChange={e=>setDesde(e.target.value)}/></BFG>
+      <BFG label="Hasta"><input type="date" className={inp} value={hasta} onChange={e=>setHasta(e.target.value)}/></BFG>
+      <BFG label={`Efectivo contado en caja (${simb})`}><input type="number" step="0.01" className={`${inp} font-black ${OK?'border-emerald-400 bg-emerald-50':sbTecleado?'border-amber-300':''}`} value={saldoContado} onChange={e=>setSaldoContado(e.target.value)} placeholder={esCajaBs?'0,00 Bs.':'0.00'}/></BFG>
+    </div></BCard>
+    {cajaId&&<div className="grid lg:grid-cols-3 gap-5">
+      <div className="lg:col-span-2 space-y-3">
+        <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle="Marque los que ya verific\u00f3 contra el conteo / vales de la caja" action={
+          todos.length>0&&(<button onClick={todosMarcados?desmarcarTodos:marcarTodos} className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1"><CheckCircle size={13}/> {todosMarcados?'Desmarcar todos':'Seleccionar todos'}</button>)
+        }>
+          {todos.length===0?<BEmptyState icon={CheckCircle} title="Sin movimientos pendientes" desc=""/>:
+            <div className="divide-y divide-slate-100">{todos.map(m=>(
+              <label key={m.id} className={`flex items-center gap-4 py-3 px-2 cursor-pointer rounded-xl hover:bg-slate-50 ${marcados[m.id]!==false?'bg-emerald-50/60':''}`}>
+                <input type="checkbox" checked={marcados[m.id]!==false} onChange={()=>toggle(m.id)} className="w-4 h-4 accent-emerald-500 flex-shrink-0"/>
+                <div className="flex-1 min-w-0"><div className="flex items-center gap-2 mb-0.5"><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':'blue'}>{m.tipo}</BBadge><span className="text-[10px] text-slate-400">{bancoDd(m.fecha)}</span>{m._derivado&&<span className="text-[8px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen}</span>}</div>
+                  <p className="text-xs font-semibold text-slate-700 truncate">{m.concepto}{(m._tercero||m.terceroNombre)?` \u00b7 ${m._tercero||m.terceroNombre}`:''}</p></div>
+                <div className="text-right flex-shrink-0">
+                  <p className={`font-mono font-black text-sm ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{esCajaBs?'Bs.'+fN(m.montoBs):'$'+fN(m.montoUSD)}</p>
+                  <p className="text-[10px] text-slate-400">{esCajaBs?'$'+fN(m.montoUSD):'Bs.'+fN(m.montoBs)}</p>
+                </div>
+                {marcados[m.id]!==false&&<CheckCircle size={16} className="text-emerald-500 flex-shrink-0"/>}
+              </label>
+            ))}</div>}
+        </BCard>
+      </div>
+      <div className="space-y-4">
+        <div className="bg-white rounded-2xl border-2 border-slate-200 overflow-hidden shadow-sm sticky top-4">
+          <div className="px-5 py-4" style={{background:'linear-gradient(135deg,#0f172a,#1e293b)'}}><p className="font-black text-white text-sm uppercase tracking-widest">Panel de Cuadre</p></div>
+          <div className="p-5 space-y-3">
+            {[
+              {l:'Saldo Inicial (antes del "Desde")',n:saldoInicialNativo,c:'text-slate-700',b:false},
+              {l:'(+) Entradas marcadas',n:entradasNativo,c:'text-emerald-500',b:false},
+              {l:'(\u2212) Salidas marcadas',n:salidasNativo,c:'text-red-500',b:false},
+              {l:'= Saldo en Libros (calculado)',n:saldoLibrosNativo,c:'text-slate-900',b:true},
+            ].map(({l,n,c,b})=>(
+              <div key={l} className="flex items-center justify-between"><p className={`text-[10px] ${b?'font-black text-slate-700':'font-medium text-slate-500'} leading-tight max-w-[150px]`}>{l}</p>
+                <div className="text-right"><p className={`font-mono font-black text-sm ${c}`}>{simb}{fN(n)}</p><p className="text-[9px] text-slate-400 font-mono">{esCajaBs?'$'+fN(aUSD(n)):'Bs.'+fN(aBs(n))}</p></div>
+              </div>
+            ))}
+            {(egTrans>0||ingTrans>0)&&<p className="text-[9px] text-amber-600 font-bold">{'\u26a0 Hay '}{todos.filter(m=>marcados[m.id]===false).length}{' movimiento(s) desmarcado(s) (no incluido(s) arriba): desmarca solo lo que NO se haya verificado todav\u00eda.'}</p>}
+            <div className="border-t-2 border-slate-200 pt-3 space-y-1">
+              <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-700 uppercase">= Saldo Conciliado</p><p className="font-mono font-black text-blue-600">{simb}{fN(saldoLibrosNativo)}</p></div>
+              <div className="flex items-center justify-between"><p className="text-[10px] font-black text-slate-500 uppercase">Efectivo contado</p><p className="font-mono font-black text-slate-900">{simb}{fN(sbNum)}</p></div>
+            </div>
+            <div className={`rounded-xl p-4 text-center border-2 ${OK?'border-emerald-400 bg-emerald-50':'border-amber-400 bg-amber-50'}`}>
+              <p className="text-[9px] font-black uppercase tracking-widest mb-1 text-slate-500">Diferencia</p>
+              <p className={`font-mono font-black text-2xl ${OK?'text-emerald-600':'text-amber-600'}`}>{simb}{fN(diff)}</p>
+              {OK?<p className="text-[10px] text-emerald-600 font-black mt-1">{'\u2713 Cuadrado'}</p>:<p className="text-[10px] text-amber-600 font-black mt-1">Pendiente</p>}
+            </div>
+            <BBg onClick={aprobar} disabled={!OK||busy}>{busy?<><RefreshCw size={13} className="animate-spin"/> Procesando...</>:<><CheckCircle size={13}/> Aprobar</>}</BBg>
+            <p className="text-[9px] text-slate-400 text-center">Al aprobar los movimientos quedan bloqueados.</p>
+          </div>
+        </div>
+      </div>
+    </div>}
+    {cajaId&&historial.length>0&&(
+      <BCard title="Historial de Conciliaciones" subtitle={`${historial.length} conciliaci\u00f3n(es) aprobada(s) para esta caja`}>
+        <table className="w-full"><thead><tr><BTh>Fecha</BTh><BTh>{'Per\u00edodo'}</BTh><BTh right>Mov.</BTh><BTh right>Saldo Conciliado</BTh><BTh right>Diferencia</BTh><BTh></BTh></tr></thead>
+          <tbody>{historial.map(c=>(
+            <tr key={c.id} className="hover:bg-slate-50">
+              <BTd>{bancoDd(c.fecha)}</BTd>
+              <BTd className="text-[10px] text-slate-500">{bancoDd(c.desde)} {'\u2192'} {bancoDd(c.hasta)}</BTd>
+              <BTd right mono>{c.count}</BTd>
+              <BTd right mono className="font-black">{simb}{fN(c.saldoConcil)}</BTd>
+              <BTd right mono className={Math.abs(c.diff)<0.01?'text-emerald-600':'text-amber-600'}>{simb}{fN(c.diff)}</BTd>
+              <BTd><div className="flex gap-1">
+                <button onClick={()=>exportarPDF(c)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="PDF"><FileText size={12}/></button>
+                <button onClick={()=>abrirEdit(c)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
+                <button onClick={()=>eliminar(c)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>
+              </div></BTd>
+            </tr>
+          ))}</tbody>
+        </table>
+      </BCard>
+    )}
+    {!cajaId&&<BEmptyState icon={PiggyBank} title="Seleccione una caja" desc={'Elija la caja para iniciar la conciliaci\u00f3n'}/>}
+    {histEdit&&(
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setHistEdit(null)}>
+        <div className="bg-white rounded-2xl max-w-sm w-full" onClick={e=>e.stopPropagation()}>
+          <div className="px-5 py-4" style={{background:'#0f172a'}}><p className="text-white font-black text-sm uppercase">{'Editar Conciliaci\u00f3n'}</p></div>
+          <div className="p-5 space-y-3">
+            <BFG label="Fecha"><input type="date" className={inp} value={histEditForm.fecha} onChange={e=>setHistEditForm(f=>({...f,fecha:e.target.value}))}/></BFG>
+            <BFG label={`Efectivo contado en caja (${String(histEdit.moneda||'').toUpperCase()==='BS'?'Bs.':'$'})`}><input type="number" step="0.01" className={inp} value={histEditForm.saldoContado} onChange={e=>setHistEditForm(f=>({...f,saldoContado:e.target.value}))}/></BFG>
+          </div>
+          <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+            <BBo onClick={()=>setHistEdit(null)}>Cancelar</BBo><BBg onClick={()=>setPwdPrompt({accion:'editar'})}>Guardar</BBg>
+          </div>
+        </div>
+      </div>
+    )}
+    {pwdPrompt&&(
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>{setPwdPrompt(null);setPwdInput('');setPwdError(false);}}>
+        <div className="bg-white rounded-2xl max-w-sm w-full" onClick={e=>e.stopPropagation()}>
+          <div className="px-5 py-4" style={{background:'#0f172a'}}><p className="text-white font-black text-sm uppercase">Clave de Administrador</p></div>
+          <div className="p-5 space-y-3">
+            <p className="text-xs text-slate-500">{'Para '}{pwdPrompt.accion==='editar'?'editar':'eliminar'}{' esta conciliaci\u00f3n aprobada, ingresa la clave de administrador.'}</p>
+            <input type="password" autoFocus value={pwdInput} onChange={e=>{setPwdInput(e.target.value);setPwdError(false);}} onKeyDown={e=>e.key==='Enter'&&confirmarPwd()}
+              className={`w-full border-2 rounded-xl px-3 py-2 text-xs font-bold outline-none ${pwdError?'border-red-400 bg-red-50':'border-gray-200 focus:border-orange-400'}`} placeholder="Clave"/>
+            {pwdError&&<p className="text-[10px] text-red-500 font-bold">Clave incorrecta.</p>}
+          </div>
+          <div className="px-5 py-4 border-t border-slate-100 flex gap-2">
+            <BBo onClick={()=>{setPwdPrompt(null);setPwdInput('');setPwdError(false);}}>Cancelar</BBo><BBg onClick={confirmarPwd}>Confirmar</BBg>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>);
+}
+
 const DebugPanel = () => {
   const [, forceUpdate] = useState(0);
   const [minimizado, setMinimizado] = useState(window.__bancoDbgMin ?? true);
@@ -2447,6 +2707,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const [movCaja,    setMovCaja]  = useState([]);
   const [arques,     setArques]   = useState([]);
   const [concils,    setConcils]  = useState([]);
+  const [concilsCaja, setConcilsCaja] = useState([]);
+  const concilCajaIds = new Set((concilsCaja||[]).flatMap(c=>c.movimientoIds||[])); // movimientos de caja ya conciliados
   const [tasas,      setTasas]    = useState([]);
   const [clientes,   setClientes] = useState([]);
   const [facturas,   setFacturas] = useState([]);
@@ -2489,6 +2751,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       onSnapshot(query(getColRef('caja_movimientos'), orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('caja_arques'), orderBy('fecha','desc')), s => setArques(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('banco_conciliaciones'), s => setConcils(s.docs.map(d=>d.data()))),
+      onSnapshot(getColRef('caja_conciliaciones'), s => setConcilsCaja(s.docs.map(d=>d.data()))),
       onSnapshot(query(getColRef('banco_tasas'), orderBy('fecha','desc')), s => setTasas(s.docs.map(d=>d.data()))),
       onSnapshot(getColRef('clientes'), s => setClientes(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(query(getColRef('facturacion_facturas'), orderBy('fechaEmision','desc')), s => setFacturas(s.docs.map(d=>d.data()))),
@@ -6451,6 +6714,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const guardarEditCaja = async() => {
       if(!cajaDet) return;
+      if(cajaDet.estatus==='Conciliado'||concilCajaIds.has(cajaDet.id)) return alert('Este movimiento ya est\u00e1 conciliado. Elimine primero la conciliaci\u00f3n para poder editarlo.');
       if(!form.montoNativo||Number(form.montoNativo)<=0) return alert('Ingrese un monto válido');
       if(!form.concepto) return alert('Ingrese el concepto');
       setBusy(true);
@@ -6929,6 +7193,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <div className="flex items-center gap-1 mt-0.5">
                       {m._cajaNombre&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-slate-700">🏦 {m._cajaNombre}</span>}
                       {m._fromBanco&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen==='CxP'?'CxP':'CxC'}</span>}
+                      {(m.estatus==='Conciliado'||concilCajaIds.has(m.id))&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-emerald-600">&#10003; CONC.</span>}
                     </div>
                   </BTd>
                   <BTd className="text-[10px] max-w-[120px] truncate">{m._tercero||m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
@@ -6940,7 +7205,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <div className="flex items-center gap-1">
                       <button onClick={()=>generarPDFMovCaja(m)} className="p-1.5 text-slate-700 hover:bg-slate-100 rounded-lg" title="Comprobante PDF"><FileText size={12}/></button>
                       <button onClick={()=>{setCajaDet(m);setCajaEdit(false);}} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver / Editar"><Settings size={12}/></button>
-                      <button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={12}/></button>
+                      <button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} disabled={m.estatus==='Conciliado'||concilCajaIds.has(m.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title={(m.estatus==='Conciliado'||concilCajaIds.has(m.id))?'Conciliado: elimine primero la conciliaci\u00f3n':'Eliminar'}><Trash2 size={12}/></button>
                     </div>
                   </BTd>
                 </tr>)}
@@ -9786,7 +10051,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                                                     {id:'caja_op',       label:'Operaciones Caja', icon:Banknote},
                                                     {id:'pagos_identificar',label:'Pagos por Identificar',icon:Inbox},
                                                     {id:'vales',         label:'Relación de Vales',icon:FileText},
-                                                    {id:'arqueo',        label:'Arqueo de Caja',   icon:Calculator}] },
+                                                    {id:'arqueo',        label:'Arqueo de Caja',   icon:Calculator},
+                                                    {id:'conciliacion_caja', label:'Conciliaci\u00f3n', icon:CheckCircle}] },
     { group:'Reportes',    color:'#f59e0b', items:[{id:'rpt_gral_caja',  label:'General de Caja',  icon:PiggyBank},
                                                     {id:'rpt_comp_caja', label:'Comprobante de Caja',icon:FileText},
                                                     {id:'rpt_libro_caja',label:'Libro Diario General',icon:BookOpen}] },
@@ -9806,6 +10072,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     pagos_identificar:<PagosPorIdentificarView/>,
     conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva} concils={concils} validarClaveAdmin={validarClaveAdmin}/>, reciprocidad:<ReciprocidadView/>,
     cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
+    conciliacion_caja:<ConciliacionCajaView cajas={cajas} movCaja={movCaja} cobrosCajaCxc={cobrosCajaCxc} pagosCajaCxP={pagosCajaCxP} tasaActiva={tasaActiva} concils={concilsCaja} validarClaveAdmin={validarClaveAdmin}/>,
     caja_dashboard:<CajaOpView/>,
     rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
     rpt_gral_caja:<ReportesGeneralView tipo="caja"/>,
