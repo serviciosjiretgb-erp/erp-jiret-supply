@@ -2064,7 +2064,7 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
   const saldoInicialUSD = cuenta?(esCuentaBs?saldoInicialNativo/tasaActiva:saldoInicialNativo):0;
   const saldoInicialBs  = cuenta?(esCuentaBs?saldoInicialNativo:saldoInicialNativo*tasaActiva):0;
   const saldoConcil=saldoLibros; // el ajuste por marcados/no-marcados ya está adentro de saldoLibrosCalculadoNativo
-  const sbNum=Number(saldoBanco)||0;const saldoConcilMonedaCta=esCuentaBs?saldoLibrosBs:saldoLibrosUSD;const diff=sbNum-saldoConcilMonedaCta;const OK=Math.abs(diff)<0.01&&sbNum>0;
+  const sbNum=Number(saldoBanco)||0;const saldoConcilMonedaCta=esCuentaBs?saldoLibrosBs:saldoLibrosUSD;const diff=sbNum-saldoConcilMonedaCta;const sbTecleado=String(saldoBanco??'').trim()!=='';const OK=Math.abs(diff)<0.01&&sbTecleado; // saldo 0 es valido: basta que el campo tenga un valor escrito
   const aprobar=async()=>{
     if(!OK)return alert('Diferencia debe ser $0.00');
     if(!window.confirm('¿Aprobar conciliación? Podrás editarla o eliminarla luego con la clave de administrador si necesitas corregir algo.'))return;
@@ -2176,7 +2176,7 @@ function ConciliacionView({ cuentas, movBanco, tasaActiva, concils, validarClave
       </select></BFG>
       <BFG label="Desde"><input type="date" className={inp} value={desde} onChange={e=>setDesde(e.target.value)}/></BFG>
       <BFG label="Hasta"><input type="date" className={inp} value={hasta} onChange={e=>setHasta(e.target.value)}/></BFG>
-      <BFG label={esCuentaBs?'Saldo según Banco (Bs.)':'Saldo según Banco ($)'}><input type="number" step="0.01" className={`${inp} font-black ${OK?'border-emerald-400 bg-emerald-50':sbNum>0?'border-amber-300':''}`} value={saldoBanco} onChange={e=>setSaldoBco(e.target.value)} placeholder={esCuentaBs?'0,00 Bs.':'0.00'}/></BFG>
+      <BFG label={esCuentaBs?'Saldo según Banco (Bs.)':'Saldo según Banco ($)'}><input type="number" step="0.01" className={`${inp} font-black ${OK?'border-emerald-400 bg-emerald-50':sbTecleado?'border-amber-300':''}`} value={saldoBanco} onChange={e=>setSaldoBco(e.target.value)} placeholder={esCuentaBs?'0,00 Bs.':'0.00'}/></BFG>
     </div></BCard>
     {cuentaId&&<div className="grid lg:grid-cols-3 gap-5">
       <div className="lg:col-span-2 space-y-3">
