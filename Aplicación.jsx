@@ -22669,6 +22669,8 @@ function App() {
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
      {movs:[...movCajaApp, ...derivarMovsCajaDesdeCxcCxp(cobrosCxc, procuraPagosCxpApp, movCajaApp, settings?.tasaBCV)], cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
+        // Caja: la contabilidad arranca en el mes del saldo inicial declarado en "Editar Caja" (mesSaldoInicial); lo anterior se ignora
+        if(mod==='Caja'){ const _cj=(cuentas||[]).find(c=>c.id===m[idField]); if(_cj&&_cj.mesSaldoInicial&&(m.fecha||'')<`${_cj.mesSaldoInicial}-01`) return; }
         // Si este movimiento YA está vinculado a un registro de "Cuentas por Pagar Relacionadas"
         // (sección 6, más abajo), se omite aquí — si no, se cuenta dos veces: una vez como
         // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
