@@ -2329,16 +2329,20 @@ function ConciliacionCajaView({ cajas, movCaja, cobrosCajaCxc, pagosCajaCxP, tas
   const todosMovs=useMemo(()=>construirMovsCaja(movCaja,cobrosCajaCxc,pagosCajaCxP,tasaActiva),[movCaja,cobrosCajaCxc,pagosCajaCxP,tasaActiva]);
   const idsConciliados=useMemo(()=>{const s=new Set();(concils||[]).forEach(c=>(c.movimientoIds||[]).forEach(id=>s.add(id)));return s;},[concils]);
   const esBsMov=m=>String(m.moneda||'').toUpperCase()==='BS';
-  const movsDeCaja=caja?todosMovs.filter(m=>(m._cajaId||m.cajaId||'')===cajaId&&(esCajaBs?esBsMov(m):!esBsMov(m))):[];
+  // Se ancla al saldo inicial y al mes declarados en "Editar Caja" (mesSaldoInicial): lo anterior a ese mes se ignora.
+  const inicioCaja=caja?`${caja.mesSaldoInicial||'2000-01'}-01`:'2000-01-01';
+  const movsDeCaja=caja?todosMovs.filter(m=>(m._cajaId||m.cajaId||'')===cajaId&&(esCajaBs?esBsMov(m):!esBsMov(m))&&(m.fecha||'')>=inicioCaja):[];
+  const desdeEf=(!desde||desde<inicioCaja)?inicioCaja:desde;
   const nativo=m=>esCajaBs?Number(m.montoBs||0):Number(m.montoUSD||0);
   const signo=m=>m.tipo==='Ingreso'?1:-1; // todo lo que no sea Ingreso sale de la caja
   const saldoActualDe=(c)=>{
     const bsC=String(c.moneda||'').toUpperCase()==='BS';
-    const mv=todosMovs.filter(m=>(m._cajaId||m.cajaId||'')===c.id&&(bsC?esBsMov(m):!esBsMov(m)));
+    const ini=`${c.mesSaldoInicial||'2000-01'}-01`;
+    const mv=todosMovs.filter(m=>(m._cajaId||m.cajaId||'')===c.id&&(bsC?esBsMov(m):!esBsMov(m))&&(m.fecha||'')>=ini);
     return Number(c.saldoInicial||0)+mv.reduce((s,m)=>s+(m.tipo==='Ingreso'?1:-1)*(bsC?Number(m.montoBs||0):Number(m.montoUSD||0)),0);
   };
   const todos=movsDeCaja
-    .filter(m=>m.estatus!=='Conciliado'&&!idsConciliados.has(m.id)&&(!desde||(m.fecha||'')>=desde)&&(!hasta||(m.fecha||'')<=hasta))
+    .filter(m=>m.estatus!=='Conciliado'&&!idsConciliados.has(m.id)&&(m.fecha||'')>=desdeEf&&(!hasta||(m.fecha||'')<=hasta))
     .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
   const toggle=id=>setMarcados(p=>({...p,[id]:p[id]===false?true:false}));
   const marcarTodos=()=>{const n={};todos.forEach(m=>n[m.id]=true);setMarcados(p=>({...p,...n}));};
@@ -2348,7 +2352,7 @@ function ConciliacionCajaView({ cajas, movCaja, cobrosCajaCxc, pagosCajaCxP, tas
   const ingTrans=todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]===false).reduce((a,m)=>a+Number(m.montoUSD||0),0);
   // Saldo inicial del periodo = saldo inicial de la caja + todo lo ocurrido antes de "Desde" (misma base que Cuentas de Caja)
   const saldoIniCaja=Number(caja?.saldoInicial||0);
-  const netoAntes=movsDeCaja.filter(m=>desde&&(m.fecha||'')<desde).reduce((s,m)=>s+signo(m)*nativo(m),0);
+  const netoAntes=movsDeCaja.filter(m=>(m.fecha||'')<desdeEf).reduce((s,m)=>s+signo(m)*nativo(m),0);
   const saldoInicialNativo=saldoIniCaja+netoAntes;
   const entradasNativo=todos.filter(m=>m.tipo==='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+nativo(m),0);
   const salidasNativo=todos.filter(m=>m.tipo!=='Ingreso'&&marcados[m.id]!==false).reduce((a,m)=>a+nativo(m),0);
@@ -2446,7 +2450,7 @@ function ConciliacionCajaView({ cajas, movCaja, cobrosCajaCxc, pagosCajaCxP, tas
     </div></BCard>
     {cajaId&&<div className="grid lg:grid-cols-3 gap-5">
       <div className="lg:col-span-2 space-y-3">
-        <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle="Marque los que ya verific\u00f3 contra el conteo / vales de la caja" action={
+        <BCard title={`Movimientos a Conciliar (${todos.length})`} subtitle={'Marque los que ya verific\u00f3 contra el conteo / vales de la caja'} action={
           todos.length>0&&(<button onClick={todosMarcados?desmarcarTodos:marcarTodos} className="text-[10px] font-black uppercase text-blue-600 hover:text-blue-800 flex items-center gap-1"><CheckCircle size={13}/> {todosMarcados?'Desmarcar todos':'Seleccionar todos'}</button>)
         }>
           {todos.length===0?<BEmptyState icon={CheckCircle} title="Sin movimientos pendientes" desc=""/>:
@@ -5507,7 +5511,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const getSaldoCaja = (cajaId)=>{
       const esBs = m => String(m||'').toUpperCase()==='BS';
-      const movs = movCaja.filter(m=>m.cajaId===cajaId);
+      // Solo cuenta lo ocurrido desde el mes del saldo inicial declarado en "Editar Caja" (lo anterior se ignora)
+      const iniCaja = `${((cajas||[]).find(x=>x.id===cajaId)?.mesSaldoInicial)||'2000-01'}-01`;
+      const movs = movCaja.filter(m=>m.cajaId===cajaId && (m.fecha||'')>=iniCaja);
       const bs  = movs.filter(m=>esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
       const usd = movs.filter(m=>!esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
       // Cobros CxC / Pagos CxP registrados a través de esta caja — se excluyen SOLO los que
@@ -5517,10 +5523,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       // duplicado — pero Aplicación.jsx nunca crea ese duplicado para pagos en efectivo
       // (CAJA::), así que ese filtro excluía TODOS los cobros de caja hechos por "Registrar
       // Cobranza", sin importar si de verdad estaban duplicados o no.
-      const cobrosCaja = cobrosCajaCxc.filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId && !(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId)));
+      const cobrosCaja = cobrosCajaCxc.filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId && (c.fecha||'')>=iniCaja && !(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId)));
       const bsCobros  = cobrosCaja.filter(c=>esBs(c.moneda)).reduce((a,c)=>{const tasa=Number(c.tasa||tasaActiva)||tasaActiva;return a+(Number(c.montoBs||0)||(Number(c.monto||0)*tasa));},0);
       const usdCobros = cobrosCaja.filter(c=>!esBs(c.moneda)).reduce((a,c)=>a+Number(c.monto||0),0);
-      const pagosCaja = pagosCajaCxP.filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId && !(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId)));
+      const pagosCaja = pagosCajaCxP.filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId && (p.fecha||'')>=iniCaja && !(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId)));
       const bsPagos  = pagosCaja.filter(p=>esBs(p.moneda)).reduce((a,p)=>{const tasa=Number(p.tasa||tasaActiva)||tasaActiva;return a+(Number(p.montoBs||0)||(Number(p.monto||0)*tasa));},0);
       const usdPagos = pagosCaja.filter(p=>!esBs(p.moneda)).reduce((a,p)=>a+Number(p.monto||0),0);
       return {bs: bs+bsCobros-bsPagos, usd: usd+usdCobros-usdPagos};
@@ -6398,7 +6404,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const c = cajas.find(x=>x.id===cajaId);
       if(!c) return 0;
       const esBs = m => String(m.moneda||'').toUpperCase()==='BS';
-      const movs = allMovsCajaBase.filter(m=>(m._cajaId||m.cajaId||'')===cajaId);
+      const iniCajaAct = `${c.mesSaldoInicial||'2000-01'}-01`;
+      const movs = allMovsCajaBase.filter(m=>(m._cajaId||m.cajaId||'')===cajaId && (m.fecha||'')>=iniCajaAct);
       const sumBs  = movs.filter(esBs).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
       const sumUsd = movs.filter(m=>!esBs(m)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
       return Number(c.saldoInicial||0) + (c.moneda==='BS'?sumBs:sumUsd);
@@ -8423,13 +8430,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const getSaldoCajaRes = (cajaId)=>{
       const esBs = m => String(m||'').toUpperCase()==='BS';
-      const movs = movCaja.filter(m=>m.cajaId===cajaId);
+      // Solo cuenta lo ocurrido desde el mes del saldo inicial declarado en "Editar Caja" (lo anterior se ignora)
+      const iniCaja = `${((cajas||[]).find(x=>x.id===cajaId)?.mesSaldoInicial)||'2000-01'}-01`;
+      const movs = movCaja.filter(m=>m.cajaId===cajaId && (m.fecha||'')>=iniCaja);
       const bs  = movs.filter(m=>esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
       const usd = movs.filter(m=>!esBs(m.moneda)).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
-      const cobrosCaja = (cobrosCajaCxc||[]).filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId && !(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId)));
+      const cobrosCaja = (cobrosCajaCxc||[]).filter(c=>(c.cuentaBancariaId||'').replace('CAJA::','')===cajaId && (c.fecha||'')>=iniCaja && !(c.grupoCobroId && movCaja.some(m=>m.grupoCobroId===c.grupoCobroId)));
       const bsCobros  = cobrosCaja.filter(c=>esBs(c.moneda)).reduce((a,c)=>{const t=Number(c.tasa||tasaActiva)||tasaActiva;return a+(Number(c.montoBs||0)||(Number(c.monto||0)*t));},0);
       const usdCobros = cobrosCaja.filter(c=>!esBs(c.moneda)).reduce((a,c)=>a+Number(c.monto||0),0);
-      const pagosCaja = (pagosCajaCxP||[]).filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId && !(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId)));
+      const pagosCaja = (pagosCajaCxP||[]).filter(p=>(p.cuentaId||'').replace('CAJA::','')===cajaId && (p.fecha||'')>=iniCaja && !(p.grupoPagoId && movCaja.some(m=>m.grupoPagoId===p.grupoPagoId)));
       const bsPagos  = pagosCaja.filter(p=>esBs(p.moneda)).reduce((a,p)=>{const t=Number(p.tasa||tasaActiva)||tasaActiva;return a+(Number(p.montoBs||0)||(Number(p.monto||0)*t));},0);
       const usdPagos = pagosCaja.filter(p=>!esBs(p.moneda)).reduce((a,p)=>a+Number(p.monto||0),0);
       return {bs: bs+bsCobros-bsPagos, usd: usd+usdCobros-usdPagos};
@@ -9334,7 +9343,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return()=>u();
     },[]);
     let allMovs=movsFuente.map(m=>({...m,origen:isBanco?'Banco':'Caja'}));
-    allMovs=allMovs.filter(m=>{if(m.fecha<filtDesde||m.fecha>filtHasta)return false;if(filtOrigen&&m[idField]!==filtOrigen)return false;return true;});
+    allMovs=allMovs.filter(m=>{if(m.fecha<filtDesde||m.fecha>filtHasta)return false;if(filtOrigen&&m[idField]!==filtOrigen)return false;if(!isBanco&&(m.fecha||'')<cajaIniciaEn(m.cajaId))return false;return true;});
     allMovs.sort((a,b)=>a.fecha.localeCompare(b.fecha));
     let lineasPlanas=[],sBs=0,sUSD=0;
     allMovs.forEach(m=>{
@@ -9500,8 +9509,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const totBsBanco = cuentas.filter(c=>c.moneda==='BS').reduce((a,c)=>a+Number(c.saldo),0);
     const totUSDBanco = cuentas.filter(c=>c.moneda==='USD').reduce((a,c)=>a+Number(c.saldo),0);
     const totBsEqBanco = cuentas.reduce((a,c)=>a+(c.moneda==='BS'?Number(c.saldo):Number(c.saldo)*tasaDia),0);
-    const saldoCajaBs  = movCaja.filter(m=>m.moneda==='BS' ).reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoBs||0),0);
-    const saldoCajaUSD = movCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number(m.montoUSD||0),0);
+    const saldoCajaBs  = (cajas||[]).filter(c=>String(c.moneda||'').toUpperCase()==='BS').reduce((a,c)=>a+saldoCajaVigente(c),0);
+    const saldoCajaUSD = (cajas||[]).filter(c=>String(c.moneda||'').toUpperCase()!=='BS').reduce((a,c)=>a+saldoCajaVigente(c),0);
     const totBsEqCaja = saldoCajaBs + (saldoCajaUSD * tasaDia);
     const imprimir=()=>{
       const gruposImp = [
@@ -9666,6 +9675,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     },[]);
     const applyFiltros = (a, isMov=false) => {
       if(!isMov && a.modulo!==(isBanco?'Bancos':'Caja')) return false;
+      if(!isBanco){ // Caja: nada anterior al mes del saldo inicial de la caja
+        const _cid = a.cajaId || (isMov?'':movsFuente.find(m=>m.id===a.movimientoCajaId||m.id===a.movimientoBancoId)?.cajaId);
+        if(_cid && (a.fecha||'')<cajaIniciaEn(_cid)) return false;
+      }
       if(filtDesde && a.fecha < filtDesde) return false;
       if(filtHasta && a.fecha > filtHasta) return false;
       const bancoId = isMov ? a[idField] : (a[idField] || movsFuente.find(m=>m.id===a.movimientoBancoId)?.[idField]);
@@ -10034,6 +10047,20 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     );
   };
 
+  // Caja: la contabilidad y los reportes arrancan en el mes del saldo inicial declarado en "Editar Caja".
+  const cajaIniciaEn = (cajaId) => `${((cajas||[]).find(c=>c.id===cajaId)?.mesSaldoInicial)||'2000-01'}-01`;
+  const saldoCajaVigente = (c) => {
+    const esBsC = String(c.moneda||'').toUpperCase()==='BS';
+    const ini = `${c.mesSaldoInicial||'2000-01'}-01`;
+    const esBsM = m => String(m||'').toUpperCase()==='BS';
+    const movs = movCaja.filter(m=>m.cajaId===c.id && (m.fecha||'')>=ini && (esBsC?esBsM(m.moneda):!esBsM(m.moneda)));
+    const net = movs.reduce((a,m)=>a+(m.tipo==='Ingreso'?1:-1)*Number((esBsC?m.montoBs:m.montoUSD)||0),0);
+    const cobros = (cobrosCajaCxc||[]).filter(x=>(x.cuentaBancariaId||'').replace('CAJA::','')===c.id && (x.fecha||'')>=ini && (esBsC?esBsM(x.moneda):!esBsM(x.moneda)) && !(x.grupoCobroId && movCaja.some(m=>m.grupoCobroId===x.grupoCobroId)))
+      .reduce((a,x)=>{const t=Number(x.tasa||tasaActiva)||tasaActiva;return a+(esBsC?(Number(x.montoBs||0)||(Number(x.monto||0)*t)):Number(x.monto||0));},0);
+    const pagos = (pagosCajaCxP||[]).filter(x=>(x.cuentaId||'').replace('CAJA::','')===c.id && (x.fecha||'')>=ini && (esBsC?esBsM(x.moneda):!esBsM(x.moneda)) && !(x.grupoPagoId && movCaja.some(m=>m.grupoPagoId===x.grupoPagoId)))
+      .reduce((a,x)=>{const t=Number(x.tasa||tasaActiva)||tasaActiva;return a+(esBsC?(Number(x.montoBs||0)||(Number(x.monto||0)*t)):Number(x.monto||0));},0);
+    return Number(c.saldoInicial||0)+net+cobros-pagos;
+  };
   const navGroupsBanco = [
     { group:'Analítica',   color:'#f97316', items:[{id:'dashboard',    label:'Panel General',      icon:LayoutDashboard}] },
     { group:'Bancos',      color:'#3b82f6', items:[{id:'cuentas',      label:'Cuentas Bancarias',  icon:Building2},
