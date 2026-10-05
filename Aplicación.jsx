@@ -6200,6 +6200,17 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
 // coincidía con lo que ya se veía bien en Comprobantes Contables. Ahora es un solo lugar: lo que
 // se vea en Comprobantes Contables (incluida cualquier reclasificación) es exactamente lo que
 // viaja a los reportes financieros.
+// Debe/Haber editable por linea (reclasificacion con tipoOverride 'D' | 'H'): intercambia el lado de la linea.
+const _ladoDebeLinea = (o) => (Number(o.debeBs||0)+Number(o.debeUSD||0))>0.0001 || (Number(o.haberBs||0)+Number(o.haberUSD||0))<=0.0001;
+const aplicarLadoDH = (r, o) => {
+  if(!r || !r.tipoOverride) return o;
+  if((r.tipoOverride==='D') === _ladoDebeLinea(o)) return o;
+  return {...o, debeBs:o.haberBs, haberBs:o.debeBs, debeUSD:o.haberUSD, haberUSD:o.debeUSD};
+};
+const swapTipoCC = (ov, l) => {
+  if(!ov || !ov.tipoOverride || ov.tipoOverride===l.tipo) return l;
+  return {...l, tipo:ov.tipoOverride, dBs:l.hBs, hBs:l.dBs, dUSD:l.hUSD, hUSD:l.dUSD};
+};
 const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const {cuentas, idField, nombreCta, asientos, provs, clientes, tercerosRel, planCuentas, tabId, aplicarReclas, cuentasAnticipoCfg} = ctx;
   const cta = (cuentas||[]).find(c=>c.id===m[idField]);
@@ -6211,7 +6222,7 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
     return (asientoLigado.lineas||[]).map((l,li)=>{
       const r = aplicarReclas(tabId, compId, li, l.codigo||'', l.cuenta||'—');
-      return {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)};
+      return aplicarLadoDH(r, {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)});
     });
   }
   // 2) Si no, se reconstruye: primero el tercero específico (su propia cuenta configurada),
@@ -6260,8 +6271,8 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const propiaR = aplicarReclas(tabId, compId, 0, codPropia, nombrePropia);
   const contraR = aplicarReclas(tabId, compId, 1, contra.codigo, contra.cuenta);
   return [
-    {codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD},
-    {codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0},
+    aplicarLadoDH(propiaR, {codigo:propiaR.codigo, cuenta:propiaR.cuenta, debeBs:isIng?montoBs:0, haberBs:isIng?0:montoBs, debeUSD:isIng?montoUSD:0, haberUSD:isIng?0:montoUSD}),
+    aplicarLadoDH(contraR, {codigo:contraR.codigo, cuenta:contraR.cuenta, debeBs:isIng?0:montoBs, haberBs:isIng?montoBs:0, debeUSD:isIng?0:montoUSD, haberUSD:isIng?montoUSD:0}),
   ];
 };
 
@@ -20164,7 +20175,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const ov = cuentaReclas(tabId, compId, lineIdx);
     return ov ? {codigo: ov.codigo||codigo, cuenta: ov.cuenta||cuenta,
       montoUSDOverride:ov.montoUSDOverride, montoBsOverride:ov.montoBsOverride,
-      fechaOverride:ov.fechaOverride, nroDocOverride:ov.nroDocOverride, conceptoOverride:ov.conceptoOverride,
+      fechaOverride:ov.fechaOverride, nroDocOverride:ov.nroDocOverride, conceptoOverride:ov.conceptoOverride, tipoOverride:ov.tipoOverride||null,
     } : {codigo, cuenta};
   };
   const [reclasFormExtra, setReclasFormExtra] = useState({fecha:'', nroDoc:'', concepto:'', tasa:'', montoUSD:'', montoBs:''});
@@ -20249,6 +20260,59 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
   // Celda de código+cuenta reutilizable: aplica el override si existe y da acceso a reclasificar
   // con un clic (reemplaza el par de <td> código/cuenta que se repite en las 8 pestañas).
+  // Debe/Haber editable: clic en la D/H de una linea la intercambia (se guarda como reclasificacion con tipoOverride)
+  const alternarTipoCC = async (tabId, compId, li, l) => {
+    try{
+      const key = claveReclas(tabId, compId, li);
+      const ex = reclasificacionesC[key] || {};
+      // Banco / Caja: si el movimiento tiene asiento guardado, se corrige el ASIENTO mismo (cont_asientos).
+      // De ahi se alimentan Libro Diario, Mayor, Balance de Comprobacion, Estado de Resultados, etc.
+      if(tabId==='banco' || tabId==='caja'){
+        const movs = tabId==='banco' ? (movBanco||[]) : (movCaja||[]);
+        const m = movs.find(x=>(x._docId||x.id)===compId || x.id===compId);
+        const asiento = m && (asientosCC||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
+        if(asiento && Array.isArray(asiento.lineas) && asiento.lineas[li]){
+          const nl = asiento.lineas.map((x,i)=>{
+            if(i!==li) return x;
+            const eraDebe = _ladoDebeLinea(x);
+            return {...x, tipoLinea: eraDebe?'H':'D', debeBs:Number(x.haberBs||0), haberBs:Number(x.debeBs||0), debeUSD:Number(x.haberUSD||0), haberUSD:Number(x.debeUSD||0)};
+          });
+          const batch = writeBatch(db);
+          batch.update(getDocRef('cont_asientos', asiento.id), {
+            lineas: nl,
+            totalDebeBs: nl.reduce((t,x)=>t+Number(x.debeBs||0),0), totalHaberBs: nl.reduce((t,x)=>t+Number(x.haberBs||0),0),
+            totalDebeUSD: nl.reduce((t,x)=>t+Number(x.debeUSD||0),0), totalHaberUSD: nl.reduce((t,x)=>t+Number(x.haberUSD||0),0),
+            editadoDH: true, editadoDHTs: Date.now(), editadoDHPor: 'Comprobantes Contables',
+          });
+          // si habia una reclasificacion de lado para esta linea, se limpia (el asiento ya quedo corregido)
+          if(ex.tipoOverride) batch.set(getDocRef('comprobantes_reclasificaciones', key), {...ex, tipoOverride:null}, {merge:true});
+          await batch.commit();
+          return;
+        }
+      }
+      // Resto de pesta as (o movimiento sin asiento guardado): reclasificacion de lado (tipoOverride)
+      const nuevo = l.tipo==='D' ? 'H' : 'D';
+      const original = ex.tipoOriginal || l.tipo;
+      await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
+        ...ex,
+        codigo: ex.codigo ?? l.codigo ?? '', cuenta: ex.cuenta ?? l.cuenta ?? '',
+        tabId, compId, lineIdx: li, timestamp: Date.now(),
+        codigoOriginal: ex.codigoOriginal ?? (l.codigo||''), cuentaOriginal: ex.cuentaOriginal ?? (l.cuenta||''),
+        tipoOriginal: original,
+        tipoOverride: nuevo===original ? null : nuevo,
+      });
+    }catch(e){ alert('Error al cambiar Debe/Haber: '+e.message); }
+  };
+  const CeldaTipoCC = ({tabId, compId, li, l}) => {
+    const ov = cuentaReclas(tabId, compId, li);
+    return (
+      <td className="px-3 py-2 text-center">
+        <button type="button" onClick={()=>alternarTipoCC(tabId, compId, li, l)}
+          title={'Clic para cambiar a '+(l.tipo==='D'?'Haber (H)':'Debe (D)')+((tabId==='banco'||tabId==='caja')?'  \u00b7  corrige el asiento guardado':'')+(ov?.tipoOverride?'  \u00b7  editado (original: '+ov.tipoOriginal+')':'')}
+          className={`font-black px-1.5 rounded hover:bg-orange-100 cursor-pointer ${l.tipo==='D'?'text-emerald-600':'text-red-500'} ${ov?.tipoOverride?'underline decoration-orange-400':''}`}>{l.tipo}</button>
+      </td>
+    );
+  };
   const CeldaCuentaCC = ({tabId, compId, li, l, r}) => {
     const ov = cuentaReclas(tabId, compId, li);
     const codigo = ov?.codigo || l.codigo;
@@ -20383,11 +20447,12 @@ ${valoresHtml}
 
   // Config por pestaña: qué datos, títulos y formato de columnas usa cada comprobante.
   // Aplica las reclasificaciones guardadas también al PDF/Excel, para que coincidan con pantalla.
+  const conTipoCC = (tabId, lineasArr) => (lineasArr||[]).map(r => ({...r, lineas:(r.lineas||[]).map((l,li)=>swapTipoCC(cuentaReclas(tabId, r.id, li), l))}));
   const aplicarReclasCC = (tabId, lineasArr) => (lineasArr||[]).map(r => ({
     ...r,
     lineas: (r.lineas||[]).map((l, li) => {
       const ov = cuentaReclas(tabId, r.id, li);
-      return ov ? {...l, codigo: ov.codigo, cuenta: ov.cuenta} : l;
+      return ov ? swapTipoCC(ov, {...l, codigo: ov.codigo, cuenta: ov.cuenta}) : l;
     }),
   }));
 
@@ -20599,7 +20664,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'procura') {
-      const lineasProc = filtrarPorBusquedaCC(construirLineasProcura());
+      const lineasProc = filtrarPorBusquedaCC(conTipoCC('procura', construirLineasProcura()));
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
@@ -20629,7 +20694,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
                       <td className={`px-3 py-2 text-gray-400 font-mono whitespace-nowrap ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoReclas('procura',r.id,li,'fecha','Fecha','date',r.fecha,ctx)} title={li===0?'Clic para editar la fecha':''}>{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='procura' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='procura' compId={r.id} li={li} l={l}/>
                       <td className={`px-3 py-2 font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoReclas('procura',r.id,li,'nroDoc','Nro Fact.','text',r.doc,ctx)} title={li===0?'Clic para editar el nro. de factura':''}>{li===0?r.doc:''}</td>
                       <td className={`px-3 py-2 text-gray-600 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoReclas('procura',r.id,li,'concepto','Concepto','text',r.conc,ctx)} title={li===0?'Clic para editar el concepto':''}>{li===0?r.conc:''}</td>
                       <td className={`px-3 py-2 text-right font-mono font-black text-emerald-600 ${l.dUSD>0?'cursor-pointer hover:bg-orange-50':''}`} onClick={()=>l.dUSD>0&&abrirEditarCampoReclas('procura',r.id,li,'montoUSD','Monto $','number',l.dUSD,ctx)} title={l.dUSD>0?'Clic para editar el monto en $':''}>{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
@@ -20653,7 +20718,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ventas') {
-      const lineasVta = filtrarPorBusquedaCC(construirLineasVentasCompleto());
+      const lineasVta = filtrarPorBusquedaCC(conTipoCC('ventas', construirLineasVentasCompleto()));
       const nFact = lineasVta.filter(r=>!r.esNota).length;
       const nNC = lineasVta.filter(r=>r.tipoNota==='NC').length;
       const nND = lineasVta.filter(r=>r.tipoNota==='ND').length;
@@ -20687,7 +20752,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-teal-600">{li===0?(<>{r.tipoNota&&<span className={`mr-1 px-1.5 py-0.5 rounded text-[8px] ${r.tipoNota==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoNota}</span>}{r.comprobante}</>):''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='ventas' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='ventas' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
@@ -20711,7 +20776,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ret_cli') {
-      const lineasRet = filtrarPorBusquedaCC(construirLineasRetencionesCliente());
+      const lineasRet = filtrarPorBusquedaCC(conTipoCC('ret_cli', construirLineasRetencionesCliente()));
       return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
@@ -20740,7 +20805,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-purple-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='ret_cli' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='ret_cli' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
@@ -20764,7 +20829,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ret_prov') {
-      const lineasRP = filtrarPorBusquedaCC(construirLineasRetencionesProveedor());
+      const lineasRP = filtrarPorBusquedaCC(conTipoCC('ret_prov', construirLineasRetencionesProveedor()));
       const nIVA = lineasRP.filter(r=>r.tipoRet==='IVA').length;
       const nISLR = lineasRP.filter(r=>r.tipoRet==='ISLR').length;
       return (
@@ -20795,7 +20860,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-amber-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='ret_prov' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='ret_prov' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
@@ -20819,7 +20884,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'deprec') {
-      const lineasDep = filtrarPorBusquedaCC(construirLineasDepreciacion());
+      const lineasDep = filtrarPorBusquedaCC(conTipoCC('deprec', construirLineasDepreciacion()));
       const totalDepUSD = lineasDep.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       return (
         <div className="p-6 space-y-4">
@@ -20857,7 +20922,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-stone-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='deprec' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='deprec' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
@@ -20882,7 +20947,7 @@ ${valoresHtml}
     }
     if (activo === 'imp_enterar') {
       const MESES_IMP=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-      const lineasImp = filtrarPorBusquedaCC(construirLineasImpuestosPorEnterar());
+      const lineasImp = filtrarPorBusquedaCC(conTipoCC('imp_enterar', construirLineasImpuestosPorEnterar()));
       const totalImpUSD = lineasImp.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       const faltaAE = lineasImp.some(r=>r.id.startsWith('AE-') && r.lineas.some(l=>!l.codigo));
       const faltaPP = lineasImp.some(r=>r.id.startsWith('PP-') && r.lineas.some(l=>!l.codigo));
@@ -20925,7 +20990,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-indigo-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='imp_enterar' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='imp_enterar' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
@@ -20950,7 +21015,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'ajustes') {
-      const lineasAj = filtrarPorBusquedaCC(construirLineasAjustes());
+      const lineasAj = filtrarPorBusquedaCC(conTipoCC('ajustes', construirLineasAjustes()));
       const totalAjUSD = lineasAj.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       return (
         <div className="p-6 space-y-4">
@@ -20991,7 +21056,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='ajustes' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='ajustes' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?(r.tasa?contFmt(r.tasa):'—'):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
@@ -21110,7 +21175,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'nomina') {
-      const lineasNom = filtrarPorBusquedaCC(construirLineasNomina());
+      const lineasNom = filtrarPorBusquedaCC(conTipoCC('nomina', construirLineasNomina()));
       const totalNomUSD = lineasNom.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       return (
         <div className="p-6 space-y-4">
@@ -21143,7 +21208,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='nomina' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='nomina' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-gray-500">{l.detalle||''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?(r.tasa?contFmt(r.tasa):'—'):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
@@ -21336,7 +21401,7 @@ ${valoresHtml}
     }
     if (activo === 'costos_produccion' || activo === 'consumos_internos') {
       const esCostos = activo === 'costos_produccion';
-      const lineasProd = filtrarPorBusquedaCC(esCostos ? construirLineasCostosProduccion() : construirLineasConsumosInternos());
+      const lineasProd = filtrarPorBusquedaCC(conTipoCC(esCostos?'costos_produccion':'consumos_internos', esCostos ? construirLineasCostosProduccion() : construirLineasConsumosInternos()));
       const totalUSD = lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       const faltaConfig = !cuentasProduccionCfgC || Object.keys(cuentasProduccionCfgC).length===0;
       const tabIdActual = esCostos ? 'costos_produccion' : 'consumos_internos';
@@ -21371,7 +21436,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId={tabIdActual} compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId={tabIdActual} compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-gray-500">{l.detalle||''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
@@ -21404,7 +21469,7 @@ ${valoresHtml}
       );
     }
     if (activo === 'relacionadas') {
-      const lineasRel = filtrarPorBusquedaCC(construirLineasRelacionadas());
+      const lineasRel = filtrarPorBusquedaCC(conTipoCC('relacionadas', construirLineasRelacionadas()));
       const totalRelUSD = lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
       return (
         <div className="p-6 space-y-4">
@@ -21435,7 +21500,7 @@ ${valoresHtml}
                       <td className="px-3 py-2 font-mono font-black text-pink-600">{li===0?r.comprobante:''}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='relacionadas' compId={r.id} li={li} l={l} r={r}/>
-                      <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                      <CeldaTipoCC tabId='relacionadas' compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 font-mono text-gray-400">{li===0?r.doc:''}</td>
                       <td className="px-3 py-2 text-gray-600 uppercase">{li===0?r.conc:''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
@@ -21892,7 +21957,7 @@ ${valoresHtml}
                     <td className="px-3 py-2 font-mono font-black text-blue-600">{li===0?r.comprobante:''}</td>
                     <td className={`px-3 py-2 text-gray-400 font-mono whitespace-nowrap ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'fecha','Fecha','date')} title={li===0?'Clic para editar la fecha':''}>{li===0?contDd(r.fecha):''}</td>
                     <CeldaCuentaCC tabId={esBanco?'banco':'caja'} compId={r.id} li={li} l={l} r={r}/>
-                    <td className="px-3 py-2 text-center"><span className={`font-black ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span></td>
+                    <CeldaTipoCC tabId={esBanco?'banco':'caja'} compId={r.id} li={li} l={l}/>
                     <td className={`px-3 py-2 font-mono text-gray-400 ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'referencia','Nro Doc / Referencia','text')} title={li===0?'Clic para editar el nro. de documento':''}>{li===0?r.doc:''}</td>
                     <td className={`px-3 py-2 text-gray-600 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'concepto','Concepto','text')} title={li===0?'Clic para editar el concepto':''}>{li===0?r.conc:''}</td>
                     <td className={`px-3 py-2 text-gray-500 uppercase ${li===0?'cursor-pointer hover:bg-orange-50 hover:text-orange-600':''}`} onClick={()=>li===0&&abrirEditarCampoCC(r,esBanco,'proveedor','Proveedor/Cliente','text')} title={li===0?'Clic para asignar a qué proveedor/cliente pertenece este movimiento':''}>{li===0?(r.proveedor||'—'):''}</td>
@@ -22498,14 +22563,14 @@ function App() {
       const ov = reclasificacionesApp[`${tabId}__${compId}__${lineIdx}`];
       return ov ? {codigo:ov.codigo||codigo, cuenta:ov.cuenta||cuenta,
         montoUSDOverride:ov.montoUSDOverride, montoBsOverride:ov.montoBsOverride,
-        fechaOverride:ov.fechaOverride, nroDocOverride:ov.nroDocOverride, conceptoOverride:ov.conceptoOverride,
+        fechaOverride:ov.fechaOverride, nroDocOverride:ov.nroDocOverride, conceptoOverride:ov.conceptoOverride, tipoOverride:ov.tipoOverride||null,
       } : {codigo, cuenta};
     };
     const mapLineas = (lineas, tabId, compId) => lineas.map((l,li)=>{
       const codigo=(l.cuenta||'').split('—')[0].trim();
       const cuenta=(l.cuenta||'').split('—').slice(1).join('—').trim()||l.cuenta;
       const r = tabId ? aplicarReclasLinea(tabId, compId, li, codigo, cuenta) : {codigo, cuenta};
-      const esDeb = l.tipo==='DEBITO';
+      const esDeb = r.tipoOverride ? r.tipoOverride==='D' : l.tipo==='DEBITO';
       const montoUSD = r.montoUSDOverride!=null ? r.montoUSDOverride : (l.montoUSD||0);
       const montoBs = r.montoBsOverride!=null ? r.montoBsOverride : (l.montoBs||0);
       return {
@@ -22795,6 +22860,7 @@ function App() {
             activosFijos, activoFijoCfg:activoFijoCfgC, planCuentas:planDeCuentas, tasa,
             tabId:'deprec', aplicarReclas:aplicarReclasLinea, compId,
           });
+          if(r) r.lineas = (r.lineas||[]).map((l,li)=>aplicarLadoDH(reclasificacionesApp[`deprec__${compId}__${li}`], l));
           if(r){
             const [yy,mm]=cur.split('-');
             const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
@@ -22822,7 +22888,7 @@ function App() {
             settingsTasa:settings?.tasaBCV, tabId:'imp_enterar', aplicarReclas:aplicarReclasLinea,
           });
           items.forEach(it=>{
-            out.push({fecha:it.fecha, comprobante:it.id, modulo:'Impuestos', concepto:`${it.comprobante} — ${mesKey}`, lineas:it.lineas});
+            out.push({fecha:it.fecha, comprobante:it.id, modulo:'Impuestos', concepto:`${it.comprobante} — ${mesKey}`, lineas:(it.lineas||[]).map((l,li)=>aplicarLadoDH(reclasificacionesApp[`imp_enterar__${it.id}__${li}`], l))});
           });
         }catch(e){}
       });
