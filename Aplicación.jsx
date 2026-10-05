@@ -35572,7 +35572,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // 2. Mix de categoría — según subcategorías vendidas por la empresa
           const mixOrden = [...(cfg.mixTabla||[])].sort((a,b)=>b.cat-a.cat);
           const mixAplica = mixOrden.find(m=>nSubcats>=m.cat);
-          const montoMix = mixAplica ? mixAplica.monto : 0;
+          const montoMixAuto = mixAplica ? mixAplica.monto : 0; // referencia; el Mix ahora se ingresa a mano
 
           // 3. Cobranza automática desde Notas de Entrega
           const calcRango = (dias) => {
@@ -35719,8 +35719,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             salarioGarantizado: salarioAplica ? parseNum(bonosGuardados.salarioGarantizado ?? salarioBaseFicha) : 0,
             captacion: parseNum(bonosGuardados.captacion ?? captacionAuto),
             recuperacion: parseNum(bonosGuardados.recuperacion ?? recuperacionAuto),
+            mix: parseNum(bonosGuardados.mix ?? 0),
           };
 
+          const montoMix = parseNum(bonos.mix||0); // Mix de Categoria: monto manual
           const comisionTotalVenta = comisionMeta + montoMix;
           // Comisión porcentual simple (si aplica)
           const comisionPorcentual = tipoComisionVend==='PORCENTUAL' ? (totalVentasVend*(pctSimple/100)) : 0;
@@ -35768,7 +35770,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               fila('Salario Garantizado',salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:'No aplica',bonos.salarioGarantizado),
               fila(`Captación de Cliente (≥${minClientesCaptacion})`,`${nuevosCount} nuevo(s)`,bonos.captacion),
               fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
-              fila(`Mix de Categoría (${nSubcats} subcat.)`,mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado',montoMix),
+              fila('Mix de Categor\u00eda','Manual',montoMix),
               fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
               fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
             ].join('');
@@ -35791,7 +35793,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               fila('Salario Garantizado',salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:'No aplica',bonos.salarioGarantizado),
               fila(`Captación de Cliente (≥${minClientesCaptacion})`,`${nuevosCount} nuevo(s)`,bonos.captacion),
               fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
-              fila(`Mix de Categoría (${nSubcats} subcat.)`,mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado',montoMix),
+              fila('Mix de Categor\u00eda','Manual',montoMix),
               fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
               fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
             ].join('');
@@ -35913,7 +35915,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <tr><td className="px-3 py-2 font-bold">Salario Garantizado <span className="text-[8px] text-gray-400">(primeros 3 meses)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.salarioGarantizado||''} onChange={e=>setComBonos({...bonos,salarioGarantizado:parseNum(e.target.value)})} disabled={!salarioAplica} className={`w-24 border rounded-lg px-2 py-1 text-right font-black text-xs ${!salarioAplica?'bg-gray-100 text-gray-400':''}`} placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{fechaIngreso?(salarioAplica?`Aplica (mes ${mesesDesdeIngreso+1}/3)`:`Vencido (${fechaIngreso})`):'Sin fecha ingreso'}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.salarioGarantizado)}</td></tr>
                         <tr><td className="px-3 py-2 font-bold">Captación de Cliente <span className="text-[8px] text-gray-400">(≥{minClientesCaptacion} nuevos)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.captacion||''} onChange={e=>setComBonos({...bonos,captacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[8px] text-gray-500 mt-1 text-left whitespace-normal break-words">{nuevosCount} nuevo(s){nuevosCount>0?`: ${nuevosLista.join(', ')}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.captacion)}</td></tr>
                         <tr><td className="px-3 py-2 font-bold">Recuperación de Cliente <span className="text-[8px] text-gray-400">(+6 meses inactivo)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.recuperacion||''} onChange={e=>setComBonos({...bonos,recuperacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{recuperadosCount} recuperado(s){recuperadosCount>0?`: ${recuperadosLista.slice(0,3).join(', ')}${recuperadosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.recuperacion)}</td></tr>
-                        <tr className="bg-blue-50"><td className="px-3 py-2 font-bold">Mix de Categoría ({nSubcats} subcat. vendidas)</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{mixAplica?`Cumple ${mixAplica.cat}+`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(montoMix)}</td></tr>
+                        <tr className="bg-blue-50"><td className="px-3 py-2 font-bold">{'Mix de Categor\u00eda'}</td><td className="px-3 py-2 text-right"><input type="number" value={bonos.mix||''} onChange={e=>setComBonos({...bonos,mix:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(montoMix)}</td></tr>
                         <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Meta de Venta</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{escMeta?`${escMeta.pct}%`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(comisionMeta)}</td></tr>
                         <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Cobranza</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{cobranzaCalc.length} pagos</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(totalCobranza)}</td></tr>
                       </tbody>
@@ -35944,18 +35946,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <tbody className="divide-y divide-gray-50">
                           {(cfg.metaTabla||[]).map((e,i)=>{const aplica=totalVentasVend>=e.min&&totalVentasVend<=e.max;return(
                             <tr key={i} className={aplica?'bg-green-50':''}><td className="px-3 py-1.5 font-bold">${formatNum(e.min)} a ${formatNum(e.max)}</td><td className="px-3 py-1.5 text-center font-black">{e.pct}%</td><td className={`px-3 py-1.5 text-center font-black text-[9px] ${aplica?'text-green-600':'text-gray-400'}`}>{aplica?'✓ Alcanzado':'No alcanzado'}</td><td className="px-3 py-1.5 text-right font-black">${formatNum(aplica?totalVentasVend*(e.pct/100):0)}</td></tr>
-                          );})}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="border-2 border-gray-100 rounded-2xl overflow-hidden">
-                      <div className="bg-blue-600 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest">2. Mix de Categoría (subcategorías vendidas por la empresa)</div>
-                      <div className="px-4 py-2 bg-blue-50 text-[9px] font-bold text-gray-600 uppercase">Subcategorías vendidas este mes: <b className="text-blue-700">{nSubcats}</b> {nSubcats>0?`(${Array.from(subcatsVendidas).join(', ')})`:''}</div>
-                      <table className="w-full text-xs">
-                        <thead><tr className="bg-gray-50 text-[8px] font-black uppercase text-gray-500"><th className="px-3 py-2 text-left">Categorías</th><th className="px-3 py-2 text-center">Estatus</th><th className="px-3 py-2 text-right">Monto</th></tr></thead>
-                        <tbody className="divide-y divide-gray-50">
-                          {(cfg.mixTabla||[]).map((m,i)=>{const aplica=nSubcats>=m.cat&&(mixAplica&&mixAplica.cat===m.cat);const cumple=nSubcats>=m.cat;return(
-                            <tr key={i} className={aplica?'bg-green-50':''}><td className="px-3 py-1.5 font-bold">{m.cat} categorías</td><td className={`px-3 py-1.5 text-center font-black text-[9px] ${cumple?'text-green-600':'text-gray-400'}`}>{cumple?'✓':'No alcanzado'}</td><td className="px-3 py-1.5 text-right font-black">${formatNum(aplica?m.monto:0)}</td></tr>
                           );})}
                         </tbody>
                       </table>
