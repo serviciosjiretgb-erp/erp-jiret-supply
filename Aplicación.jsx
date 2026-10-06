@@ -3690,12 +3690,12 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         _soloRif(r.rifProveedor),
         (r.nroFactura||'').toString().trim(),
         (r.nroControl||'').toString().trim(),
-        N2(total),
-        N2(base16),
+        N2(cero?0:total),
+        N2(cero?0:base16),
         N2(cero?0:montoRet),
         ((r.tipoDocumento==='NC'||r.tipoDocumento==='ND')?((r.facturaAfectada||'').toString().trim()||'0'):'0'),
         (r.nroComprobante||'').toString().trim(),
-        N2(exento),
+        N2(cero?0:exento),
         N2(PCT_IVA),
         '0'
       ].join('\t');
@@ -3706,6 +3706,8 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     const _facts=_meta.filter(m=>m.r.tipoDocumento!=='NC'&&m.r.tipoDocumento!=='ND');
     const _avisos=[]; const _extras=[];
     _meta.forEach((m,i)=>{
+      const _c=lineas[i].split('\t'); const _esp=parseFloat((parseFloat(_c[9])*(m.pct/100)*(pNum(m.r.pctRetencion||75)/100)).toFixed(2));
+      if(Math.abs(_esp-parseFloat(_c[10]))>0.01)_avisos.push(`Comprobante ${m.r.nroComprobante||''} (doc ${m.r.nroFactura||''}): el IVA retenido ${_c[10]} no es igual a base x alicuota x % retencion (${_esp.toFixed(2)}); el SENIAT lo rechazara.`);
       if(m.r.tipoDocumento!=='NC'&&m.r.tipoDocumento!=='ND') return;
       const fa=_nfx(m.r.facturaAfectada), rifM=_soloRif(m.r.rifProveedor);
       const f=_facts.find(x=>_soloRif(x.r.rifProveedor)===rifM&&fa&&_nfx(x.r.nroFactura)===fa);
@@ -3715,7 +3717,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         if(orig){
           const _ya=_extras.some(e=>e.orig===orig);
           if(!_ya)_extras.push({idx:i,orig,line:_mk(orig,true)});
-          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}); se agrego en este TXT como linea de referencia con retencion 0,00 para que la NC tenga a que apuntar (la retencion original ya se declaro en su periodo).`);
+          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}); se agrego en este TXT como linea de referencia con base, total y retencion en 0,00 (asi cumple base x alicuota x % = retencion) para que la NC tenga a que apuntar (la retencion original ya se declaro en su periodo).`);
         }else _avisos.push(`${etq}: esa factura NO se encontro en el sistema ni en este TXT.`);
         return;
       }
