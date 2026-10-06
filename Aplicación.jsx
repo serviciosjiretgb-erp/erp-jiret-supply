@@ -3079,7 +3079,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       // Solo retenciones de IVA — el mismo criterio que ya usa Libro de Ventas. Sin este filtro se
       // sumaban también ISLR/Municipal/Otras retenciones, inflando "Retenciones del Período".
       // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
-      const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f.substring(0,7)===`${detAnio}-${detMes}`&&getQuincenaRetMod(r)===detQ&&(r.tipoRetencion||'IVA')==='IVA';});
+      const retVentasPeriodo=filtrarRetIvaVentasLibro(detRetVentas, detInvoices, detAnio, detMes, detQ);
       let ivaDebitosBs=0;
       ventasFact.forEach(inv=>{
         if(inv.aplicaIva!=='SI') return;
@@ -3139,7 +3139,11 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     if(!editRet) return;
     try{
       const col=editRet.tipo==='IVA'?'procura_ret_iva':'procura_ret_islr';
-      await setDoc(getDocRef(col,editRet.doc.id),{...editRetForm,nroComprobante:editRetForm.nroComprobante||editRet.doc.nroComprobante,updatedAt:Date.now()},{merge:true});
+      const _fEf=editRetForm.fecha||editRet.doc.fecha||'';
+      const _mesF=_fEf.substring(0,7), _qF=((parseInt(_fEf.substring(8,10),10)||1)<=15)?'1':'2';
+      const _hayOv=!!(editRetForm._periodoMes&&editRetForm._periodoQ&&(editRetForm._periodoMes!==_mesF||String(editRetForm._periodoQ)!==_qF));
+      const {_periodoMes:_pm,_periodoQ:_pq,...restoForm}=editRetForm;
+      await setDoc(getDocRef(col,editRet.doc.id),{...restoForm,_periodoMes:_hayOv?_pm:'',_periodoQ:_hayOv?String(_pq):'',nroComprobante:editRetForm.nroComprobante||editRet.doc.nroComprobante,updatedAt:Date.now()},{merge:true});
       setEditRet(null);
       setImpDialog({title:'✅ Actualizado',text:'Comprobante actualizado correctamente.',type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
@@ -3510,9 +3514,15 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
   // Solo para las tablas en pantalla (fecha más reciente primero) — el XML fiscal sigue usando _ordCompIVA (por N° comprobante)
   const _ordFechaDesc=(a,b)=>(b.fecha||'').localeCompare(a.fecha||'');
   const RET_PAGE_SIZE=25;
+  // Fecha con la que se ubica un comprobante en mes/quincena: si en "Editar Retencion" se eligio otro Mes/Quincena
+  // (guardado como _periodoMes/_periodoQ), manda esa eleccion; si no, su fecha normal.
+  const _fechaRefRet=(r)=>{
+    if(r&&r._periodoMes&&r._periodoQ) return `${r._periodoMes}-${String(r._periodoQ)==='2'?'16':'01'}`;
+    return (r&&r.fecha)||'';
+  };
   const _MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   const _mesLabel=(r)=>{
-    const [y,m]=(r.fecha||'').split('-');
+    const [y,m]=_fechaRefRet(r).split('-');
     const mi=parseInt(m,10)-1;
     return (y&&mi>=0&&mi<12)?`${_MESES[mi]} ${y}`:'—';
   };
@@ -3526,8 +3536,8 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     if(f.factura&&!_normRet(r.nroFactura).includes(_normRet(f.factura))) return false;
     if(f.comprobante&&!_normRet(r.nroComprobante).includes(_normRet(f.comprobante))) return false;
     if(tipoR==='ISLR'&&f.concepto&&!(_normRet(r.concepto).includes(_normRet(f.concepto))||_normRet(r.codConcepto).includes(_normRet(f.concepto)))) return false;
-    if(f.desde&&(r.fecha||'')<f.desde) return false;
-    if(f.hasta&&(r.fecha||'')>f.hasta) return false;
+    if(f.desde&&_fechaRefRet(r)<f.desde) return false;
+    if(f.hasta&&_fechaRefRet(r)>f.hasta) return false;
     return true;
   };
   const hayFiltrosRetActivos=Object.values(retFiltros).some(Boolean);
@@ -3643,12 +3653,12 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     if(!txtMes){setImpDialog({title:'Falta el mes',text:'Selecciona el mes a declarar.',type:'alert'});return;}
     const q=parseInt(txtQuincena,10);
     const lista=retIVA.filter(r=>{
-      const mesOK=(r.fecha||'').substring(0,7)===txtMes;
+      const mesOK=_fechaRefRet(r).substring(0,7)===txtMes;
       // La quincena se calcula del DÍA real de la fecha (1-15 = I, 16-fin = II), no del campo de
       // texto "periodo" — ese campo puede no estar bien poblado en registros viejos, y como
       // "includes('II')" da false para un texto vacío, todo terminaba cayendo en la I Quincena
       // por defecto (por eso pedir la I traía todo el mes).
-      const dia=parseInt((r.fecha||'').substring(8,10),10)||1;
+      const dia=parseInt(_fechaRefRet(r).substring(8,10),10)||1;
       const qOK=(dia<=15?1:2)===q;
       return mesOK&&qOK;
     }).sort(_ordCompIVA);
@@ -3705,7 +3715,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
   const _escXml=s=>(s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
   const generarXmlRetISLR=()=>{
     if(!xmlMes){setImpDialog({title:'Falta el mes',text:'Selecciona el mes a declarar.',type:'alert'});return;}
-    const lista=retISLR.filter(r=>(r.fecha||'').substring(0,7)===xmlMes).sort(_ordCompIVA);
+    const lista=retISLR.filter(r=>_fechaRefRet(r).substring(0,7)===xmlMes).sort(_ordCompIVA);
     if(lista.length===0){setImpDialog({title:'Sin registros',text:`No hay retenciones ISLR para ${xmlMes}.`,type:'alert'});return;}
     const [yyyy,mm]=xmlMes.split('-');
     const rifAgente=_soloRif(settings?.empresaRif||'J-41230937-4');
@@ -3956,7 +3966,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                           <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:_mes,_periodoQ:_detectQ(r.periodo)});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:r._periodoMes||_mes,_periodoQ:r._periodoQ||((parseInt((r.fecha||'').substring(8,10),10)||1)<=15?'1':'2')});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -4017,7 +4027,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                           <button onClick={()=>imprimirComprobante(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:_mes,_periodoQ:_detectQ(r.periodo)});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'ISLR'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pct:r.pct||0,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseImponibleBs:r.baseImponibleBs||0,sustraendoBs:r.sustraendoBs||0,_periodoMes:r._periodoMes||_mes,_periodoQ:r._periodoQ||((parseInt((r.fecha||'').substring(8,10),10)||1)<=15?'1':'2')});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'ISLR')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -4429,7 +4439,7 @@ td,th{border:1px solid #333;padding:5px 7px}
           });
           const ncndFiscalesDet=(detNotasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.fecha>=desde&&n.fecha<=hasta);
           // La quincena es la que se eligió al registrar la retención (no necesariamente la fecha).
-          const retVentasPeriodo=(detRetVentas||[]).filter(r=>{const f=r.fechaComprobante||r.fecha||'';return f.substring(0,7)===`${detAnio}-${detMes}`&&getQuincenaRetMod(r)===detQ&&(r.tipoRetencion||'IVA')==='IVA';});
+          const retVentasPeriodo=filtrarRetIvaVentasLibro(detRetVentas, detInvoices, detAnio, detMes, detQ);
           let ventasGravadasBs=0, ivaDebitosBs=0;
           ventasFact.forEach(inv=>{
             if(inv.aplicaIva!=='SI') return;
@@ -5991,6 +6001,20 @@ const pNum=(v)=>parseFloat(String(v||0).replace(/[^0-9.-]/g,''))||0;
 // Quincena de una retención: la que se eligió a mano al registrarla (no necesariamente la
 // que marca la fecha) — a nivel de módulo para que Libro de Ventas y Determinación de IVA
 // usen exactamente el mismo criterio.
+// Retenciones de IVA recibidas (ventas) de una quincena: MISMO criterio que el Libro de Ventas, para que la
+// Determinacion de IVA (campo 66) y el Libro siempre coincidan: respeta "Mes a Reflejar" (periodoLibroMes) y la
+// quincena elegida al registrar; excluye IGTF y "otras retenciones"; ignora las que no tienen factura asociada.
+const filtrarRetIvaVentasLibro=(rets,invoices,anio,mes2,q)=>(rets||[]).filter(r=>{
+  if(r.tipoExtra&&r.tipo!=='IGTF') return false;
+  if(r.tipo==='IGTF') return false;
+  if((r.tipoRetencion||'IVA')!=='IVA') return false;
+  if(r.periodoLibroMes){ if(r.periodoLibroMes!==`${anio}-${mes2}`) return false; }
+  else { const f=r.fechaComprobante||r.fecha||''; if(f.substring(0,7)!==`${anio}-${mes2}`) return false; }
+  if(getQuincenaRetMod(r)!==String(q)) return false;
+  const esManual=String(r.facturaId||'').startsWith('MANUAL-');
+  if(!esManual&&!(invoices||[]).some(i=>i.id===r.facturaId)) return false;
+  return true;
+});
 const getQuincenaRetMod=(r)=>{
   if(String(r?.quincena)==='1'||String(r?.quincena)==='2') return String(r.quincena);
   const dd=parseInt((r?.fechaComprobante||r?.fecha||'').split('-')[2],10);
