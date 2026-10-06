@@ -5142,12 +5142,14 @@ td,th{border:1px solid #333;padding:5px 7px}
           const ventasM2=_baseVentas(`${rtAnio}-${rtMes}-16`,mHasta);
           const ventasBrutasMes=ventasM1.totBruta+ventasM2.totBruta;
 
-          const _enMes=(r)=>(r.fecha||'').substring(0,7)===`${rtAnio}-${rtMes}`;
-          const _enQuincena=(r)=>_enMes(r)&&_detectQ(r.periodo)===rtQ;
+          const _enMes=(r)=>_fechaRefRet(r).substring(0,7)===`${rtAnio}-${rtMes}`;
+          const _qDeRet=(r)=>(r&&r._periodoQ)?(String(r._periodoQ)==='2'?'2':'1'):_detectQ(r&&r.periodo);
+          const _enQuincena=(r)=>_enMes(r)&&_qDeRet(r)===rtQ;
+          const _qDiaRet=(r)=>{if(r&&r._periodoQ)return String(r._periodoQ)==='2'?'2':'1';const d=parseInt((_fechaRefRet(r)||'').substring(8,10),10);return d>=16?'2':'1';};
           const retIvaBs=(retIVA||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           // Retenciones de ISLR se declaran MENSUALMENTE ante el SENIAT (no por quincena, a diferencia de IVA) —
           // por eso este total suma todo el mes, no solo la quincena seleccionada arriba.
-          const retIslrBs=(retISLR||[]).filter(_enMes).reduce((s,r)=>s+pNum(r.montoBs||0),0);
+          const retIslrBs=(retISLR||[]).filter(r=>_enMes(r)&&_qDiaRet(r)===rtQ).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           const anticipoIslrBs=parseFloat((ventasQ.totGravada*0.01).toFixed(2));
           // IGTF — antes era manual; ahora sale solo, sumando el IGTF realmente percibido y registrado
           // (pestaña Impuestos → IGTF) cuyo período/quincena de libro sea el seleccionado aquí. Cuando el
@@ -5179,7 +5181,7 @@ td,th{border:1px solid #333;padding:5px 7px}
             {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:retIvaBs,campo:'venceIva'},
             {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
             {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:igtfBs,campo:'venceIgtf'},
-            {label:'RETENCIONES DE ISLR',periodo:'MENSUAL',monto:retIslrBs,campo:'venceRetIslr'},
+            {label:'RETENCIONES DE ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:retIslrBs,campo:'venceRetIslr'},
             {label:'PENSIONES',periodo:'MENSUAL',monto:pensionesBs,campo:'vencePensiones'},
             {label:'IMPUESTO SOBRE LA RENTA',periodo:'ANUAL',monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
           ];
