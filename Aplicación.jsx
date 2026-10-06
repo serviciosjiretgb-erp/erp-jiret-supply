@@ -17168,8 +17168,11 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // categoría de inventario involucrada (Materia Prima/Consumibles/Terminados).
   const construirLineasCostosProduccion = () => {
     const cfg = cuentasProduccionCfgC;
+    const _nfVistoCP=new Map(); (facturasVentaC||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal) return; const p=_nfVistoCP.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoCP.set(nf,f);});
     return (facturasVentaC||[]).filter(f=>{
       if (f.esAnulacionFiscal) return false;
+      { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoCP.get(nf)?.id!==f.id) return false; }
+      if (reclasificacionesC[`EXCL__costos_produccion__${f.id}`]) return false;
       const items = f.itemsFacturados||[];
       if (!items.some(it=>Number(it.costoTotal||0)>0)) return false;
       const fecha = f.fecha||'';
@@ -20673,7 +20676,7 @@ ${valoresHtml}
   const contenido = () => {
     if (activo === 'reclasificaciones') {
       const labelTab = (id) => TABS_CC.find(t=>t.id===id)?.label || id;
-      const lista = Object.values(reclasificacionesC||{})
+      const lista = Object.values(reclasificacionesC||{}).filter(rc=>rc.tabId!=='excl')
         .filter(rc => { const q=buscarCC.toUpperCase(); return !q || (rc.cuenta||'').toUpperCase().includes(q) || (rc.cuentaOriginal||'').toUpperCase().includes(q) || (rc.conceptoComprobante||'').toUpperCase().includes(q); })
         .filter(rc => (!filtDesde || !rc.fechaComprobante || rc.fechaComprobante>=filtDesde) && (!filtHasta || !rc.fechaComprobante || rc.fechaComprobante<=filtHasta))
         .sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
@@ -21522,6 +21525,10 @@ ${valoresHtml}
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
                       <td className="px-3 py-2 text-center">{li===0 && (
                         <div className="flex items-center gap-1 justify-center">
+                          {esCostos && <button title="Eliminar este asiento" onClick={async()=>{
+                            if(!window.confirm('\u00bfEliminar el asiento de la factura '+r.comprobante+'? Deja de aparecer en Comprobantes, Mayor y Estados (la factura de venta no se toca). Se puede restaurar desde la pesta\u00f1a Reclasificaciones.')) return;
+                            try{ await setDoc(getDocRef('comprobantes_reclasificaciones', `EXCL__costos_produccion__${r.id}`), {tabId:'excl', compId:r.id, excluido:true, conceptoComprobante:'ASIENTO ELIMINADO \u2014 '+r.comprobante, fechaComprobante:r.fecha||'', timestamp:Date.now()}); }catch(e){ alert('Error: '+e.message); }
+                          }} className="px-1.5 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-500 hover:text-white">Eliminar</button>}
                           <input key={r.tasa} type="number" step="0.0001" defaultValue={r.tasa} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0) guardarTasaManualProd(r.id, v);}}
                             className="w-16 border border-gray-200 rounded px-1 py-1 text-[10px] font-bold text-center outline-none focus:border-orange-400" title="Tasa manual para este comprobante"/>
                           <button disabled={fetchingBCV} title="Aplicar tasa BCV del día" onClick={async()=>{const t=await fetchTasaBCV(r.fecha); if(t) guardarTasaManualProd(r.id, t);}}
@@ -21532,7 +21539,7 @@ ${valoresHtml}
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={6} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} {esCostos?'factura(s)':'salida(s)'}</td>
+                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasProd.length} {esCostos?'factura(s)':'salida(s)'}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasProd.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
@@ -22873,7 +22880,10 @@ function App() {
     // 9a) Costo de Producción/Venta — MISMA función compartida que usa Comprobantes Contables
     // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
     // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
+    const _nfVistoEng=new Map(); (invoices||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal) return; const p=_nfVistoEng.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoEng.set(nf,f);});
     (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+      { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoEng.get(nf)?.id!==f.id) return; }
+      if (reclasificacionesApp[`EXCL__costos_produccion__${f.id}`]) return;
       const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos, notasEntrega});
       if(!r) return;
       out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
@@ -35021,7 +35031,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     {rows.length===0 && <tr><td colSpan={16} className="py-8 text-center text-gray-400 font-bold">Sin datos en el período seleccionado</td></tr>}
                   </tbody>
                   {rows.length>0 && <tfoot><tr className="bg-black text-white font-black text-[8px]">
-                    <td colSpan={8} className="py-2 px-1.5 uppercase">TOTALES</td>
+                    <td colSpan={9} className="py-2 px-1.5 uppercase">TOTALES</td>
                     <td className="py-2 px-1.5 text-right">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
                     <td/>
                     <td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalVentas)}</td>
