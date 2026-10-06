@@ -3664,7 +3664,9 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     const rifAgente=_soloRif(settings?.empresaRif||'J-41230937-4');
     const periodoAAAAMM=txtMes.replace('-','');
     const N2=n=>Math.abs(parseFloat(n)||0).toFixed(2);
-    const lineas=lista.map(r=>{
+    const _meta=[];
+    const _nfx=x=>(x||'').toString().replace(/\D/g,'').replace(/^0+/,'');
+    const _mk=(r,cero)=>{
       const montoRet=pNum(r.montoBs||0);
       const pctRetUsado=(pNum(r.pctRetencion||75)/100)||0.75;
       const baseIVA=pNum(r.baseIVABs||0); // monto de IVA de la factura (no la base)
@@ -3678,6 +3680,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         ||(montoRet?parseFloat((montoRet/(pctRetUsado*(PCT_IVA/100))).toFixed(2)):0);
       const exento=pNum(r.exentoBs||0);
       const total=pNum(r.totalFacturaBs||0)||parseFloat((base16*(1+PCT_IVA/100)+exento).toFixed(2));
+      if(!cero)_meta.push({r,pct:PCT_IVA});
       return[
         rifAgente,
         periodoAAAAMM,
@@ -3689,14 +3692,39 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         (r.nroControl||'').toString().trim(),
         N2(total),
         N2(base16),
-        N2(montoRet),
+        N2(cero?0:montoRet),
         ((r.tipoDocumento==='NC'||r.tipoDocumento==='ND')?((r.facturaAfectada||'').toString().trim()||'0'):'0'),
         (r.nroComprobante||'').toString().trim(),
         N2(exento),
         N2(PCT_IVA),
         '0'
       ].join('\t');
+    };
+    const lineas=lista.map(r=>_mk(r,false));
+    // Validacion SENIAT: el documento afectado de una NC/ND debe ser una factura (01) declarada en ESTE mismo TXT,
+    // con el mismo RIF y la misma alicuota. Se escribe exactamente como esta en la factura y se avisa si no esta.
+    const _facts=_meta.filter(m=>m.r.tipoDocumento!=='NC'&&m.r.tipoDocumento!=='ND');
+    const _avisos=[]; const _extras=[];
+    _meta.forEach((m,i)=>{
+      if(m.r.tipoDocumento!=='NC'&&m.r.tipoDocumento!=='ND') return;
+      const fa=_nfx(m.r.facturaAfectada), rifM=_soloRif(m.r.rifProveedor);
+      const f=_facts.find(x=>_soloRif(x.r.rifProveedor)===rifM&&fa&&_nfx(x.r.nroFactura)===fa);
+      const etq=`${m.r.tipoDocumento} ${m.r.nroFactura||''} (${m.r.proveedor||''}) afecta ${m.r.facturaAfectada||'?'}`;
+      if(!f){
+        const orig=(retIVA||[]).find(x=>x.tipoDocumento!=='NC'&&x.tipoDocumento!=='ND'&&_soloRif(x.rifProveedor)===rifM&&fa&&_nfx(x.nroFactura)===fa);
+        if(orig){
+          const _ya=_extras.some(e=>e.orig===orig);
+          if(!_ya)_extras.push({idx:i,orig,line:_mk(orig,true)});
+          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}); se agrego en este TXT como linea de referencia con retencion 0,00 para que la NC tenga a que apuntar (la retencion original ya se declaro en su periodo).`);
+        }else _avisos.push(`${etq}: esa factura NO se encontro en el sistema ni en este TXT.`);
+        return;
+      }
+      const cols=lineas[i].split('\t');
+      cols[11]=(f.r.nroFactura||'').toString().trim();
+      if(f.pct!==m.pct)_avisos.push(`${etq}: la alicuota de la NC (${m.pct}%) no coincide con la de la factura (${f.pct}%).`);
+      lineas[i]=cols.join('\t');
     });
+    _extras.sort((x,y)=>y.idx-x.idx).forEach(e=>lineas.splice(e.idx,0,e.line));
     const contenido=lineas.join('\r\n')+'\r\n';
     const blob=new Blob([contenido],{type:'text/plain;charset=utf-8'});
     const url=URL.createObjectURL(blob);
@@ -3706,7 +3734,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     a.click();
     URL.revokeObjectURL(url);
     setShowTxtModal(false);
-    setImpDialog({title:'✅ TXT Generado',text:`${lista.length} comprobante(s) exportado(s) para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`,type:'alert'});
+    setImpDialog({title:'✅ TXT Generado',text:`${lista.length} comprobante(s) exportado(s) para ${txtMes} · ${txtQuincena==='2'?'II':'I'} Quincena.`+(_avisos.length?'\n\nATENCI\u00d3N, el SENIAT puede rechazar:\n'+_avisos.join('\n'):''),type:'alert'});
   };
 
   // ── XML Retenciones ISLR para el portal SENIAT (RelacionRetencionesISLR, declaración mensual) ──
