@@ -3565,8 +3565,8 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     const totalBs=lista.reduce((s,r)=>s+pNum(r.montoBs),0);
     const filtrosTxt=_filtrosRetTxt(tipoR);
     const headCols=tipoR==='IVA'
-      ?['N° Comp.','Proveedor','Factura','Fecha','Período','%','Monto USD','Monto Bs.','Status']
-      :['N° Comp.','Proveedor','Factura','Fecha','Concepto SENIAT','%','Monto USD','Monto Bs.','Status'];
+      ?['N° Comp.','Proveedor','Factura','Fecha','Período','%','Monto USD','Monto Bs.']
+      :['N° Comp.','Proveedor','Factura','Fecha','Concepto SENIAT','%','Monto USD','Monto Bs.'];
     const filasHtml=lista.map((r,i)=>tipoR==='IVA'?`<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
         <td style="padding:3px 6px;font-weight:700;color:#ea580c">${r.nroComprobante||'—'}</td>
         <td style="padding:3px 6px">${r.proveedor||'—'}<div style="font-size:6px;color:#777">${r.rifProveedor||''}</div></td>
@@ -3576,7 +3576,6 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
         <td style="padding:3px 6px;text-align:center">${r.pctRetencion||75}%</td>
         <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.monto)}</td>
         <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.montoBs)}</td>
-        <td style="padding:3px 6px;text-align:center">${r.status||'PENDIENTE'}</td>
       </tr>`:`<tr style="background:${i%2===0?'#fff':'#f8fafc'}">
         <td style="padding:3px 6px;font-weight:700;color:#ea580c">${r.nroComprobante||'—'}</td>
         <td style="padding:3px 6px">${r.proveedor||'—'}<div style="font-size:6px;color:#777">${r.rifProveedor||''}</div></td>
@@ -3586,7 +3585,6 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
         <td style="padding:3px 6px;text-align:center">${r.pct||0}%</td>
         <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.monto)}</td>
         <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.montoBs)}</td>
-        <td style="padding:3px 6px;text-align:center">${r.status||'PENDIENTE'}</td>
       </tr>`).join('');
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Retenciones ${tipoR}</title><style>
 @page{size:legal landscape;margin:10mm 8mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:7px;font-family:Arial}}
@@ -3613,7 +3611,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
 <table>
   <thead><tr>${headCols.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
   <tbody>${filasHtml||`<tr><td colspan="${headCols.length}" style="text-align:center;padding:16px;color:#999">Sin registros para los filtros aplicados</td></tr>`}</tbody>
-  <tfoot><tr><td colspan="${headCols.length-3}" style="text-align:right">TOTALES →</td><td style="text-align:right;font-family:monospace">${fmtN(totalUSD)}</td><td style="text-align:right;font-family:monospace">${fmtN(totalBs)}</td><td></td></tr></tfoot>
+  <tfoot><tr><td colspan="${headCols.length-2}" style="text-align:right">TOTALES →</td><td style="text-align:right;font-family:monospace">${fmtN(totalUSD)}</td><td style="text-align:right;font-family:monospace">${fmtN(totalBs)}</td></tr></tfoot>
 </table>
 <script>window.onload=()=>{window.print();}<\/script>
 </body></html>`;
@@ -43452,282 +43450,321 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
           };
 
-          // ── Excel con membrete ────────────────────────────────────────────────
-          const exportExcel=async()=>{
-            // Cargar SheetJS dinámicamente si no está disponible
-            if(!window.XLSX){
-              await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
-            }
-            const XL=window.XLSX;
+          // ===== Exportes del Libro de Ventas: Excel profesional (ExcelJS) y PDF Oficio horizontal =====
+          const lvPrep=()=>{
             const mes2=String(libroMes).padStart(2,'0');
             const mesesLabel=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
             const mesLabel=mesesLabel[parseInt(libroMes,10)-1]||'';
-            const lastDay=new Date(parseInt(libroAnio),parseInt(libroMes),0).getDate();
-            const desde=libroQuincena==='2'?`${libroAnio}-${mes2}-16`:`${libroAnio}-${mes2}-01`;
-            const hasta=libroQuincena==='1'?`${libroAnio}-${mes2}-15`:`${libroAnio}-${mes2}-${String(lastDay).padStart(2,'0')}`;
-            const fmtFecha=d=>{if(!d)return'';const p=String(d).split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
-            const fmtNum=n=>{if(!n&&n!==0)return '';const a=Math.abs(parseNum(n));const s=a.toFixed(2).split('.');const fmt=s[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+s[1];return parseNum(n)<0?'-'+fmt:fmt;};
-            const pFac=s=>String(s||'').trim()?String(s).trim().replace(/^0+/,'').padStart(8,'0'):'—';
-            const pCtrl=s=>{const c=String(s||'').trim();if(!c)return'—';if(c.includes('-'))return c;return c.length>2?`${c.slice(0,2)}-${c.slice(2)}`:c;};
+            const fmtF=d=>{if(!d)return'';const p=String(d).split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
+            const padF=s=>String(s||'').trim()?String(s).trim().replace(/^0+/,'').padStart(8,'0'):'';
+            const padC=s=>{const c=String(s||'').trim();if(!c)return'';if(c.includes('-'))return c;return c.length>2?`${c.slice(0,2)}-${c.slice(2)}`:c;};
+            const n0=v=>{const n=parseNum(v);return isNaN(n)?0:n;};
+            const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+            const rif=settings?.empresaRif||settings?.empresaRIF||'J-412309374';
+            const dir=settings?.empresaDireccion||settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
             const Q=libroQuincena==='1'?'I QUINCENA':libroQuincena==='2'?'II QUINCENA':'MES COMPLETO';
-            const periodoStr=libroQuincena==='AMBAS'?`01/${mes2}/${libroAnio} AL ${String(lastDay).padStart(2,'0')}/${mes2}/${libroAnio}`:`${fmtFecha(desde)} AL ${fmtFecha(hasta)}`;
-
-            // ── Armar AOA (array of arrays) ──────────────────────────────────
-            const aoa=[];
-            // Filas 1-6: membrete
-            aoa.push(['','SERVICIOS JIRET G&B, C.A.','','','','','','','','','','','','','','','','','IMPUESTO AL VALOR AGREGADO']);
-            aoa.push(['','RIF: J-412309374','','','','','','','','','','','','','','','','','FORMA 99030']);
-            aoa.push(['',''+(settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA')]);
-            aoa.push(['','LIBRO DE VENTAS','','','','','','','','','','','','','','','','MES',mesLabel.toUpperCase()]);
-            aoa.push(['','','','','','','','','','','','','','','','','','PERIODO:',Q]);
-            aoa.push(['','','','','','','','','','','','','','','','','','DEL',periodoStr]);
-            aoa.push(['','','','','','','','','','','','Ventas internas o Exportaciones Gravadas']);
-            // Fila 8-9: encabezados dobles
-            aoa.push(['Nº','Fecha','Nº R.I.F.','Nombre y Apellido o Razón Social','Tipo de Transacción',
-              'N° de Factura','N° Control de Factura','N° Nota de','N° Nota de','Nº Factura',
-              'Valor Total de Ventas','Igtf Percibido','Ventas internas no gravables','Base Imponible',
-              '% Alícuota','Impuesto I.V.A (16%)','IVA Retenido','N° Factura que afecta','N° Comprobante de retención']);
-            aoa.push(['','Documento','o C.I.','','','','','Débito','Crédito','Afectada']);
-            // Filas de datos
-            rows.forEach(r=>{
-              const isFac=r.tipo==='FACTURA';
-              const isRet=r.tipo==='RETENCION';
-              const isNC=r.tipo==='NC';
-              const isND=r.tipo==='ND';
-              aoa.push([
-                r.seq||'',
-                fmtFecha(r.fecha),
-                r.rif||'',
-                r.nombre||'',
-                r.tipo||'',
-                isFac?(pFac(r.nroFactura)):'—',
-                isFac?(pCtrl(r.nroControl)):isNC||isND?(pCtrl(r.nroControl)||'—'):'—',
-                isND?(r.nroDebito||'—'):'—',
-                isNC?(r.nroCredito||'—'):'—',
-                isNC||isND?(pFac(r.facAfectada)||'—'):'—',
-                isFac||isNC||isND?parseNum(r.totalVentasBs||0):0,
-                parseNum(r.igtf||0),
-                parseNum(r.noGravable||0),
-                isFac||isNC||isND?parseNum(r.baseImponibleBs||0):'',
-                isRet?'75%':(r.alicuota||'16%'),
-                isFac||isNC||isND?parseNum(r.ivaBs||0):'',
-                isRet?parseNum(r.ivaRetDb||0):'',
-                isRet?(pFac(r.nroFactAfecta)||'—'):'—',
-                isRet?(r.nroComprobante||'—'):'—',
-              ]);
-            });
-            // Fila TOTAL
-            const totTV=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.totalVentasBs||0)),0);
-            const totBase=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.baseImponibleBs||0)),0);
-            const totIVA=rows.reduce((s,r)=>s+(r.tipo==='RETENCION'?0:parseNum(r.ivaBs||0)),0);
-            const totRet=rows.reduce((s,r)=>s+parseNum(r.ivaRetDb||0),0);
-            const totIgtf=rows.reduce((s,r)=>s+parseNum(r.igtf||0),0);
-            aoa.push(['TOTAL','','','','','','','','','',totTV,totIgtf,0,totBase,'',totIVA,totRet,'','']);
-            // Resumen
-            aoa.push([]);
-            aoa.push(['','','','RESUMEN LIBRO DE VENTAS']);
-            aoa.push(['','','','DÉBITOS FISCALES']);
-            aoa.push(['','','','Ventas internas no gravadas','',0]);
-            aoa.push(['','','','Ventas de exportación','',0]);
-            aoa.push(['','','','Ventas internas gravadas alícuota general (16%)','',totBase]);
-            aoa.push(['','','','Ventas internas gravadas alícuota general + adicional','',0]);
-            aoa.push(['','','','Ventas internas gravadas alícuota reducida','',0]);
-            aoa.push(['','','','Total ventas y débitos fiscales para determinación','',totBase]);
-            aoa.push(['','','','Ajuste a los débitos fiscales de períodos anteriores','',0]);
-            aoa.push(['','','','Certificados de Créditos Fiscales para determinación','',0]);
-            aoa.push(['','','','Total débitos fiscales','',totIVA]);
-            aoa.push([]);
-            aoa.push(['','','','AUTOLIQUIDACIÓN']);
-            aoa.push(['','','','Retenciones acumuladas por descontar','',parseNum(libroRetAcum||0)]);
-            aoa.push(['','','','Retenciones del Período','',totRet]);
-            aoa.push(['','','','Créditos adquiridos por cesión de retenciones','',0]);
-            aoa.push(['','','','Recuperación de retenciones solicitado','',0]);
-            aoa.push(['','','','Total Retenciones','',parseNum(libroRetAcum||0)+totRet]);
-            aoa.push(['','','','Retenciones soportadas y descontadas en esta declaración','',parseNum(libroRetDesc||0)]);
-            aoa.push(['','','','Saldo de Retenciones de IVA no aplicado','',(parseNum(libroRetAcum||0)+totRet)-parseNum(libroRetDesc||0)]);
-            aoa.push(['','','','Total Retenciones','',(parseNum(libroRetAcum||0)+totRet)-parseNum(libroRetDesc||0)]);
-
-            // ── Crear hoja ───────────────────────────────────────────────────
-            const ws=XL.utils.aoa_to_sheet(aoa);
-            // Anchos de columna (unidades: caracteres)
-            ws['!cols']=[{wch:5},{wch:11},{wch:14},{wch:38},{wch:11},{wch:10},{wch:12},{wch:8},{wch:8},{wch:10},{wch:18},{wch:8},{wch:10},{wch:18},{wch:7},{wch:18},{wch:18},{wch:12},{wch:22}];
-            // Formato de número para celdas numéricas (columnas K-Q = índices 10-16)
-            const numFmt='#,##0.00';
-            const firstDataRow=9; // 0-indexed (fila 10 en Excel)
-            for(let ri=firstDataRow;ri<firstDataRow+rows.length+1;ri++){
-              for(let ci=10;ci<=16;ci++){
-                const addr=XL.utils.encode_cell({r:ri,c:ci});
-                if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
-              }
-            }
-            // ── Estilos Libro de Ventas ────────────────────────────────────────
-            const LVS = {
-              memb: {fill:{patternType:'solid',fgColor:{rgb:'FF0F172A'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:10,name:'Arial'}},
-              sub:  {fill:{patternType:'solid',fgColor:{rgb:'FF1E293B'}},font:{color:{rgb:'FFE2E8F0'},sz:8,name:'Arial'}},
-              secH: {fill:{patternType:'solid',fgColor:{rgb:'FF1D4ED8'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'},alignment:{horizontal:'center',wrapText:true}},
-              colH: {fill:{patternType:'solid',fgColor:{rgb:'FF3B82F6'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'},alignment:{horizontal:'center',wrapText:true}},
-              fac:  {fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}},font:{color:{rgb:'FF111827'},sz:8,name:'Arial'}},
-              facN: {fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}},font:{color:{rgb:'FF111827'},sz:8,name:'Arial'},alignment:{horizontal:'right'}},
-              ret:  {fill:{patternType:'solid',fgColor:{rgb:'FFFEFCE8'}},font:{color:{rgb:'FF78350F'},sz:8,name:'Arial'}},
-              retN: {fill:{patternType:'solid',fgColor:{rgb:'FFFEF3C7'}},font:{color:{rgb:'FFDC2626'},bold:true,sz:8,name:'Arial'},alignment:{horizontal:'right'}},
-              nc:   {fill:{patternType:'solid',fgColor:{rgb:'FFEFF6FF'}},font:{color:{rgb:'FF1E40AF'},sz:8,name:'Arial'}},
-              tot:  {fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}},font:{color:{rgb:'FFFFFFFF'},bold:true,sz:9,name:'Arial'}},
-              totN: {fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}},font:{color:{rgb:'FFF97316'},bold:true,sz:9,name:'Arial'},alignment:{horizontal:'right'}},
-              sum:  {fill:{patternType:'solid',fgColor:{rgb:'FFF8FAFC'}},font:{color:{rgb:'FF374151'},sz:8,name:'Arial'}},
-              sumN: {fill:{patternType:'solid',fgColor:{rgb:'FFF1F5F9'}},font:{color:{rgb:'FF0F766E'},bold:true,sz:9,name:'Arial'},alignment:{horizontal:'right'}},
+            const periodoTxt=`DEL ${fmtF(periodoDesde)} AL ${fmtF(periodoHasta)}`;
+            const esDoc=r=>['FACTURA','NC','ND'].includes(r.tipo);
+            const tot={
+              tv:rows.filter(esDoc).reduce((s,r)=>s+n0(r.totalVentasBs),0),
+              igtf:rows.reduce((s,r)=>s+n0(r.igtf),0),
+              ng:rows.filter(esDoc).reduce((s,r)=>s+n0(r.noGravable),0),
+              base:rows.filter(esDoc).reduce((s,r)=>s+n0(r.baseImponibleBs),0),
+              iva:rows.filter(esDoc).reduce((s,r)=>s+n0(r.ivaBs),0),
+              ret:rows.reduce((s,r)=>s+n0(r.ivaRetDb),0),
             };
-            const lvSC=(r,c,st)=>{const addr=XL.utils.encode_cell({r,c});if(!ws[addr])ws[addr]={v:'',t:'s'};ws[addr].s=st;};
-            // Membrete filas 0-5 (índices 0-5)
-            for(let r=0;r<6;r++) for(let c=0;c<19;c++) lvSC(r,c,r<2?LVS.memb:LVS.sub);
-            // Sección header fila 6
-            for(let c=0;c<19;c++) lvSC(6,c,LVS.secH);
-            // Col headers fila 7 y 8
-            for(let r=7;r<9;r++) for(let c=0;c<19;c++) lvSC(r,c,LVS.colH);
-            // Data rows
-            const lvFirst=9;
-            rows.forEach((r,i)=>{
-              const ri=lvFirst+i;
-              const isFac=r.tipo==='FACTURA';const isRet=r.tipo==='RETENCION';
-              const st=isFac?LVS.fac:isRet?LVS.ret:LVS.nc;
-              const stN=isFac?LVS.facN:isRet?LVS.retN:LVS.nc;
-              for(let c=0;c<19;c++){
-                const isNum=[10,11,12,13,14,15,16].includes(c);
-                lvSC(ri,c,isNum?stN:st);
+            const gravadas=rows.filter(r=>esDoc(r)&&r.alicuota==='16%').reduce((s,r)=>s+n0(r.baseImponibleBs),0);
+            const retAcum=n0(libroRetAcum), retDesc=n0(libroRetDesc);
+            const totalRet=retAcum+tot.ret;
+            const saldoRet=totalRet-retDesc;
+            const otros={anticipo:parseFloat((gravadas*0.01).toFixed(2)),iae:parseFloat((tot.tv*0.01).toFixed(2))};
+            const tipoLab={FACTURA:'FACTURA',RETENCION:'RETENCI\u00d3N',NC:'NOTA CR\u00c9DITO',ND:'NOTA D\u00c9BITO'};
+            const hoy=fmtF(getTodayDate());
+            return {mes2,mesLabel,fmtF,padF,padC,n0,empresa,rif,dir,Q,periodoTxt,esDoc,tot,gravadas,retAcum,retDesc,totalRet,saldoRet,otros,tipoLab,hoy};
+          };
+
+          //  Excel profesional
+          const exportExcel=async()=>{
+            try{
+              const EJ=await ccLoadExcelJS();
+              const L=lvPrep();
+              const {mes2,mesLabel,fmtF,padF,padC,n0,empresa,rif,dir,Q,periodoTxt,esDoc,tot,gravadas,retAcum,retDesc,totalRet,saldoRet,otros,tipoLab,hoy}=L;
+              const NCOL=19;
+              const NF='#,##0.00;[Red]\\-#,##0.00;"\u2013"';
+              const NAVY='FF0F172A', SLATE='FF1E293B', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB';
+              const fill=a=>({type:'pattern',pattern:'solid',fgColor:{argb:a}});
+              const bd={top:{style:'thin',color:{argb:GRID}},left:{style:'thin',color:{argb:GRID}},bottom:{style:'thin',color:{argb:GRID}},right:{style:'thin',color:{argb:GRID}}};
+              const wb=new EJ.Workbook();
+              wb.creator=empresa; wb.created=new Date();
+              const ws=wb.addWorksheet('Libro de Ventas',{
+                properties:{tabColor:{argb:ORANGE}},
+                views:[{state:'frozen',ySplit:7,showGridLines:false}],
+                pageSetup:{paperSize:14,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,horizontalCentered:true,
+                  margins:{left:0.3,right:0.3,top:0.4,bottom:0.55,header:0.2,footer:0.25},printTitlesRow:'6:7'},
+                headerFooter:{oddFooter:`&L&8&"Arial,Regular"Libro de Ventas \u2014 ${mesLabel} ${libroAnio} \u2014 ${Q}&C&8&"Arial,Regular"P\u00e1gina &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
+              });
+              const nameW=Math.min(54,Math.max(30,...rows.map(r=>String(r.nombre||'').length+3)));
+              [5,11,15,nameW,15,11,12,11,11,11,17,11,13,17,9,16,16,12,19].forEach((w,i)=>{ws.getColumn(i+1).width=w;});
+
+              // Membrete (filas 1-4) sobre fondo oscuro
+              for(let r=1;r<=4;r++) for(let c=1;c<=NCOL;c++){ws.getCell(r,c).fill=fill(NAVY);}
+              const put=(r,c1,c2,val,font,al)=>{ if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle',horizontal:'left',indent:1}; return cell; };
+              put(1,1,11,empresa,{name:'Arial',size:15,bold:true,color:{argb:WHITE}});
+              put(2,1,11,`RIF: ${rif}`,{name:'Arial',size:9,color:{argb:'FFE2E8F0'}});
+              put(3,1,11,dir,{name:'Arial',size:8,color:{argb:'FF94A3B8'}});
+              put(4,1,11,'LIBRO DE VENTAS',{name:'Arial',size:17,bold:true,color:{argb:ORANGE}});
+              const boxC={vertical:'middle',horizontal:'center'};
+              put(1,14,19,'IMPUESTO AL VALOR AGREGADO  \u00b7  FORMA 99030',{name:'Arial',size:9,bold:true,color:{argb:WHITE}},boxC).fill=fill(ORANGE);
+              put(2,14,19,`MES:  ${mesLabel.toUpperCase()} ${libroAnio}`,{name:'Arial',size:10,bold:true,color:{argb:WHITE}},boxC).fill=fill(SLATE);
+              put(3,14,19,`PERIODO:  ${Q}`,{name:'Arial',size:10,bold:true,color:{argb:WHITE}},boxC).fill=fill(SLATE);
+              put(4,14,19,periodoTxt,{name:'Arial',size:9,color:{argb:'FFE2E8F0'}},boxC).fill=fill(SLATE);
+              [24,15,14,28].forEach((h,i)=>{ws.getRow(i+1).height=h;});
+              // Franja naranja
+              for(let c=1;c<=NCOL;c++) ws.getCell(5,c).fill=fill(ORANGE);
+              ws.getRow(5).height=4;
+
+              // Encabezados: grupo (fila 6) y columnas (fila 7)
+              const grp=[[1,10,'DATOS DEL DOCUMENTO','FF1E293B'],[11,16,'VENTAS INTERNAS O EXPORTACIONES GRAVADAS','FF1D4ED8'],[17,19,'RETENCI\u00d3N DE IVA','FFEA580C']];
+              grp.forEach(([a,b,t,col])=>{ws.mergeCells(6,a,6,b);const c=ws.getCell(6,a);c.value=t;c.font={name:'Arial',size:9,bold:true,color:{argb:WHITE}};c.alignment={vertical:'middle',horizontal:'center'};for(let k=a;k<=b;k++){ws.getCell(6,k).fill=fill(col);ws.getCell(6,k).border={left:{style:'thin',color:{argb:WHITE}},right:{style:'thin',color:{argb:WHITE}}};}});
+              ws.getRow(6).height=19;
+              const heads=['N\u00b0','Fecha','N\u00b0 R.I.F. o C.I.','Nombre o Raz\u00f3n Social','Tipo de Transacci\u00f3n','N\u00b0 de Factura','N\u00b0 Control de Factura','N\u00b0 Nota de D\u00e9bito','N\u00b0 Nota de Cr\u00e9dito','N\u00b0 Factura Afectada','Valor Total de Ventas Bs.','IGTF Percibido','Ventas Internas No Gravables','Base Imponible','% Al\u00edcuota','Impuesto I.V.A. (16%)','IVA Retenido','N\u00b0 Factura que Afecta','N\u00b0 Comprobante de Retenci\u00f3n'];
+              const hcol=c=>c<=10?'FF334155':c<=16?'FF2563EB':'FFF97316';
+              heads.forEach((t,i)=>{const c=ws.getCell(7,i+1);c.value=t;c.font={name:'Arial',size:8,bold:true,color:{argb:WHITE}};c.fill=fill(hcol(i+1));c.alignment={vertical:'middle',horizontal:'center',wrapText:true};c.border={left:{style:'thin',color:{argb:WHITE}},right:{style:'thin',color:{argb:WHITE}},bottom:{style:'medium',color:{argb:ORANGE}}};});
+              ws.getRow(7).height=38;
+              ws.autoFilter={from:{row:7,column:1},to:{row:7,column:NCOL}};
+
+              // Datos
+              const FIRST=8;
+              const tipoFill={FACTURA:null,RETENCION:'FFFFFBEB',NC:'FFFEF2F2',ND:'FFEFF6FF'};
+              const tipoCol={FACTURA:'FF15803D',RETENCION:'FFB45309',NC:'FFB91C1C',ND:'FF1D4ED8'};
+              const center=[1,2,5,6,7,8,9,10,15,18,19], right=[11,12,13,14,16,17];
+              rows.forEach((r,i)=>{
+                const ri=FIRST+i;
+                const isFac=r.tipo==='FACTURA', isRet=r.tipo==='RETENCION', isNC=r.tipo==='NC', isND=r.tipo==='ND';
+                const dp=String(r.fecha||'').split('-').map(Number);
+                const fechaCell=dp.length===3&&dp[0]?new Date(Date.UTC(dp[0],dp[1]-1,dp[2])):'';
+                const vals=[
+                  r.seq||i+1, fechaCell, r.rif||'', r.nombre||'', tipoLab[r.tipo]||r.tipo||'',
+                  isFac?padF(r.nroFactura):'',
+                  (isFac||isNC||isND)?padC(r.nroControl):'',
+                  isND?(r.nroDebito||''):'',
+                  isNC?(r.nroCredito||''):'',
+                  (isNC||isND)?padF(r.facAfectada):'',
+                  esDoc(r)?n0(r.totalVentasBs):null,
+                  n0(r.igtf)>0?n0(r.igtf):null,
+                  esDoc(r)?n0(r.noGravable):null,
+                  esDoc(r)?n0(r.baseImponibleBs):null,
+                  isRet?(r.alicuota||'75%'):(r.alicuota||'16%'),
+                  esDoc(r)?n0(r.ivaBs):null,
+                  isRet?n0(r.ivaRetDb):null,
+                  isRet?padF(r.nroFactAfecta):'',
+                  isRet?(r.nroComprobante||''):'',
+                ];
+                const bg=tipoFill[r.tipo]||(i%2?'FFF8FAFC':WHITE);
+                vals.forEach((v,ci)=>{
+                  const c=ws.getCell(ri,ci+1);
+                  c.value=(v===''?null:v);
+                  const col=ci+1;
+                  let color='FF111827', bold=false;
+                  if(col===5){color=tipoCol[r.tipo]||color;bold=true;}
+                  if(col===17){color='FFDC2626';bold=true;}
+                  if(col===6||col===19){bold=true;}
+                  if(col===6){color='FF1D4ED8';}
+                  c.font={name:'Arial',size:9,bold,color:{argb:color}};
+                  c.fill=fill(bg);
+                  c.border=bd;
+                  c.alignment={vertical:'middle',horizontal:center.includes(col)?'center':right.includes(col)?'right':'left',indent:(col===4||col===3)?1:0};
+                  if(right.includes(col)) c.numFmt=NF;
+                  if(col===2) c.numFmt='dd/mm/yyyy';
+                  if([3,6,7,8,9,10,18,19].includes(col)) c.numFmt='@';
+                });
+                ws.getRow(ri).height=17;
+              });
+
+              // Fila de totales (con f\u00f3rmulas)
+              const LAST=FIRST+rows.length-1;
+              const T=LAST+1;
+              ws.mergeCells(T,1,T,10);
+              const tl=ws.getCell(T,1); tl.value=`TOTALES \u2014 ${rows.length} registros`;
+              const sumF=(col,res)=>({formula:`SUM(${col}${FIRST}:${col}${LAST})`,result:res});
+              const tv={11:sumF('K',tot.tv),12:sumF('L',tot.igtf),13:sumF('M',tot.ng),14:sumF('N',tot.base),16:sumF('P',tot.iva),17:sumF('Q',tot.ret)};
+              for(let c=1;c<=NCOL;c++){
+                const cell=ws.getCell(T,c);
+                cell.fill=fill(NAVY);
+                cell.border={top:{style:'medium',color:{argb:ORANGE}}};
+                if(tv[c]){cell.value=tv[c];cell.numFmt='#,##0.00';cell.font={name:'Arial',size:10,bold:true,color:{argb:ORANGE}};cell.alignment={horizontal:'right',vertical:'middle'};}
               }
-            });
-            // Total row
-            const lvTotRow=lvFirst+rows.length;
-            for(let c=0;c<19;c++) lvSC(lvTotRow,c,[10,11,12,13,14,15,16].includes(c)?LVS.totN:LVS.tot);
-            // Resumen rows
-            const lvResStart=lvTotRow+2;
-            for(let ri=lvResStart;ri<lvResStart+20;ri++) for(let c=0;c<19;c++){
-              const addr=XL.utils.encode_cell({r:ri,c});
-              if(ws[addr]) ws[addr].s=(c===5)?LVS.sumN:LVS.sum;
-            }
-            // Crear libro y exportar
-            const wb=XL.utils.book_new();
-            XL.utils.book_append_sheet(wb,ws,'LVENTAS');
-            XL.writeFile(wb,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xlsx`,{cellStyles:true});
+              tl.font={name:'Arial',size:10,bold:true,color:{argb:WHITE}}; tl.alignment={horizontal:'left',vertical:'middle',indent:1};
+              ws.getRow(T).height=24;
+
+              // Resumen
+              let rr=T+2;
+              const secHead=(txt)=>{ws.mergeCells(rr,4,rr,11);const c=ws.getCell(rr,4);c.value=txt;c.font={name:'Arial',size:10,bold:true,color:{argb:WHITE}};c.alignment={vertical:'middle',horizontal:'left',indent:1};for(let k=4;k<=11;k++)ws.getCell(rr,k).fill=fill(SLATE);ws.getRow(rr).height=19;rr++;};
+              const line=(label,val,k)=>{
+                ws.mergeCells(rr,4,rr,10);
+                const lc=ws.getCell(rr,4), vc=ws.getCell(rr,11);
+                lc.value=label; vc.value=val; vc.numFmt=NF;
+                const strong=(k==='b'||k==='h'||k==='t');
+                const bg=k==='t'?NAVY:k==='h'?'FFFEF3C7':k==='b'?'FFF1F5F9':WHITE;
+                const fc=k==='t'?WHITE:'FF111827';
+                for(let c=4;c<=11;c++){const cc=ws.getCell(rr,c);cc.fill=fill(bg);cc.border=bd;}
+                lc.font={name:'Arial',size:9,bold:strong,color:{argb:fc}};
+                vc.font={name:'Arial',size:9,bold:strong||k==='n2',color:{argb:k==='t'?ORANGE:fc}};
+                lc.alignment={vertical:'middle',horizontal:'left',indent:1};
+                vc.alignment={vertical:'middle',horizontal:'right'};
+                ws.getRow(rr).height=16;
+                rr++; return rr-1;
+              };
+              ws.mergeCells(rr,4,rr,11);
+              const rt=ws.getCell(rr,4);rt.value='RESUMEN LIBRO DE VENTAS';rt.font={name:'Arial',size:12,bold:true,color:{argb:WHITE}};rt.alignment={vertical:'middle',horizontal:'left',indent:1};
+              for(let k=4;k<=11;k++)ws.getCell(rr,k).fill=fill(NAVY);
+              ws.getRow(rr).height=24;rr++;
+              secHead('D\u00c9BITOS FISCALES');
+              const d1=line('Ventas internas no gravadas',0);
+              line('Ventas de exportaci\u00f3n',0);
+              line('Ventas internas gravadas al\u00edcuota general (16%)',gravadas,'n2');
+              line('Ventas internas gravadas al\u00edcuota general + adicional',0);
+              const d5=line('Ventas internas gravadas al\u00edcuota reducida',0);
+              line('Total ventas y d\u00e9bitos fiscales para determinaci\u00f3n',{formula:`SUM(K${d1}:K${d5})`,result:gravadas},'b');
+              line('Ajuste a los d\u00e9bitos fiscales de per\u00edodos anteriores',0);
+              line('Certificados de Cr\u00e9ditos Fiscales para determinaci\u00f3n',0);
+              line('Total d\u00e9bitos fiscales',{formula:`P${T}`,result:tot.iva},'t');
+              rr++;
+              secHead('AUTOLIQUIDACI\u00d3N');
+              const a1=line('Retenciones acumuladas por descontar',retAcum);
+              line('Retenciones del Per\u00edodo',{formula:`Q${T}`,result:tot.ret},'n2');
+              line('Cr\u00e9ditos adquiridos por cesi\u00f3n de retenciones',0);
+              const a4=line('Recuperaci\u00f3n de retenciones solicitado',0);
+              const aTot=line('Total Retenciones',{formula:`SUM(K${a1}:K${a4})`,result:totalRet},'b');
+              const aDesc=line('Retenciones soportadas y descontadas en esta declaraci\u00f3n',retDesc);
+              const aSal=line('Saldo de Retenciones de IVA no aplicado',{formula:`K${aTot}-K${aDesc}`,result:saldoRet},'h');
+              line('Total Retenciones',{formula:`K${aSal}`,result:saldoRet},'t');
+              rr++;
+              secHead('OTROS IMPUESTOS');
+              line('Anticipo ISLR (1% Base Imponible)',otros.anticipo,'n2');
+              line('I.A.E. (1% Ventas Brutas)',otros.iae,'t');
+              ws.pageSetup.printArea=`A1:S${rr}`;
+
+              const buf=await wb.xlsx.writeBuffer();
+              const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+              const url=URL.createObjectURL(blob);
+              const a=document.createElement('a');a.href=url;a.download=`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}.xlsx`;
+              document.body.appendChild(a);a.click();document.body.removeChild(a);
+              setTimeout(()=>URL.revokeObjectURL(url),2000);
+            }catch(e){ setDialog({title:'Error al exportar',text:(e&&e.message)||String(e),type:'alert'}); }
           };
 
 
-          // ── PDF ───────────────────────────────────────────────────────────────
+          //  PDF: Oficio (8.5 x 13 in) horizontal, m\u00e1rgenes parejos, encabezado repetido en cada p\u00e1gina
           const exportPDF=()=>{
-            const pNum = (s,l=8) => String(s||'').trim()?String(s).padStart(l,'0'):'—';
-            const fV = n => {if(!n&&n!==0)return'—';const p=Math.abs(parseNum(n)).toFixed(2).split('.');return(n<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
-
-            // Totales para el Resumen
-            // Totales netos: FACTURAS + ajuste NC (negativo) + ND (positivo)
-            const totVentasGravadas = rows.filter(r=>['FACTURA','NC','ND'].includes(r.tipo)&&r.alicuota==='16%').reduce((s,r)=>s+r.baseImponibleBs,0);
-            const totIVADebitos = rows.filter(r=>['FACTURA','NC','ND'].includes(r.tipo)).reduce((s,r)=>s+r.ivaBs,0);
-            const totVentasBruta = rows.filter(r=>['FACTURA','NC','ND'].includes(r.tipo)).reduce((s,r)=>s+r.totalVentasBs,0);
-            const retPeriodo = rows.filter(r=>r.tipo==='RETENCION').reduce((s,r)=>s+r.ivaRetDb,0);
-            const retAcum = parseNum(libroRetAcum||0);
-            const retDesc = parseNum(libroRetDesc||0);
-            const totalRetenciones = retAcum + retPeriodo;
-            const saldoRet = totalRetenciones - retDesc;
-            const anticipoISLR = parseFloat((totVentasGravadas*0.01).toFixed(2));
-            const iae = parseFloat((totVentasBruta*0.01).toFixed(2));
-
-            const rowsHtml = rows.map(r=>`
-<tr style="border-bottom:1px solid #e5e7eb;${r.tipo!=='FACTURA'?'background:#fefce8':''}">
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.seq}</td>
-  <td style="padding:2px 4px;font-size:7px;min-width:68px;white-space:nowrap;border-right:1px solid #e5e7eb">${r.fecha}</td>
-  <td style="padding:2px 4px;font-size:7px;min-width:90px;white-space:nowrap;border-right:1px solid #e5e7eb">${r.rif}</td>
-  <td style="padding:2px 4px;font-size:7px;min-width:130px;max-width:180px;word-wrap:break-word;border-right:1px solid #e5e7eb">${r.nombre}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb;background:${r.tipo==='FACTURA'?'#f0fdf4':r.tipo==='RETENCION'?'#fefce8':'#f5f3ff'};color:#111;font-weight:bold">${r.tipoDisplay||r.tipo}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;color:#1d4ed8;font-weight:bold;border-right:1px solid #e5e7eb">${pNum(r.nroFactura,8)}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${pNum(r.nroControl,8)||'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.nroDebito||'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.nroCredito||'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.facAfectada?pNum(r.facAfectada,8):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">${r.totalVentasBs>0||r.totalVentasBs<0?fV(r.totalVentasBs):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">${parseNum(r.igtf||0)>0?fV(r.igtf):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb">0,00</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;border-right:1px solid #e5e7eb;font-weight:bold">${r.baseImponibleBs>0||r.baseImponibleBs<0?fV(r.baseImponibleBs):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;border-right:1px solid #e5e7eb">${r.alicuota}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;font-weight:bold;border-right:1px solid #e5e7eb">${r.ivaBs>0?fV(r.ivaBs):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:right;color:#dc2626;font-weight:bold;border-right:1px solid #e5e7eb">${r.ivaRetDb>0?fV(r.ivaRetDb):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px;text-align:center;color:#ea580c;font-weight:bold;border-right:1px solid #e5e7eb">${r.nroFactAfecta?pNum(r.nroFactAfecta,8):'—'}</td>
-  <td style="padding:2px 4px;font-size:7px">${r.nroComprobante?pNum(r.nroComprobante,14):'—'}</td>
-</tr>`).join('');
-
-            const colHeaders = ['Nº','Fecha','N° RIF','Razón Social','Tipo Transacción','N° Factura','N° Control','N° Débito','N° Crédito','Fact. Afectada','Valor Total Bs.','IGTF','No Gravable','Base Imponible','% Alíc.','IVA 16%','IVA Retenido','Fact. que Afecta','N° Comprobante'];
-            const totRow = `<tr style="background:#1f2937;color:#fff;font-weight:900">
-  <td colspan="10" style="padding:3px 4px;font-size:7px">TOTALES — ${rows.length} registros</td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totTV)}</td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(rows.reduce((s,r)=>s+parseNum(r.igtf||0),0))}</td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right">0,00</td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right;font-weight:900">${fV(totBase)}</td>
-  <td></td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totIva)}</td>
-  <td style="padding:3px 4px;font-size:7px;text-align:right">${fV(totRetDb)}</td>
-  <td colspan="2"></td>
-</tr>`;
-
-            const resumenHtml = `
-<div style="margin-top:20px;page-break-inside:avoid">
-  <table style="width:55%;border-collapse:collapse;font-size:8px;font-family:Arial">
-    <tr><td colspan="2" style="background:#1f2937;color:#fff;font-weight:900;padding:6px 8px;font-size:9px">RESUMEN LIBRO DE VENTAS</td></tr>
-    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 8px">DÉBITOS FISCALES</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas no gravadas</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas de exportación</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas gravadas alícuota general (16%)</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(totVentasGravadas)}</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas gravadas alícuota general + adicional</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ventas internas gravadas alícuota reducida</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr style="background:#f9fafb"><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb;font-weight:bold">Total ventas y débitos fiscales para determinación</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(totVentasGravadas)}</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Ajuste a los débitos fiscales de períodos anteriores</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Certificados de Créditos Fiscales para determinación</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 8px;font-weight:900">Total débitos fiscales</td><td style="padding:4px 8px;text-align:right;font-weight:900">${fV(totIVADebitos)}</td></tr>
-    <tr><td colspan="2" style="padding:6px 8px"></td></tr>
-    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 8px">AUTOLIQUIDACIÓN</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Retenciones acumuladas por descontar</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">${fV(retAcum)}</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Retenciones del Período</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(retPeriodo)}</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Créditos adquiridos por cesión de retenciones</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Recuperación de retenciones solicitado</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">0,00</td></tr>
-    <tr style="background:#f9fafb"><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb;font-weight:bold">Total Retenciones</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(totalRetenciones)}</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Retenciones soportadas y descontadas en esta declaración</td><td style="padding:3px 8px;text-align:right;border-bottom:1px solid #e5e7eb">${fV(retDesc)}</td></tr>
-    <tr style="background:#fef3c7"><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb;font-weight:bold">Saldo de Retenciones de IVA no aplicado</td><td style="padding:3px 8px;text-align:right;font-weight:bold;border-bottom:1px solid #e5e7eb">${fV(saldoRet)}</td></tr>
-    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 8px;font-weight:900">Total Retenciones</td><td style="padding:4px 8px;text-align:right;font-weight:900">${fV(saldoRet)}</td></tr>
-    <tr><td colspan="2" style="padding:6px 8px"></td></tr>
-    <tr><td colspan="2" style="background:#374151;color:#fff;font-weight:900;padding:4px 8px">OTROS IMPUESTOS</td></tr>
-    <tr><td style="padding:3px 8px;border-bottom:1px solid #e5e7eb">Anticipo ISLR (1% Base Imponible)</td><td style="padding:3px 8px;text-align:right;font-weight:bold;color:#1d4ed8;border-bottom:1px solid #e5e7eb">${fV(anticipoISLR)}</td></tr>
-    <tr style="background:#1f2937;color:#fff"><td style="padding:4px 8px;font-weight:900">I.A.E. (1% Ventas Brutas)</td><td style="padding:4px 8px;text-align:right;font-weight:900">${fV(iae)}</td></tr>
-  </table>
+            const L=lvPrep();
+            const {mes2,mesLabel,fmtF,padF,padC,n0,empresa,rif,dir,Q,periodoTxt,tot,gravadas,retAcum,retDesc,totalRet,saldoRet,otros,tipoLab,hoy}=L;
+            const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const fV=(n,zero)=>{const v=n0(n);if(!v&&!zero)return'';const p=Math.abs(v).toFixed(2).split('.');return(v<0?'-':'')+p[0].replace(/\B(?=(\d{3})+(?!\d))/g,'.')+','+p[1];};
+            const neg=n=>n0(n)<0?' neg':'';
+            const W=[6,14,19,38,15,15,16,13,13,15,21,11,12,21,7,19,19,15,24];
+            const SW=W.reduce((a,b)=>a+b,0);
+            const cols=W.map(w=>`<col style="width:${(w/SW*100).toFixed(3)}%">`).join('');
+            const cls={FACTURA:'t-fac',RETENCION:'t-ret',NC:'t-nc',ND:'t-nd'};
+            const body=rows.map((r,i)=>{
+              const isFac=r.tipo==='FACTURA', isRet=r.tipo==='RETENCION', isNC=r.tipo==='NC', isND=r.tipo==='ND';
+              const doc=isFac||isNC||isND;
+              return `<tr class="${cls[r.tipo]||'t-fac'}${i%2?' alt':''}">
+<td class="c">${r.seq||i+1}</td><td class="c">${fmtF(r.fecha)}</td><td>${esc(r.rif)}</td><td class="nm">${esc(r.nombre)}</td>
+<td class="c tp">${tipoLab[r.tipo]||esc(r.tipo)}</td>
+<td class="c nf">${isFac?padF(r.nroFactura):''}</td><td class="c">${doc?padC(r.nroControl):''}</td>
+<td class="c">${isND?esc(r.nroDebito||''):''}</td><td class="c">${isNC?esc(r.nroCredito||''):''}</td><td class="c">${(isNC||isND)?padF(r.facAfectada):''}</td>
+<td class="n${neg(r.totalVentasBs)}">${doc?fV(r.totalVentasBs,true):''}</td><td class="n">${fV(r.igtf)}</td><td class="n">${doc?fV(r.noGravable,true):''}</td>
+<td class="n b${neg(r.baseImponibleBs)}">${doc?fV(r.baseImponibleBs,true):''}</td><td class="c">${esc(isRet?(r.alicuota||'75%'):(r.alicuota||'16%'))}</td>
+<td class="n b${neg(r.ivaBs)}">${doc?fV(r.ivaBs,true):''}</td><td class="n b rt">${isRet?fV(r.ivaRetDb,true):''}</td>
+<td class="c rt2">${isRet?padF(r.nroFactAfecta):''}</td><td class="c b">${isRet?esc(r.nroComprobante||''):''}</td></tr>`;
+            }).join('');
+            const heads=['N\u00b0','Fecha','N\u00b0 R.I.F. o C.I.','Nombre o Raz\u00f3n Social','Tipo de Transacci\u00f3n','N\u00b0 de Factura','N\u00b0 Control de Factura','N\u00b0 Nota de D\u00e9bito','N\u00b0 Nota de Cr\u00e9dito','N\u00b0 Factura Afectada','Valor Total de Ventas Bs.','IGTF Percibido','Ventas Int. No Gravables','Base Imponible','% Al\u00edc.','Impuesto I.V.A. (16%)','IVA Retenido','N\u00b0 Factura que Afecta','N\u00b0 Comprobante de Retenci\u00f3n'];
+            const hc=i=>i<10?'g1':i<16?'g2':'g3';
+            const linea=(l,v,k)=>`<tr class="${k||''}"><td>${l}</td><td class="n">${fV(v,true)}</td></tr>`;
+            const resumen=`
+<div class="resumen">
+  <div class="box"><div class="bt">D\u00c9BITOS FISCALES</div><table>
+    ${linea('Ventas internas no gravadas',0)}${linea('Ventas de exportaci\u00f3n',0)}${linea('Ventas internas gravadas al\u00edcuota general (16%)',gravadas,'bd')}
+    ${linea('Ventas internas gravadas al\u00edcuota general + adicional',0)}${linea('Ventas internas gravadas al\u00edcuota reducida',0)}
+    ${linea('Total ventas y d\u00e9bitos fiscales para determinaci\u00f3n',gravadas,'sub')}
+    ${linea('Ajuste a los d\u00e9bitos fiscales de per\u00edodos anteriores',0)}${linea('Certificados de Cr\u00e9ditos Fiscales para determinaci\u00f3n',0)}
+    ${linea('Total d\u00e9bitos fiscales',tot.iva,'tot')}
+  </table></div>
+  <div class="box"><div class="bt">AUTOLIQUIDACI\u00d3N</div><table>
+    ${linea('Retenciones acumuladas por descontar',retAcum)}${linea('Retenciones del Per\u00edodo',tot.ret,'bd')}
+    ${linea('Cr\u00e9ditos adquiridos por cesi\u00f3n de retenciones',0)}${linea('Recuperaci\u00f3n de retenciones solicitado',0)}
+    ${linea('Total Retenciones',totalRet,'sub')}
+    ${linea('Retenciones soportadas y descontadas en esta declaraci\u00f3n',retDesc)}
+    ${linea('Saldo de Retenciones de IVA no aplicado',saldoRet,'hi')}
+    ${linea('Total Retenciones',saldoRet,'tot')}
+  </table></div>
+  <div class="box small"><div class="bt">OTROS IMPUESTOS</div><table>
+    ${linea('Anticipo ISLR (1% Base Imponible)',otros.anticipo,'bd')}
+    ${linea('I.A.E. (1% Ventas Brutas)',otros.iae,'tot')}
+  </table></div>
 </div>`;
-
-            const html=`<html><head><meta charset="utf-8"><style>
-              @page{size:A3 landscape;margin:8mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:7px;font-family:Arial}}
-              *{font-family:Arial,sans-serif;font-size:7px;box-sizing:border-box}
-              body{padding:0;margin:0}
-              table{border-collapse:collapse;width:100%}
-              thead{display:table-header-group}
-              tfoot{display:table-footer-group}
-              .hdr th{background:#1f2937;color:#fff;padding:4px 3px;font-size:7px;text-align:center;border:1px solid #333;white-space:nowrap}
-              td{vertical-align:middle}
-            </style></head><body>
-<div style="padding:10px">
-<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px">
-  <div>
-    ${settings?.logoURL?`<img src="${settings.logoURL}" style="height:40px;margin-bottom:4px" alt="logo"/>`:'' }
-    <div style="font-weight:900;font-size:11px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div>
-    <div style="font-size:8px">RIF: ${settings?.empresaRIF||'J-412309374'}</div>
-    <div style="font-size:8px">${settings?.empresaDireccion||''}</div>
-    <div style="font-weight:900;font-size:12px;border-bottom:2px solid #000;margin-top:4px;display:inline-block">LIBRO DE VENTAS</div>
-  </div>
-  <div style="text-align:center;border:1px solid #ddd;padding:6px;min-width:200px">
-    <div style="background:#1f2937;color:#fff;padding:4px 6px;font-size:8px;font-weight:900">IMPUESTO AL VALOR AGREGADO</div>
-    <div style="padding:2px;font-size:8px;font-weight:bold">FORMA 99030</div>
-    <div style="font-size:8px">RIF: ${settings?.empresaRIF||'J-412309374'}</div>
-    <div style="display:flex;justify-content:space-between;font-size:8px;padding:2px 4px"><span style="background:#374151;color:#fff;padding:1px 4px;font-weight:bold">MES</span><span style="font-weight:bold">${mesLabel.toUpperCase()} ${libroAnio}</span></div>
-    <div style="background:#374151;color:#fff;padding:2px 6px;font-size:8px;font-weight:bold">${libroQuincena==='AMBAS'?'MES COMPLETO':libroQuincena==='1'?'PERIODO: I QUINCENA':'PERIODO: II QUINCENA'}</div>
-    <div style="font-size:8px;padding:2px">DEL ${periodoDesde.split('-').reverse().join('/')} AL ${periodoHasta.split('-').reverse().join('/')}</div>
-  </div>
+            const css=`
+@page{size:13in 8.5in;margin:7mm 7mm 12mm 7mm;
+  @bottom-left{content:"${esc(empresa).replace(/&amp;/g,'&')} \u2014 Libro de Ventas ${mesLabel} ${libroAnio} \u00b7 ${Q}";font:7px Arial;color:#64748b}
+  @bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#64748b}
+  @bottom-right{content:"Generado el ${hoy}";font:7px Arial;color:#64748b}}
+*{box-sizing:border-box;font-family:Arial,Helvetica,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+html,body{margin:0;padding:0;background:#e5e7eb}
+.bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}
+.bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer;font-size:12px}
+.sheet{width:316mm;margin:10px auto;background:#fff;padding:0}
+.top{display:flex;justify-content:space-between;align-items:stretch;gap:10px;background:#0f172a;border-bottom:3px solid #f97316;padding:7px 10px;color:#fff}
+.top .l{display:flex;gap:10px;align-items:center}.top img{height:38px}
+.emp{font-size:13px;font-weight:900;letter-spacing:.2px}.sub{font-size:8px;color:#cbd5e1;margin-top:1px}.dir{font-size:7px;color:#94a3b8;margin-top:1px}
+.ttl{font-size:15px;font-weight:900;color:#f97316;margin-top:3px;letter-spacing:1px}
+.box2{min-width:230px;border:1px solid #334155;font-size:8px}.box2 div{padding:2.5px 8px;text-align:center}
+.box2 .h{background:#f97316;font-weight:900}.box2 .m{background:#1e293b;font-weight:800;font-size:9px}.box2 .d{background:#1e293b;color:#e2e8f0}
+table.lv{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px}
+table.lv th,table.lv td{font-size:6.6px;padding:2.2px 3px;border:.5px solid #d1d5db;vertical-align:middle;overflow-wrap:anywhere}
+thead{display:table-header-group}tr{page-break-inside:avoid}
+table.lv th{color:#fff;font-weight:800;text-align:center;line-height:1.15;border-color:#fff;font-size:6.2px}
+.gr th{font-size:7px;padding:3px}.g1{background:#334155}.g2{background:#2563eb}.g3{background:#f97316}
+.gr .g1{background:#1e293b}.gr .g2{background:#1d4ed8}.gr .g3{background:#ea580c}
+th.hb{border-bottom:1.5px solid #f97316}
+td.c{text-align:center}td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}td.b{font-weight:700}
+td.nm{font-weight:600}.neg{color:#dc2626}
+.t-fac.alt td{background:#f8fafc}.t-ret td{background:#fffbeb}.t-nc td{background:#fef2f2}.t-nd td{background:#eff6ff}
+.tp{font-weight:800;font-size:6px}.t-fac .tp{color:#15803d}.t-ret .tp{color:#b45309}.t-nc .tp{color:#b91c1c}.t-nd .tp{color:#1d4ed8}
+td.nf{color:#1d4ed8;font-weight:800}td.rt{color:#dc2626}td.rt2{color:#ea580c;font-weight:700}
+tr.total td{background:#0f172a;color:#f97316;font-weight:900;font-size:7.5px;border-color:#0f172a;border-top:2px solid #f97316}
+tr.total td.lbl{color:#fff;text-align:left;padding-left:8px}
+.resumen{display:flex;gap:10px;margin-top:12px;page-break-inside:avoid;align-items:flex-start}
+.resumen .box{flex:1;border:1px solid #cbd5e1}.resumen .box.small{flex:.7}
+.resumen .bt{background:#1e293b;color:#fff;font-weight:900;font-size:8px;padding:4px 8px;letter-spacing:.5px}
+.resumen table{width:100%;border-collapse:collapse}.resumen td{font-size:7.2px;padding:2.6px 8px;border-bottom:.5px solid #e5e7eb}
+.resumen td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;width:26%}
+.resumen tr.bd td{font-weight:700}.resumen tr.sub td{background:#f1f5f9;font-weight:800}.resumen tr.hi td{background:#fef3c7;font-weight:800}
+.resumen tr.tot td{background:#0f172a;color:#fff;font-weight:900}.resumen tr.tot td.n{color:#f97316}
+@media print{html,body{background:#fff}.bar{display:none}.sheet{width:auto;margin:0}}`;
+            const html=`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}</title><style>${css}</style></head><body>
+<div class="bar"><button onclick="window.print()">IMPRIMIR / GUARDAR PDF</button><span>Papel: Oficio / Folio (8,5 x 13 in) \u00b7 Horizontal \u00b7 Escala 100% \u00b7 M\u00e1rgenes: predeterminados</span></div>
+<div class="sheet">
+<div class="top">
+  <div class="l">${settings?.logoURL?`<img src="${esc(settings.logoURL)}" alt="logo"/>`:''}<div>
+    <div class="emp">${esc(empresa)}</div><div class="sub">RIF: ${esc(rif)}</div><div class="dir">${esc(dir)}</div><div class="ttl">LIBRO DE VENTAS</div></div></div>
+  <div class="box2"><div class="h">IMPUESTO AL VALOR AGREGADO \u00b7 FORMA 99030</div><div class="m">MES: ${mesLabel.toUpperCase()} ${libroAnio}</div><div class="m">PERIODO: ${Q}</div><div class="d">${periodoTxt}</div></div>
 </div>
-<table class="hdr"><thead><tr>${colHeaders.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot>${totRow}</tfoot></table>
-${resumenHtml}
-</div></body></html>`;
-            handlePDFFromHTML(html,`LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}`,true);
+<table class="lv"><colgroup>${cols}</colgroup>
+<thead>
+<tr class="gr"><th colspan="10" class="g1">DATOS DEL DOCUMENTO</th><th colspan="6" class="g2">VENTAS INTERNAS O EXPORTACIONES GRAVADAS</th><th colspan="3" class="g3">RETENCI\u00d3N DE IVA</th></tr>
+<tr>${heads.map((h,i)=>`<th class="${hc(i)} hb">${h}</th>`).join('')}</tr>
+</thead>
+<tbody>${body}
+<tr class="total"><td colspan="10" class="lbl">TOTALES \u2014 ${rows.length} registros</td><td class="n">${fV(tot.tv,true)}</td><td class="n">${fV(tot.igtf,true)}</td><td class="n">${fV(tot.ng,true)}</td><td class="n">${fV(tot.base,true)}</td><td></td><td class="n">${fV(tot.iva,true)}</td><td class="n">${fV(tot.ret,true)}</td><td colspan="2"></td></tr>
+</tbody></table>
+${resumen}
+</div>
+<script>window.onload=function(){setTimeout(function(){window.print();},500);};<\/script>
+</body></html>`;
+            const w=window.open('','_blank');
+            if(w){w.document.write(html);w.document.close();}
+            else setDialog({title:'Ventana bloqueada',text:'Permite las ventanas emergentes para imprimir el PDF.',type:'alert'});
           };
 
           const factsFiltradas = retBusqFact
