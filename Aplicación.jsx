@@ -3690,12 +3690,12 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         _soloRif(r.rifProveedor),
         (r.nroFactura||'').toString().trim(),
         (r.nroControl||'').toString().trim(),
-        N2(cero?0:total),
-        N2(cero?0:base16),
-        N2(cero?0:montoRet),
+        N2(total),
+        N2(base16),
+        N2(montoRet),
         ((r.tipoDocumento==='NC'||r.tipoDocumento==='ND')?((r.facturaAfectada||'').toString().trim()||'0'):'0'),
         (r.nroComprobante||'').toString().trim(),
-        N2(cero?0:exento),
+        N2(exento),
         N2(PCT_IVA),
         '0'
       ].join('\t');
@@ -3717,7 +3717,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         if(orig){
           const _ya=_extras.some(e=>e.orig===orig);
           if(!_ya)_extras.push({idx:i,orig,line:_mk(orig,true)});
-          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}); se agrego en este TXT como linea de referencia con base, total y retencion en 0,00 (asi cumple base x alicuota x % = retencion) para que la NC tenga a que apuntar (la retencion original ya se declaro en su periodo).`);
+          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}); se copio en este TXT (con sus montos reales) porque el portal exige que la NC apunte a una factura de este mismo archivo y que su monto no la exceda. OJO: esa factura y su retencion ya se declararon en su periodo, asi que quedan declaradas dos veces; confirma con el SENIAT si debes rectificar el periodo original.`);
         }else _avisos.push(`${etq}: esa factura NO se encontro en el sistema ni en este TXT.`);
         return;
       }
