@@ -4114,7 +4114,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
               const per=r.periodoLibroMes||(r.fechaComprobante||r.fecha||'').substring(0,7)||'';
               return `<tr class="${i%2?'alt':''}"><td class="n0">${i+1}</td><td class="nc">${esc(r.nroRetencion||'\u2014')}</td><td class="nm">${esc(r._manualCliente||r.clientName||'\u2014')}</td><td>${esc(r._manualRif||r.clientRif||'')}</td><td class="c">${esc(nroFacR)}</td><td class="c">${pD(r.fechaComprobante||r.fecha)}</td><td class="c">${per?per.split('-').reverse().join('/'):'\u2014'}</td><td class="c">${(r.quincena||'1')==='1'?'I Q.':'II Q.'}</td><td class="c">${r.porcentaje||3}%</td><td class="r">${fmtN(r.montoRetenidoUSD)}</td><td class="r">${fmtN(r.montoRetenido)}</td></tr>`;
             }).join('');
-            const css=`@page{size:11in 8.5in;margin:8mm 8mm 12mm 8mm;@bottom-left{content:"${esc(empNom)} \u00b7 IGTF percibido \u00b7 ${esc(mesTxt)} \u00b7 ${esc(qTxt)}";font:7px Arial;color:#666}@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}@bottom-right{content:"Generado el ${pD(getTodayDate())}";font:7px Arial;color:#666}}
+            const css=`@page{size:11in 8.5in;margin:8mm 8mm 12mm 8mm;@bottom-left{content:"${esc(empNom).replace(/&amp;/g,'&')} \u00b7 IGTF percibido \u00b7 ${esc(mesTxt)} \u00b7 ${esc(qTxt)}";font:7px Arial;color:#666}@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}@bottom-right{content:"Generado el ${pD(getTodayDate())}";font:7px Arial;color:#666}}
 *{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}.bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer}
 .sheet{width:263mm;margin:10px auto}
@@ -14477,304 +14477,271 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, notasCompr
   const c71 = (lcRes.c70||0)+(lcRes.c37||0);                                  // total CF deducibles
   const c39 = c71+(lcRes.c20||0)-(lcRes.c21||0)-(lcRes.c81||0)+(lcRes.c38||0)-(lcRes.c82||0); // total CF
 
-  // ── EXCEL EXPORT ──────────────────────────────────────────────────
-  const exportExcel = async () => {
-    if(!window.XLSX){ await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);}); }
-    const XL = window.XLSX;
-    const numFmt = '#,##0.00';
+  // ===== Exportes del Libro de Compras: Excel profesional (ExcelJS) y PDF Oficio horizontal (8,5 x 13) =====
+  const lcPrep = () => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || 'J-412309374';
     const dir = settings?.empresaDireccion || 'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
-    const Q = filtQ==='AMBAS'?'MES COMPLETO':filtQ==='1'?'I QUINCENA':'II QUINCENA';
-
-    // Construir AOA — 28 columnas
-    const aoa = [];
-    aoa.push(['','','','',empresa,'','','','','','','','','','','','','','','','','','','IMPUESTO AL VALOR AGREGADO','','','','']);
-    aoa.push(['','','','','RIF: '+rif,'','','','','','','','','','','','','','','','','','','FORMA 99030','','','','']);
-    aoa.push(['','','','',dir]);
-    aoa.push(['','','','','LIBRO DE COMPRAS','','','','','','','','','','','','','','','','','','','MES',mesLabel.toUpperCase(),'','','']);
-    aoa.push(['','','','','','','','','','','','','','','','','','','','','','','','PERÍODO:',Q,'','','']);
-    aoa.push(['','','','','','','','','','','','','','','','','','','','','','','','DEL',`${fmtFE(desde)} AL ${fmtFE(hasta)}`,'','','']);
-    // Fila 7: sección headers
-    aoa.push(['','','','','','','','','IMPORTACIONES','','','','','','','Compras Internas por Alícuota General','','','','','Compras Nacionales por Alícuota Reducida','','','','IVA RETENIDO','','','']);
-    // Fila 8: col headers
-    aoa.push(['N° Opr','Fecha del Documento','Nº R.I.F. o C.I','Nombre y Apellido o Razón Social','Tipo de Documento','N° de Factura','N° de Control de Factura','Nro de Factura Afectada','Fecha Aplic','N° de Planilla C-80/C-81','N° de Expediente','Total Importación','Base Imponible','0.16','IVA','Total Compras Alícuota General','Compras sin derecho a Crédito Fiscal','Base Imponible','% Alícuota','Crédito Fiscal 16%','Total Compras Alícuota Reducida','Base Imponible','%','Crédito Fiscal 8%','% Retenido','Monto Retenido','Factura que Afecta','N° Comprobante']);
-    // Filas de datos
-    rows.forEach(r => {
-      aoa.push([
-        r.seq, fmtFE(r.fecha), r.rif, r.nombre, r.tipo,
-        r.nroFactura||'—', r.nroControl||'—', r.retFact||'—',
-        r.impFechaAplic?fmtFE(r.impFechaAplic):'', r.impPlanilla||'', r.impExpediente||'',
-        r.impTotal||null, r.impBase||null, r.impBase>0&&r.tipo==='FACTURA'?0.16:null, r.impIVA||null,
-        r.ciTotal||null, r.ciSinDer||null, r.ciBase||null, (r.tipo==='FACTURA'||r.tipo==='NC'||r.tipo==='ND')&&r.ciBase!==0?0.16:null, r.ciCred||null,
-        r.crTotal||null, r.crBase||null, r.tipo==='FACTURA'&&r.crBase>0?0.08:null, r.crCred||null,
-        r.retPct||'—', r.retMonto||null, r.retFact||'—', r.retComp||'—',
-      ]);
-    });
-    // Fila TOTAL
-    aoa.push(['TOTAL','','','','','','','','','','',totImpTotal,totImpBase,totImpBase>0?0.16:'',totImpIVA, totCiTotal,totSinDer,totBase16,'',totCred16,totCrTotal,totBase8,'',totCred8,'',totRetMonto,'','']);
-    // Resumen
-    aoa.push([]);
-    aoa.push([]);
-    aoa.push(['','','','','RESUMEN — FORMA 99030 CRÉDITOS FISCALES','','Base Imponible','','Crédito Fiscal']);
-    aoa.push(['','','','','N°','Concepto','Campo','Valor','Campo','Valor']);
-    // Items 10-17 (auto)
-    aoa.push(['','','','',10,'Compras no gravadas y/o sin derecho a crédito fiscal',30,c30,'','—']);
-    aoa.push(['','','','',11,'Importaciones gravadas por alícuota general',31,c31,32,c32]);
-    aoa.push(['','','','',12,'Importaciones gravadas por alícuota general más adicional',312,lcRes.c312||0,322,lcRes.c322||0]);
-    aoa.push(['','','','',13,'Importaciones gravadas por alícuota reducida',313,lcRes.c313||0,323,lcRes.c323||0]);
-    aoa.push(['','','','',14,'Compras internas gravadas por alícuota general (16%)',33,c33,34,c34]);
-    aoa.push(['','','','',15,'Compras internas gravadas por alícuota general más adicional',332,lcRes.c332||0,342,lcRes.c342||0]);
-    aoa.push(['','','','',16,'Compras internas gravadas por alícuota reducida',333,totBase8,343,totCred8]);
-    aoa.push(['','','','',17,'Total compras y créditos fiscales del período',35,c35,36,c36]);
-    // Items 18-26 (manuales + algunos auto)
-    aoa.push(['','','','',18,'Créditos fiscales totalmente deducibles',70,lcRes.c70||0,'','']);
-    aoa.push(['','','','',19,'Créditos fiscales producto de la aplicación de la prorrata',37,lcRes.c37||0,'','']);
-    aoa.push(['','','','',20,'Total créditos fiscales deducibles (18+19)',71,c71,'','']);
-    aoa.push(['','','','',21,'Excedente créditos fiscales del mes anterior (ítem 60 dec. anterior)',20,lcRes.c20||0,'','']);
-    aoa.push(['','','','',22,'Reintegro solicitado (solo exportadores)',21,lcRes.c21||0,'','']);
-    aoa.push(['','','','',23,'Reintegro solicitado (solo bienes/servicios a entes exonerados)',81,lcRes.c81||0,'','']);
-    aoa.push(['','','','',24,'Ajuste a los créditos fiscales de períodos anteriores',38,lcRes.c38||0,'','']);
-    aoa.push(['','','','',25,'Registrados en el período',82,lcRes.c82||0,'','']);
-    aoa.push(['','','','',26,'Total créditos fiscales  (20+21−22−23+24−25)',39,c39,'','']);
-    aoa.push([]);
-    aoa.push(['','','','','IVA RETENIDO DEL PERÍODO (Bs.)','','',totRetMonto]);
-
-    const ws = XL.utils.aoa_to_sheet(aoa);
-    // Anchos de columna
-    ws['!cols'] = [{wch:6},{wch:11},{wch:15},{wch:36},{wch:12},{wch:13},{wch:14},{wch:13},{wch:11},{wch:14},{wch:14},{wch:16},{wch:14},{wch:6},{wch:14},{wch:14},{wch:14},{wch:14},{wch:7},{wch:14},{wch:14},{wch:14},{wch:6},{wch:14},{wch:9},{wch:14},{wch:14},{wch:18}];
-    // Congelar primeras 4 columnas
-    ws['!freeze'] = {xSplit:4, ySplit:8};
-
-    // ── Estilos ──────────────────────────────────────────────────────
-    const S = {
-      hdr:  { fill:{patternType:'solid',fgColor:{rgb:'FF1F3864'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:9,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
-      hdrO: { fill:{patternType:'solid',fgColor:{rgb:'FFEA580C'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
-      hdrT: { fill:{patternType:'solid',fgColor:{rgb:'FF0F766E'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
-      hdrB: { fill:{patternType:'solid',fgColor:{rgb:'FF1E40AF'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
-      hdrP: { fill:{patternType:'solid',fgColor:{rgb:'FF6D28D9'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center',wrapText:true} },
-      memb: { fill:{patternType:'solid',fgColor:{rgb:'FF1E293B'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:10,name:'Arial'} },
-      sub:  { fill:{patternType:'solid',fgColor:{rgb:'FF334155'}}, font:{color:{rgb:'FFCBD5E1'},sz:8,name:'Arial'} },
-      fac:  { fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}}, font:{color:{rgb:'FF111827'},sz:8,name:'Arial'} },
-      facN: { fill:{patternType:'solid',fgColor:{rgb:'FFFFFFFF'}}, font:{color:{rgb:'FF111827'},sz:8,name:'Arial'}, alignment:{horizontal:'right'} },
-      facHL:{ fill:{patternType:'solid',fgColor:{rgb:'FFEFF6FF'}}, font:{color:{rgb:'FF1D4ED8'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center'} },
-      ret:  { fill:{patternType:'solid',fgColor:{rgb:'FFFEFCE8'}}, font:{color:{rgb:'FF78350F'},sz:8,name:'Arial'} },
-      retN: { fill:{patternType:'solid',fgColor:{rgb:'FFFEFCE8'}}, font:{color:{rgb:'FFDC2626'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'right'} },
-      retHL:{ fill:{patternType:'solid',fgColor:{rgb:'FFFEF3C7'}}, font:{color:{rgb:'FFEA580C'},bold:true,sz:8,name:'Arial'}, alignment:{horizontal:'center'} },
-      tot:  { fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}}, font:{color:{rgb:'FFFFFFFF'},bold:true,sz:9,name:'Arial'} },
-      totN: { fill:{patternType:'solid',fgColor:{rgb:'FF1F2937'}}, font:{color:{rgb:'FFF97316'},bold:true,sz:9,name:'Arial'}, alignment:{horizontal:'right'} },
-      sum:  { fill:{patternType:'solid',fgColor:{rgb:'FFF8FAFC'}}, font:{color:{rgb:'FF374151'},sz:8,name:'Arial'} },
-      sumN: { fill:{patternType:'solid',fgColor:{rgb:'FFF1F5F9'}}, font:{color:{rgb:'FF0F766E'},bold:true,sz:9,name:'Arial'}, alignment:{horizontal:'right'} },
+    const Q = filtQ==='AMBAS' ? 'MES COMPLETO' : filtQ==='1' ? 'I QUINCENA' : 'II QUINCENA';
+    const periodoTxt = `DEL ${fmtFE(desde)} AL ${fmtFE(hasta)}`;
+    const hoy = fmtFE(getTodayDate());
+    const esDoc = r => r.tipo==='FACTURA'||r.tipo==='NC'||r.tipo==='ND';
+    const tipoLab = {FACTURA:'FACTURA', 'RETENCI\u00d3N':'RETENCI\u00d3N', NC:'NOTA CR\u00c9DITO', ND:'NOTA D\u00c9BITO'};
+    const nz = v => { const n = Number(v)||0; return Math.abs(n)>0.004 ? n : null; };
+    // 28 columnas, en el mismo orden que el libro legal
+    const cells = r => {
+      const doc = esDoc(r), fac = r.tipo==='FACTURA', ret = r.tipo==='RETENCI\u00d3N';
+      return [
+        r.seq, r.fecha||'', r.rif||'', r.nombre||'', tipoLab[r.tipo]||r.tipo||'',
+        r.nroFactura||'', r.nroControl||'', r.retFact||'',
+        r.impFechaAplic||'', r.impPlanilla||'', r.impExpediente||'',
+        nz(r.impTotal), nz(r.impBase), (Number(r.impBase)||0)!==0&&fac?'16%':'', nz(r.impIVA),
+        doc?nz(r.ciTotal):null, doc?nz(r.ciSinDer):null, doc?nz(r.ciBase):null, doc&&(Number(r.ciBase)||0)!==0?'16%':'', doc?nz(r.ciCred):null,
+        doc?nz(r.crTotal):null, doc?nz(r.crBase):null, doc&&(Number(r.crBase)||0)!==0?'8%':'', doc?nz(r.crCred):null,
+        ret?(r.retPct||''):'', ret?nz(r.retMonto):null, ret?(r.retFact||''):'', ret?(r.retComp||''):'',
+      ];
     };
-    const sc = (r,c,st) => { const addr=XL.utils.encode_cell({r,c}); if(!ws[addr])ws[addr]={v:'',t:'s'}; ws[addr].s=st; };
-    const scN = (r,c,st) => { const addr=XL.utils.encode_cell({r,c}); if(ws[addr])ws[addr].s=st; };
-    // Filas membrete 0-5
-    for(let r=0;r<4;r++) for(let c=0;c<28;c++) sc(r,c,r<2?S.memb:S.sub);
-    // Fila 6: sección headers
-    for(let c=0;c<28;c++) sc(6,c,c>=11&&c<=14?S.hdrT:c>=15&&c<=19?S.hdrB:c>=20&&c<=23?S.hdrO:c>=24?S.hdrP:S.hdr);
-    // Fila 7: col headers
-    for(let c=0;c<28;c++) sc(7,c,c>=11&&c<=14?S.hdrT:c>=15&&c<=19?S.hdrB:c>=20&&c<=23?S.hdrO:c>=24?S.hdrP:S.hdr);
-    // Filas de datos
-    const firstDataRow = 8;
-    const numCols = [11,12,13,14,15,16,17,18,19,20,21,22,23,25];
-    rows.forEach((r,i) => {
-      const ri = firstDataRow+i;
-      const isFac = r.tipo==='FACTURA';
-      for(let c=0;c<28;c++){
-        const isNum = numCols.includes(c);
-        if(isFac){
-          if(c===5||c===6) sc(ri,c,S.facHL); // N° Factura destacado
-          else if(isNum) sc(ri,c,S.facN);
-          else sc(ri,c,S.fac);
-        } else {
-          if(c>=24&&c<=27) sc(ri,c,S.retHL); // ret columns
-          else if(isNum) sc(ri,c,S.retN);
-          else sc(ri,c,S.ret);
-        }
-        // Aplicar formato numérico
-        const addr=XL.utils.encode_cell({r:ri,c});
-        if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
-      }
-    });
-    // Fila TOTAL
-    const totRow = firstDataRow + rows.length;
-    for(let c=0;c<28;c++){
-      const isNum = numCols.includes(c);
-      sc(totRow,c,isNum?S.totN:S.tot);
-      const addr=XL.utils.encode_cell({r:totRow,c});
-      if(ws[addr]&&ws[addr].t==='n') ws[addr].z=numFmt;
-    }
-    // Resumen
-    const resStart = totRow+2;
-    for(let ri=resStart;ri<resStart+10;ri++){
-      for(let c=0;c<28;c++){
-        const addr=XL.utils.encode_cell({r:ri,c});
-        if(ws[addr]) ws[addr].s=(c===6||c===8)?S.sumN:S.sum;
-      }
-    }
-
-    const wb = XL.utils.book_new();
-    XL.utils.book_append_sheet(wb, ws, 'L COMPRAS');
-    XL.writeFile(wb, `LibroCompras_${filtAnio}_${mes2}_Q${filtQ}.xlsx`, {cellStyles:true});
+    const items = [
+      [10,'Compras no gravadas y/o sin derecho a cr\u00e9dito fiscal',30,c30,null,null,'a'],
+      [11,'Importaciones gravadas por al\u00edcuota general',31,c31,32,c32,'a'],
+      [12,'Importaciones gravadas por al\u00edcuota general m\u00e1s adicional',312,lcRes.c312||0,322,lcRes.c322||0,''],
+      [13,'Importaciones gravadas por al\u00edcuota reducida',313,lcRes.c313||0,323,lcRes.c323||0,''],
+      [14,'Compras internas gravadas por al\u00edcuota general (16%)',33,c33,34,c34,'a'],
+      [15,'Compras internas gravadas por al\u00edcuota general m\u00e1s adicional',332,lcRes.c332||0,342,lcRes.c342||0,''],
+      [16,'Compras internas gravadas por al\u00edcuota reducida',333,totBase8,343,totCred8,'a'],
+      [17,'Total compras y cr\u00e9ditos fiscales del per\u00edodo',35,c35,36,c36,'t'],
+      [18,'Cr\u00e9ditos fiscales totalmente deducibles',70,lcRes.c70||0,null,null,''],
+      [19,'Cr\u00e9ditos fiscales producto de la aplicaci\u00f3n de la prorrata',37,lcRes.c37||0,null,null,''],
+      [20,'Total cr\u00e9ditos fiscales deducibles (18+19)',71,c71,null,null,'a'],
+      [21,'Excedente cr\u00e9ditos fiscales del mes anterior (\u00edtem 60 dec. anterior)',20,lcRes.c20||0,null,null,''],
+      [22,'Reintegro solicitado (solo exportadores)',21,lcRes.c21||0,null,null,''],
+      [23,'Reintegro solicitado (solo bienes/servicios a entes exonerados)',81,lcRes.c81||0,null,null,''],
+      [24,'Ajuste a los cr\u00e9ditos fiscales de per\u00edodos anteriores',38,lcRes.c38||0,null,null,''],
+      [25,'Registrados en el per\u00edodo',82,lcRes.c82||0,null,null,''],
+      [26,'Total cr\u00e9ditos fiscales (20+21\u221222\u221223+24\u221225)',39,c39,null,null,'t'],
+    ];
+    return {empresa,rif,dir,Q,periodoTxt,hoy,esDoc,tipoLab,nz,cells,items};
   };
 
-  // ── PDF EXPORT ────────────────────────────────────────────────────
+  // \u2500\u2500 EXCEL EXPORT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  const exportExcel = async () => {
+    try {
+      const EJ = await ccLoadExcelJS();
+      const L = lcPrep();
+      const {empresa,rif,dir,Q,periodoTxt,hoy,cells,items} = L;
+      const NCOL = 28;
+      const NF = '#,##0.00;[Red]\\-#,##0.00;"\u2013"';
+      const ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB', INK='FF0F172A', LIGHT='FFF1F5F9';
+      const fill = a => ({type:'pattern',pattern:'solid',fgColor:{argb:a}});
+      const bd = {top:{style:'thin',color:{argb:GRID}},left:{style:'thin',color:{argb:GRID}},bottom:{style:'thin',color:{argb:GRID}},right:{style:'thin',color:{argb:GRID}}};
+      const wb = new EJ.Workbook();
+      wb.creator = empresa; wb.created = new Date();
+      const ws = wb.addWorksheet('Libro de Compras', {
+        properties:{tabColor:{argb:ORANGE}},
+        views:[{state:'frozen',xSplit:4,ySplit:7,showGridLines:false}],
+        pageSetup:{paperSize:14,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,horizontalCentered:true,
+          margins:{left:0.25,right:0.25,top:0.4,bottom:0.55,header:0.2,footer:0.25},printTitlesRow:'6:7'},
+        headerFooter:{oddFooter:`&L&8&"Arial,Regular"Libro de Compras \u2014 ${mesLabel} ${filtAnio} \u2014 ${Q}&C&8&"Arial,Regular"P\u00e1gina &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
+      });
+      const nameW = Math.min(46,Math.max(28,...rows.map(r=>String(r.nombre||'').length+3)));
+      [5,11,14,nameW,13,12,13,12,11,13,13,15,15,7,13,15,15,15,7,14,15,15,7,14,8,14,12,17].forEach((w,i)=>{ws.getColumn(i+1).width=w;});
+
+      // Membrete
+      for(let r=1;r<=4;r++) for(let c=1;c<=NCOL;c++) ws.getCell(r,c).fill=fill(WHITE);
+      const put = (r,c1,c2,val,font,al) => { if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle',horizontal:'left',indent:1}; return cell; };
+      put(1,1,12,empresa,{name:'Arial',size:15,bold:true,color:{argb:INK}});
+      put(2,1,12,`RIF: ${rif}`,{name:'Arial',size:9,color:{argb:'FF475569'}});
+      put(3,1,12,dir,{name:'Arial',size:8,color:{argb:'FF64748B'}});
+      put(4,1,12,'LIBRO DE COMPRAS',{name:'Arial',size:17,bold:true,color:{argb:ORANGE}});
+      const boxC = {vertical:'middle',horizontal:'center'};
+      put(1,21,28,'IMPUESTO AL VALOR AGREGADO  \u00b7  FORMA 99030',{name:'Arial',size:9,bold:true,color:{argb:'FFEA580C'}},boxC);
+      put(2,21,28,`MES:  ${mesLabel.toUpperCase()} ${filtAnio}`,{name:'Arial',size:10,bold:true,color:{argb:INK}},boxC);
+      put(3,21,28,`PERIODO:  ${Q}`,{name:'Arial',size:10,bold:true,color:{argb:INK}},boxC);
+      put(4,21,28,periodoTxt,{name:'Arial',size:9,color:{argb:'FF475569'}},boxC);
+      [24,15,14,28].forEach((h,i)=>{ws.getRow(i+1).height=h;});
+      for(let c=1;c<=NCOL;c++) ws.getCell(5,c).fill=fill(ORANGE);
+      ws.getRow(5).height=4;
+
+      // Encabezados
+      const grp = [[1,8,'DATOS DEL DOCUMENTO','FFE2E8F0',INK],[9,15,'IMPORTACIONES','FF0F766E',WHITE],[16,20,'COMPRAS INTERNAS \u2014 AL\u00cdCUOTA GENERAL','FF1D4ED8',WHITE],[21,24,'COMPRAS NACIONALES \u2014 AL\u00cdCUOTA REDUCIDA','FFEA580C',WHITE],[25,28,'IVA RETENIDO','FF6D28D9',WHITE]];
+      grp.forEach(([a,b,t,col,fc])=>{ws.mergeCells(6,a,6,b);const c=ws.getCell(6,a);c.value=t;c.font={name:'Arial',size:9,bold:true,color:{argb:fc}};c.alignment={vertical:'middle',horizontal:'center'};for(let k=a;k<=b;k++){const x=ws.getCell(6,k);x.fill=fill(col);x.border={left:{style:'thin',color:{argb:WHITE}},right:{style:'thin',color:{argb:WHITE}}};}});
+      ws.getRow(6).height=19;
+      const heads = ['N\u00b0','Fecha del Documento','N\u00b0 R.I.F. o C.I.','Nombre o Raz\u00f3n Social','Tipo de Documento','N\u00b0 de Factura','N\u00b0 de Control de Factura','N\u00b0 Factura Afectada','Fecha Aplic.','N\u00b0 Planilla C-80/C-81','N\u00b0 Expediente','Total Compras Incl. IVA','Base Imponible','% Al\u00edc.','Impuesto IVA','Total Compras Incl. IVA','Compras sin Derecho a Cr\u00e9dito','Base Imponible','% Al\u00edc.','Impuesto IVA (Cr\u00e9dito)','Total Compras Incl. IVA','Base Imponible','% Al\u00edc.','Impuesto IVA (Cr\u00e9dito)','% Ret.','IVA Retenido','N\u00b0 Factura que Afecta','N\u00b0 Comprobante de Retenci\u00f3n'];
+      const hcol = c => c<=8?'FF334155':c<=15?'FF0F766E':c<=20?'FF1D4ED8':c<=24?'FFEA580C':'FF6D28D9';
+      heads.forEach((t,i)=>{const c=ws.getCell(7,i+1);c.value=t;c.font={name:'Arial',size:8,bold:true,color:{argb:WHITE}};c.fill=fill(hcol(i+1));c.alignment={vertical:'middle',horizontal:'center',wrapText:true};c.border={left:{style:'thin',color:{argb:WHITE}},right:{style:'thin',color:{argb:WHITE}}};});
+      ws.getRow(7).height=40;
+      ws.autoFilter = {from:{row:7,column:1},to:{row:7,column:NCOL}};
+
+      // Datos
+      const FIRST = 8;
+      const tipoFill = {'RETENCI\u00d3N':'FFFFFBEB',NC:'FFFEF2F2',ND:'FFEFF6FF'};
+      const tipoCol = {FACTURA:'FF15803D','RETENCI\u00d3N':'FFB45309',NC:'FFB91C1C',ND:'FF1D4ED8'};
+      const center = [1,2,5,6,7,8,9,10,11,14,19,23,25,27,28], right = [12,13,15,16,17,18,20,21,22,24,26];
+      const text = [3,6,7,8,10,11,27,28];
+      rows.forEach((r,i)=>{
+        const ri = FIRST+i;
+        const dp = String(r.fecha||'').split('-').map(Number);
+        const vals = cells(r).map((v,ci)=>{
+          if(ci===1) return dp.length===3&&dp[0]?new Date(Date.UTC(dp[0],dp[1]-1,dp[2])):'';
+          if(ci===8){const d=String(v||'').split('-').map(Number);return d.length===3&&d[0]?new Date(Date.UTC(d[0],d[1]-1,d[2])):'';}
+          return v;
+        });
+        const bg = tipoFill[r.tipo]||(i%2?'FFF8FAFC':WHITE);
+        vals.forEach((v,ci)=>{
+          const col = ci+1, c = ws.getCell(ri,col);
+          c.value = (v===''||v===null||v===undefined)?null:v;
+          let color='FF111827', bold=false;
+          if(col===5){color=tipoCol[r.tipo]||color;bold=true;}
+          if(col===6){color='FF1D4ED8';bold=true;}
+          if(col===26){color='FFDC2626';bold=true;}
+          if(col===28){color='FFEA580C';bold=true;}
+          c.font = {name:'Arial',size:9,bold,color:{argb:color}};
+          c.fill = fill(bg); c.border = bd;
+          c.alignment = {vertical:'middle',horizontal:center.includes(col)?'center':right.includes(col)?'right':'left',indent:(col===4||col===3)?1:0};
+          if(right.includes(col)) c.numFmt = NF;
+          if(col===2||col===9) c.numFmt = 'dd/mm/yyyy';
+          if(text.includes(col)) c.numFmt = '@';
+        });
+        ws.getRow(ri).height = 17;
+      });
+
+      // Totales (f\u00f3rmulas)
+      const LAST = FIRST+rows.length-1, T = LAST+1;
+      ws.mergeCells(T,1,T,11);
+      const tl = ws.getCell(T,1); tl.value = `TOTALES \u2014 ${rows.length} registros (${fRows.length} documentos \u00b7 ${rRows.length} retenciones)`;
+      const sumF = (col,res) => ({formula:`SUM(${col}${FIRST}:${col}${LAST})`,result:res});
+      const tv = {12:sumF('L',rows.reduce((s,r)=>s+(Number(r.impTotal)||0),0)),13:sumF('M',totImpBase),15:sumF('O',totImpIVA),16:sumF('P',totCiTotal),17:sumF('Q',totSinDer),18:sumF('R',totBase16),20:sumF('T',totCred16),21:sumF('U',totCrTotal),22:sumF('V',totBase8),24:sumF('X',totCred8),26:sumF('Z',totRetMonto)};
+      for(let c=1;c<=NCOL;c++){
+        const cell = ws.getCell(T,c);
+        cell.fill = fill(LIGHT);
+        cell.border = {top:{style:'medium',color:{argb:ORANGE}}};
+        if(tv[c]){cell.value=tv[c];cell.numFmt='#,##0.00';cell.font={name:'Arial',size:10,bold:true,color:{argb:INK}};cell.alignment={horizontal:'right',vertical:'middle'};}
+      }
+      tl.font = {name:'Arial',size:10,bold:true,color:{argb:INK}}; tl.alignment = {horizontal:'left',vertical:'middle',indent:1};
+      ws.getRow(T).height = 24;
+
+      // Resumen Forma 99030
+      let rr = T+2;
+      ws.mergeCells(rr,3,rr,12);
+      const rt = ws.getCell(rr,3); rt.value = 'RESUMEN \u2014 FORMA 99030 \u00b7 CR\u00c9DITOS FISCALES';
+      rt.font = {name:'Arial',size:12,bold:true,color:{argb:INK}}; rt.alignment = {vertical:'middle',horizontal:'left',indent:1};
+      for(let k=3;k<=12;k++) ws.getCell(rr,k).fill = fill('FFE2E8F0');
+      ws.getRow(rr).height = 24; rr++;
+      const hdr2 = [[3,'N\u00b0'],[4,'Concepto'],[9,'Campo'],[10,'Base Imponible'],[11,'Campo'],[12,'Cr\u00e9dito Fiscal']];
+      ws.mergeCells(rr,4,rr,8);
+      for(let k=3;k<=12;k++){const c=ws.getCell(rr,k);c.fill=fill('FF1D4ED8');c.font={name:'Arial',size:9,bold:true,color:{argb:WHITE}};c.alignment={horizontal:'center',vertical:'middle'};c.border=bd;}
+      hdr2.forEach(([k,t])=>{ws.getCell(rr,k).value=t;});
+      ws.getRow(rr).height = 18; rr++;
+      items.forEach(([n,lbl,cB,vB,cC,vC,k])=>{
+        ws.mergeCells(rr,4,rr,8);
+        const bg = k==='t'?'FFFEF3C7':k==='a'?'FFDBEAFE':WHITE;
+        for(let c=3;c<=12;c++){const x=ws.getCell(rr,c);x.fill=fill(bg);x.border=bd;x.font={name:'Arial',size:9,bold:k==='t'||k==='a',color:{argb:'FF111827'}};}
+        ws.getCell(rr,3).value=n; ws.getCell(rr,3).alignment={horizontal:'center'};
+        ws.getCell(rr,4).value=lbl; ws.getCell(rr,4).alignment={horizontal:'left',indent:1,vertical:'middle'};
+        ws.getCell(rr,9).value=cB; ws.getCell(rr,9).alignment={horizontal:'center'};
+        const vb=ws.getCell(rr,10); vb.value=vB; vb.numFmt=NF; vb.alignment={horizontal:'right'};
+        if(cC){ws.getCell(rr,11).value=cC;ws.getCell(rr,11).alignment={horizontal:'center'};const vc=ws.getCell(rr,12);vc.value=vC;vc.numFmt=NF;vc.alignment={horizontal:'right'};}
+        ws.getRow(rr).height = 16; rr++;
+      });
+      rr++;
+      ws.mergeCells(rr,4,rr,9);
+      const rl = ws.getCell(rr,4); rl.value = 'IVA RETENIDO DEL PER\u00cdODO (Bs.)'; rl.font = {name:'Arial',size:10,bold:true,color:{argb:INK}};
+      const rv = ws.getCell(rr,10); rv.value = {formula:`Z${T}`,result:totRetMonto}; rv.numFmt = '#,##0.00'; rv.font = {name:'Arial',size:10,bold:true,color:{argb:'FFC2410C'}}; rv.alignment = {horizontal:'right'};
+      for(let c=4;c<=10;c++){ws.getCell(rr,c).fill=fill(LIGHT);ws.getCell(rr,c).border=bd;}
+      ws.pageSetup.printArea = `A1:AB${rr}`;
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `LibroCompras_${filtAnio}_${mes2}_Q${filtQ}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url),2000);
+    } catch(e) {
+      setDialog({title:'Error al exportar',text:'No se pudo generar el Excel: '+(e&&e.message?e.message:e),type:'alert'});
+    }
+  };
+
+  // \u2500\u2500 PDF EXPORT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   const exportPDF = () => {
-    const emp = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-    const rifEmp = settings?.empresaRif||'J-412309374';
-    const dirEmp = settings?.empresaDireccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA';
-    const Q = filtQ==='AMBAS'?'MES COMPLETO':filtQ==='1'?'I QUINCENA':'II QUINCENA';
-
-    const rowsHtml = rows.map(r => {
-      const isFac = r.tipo === 'FACTURA';
-      const bg = isFac ? '#fff' : '#fefce8';
-      const textColor = isFac ? '#111' : '#78350f';
-      const numStyle = `text-align:right;font-family:monospace;font-size:6px;color:${isFac?'#1f2937':'#dc2626'};`;
-      const retHighlight = !isFac ? 'background:#fef3c7;color:#ea580c;font-weight:bold;' : '';
-      return `<tr style="background:${bg};color:${textColor};border-bottom:1px solid #e5e7eb">
-  <td style="padding:1px 3px;font-size:6px;text-align:center;width:22px">${r.seq}</td>
-  <td style="padding:1px 3px;font-size:6px;white-space:nowrap;width:52px">${fmtFE(r.fecha)}</td>
-  <td style="padding:1px 3px;font-size:6px;white-space:nowrap;width:75px">${r.rif||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;max-width:120px;word-wrap:break-word">${r.nombre}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;font-weight:bold;background:${isFac?'#f0fdf4':'#fef9c3'};color:${isFac?'#065f46':'#92400e'}">${r.tipo}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;color:#1d4ed8;font-weight:bold">${r.nroFactura||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.nroControl||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.retFact||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;color:${r.impFechaAplic?'#1d4ed8':'#9ca3af'}">${r.impFechaAplic?fmtFE(r.impFechaAplic):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;color:${r.impPlanilla?'#1d4ed8':'inherit'}">${r.impPlanilla||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;color:${r.impExpediente?'#1d4ed8':'inherit'}">${r.impExpediente||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${r.impTotal>0?fmtV(r.impTotal):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${r.impBase>0?fmtV(r.impBase):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">${r.impBase>0?'0.16':'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${r.impIVA>0?fmtV(r.impIVA):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciTotal>0?fmtV(r.ciTotal):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciSinDer>0?fmtV(r.ciSinDer):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciBase>0?fmtV(r.ciBase):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">${isFac?'0.16':'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.ciCred>0?fmtV(r.ciCred):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.crTotal>0?fmtV(r.crTotal):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.crBase>0?fmtV(r.crBase):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center">${isFac&&r.crBase>0?'0.08':'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}">${isFac&&r.crCred>0?fmtV(r.crCred):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;${retHighlight}">${r.retPct||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;${numStyle}color:#dc2626;font-weight:bold">${r.retMonto>0?fmtV(r.retMonto):'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;text-align:center;color:#ea580c">${r.retFact||'—'}</td>
-  <td style="padding:1px 3px;font-size:6px;font-size:5.5px">${r.retComp||'—'}</td>
-</tr>`;
+    const L = lcPrep();
+    const {empresa,rif,dir,Q,periodoTxt,hoy,cells,items} = L;
+    const esc = v => String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const W = [2.2,4,5.2,12.5,4.8,4.6,5,4.4,3.8,4.4,4.4,5.4,5.4,2.2,4.8,5.4,5,5.4,2.2,4.8,5.4,5.4,2.2,4.8,2.6,5,4,7.6];
+    const sumW = W.reduce((a,b)=>a+b,0);
+    const cg = W.map(w=>`<col style="width:${(w/sumW*100).toFixed(3)}%">`).join('');
+    const right = [11,12,14,15,16,17,19,20,21,23,25];
+    const center = [0,1,4,5,6,7,8,9,10,13,18,22,24,26,27];
+    const num = v => (v===null||v===undefined||v==='')?'':fmtV(v);
+    const clsT = {FACTURA:'t-fac','RETENCI\u00d3N':'t-ret',NC:'t-nc',ND:'t-nd'};
+    const body = rows.map((r,i)=>{
+      const v = cells(r);
+      const tds = v.map((x,ci)=>{
+        let t;
+        if(ci===1||ci===8) t = x?fmtFE(x):'';
+        else if(right.includes(ci)) t = num(x);
+        else t = esc(x);
+        const cls = [right.includes(ci)?'n':center.includes(ci)?'c':'', ci===3?'nm':'', ci===4?'tp':'', ci===5?'nf':'', ci===25?'rt':'', ci===27?'rc':''].filter(Boolean).join(' ');
+        return `<td class="${cls}">${t}</td>`;
+      }).join('');
+      return `<tr class="${clsT[r.tipo]||'t-fac'}${i%2?' alt':''}">${tds}</tr>`;
     }).join('');
-
-    const colHeaders = [
-      'N°','Fecha','N° R.I.F.','Nombre / Razón Social','Tipo Doc.','N° Factura','N° Control','Fac. Afectada',
-      'Fec. Aplic','N° Planilla C-80/C-81','N° Expediente',
-      'Total Importación','Base Imponible','16%','IVA',
-      'CI Total','CI Sin Derecho','CI Base','% Alíc.','CI Créd.16%',
-      'CR Total','CR Base','%','CR Créd.8%',
-      '% Ret.','Mto. Ret. Bs.','Fac. Afecta','N° Comprobante'
-    ];
-    const secH = (txt,cols,color) => `<th colspan="${cols}" style="background:${color};color:#fff;padding:3px 4px;font-size:7px;font-weight:900;text-align:center;border:1px solid #374151">${txt}</th>`;
-
-    const totRow = `<tr style="background:#1f2937;color:#fff;font-weight:900">
-  <td colspan="11" style="padding:2px 4px;font-size:7px">TOTALES — ${rows.length} registros (${fRows.length} facturas · ${rRows.length} retenciones)</td>
-  <td colspan="4" style="padding:2px 4px;font-size:6px;text-align:center">—</td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right;color:#f97316">${fmtV(totCiTotal)}</td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totSinDer)}</td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totBase16)}</td>
-  <td></td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totCred16)}</td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totCrTotal)}</td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totBase8)}</td>
-  <td></td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right">${fmtV(totCred8)}</td>
-  <td></td>
-  <td style="padding:2px 4px;font-size:6px;text-align:right;color:#f97316">${fmtV(totRetMonto)}</td>
-  <td colspan="2"></td>
-</tr>`;
-
-    const rFmt = v => fmtV(v||0);
-    const rRow = (n,lbl,cBase,vBase,cCF,vCF,isAuto,isTot)=>`<tr style="background:${isTot?'#7c2d12':isAuto?'#dbeafe':'#f8fafc'};border-bottom:1px solid #e5e7eb">
-      <td style="padding:3px 8px;font-size:7px;color:#6b7280;width:22px;text-align:center">${n}</td>
-      <td style="padding:3px 8px;font-weight:${isTot||isAuto?900:400};color:${isTot?'#fff':isAuto?'#1e40af':'#111'}">${lbl}</td>
-      <td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center;width:28px">${cBase}</td>
-      <td style="padding:3px 8px;text-align:right;font-family:monospace;font-weight:${isTot||isAuto?900:400};color:${isTot?'#fcd34d':isAuto?'#1d4ed8':'#111'};width:100px">${vBase!==null?rFmt(vBase):'—'}</td>
-      <td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center;width:28px">${cCF||''}</td>
-      <td style="padding:3px 8px;text-align:right;font-family:monospace;font-weight:${isTot||isAuto?900:400};color:${isTot?'#fcd34d':isAuto?'#16a34a':'#111'};width:100px">${vCF!==null?rFmt(vCF):'—'}</td>
-    </tr>`;
-    const resumenHtml = `<div style="margin-top:20px;page-break-inside:avoid">
-  <table style="width:70%;border-collapse:collapse;font-family:Arial;font-size:8px">
-    <tr><td colspan="6" style="background:#1f2937;color:#fff;font-weight:900;padding:6px 10px;font-size:9px">RESUMEN — FORMA 99030 · CRÉDITOS FISCALES</td></tr>
-    <tr style="background:#1e40af;color:#fff"><td style="padding:3px 8px;font-size:7px;text-align:center">N°</td><td style="padding:3px 8px;font-weight:700">Concepto</td><td style="padding:3px 8px;font-size:7px;text-align:center">Campo</td><td style="padding:3px 8px;font-weight:700;text-align:right">Base Imponible</td><td style="padding:3px 8px;font-size:7px;text-align:center">Campo</td><td style="padding:3px 8px;font-weight:700;text-align:right">Crédito Fiscal</td></tr>
-    ${rRow(10,'Compras no gravadas y/o sin derecho a crédito fiscal',30,c30,null,null,true,false)}
-    ${rRow(11,'Importaciones gravadas por alícuota general',31,c31,32,c32,true,false)}
-    ${rRow(12,'Importaciones gravadas por alícuota general más adicional',312,lcRes.c312||0,322,lcRes.c322||0,false,false)}
-    ${rRow(13,'Importaciones gravadas por alícuota reducida',313,lcRes.c313||0,323,lcRes.c323||0,false,false)}
-    ${rRow(14,'Compras internas gravadas por alícuota general (16%)',33,c33,34,c34,true,false)}
-    ${rRow(15,'Compras internas gravadas por alícuota general más adicional',332,lcRes.c332||0,342,lcRes.c342||0,false,false)}
-    ${rRow(16,'Compras internas gravadas por alícuota reducida',333,totBase8,343,totCred8,true,false)}
-    ${rRow(17,'Total compras y créditos fiscales del período',35,c35,36,c36,true,false)}
-    <tr><td colspan="6" style="padding:2px"></td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">18</td><td style="padding:3px 8px" colspan="3">Créditos fiscales totalmente deducibles</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">70</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c70||0)}</td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">19</td><td style="padding:3px 8px" colspan="3">Créditos fiscales producto de la aplicación de la prorrata</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">37</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c37||0)}</td></tr>
-    <tr style="background:#dbeafe;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">20</td><td style="padding:3px 8px;font-weight:900;color:#1e40af" colspan="3">Total créditos fiscales deducibles (18+19)</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">71</td><td style="padding:3px 8px;text-align:right;font-family:monospace;font-weight:900;color:#1e40af">${rFmt(c71)}</td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">21</td><td style="padding:3px 8px" colspan="3">Excedente créditos fiscales mes anterior (ítem 60 dec. anterior)</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">20</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c20||0)}</td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">22</td><td style="padding:3px 8px" colspan="3">Reintegro solicitado (solo exportadores)</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">21</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c21||0)}</td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">23</td><td style="padding:3px 8px" colspan="3">Reintegro solicitado (solo bienes/servicios a entes exonerados)</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">81</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c81||0)}</td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">24</td><td style="padding:3px 8px" colspan="3">Ajuste a los créditos fiscales de períodos anteriores</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">38</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c38||0)}</td></tr>
-    <tr style="background:#f8fafc;border-bottom:1px solid #e5e7eb"><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">25</td><td style="padding:3px 8px" colspan="3">Registrados en el período</td><td style="padding:3px 8px;font-size:7px;color:#6b7280;text-align:center">82</td><td style="padding:3px 8px;text-align:right;font-family:monospace">${rFmt(lcRes.c82||0)}</td></tr>
-    ${rRow(26,'Total créditos fiscales  (20+21−22−23+24−25)',39,null,null,c39,false,true)}
-    <tr><td colspan="6" style="padding:4px 8px;background:#f1f5f9;font-size:7px;color:#6b7280">★ Campos automáticos (azul): calculados del Libro de Compras · Campos manuales: guardados por período en el sistema</td></tr>
-  </table>
-</div>`;
-
-    const html = `<html><head><meta charset="utf-8"><style>
-@page{size:legal landscape;margin:6mm 5mm;@bottom-center{content:"Pág. " counter(page) " / " counter(pages);font-size:6px;font-family:Arial}}
+    const sumImpTotal = rows.reduce((s,r)=>s+(Number(r.impTotal)||0),0);
+    const totCells = {11:sumImpTotal,12:totImpBase,14:totImpIVA,15:totCiTotal,16:totSinDer,17:totBase16,19:totCred16,20:totCrTotal,21:totBase8,23:totCred8,25:totRetMonto};
+    const totRowHtml = `<tr class="total"><td colspan="11" class="lbl">TOTALES \u2014 ${rows.length} registros (${fRows.length} documentos \u00b7 ${rRows.length} retenciones)</td>${Array.from({length:17},(_,k)=>{const ci=k+11;return `<td class="n">${totCells[ci]!==undefined?fmtV(totCells[ci]):''}</td>`;}).join('')}</tr>`;
+    const gh = (t,n,cls)=>`<th colspan="${n}" class="${cls}">${t}</th>`;
+    const heads = ['N\u00b0','Fecha','N\u00b0 R.I.F.','Nombre o Raz\u00f3n Social','Tipo Doc.','N\u00b0 Factura','N\u00b0 Control','Fac. Afectada','Fecha Aplic.','N\u00b0 Planilla C-80/C-81','N\u00b0 Expediente','Total Imp.','Base Imponible','%','IVA','Total Compras','Sin Derecho a Cr\u00e9dito','Base Imponible','%','Cr\u00e9dito 16%','Total Compras','Base Imponible','%','Cr\u00e9dito 8%','% Ret.','IVA Retenido','Fac. que Afecta','N\u00b0 Comprobante'];
+    const hcls = i=>i<8?'h1':i<15?'h2':i<20?'h3':i<24?'h4':'h5';
+    const resumenRows = items.map(([n,lbl,cB,vB,cC,vC,k])=>`<tr class="${k==='t'?'hi':k==='a'?'au':''}"><td class="c">${n}</td><td>${esc(lbl)}</td><td class="c">${cB}</td><td class="n">${fmtV(vB)}</td><td class="c">${cC||''}</td><td class="n">${cC?fmtV(vC):''}</td></tr>`).join('');
+    const css = `@page{size:13in 8.5in;margin:7mm 7mm 12mm 7mm;
+@bottom-left{content:"${esc(empresa).replace(/&amp;/g,'&')} \u00b7 Libro de Compras \u00b7 ${esc(mesLabel)} ${filtAnio} \u00b7 ${esc(Q)}";font:7px Arial;color:#666}
+@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}
+@bottom-right{content:"Generado el ${hoy}";font:7px Arial;color:#666}}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:Arial,sans-serif;font-size:7px}
-table{border-collapse:collapse;width:100%}
-th,td{border:1px solid #d1d5db;vertical-align:middle}
-@media print{.no-print{display:none}}
-</style></head><body>
-<div style="margin-bottom:8px">
-  <table style="border:none;margin-bottom:4px">
-    <tr>
-      <td style="border:none;font-size:14px;font-weight:900;color:#111;width:60%">${emp}</td>
-      <td style="border:none;text-align:right;font-size:8px;font-weight:bold;color:#555">IMPUESTO AL VALOR AGREGADO</td>
-    </tr>
-    <tr>
-      <td style="border:none;font-size:8px;color:#444">RIF: ${rifEmp}</td>
-      <td style="border:none;text-align:right;font-size:8px;color:#555">FORMA 99030</td>
-    </tr>
-    <tr>
-      <td style="border:none;font-size:7px;color:#666">${dirEmp}</td>
-      <td style="border:none;text-align:right;font-size:9px;font-weight:bold;color:#f97316">MES: ${mesLabel.toUpperCase()}</td>
-    </tr>
-  </table>
-  <div style="font-weight:900;font-size:13px;border-bottom:2px solid #111;padding-bottom:3px;display:inline-block">LIBRO DE COMPRAS</div>
-  <span style="margin-left:12px;font-size:8px;color:#555">PERÍODO: ${Q} — DEL ${fmtFE(desde)} AL ${fmtFE(hasta)} — ${rows.length} registros</span>
-</div>
-<table>
-  <thead>
-    <tr>
-      <th colspan="8" style="background:#1e293b;color:#fff;padding:3px;font-size:7px">DATOS DEL DOCUMENTO</th>
-      ${secH('IMPORTACIONES',7,'#0f766e')}
-      ${secH('COMPRAS INTERNAS — ALÍCUOTA GENERAL 16%',5,'#1e40af')}
-      ${secH('COMPRAS NACIONALES — ALÍCUOTA REDUCIDA 8%',4,'#ea580c')}
-      ${secH('IVA RETENIDO',4,'#6d28d9')}
-    </tr>
-    <tr>
-      ${colHeaders.map((h,i)=>`<th style="background:${i<8?'#334155':i<15?'#0f766e':i<20?'#1e40af':i<24?'#ea580c':'#6d28d9'};color:#fff;padding:2px 3px;font-size:5.5px;text-align:center;vertical-align:middle;line-height:1.2">${h}</th>`).join('')}
-    </tr>
-  </thead>
-  <tbody>
-    ${rowsHtml}
-    ${totRow}
-  </tbody>
-</table>
-${resumenHtml}
-</body></html>`;
-
+body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}
+.bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer;font-size:12px}
+.sheet{width:316mm;margin:10px auto}
+.top{display:flex;justify-content:space-between;align-items:stretch;gap:10px;border-bottom:3px solid #f97316;padding:7px 10px}
+.emp{font-size:13px;font-weight:900}.sub{font-size:8px;color:#334155;margin-top:1px}.dir{font-size:7px;color:#64748b;margin-top:1px}
+.ttl{font-size:15px;font-weight:900;color:#f97316;margin-top:3px;letter-spacing:1px}
+.box2{min-width:230px;border:1px solid #f97316;font-size:8px}.box2 div{padding:2.5px 8px;text-align:center}
+.box2 .h{color:#ea580c;border-bottom:1px solid #f97316;font-weight:900}.box2 .m{font-weight:800;font-size:9px}.box2 .d{color:#475569}
+table.lc{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px}
+table.lc th,table.lc td{font-size:5.6px;padding:2px 2px;border:.5px solid #d1d5db;vertical-align:middle;overflow-wrap:anywhere}
+thead{display:table-header-group}tr{page-break-inside:avoid}
+table.lc th{color:#fff;font-weight:800;text-align:center;line-height:1.15;border-color:#fff;font-size:5.4px}
+th.g{font-size:6.5px;padding:3px}
+.h1{background:#334155}.h2{background:#0f766e}.h3{background:#1d4ed8}.h4{background:#ea580c}.h5{background:#6d28d9}
+th.g.h1{background:#e2e8f0;color:#0f172a}
+td.c{text-align:center}td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}td.nm{font-weight:600}
+.t-fac.alt td{background:#f8fafc}.t-ret td{background:#fffbeb}.t-nc td{background:#fef2f2}.t-nd td{background:#eff6ff}
+td.tp{font-weight:800;font-size:5.2px}.t-fac td.tp{color:#15803d}.t-ret td.tp{color:#b45309}.t-nc td.tp{color:#b91c1c}.t-nd td.tp{color:#1d4ed8}
+td.nf{color:#1d4ed8;font-weight:800}td.rt{color:#dc2626;font-weight:800}td.rc{color:#ea580c;font-weight:700}
+tr.total td{background:#f1f5f9;color:#0f172a;font-weight:900;font-size:6.2px;border-color:#cbd5e1;border-top:2px solid #f97316}
+tr.total td.lbl{text-align:left;padding-left:8px}
+.resumen{margin-top:12px;page-break-inside:avoid;width:62%}
+.resumen .bt{background:#e2e8f0;font-weight:900;font-size:8px;padding:4px 8px;letter-spacing:.5px}
+.resumen table{width:100%;border-collapse:collapse}.resumen th{background:#1d4ed8;color:#fff;font-size:7px;padding:3px 6px}
+.resumen td{font-size:7.2px;padding:2.6px 8px;border-bottom:.5px solid #e5e7eb}
+.resumen td.n{text-align:right;white-space:nowrap;width:16%}.resumen td.c{text-align:center;width:6%}
+.resumen tr.au td{background:#dbeafe;font-weight:700}.resumen tr.hi td{background:#fef3c7;font-weight:800}
+.ret{margin-top:8px;font-size:9px;font-weight:900;border:1px solid #f97316;display:inline-block;padding:4px 10px}
+@media print{.bar{display:none}.sheet{width:auto;margin:0}}`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Libro de Compras ${esc(mesLabel)} ${filtAnio} ${esc(Q)}</title><style>${css}</style></head><body>
+<div class="bar"><button onclick="window.print()">Imprimir / Guardar PDF</button><span>Tama\u00f1o Oficio 8,5 x 13 \u00b7 horizontal \u00b7 desactiva "Encabezados y pies de p\u00e1gina" al imprimir</span></div>
+<div class="sheet">
+<div class="top"><div><div class="emp">${esc(empresa)}</div><div class="sub">RIF: ${esc(rif)}</div><div class="dir">${esc(dir)}</div><div class="ttl">LIBRO DE COMPRAS</div></div>
+<div class="box2"><div class="h">IMPUESTO AL VALOR AGREGADO \u00b7 FORMA 99030</div><div class="m">MES: ${esc(mesLabel.toUpperCase())} ${filtAnio}</div><div class="m">PERIODO: ${esc(Q)}</div><div class="d">${esc(periodoTxt)}</div></div></div>
+<table class="lc"><colgroup>${cg}</colgroup><thead>
+<tr>${gh('DATOS DEL DOCUMENTO',8,'g h1')}${gh('IMPORTACIONES',7,'g h2')}${gh('COMPRAS INTERNAS \u2014 AL\u00cdCUOTA GENERAL',5,'g h3')}${gh('AL\u00cdCUOTA REDUCIDA',4,'g h4')}${gh('IVA RETENIDO',4,'g h5')}</tr>
+<tr>${heads.map((h,i)=>`<th class="${hcls(i)}">${h}</th>`).join('')}</tr></thead>
+<tbody>${body}${totRowHtml}</tbody></table>
+<div class="resumen"><div class="bt">RESUMEN \u2014 FORMA 99030 \u00b7 CR\u00c9DITOS FISCALES</div><table><thead><tr><th>N\u00b0</th><th style="text-align:left">Concepto</th><th>Campo</th><th>Base Imponible</th><th>Campo</th><th>Cr\u00e9dito Fiscal</th></tr></thead><tbody>${resumenRows}</tbody></table>
+<div class="ret">IVA RETENIDO DEL PER\u00cdODO (Bs.): ${fmtV(totRetMonto)}</div></div>
+</div><script>window.onload=function(){setTimeout(function(){window.print();},500);};<\/script></body></html>`;
     const w = window.open('','_blank');
-    w.document.write(html); w.document.close();
-    setTimeout(()=>w.print(),600);
+    if(w){ w.document.write(html); w.document.close(); }
+    else setDialog({title:'Ventana bloqueada',text:'Permite las ventanas emergentes para imprimir el PDF.',type:'alert'});
   };
 
   // ── RENDER ────────────────────────────────────────────────────────
@@ -43577,7 +43544,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const ws=wb.addWorksheet('Libro de Ventas',{
                 properties:{tabColor:{argb:ORANGE}},
                 views:[{state:'frozen',ySplit:7,showGridLines:false}],
-                pageSetup:{paperSize:5,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,horizontalCentered:true,
+                pageSetup:{paperSize:14,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,horizontalCentered:true,
                   margins:{left:0.3,right:0.3,top:0.4,bottom:0.55,header:0.2,footer:0.25},printTitlesRow:'6:7'},
                 headerFooter:{oddFooter:`&L&8&"Arial,Regular"Libro de Ventas \u2014 ${mesLabel} ${libroAnio} \u2014 ${Q}&C&8&"Arial,Regular"P\u00e1gina &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
               });
@@ -43783,7 +43750,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
   </table></div>
 </div>`;
             const css=`
-@page{size:14in 8.5in;margin:7mm 7mm 12mm 7mm;
+@page{size:13in 8.5in;margin:7mm 7mm 12mm 7mm;
   @bottom-left{content:"${esc(empresa).replace(/&amp;/g,'&')} \u2014 Libro de Ventas ${mesLabel} ${libroAnio} \u00b7 ${Q}";font:7px Arial;color:#64748b}
   @bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#64748b}
   @bottom-right{content:"Generado el ${hoy}";font:7px Arial;color:#64748b}}
@@ -43791,7 +43758,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 html,body{margin:0;padding:0;background:#e5e7eb}
 .bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}
 .bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer;font-size:12px}
-.sheet{width:341mm;margin:10px auto;background:#fff;padding:0}
+.sheet{width:316mm;margin:10px auto;background:#fff;padding:0}
 .top{display:flex;justify-content:space-between;align-items:stretch;gap:10px;background:#fff;border-bottom:3px solid #f97316;padding:7px 10px;color:#0f172a}
 .top .l{display:flex;gap:10px;align-items:center}.top img{height:38px}
 .emp{font-size:13px;font-weight:900;letter-spacing:.2px}.sub{font-size:8px;color:#334155;margin-top:1px}.dir{font-size:7px;color:#64748b;margin-top:1px}
