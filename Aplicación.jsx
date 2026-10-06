@@ -43491,7 +43491,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const {mes2,mesLabel,fmtF,padF,padC,n0,empresa,rif,dir,Q,periodoTxt,esDoc,tot,gravadas,retAcum,retDesc,totalRet,saldoRet,otros,tipoLab,hoy}=L;
               const NCOL=19;
               const NF='#,##0.00;[Red]\\-#,##0.00;"\u2013"';
-              const NAVY='FF0F172A', SLATE='FF1E293B', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB';
+              const NAVY='FFF1F5F9', SLATE='FFFFFFFF', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB';
               const fill=a=>({type:'pattern',pattern:'solid',fgColor:{argb:a}});
               const bd={top:{style:'thin',color:{argb:GRID}},left:{style:'thin',color:{argb:GRID}},bottom:{style:'thin',color:{argb:GRID}},right:{style:'thin',color:{argb:GRID}}};
               const wb=new EJ.Workbook();
@@ -43499,7 +43499,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const ws=wb.addWorksheet('Libro de Ventas',{
                 properties:{tabColor:{argb:ORANGE}},
                 views:[{state:'frozen',ySplit:7,showGridLines:false}],
-                pageSetup:{paperSize:14,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,horizontalCentered:true,
+                pageSetup:{paperSize:5,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,horizontalCentered:true,
                   margins:{left:0.3,right:0.3,top:0.4,bottom:0.55,header:0.2,footer:0.25},printTitlesRow:'6:7'},
                 headerFooter:{oddFooter:`&L&8&"Arial,Regular"Libro de Ventas \u2014 ${mesLabel} ${libroAnio} \u2014 ${Q}&C&8&"Arial,Regular"P\u00e1gina &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
               });
@@ -43507,17 +43507,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               [5,11,15,nameW,15,11,12,11,11,11,17,11,13,17,9,16,16,12,19].forEach((w,i)=>{ws.getColumn(i+1).width=w;});
 
               // Membrete (filas 1-4) sobre fondo oscuro
-              for(let r=1;r<=4;r++) for(let c=1;c<=NCOL;c++){ws.getCell(r,c).fill=fill(NAVY);}
+              for(let r=1;r<=4;r++) for(let c=1;c<=NCOL;c++){ws.getCell(r,c).fill=fill(WHITE);}
               const put=(r,c1,c2,val,font,al)=>{ if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle',horizontal:'left',indent:1}; return cell; };
-              put(1,1,11,empresa,{name:'Arial',size:15,bold:true,color:{argb:WHITE}});
-              put(2,1,11,`RIF: ${rif}`,{name:'Arial',size:9,color:{argb:'FFE2E8F0'}});
-              put(3,1,11,dir,{name:'Arial',size:8,color:{argb:'FF94A3B8'}});
+              put(1,1,11,empresa,{name:'Arial',size:15,bold:true,color:{argb:'FF0F172A'}});
+              put(2,1,11,`RIF: ${rif}`,{name:'Arial',size:9,color:{argb:'FF475569'}});
+              put(3,1,11,dir,{name:'Arial',size:8,color:{argb:'FF64748B'}});
               put(4,1,11,'LIBRO DE VENTAS',{name:'Arial',size:17,bold:true,color:{argb:ORANGE}});
               const boxC={vertical:'middle',horizontal:'center'};
-              put(1,14,19,'IMPUESTO AL VALOR AGREGADO  \u00b7  FORMA 99030',{name:'Arial',size:9,bold:true,color:{argb:WHITE}},boxC).fill=fill(ORANGE);
-              put(2,14,19,`MES:  ${mesLabel.toUpperCase()} ${libroAnio}`,{name:'Arial',size:10,bold:true,color:{argb:WHITE}},boxC).fill=fill(SLATE);
-              put(3,14,19,`PERIODO:  ${Q}`,{name:'Arial',size:10,bold:true,color:{argb:WHITE}},boxC).fill=fill(SLATE);
-              put(4,14,19,periodoTxt,{name:'Arial',size:9,color:{argb:'FFE2E8F0'}},boxC).fill=fill(SLATE);
+              put(1,14,19,'IMPUESTO AL VALOR AGREGADO  \u00b7  FORMA 99030',{name:'Arial',size:9,bold:true,color:{argb:'FFEA580C'}},boxC).fill=fill(SLATE);
+              put(2,14,19,`MES:  ${mesLabel.toUpperCase()} ${libroAnio}`,{name:'Arial',size:10,bold:true,color:{argb:'FF0F172A'}},boxC).fill=fill(SLATE);
+              put(3,14,19,`PERIODO:  ${Q}`,{name:'Arial',size:10,bold:true,color:{argb:'FF0F172A'}},boxC).fill=fill(SLATE);
+              put(4,14,19,periodoTxt,{name:'Arial',size:9,color:{argb:'FF475569'}},boxC).fill=fill(SLATE);
               [24,15,14,28].forEach((h,i)=>{ws.getRow(i+1).height=h;});
               // Franja naranja
               for(let c=1;c<=NCOL;c++) ws.getCell(5,c).fill=fill(ORANGE);
@@ -43592,31 +43592,31 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const cell=ws.getCell(T,c);
                 cell.fill=fill(NAVY);
                 cell.border={top:{style:'medium',color:{argb:ORANGE}}};
-                if(tv[c]){cell.value=tv[c];cell.numFmt='#,##0.00';cell.font={name:'Arial',size:10,bold:true,color:{argb:ORANGE}};cell.alignment={horizontal:'right',vertical:'middle'};}
+                if(tv[c]){cell.value=tv[c];cell.numFmt='#,##0.00';cell.font={name:'Arial',size:10,bold:true,color:{argb:'FF0F172A'}};cell.alignment={horizontal:'right',vertical:'middle'};}
               }
-              tl.font={name:'Arial',size:10,bold:true,color:{argb:WHITE}}; tl.alignment={horizontal:'left',vertical:'middle',indent:1};
+              tl.font={name:'Arial',size:10,bold:true,color:{argb:'FF0F172A'}}; tl.alignment={horizontal:'left',vertical:'middle',indent:1};
               ws.getRow(T).height=24;
 
               // Resumen
               let rr=T+2;
-              const secHead=(txt)=>{ws.mergeCells(rr,4,rr,11);const c=ws.getCell(rr,4);c.value=txt;c.font={name:'Arial',size:10,bold:true,color:{argb:WHITE}};c.alignment={vertical:'middle',horizontal:'left',indent:1};for(let k=4;k<=11;k++)ws.getCell(rr,k).fill=fill(SLATE);ws.getRow(rr).height=19;rr++;};
+              const secHead=(txt)=>{ws.mergeCells(rr,4,rr,11);const c=ws.getCell(rr,4);c.value=txt;c.font={name:'Arial',size:10,bold:true,color:{argb:'FF0F172A'}};c.alignment={vertical:'middle',horizontal:'left',indent:1};for(let k=4;k<=11;k++)ws.getCell(rr,k).fill=fill('FFE2E8F0');ws.getRow(rr).height=19;rr++;};
               const line=(label,val,k)=>{
                 ws.mergeCells(rr,4,rr,10);
                 const lc=ws.getCell(rr,4), vc=ws.getCell(rr,11);
                 lc.value=label; vc.value=val; vc.numFmt=NF;
                 const strong=(k==='b'||k==='h'||k==='t');
                 const bg=k==='t'?NAVY:k==='h'?'FFFEF3C7':k==='b'?'FFF1F5F9':WHITE;
-                const fc=k==='t'?WHITE:'FF111827';
+                const fc='FF111827';
                 for(let c=4;c<=11;c++){const cc=ws.getCell(rr,c);cc.fill=fill(bg);cc.border=bd;}
                 lc.font={name:'Arial',size:9,bold:strong,color:{argb:fc}};
-                vc.font={name:'Arial',size:9,bold:strong||k==='n2',color:{argb:k==='t'?ORANGE:fc}};
+                vc.font={name:'Arial',size:9,bold:strong||k==='n2',color:{argb:k==='t'?'FFC2410C':fc}};
                 lc.alignment={vertical:'middle',horizontal:'left',indent:1};
                 vc.alignment={vertical:'middle',horizontal:'right'};
                 ws.getRow(rr).height=16;
                 rr++; return rr-1;
               };
               ws.mergeCells(rr,4,rr,11);
-              const rt=ws.getCell(rr,4);rt.value='RESUMEN LIBRO DE VENTAS';rt.font={name:'Arial',size:12,bold:true,color:{argb:WHITE}};rt.alignment={vertical:'middle',horizontal:'left',indent:1};
+              const rt=ws.getCell(rr,4);rt.value='RESUMEN LIBRO DE VENTAS';rt.font={name:'Arial',size:12,bold:true,color:{argb:'FF0F172A'}};rt.alignment={vertical:'middle',horizontal:'left',indent:1};
               for(let k=4;k<=11;k++)ws.getCell(rr,k).fill=fill(NAVY);
               ws.getRow(rr).height=24;rr++;
               secHead('D\u00c9BITOS FISCALES');
@@ -43705,7 +43705,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
   </table></div>
 </div>`;
             const css=`
-@page{size:13in 8.5in;margin:7mm 7mm 12mm 7mm;
+@page{size:14in 8.5in;margin:7mm 7mm 12mm 7mm;
   @bottom-left{content:"${esc(empresa).replace(/&amp;/g,'&')} \u2014 Libro de Ventas ${mesLabel} ${libroAnio} \u00b7 ${Q}";font:7px Arial;color:#64748b}
   @bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#64748b}
   @bottom-right{content:"Generado el ${hoy}";font:7px Arial;color:#64748b}}
@@ -43713,34 +43713,34 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 html,body{margin:0;padding:0;background:#e5e7eb}
 .bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}
 .bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer;font-size:12px}
-.sheet{width:316mm;margin:10px auto;background:#fff;padding:0}
-.top{display:flex;justify-content:space-between;align-items:stretch;gap:10px;background:#0f172a;border-bottom:3px solid #f97316;padding:7px 10px;color:#fff}
+.sheet{width:341mm;margin:10px auto;background:#fff;padding:0}
+.top{display:flex;justify-content:space-between;align-items:stretch;gap:10px;background:#fff;border-bottom:3px solid #f97316;padding:7px 10px;color:#0f172a}
 .top .l{display:flex;gap:10px;align-items:center}.top img{height:38px}
-.emp{font-size:13px;font-weight:900;letter-spacing:.2px}.sub{font-size:8px;color:#cbd5e1;margin-top:1px}.dir{font-size:7px;color:#94a3b8;margin-top:1px}
+.emp{font-size:13px;font-weight:900;letter-spacing:.2px}.sub{font-size:8px;color:#334155;margin-top:1px}.dir{font-size:7px;color:#64748b;margin-top:1px}
 .ttl{font-size:15px;font-weight:900;color:#f97316;margin-top:3px;letter-spacing:1px}
-.box2{min-width:230px;border:1px solid #334155;font-size:8px}.box2 div{padding:2.5px 8px;text-align:center}
-.box2 .h{background:#f97316;font-weight:900}.box2 .m{background:#1e293b;font-weight:800;font-size:9px}.box2 .d{background:#1e293b;color:#e2e8f0}
+.box2{min-width:230px;border:1px solid #f97316;font-size:8px}.box2 div{padding:2.5px 8px;text-align:center}
+.box2 .h{background:#fff;color:#ea580c;border-bottom:1px solid #f97316;font-weight:900}.box2 .m{background:#fff;color:#0f172a;font-weight:800;font-size:9px}.box2 .d{background:#fff;color:#475569}
 table.lv{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px}
 table.lv th,table.lv td{font-size:6.6px;padding:2.2px 3px;border:.5px solid #d1d5db;vertical-align:middle;overflow-wrap:anywhere}
 thead{display:table-header-group}tr{page-break-inside:avoid}
 table.lv th{color:#fff;font-weight:800;text-align:center;line-height:1.15;border-color:#fff;font-size:6.2px}
 .gr th{font-size:7px;padding:3px}.g1{background:#334155}.g2{background:#2563eb}.g3{background:#f97316}
-.gr .g1{background:#1e293b}.gr .g2{background:#1d4ed8}.gr .g3{background:#ea580c}
+.gr .g1{background:#e2e8f0;color:#0f172a}.gr .g2{background:#1d4ed8}.gr .g3{background:#ea580c}
 th.hb{border-bottom:1.5px solid #f97316}
 td.c{text-align:center}td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}td.b{font-weight:700}
 td.nm{font-weight:600}.neg{color:#dc2626}
 .t-fac.alt td{background:#f8fafc}.t-ret td{background:#fffbeb}.t-nc td{background:#fef2f2}.t-nd td{background:#eff6ff}
 .tp{font-weight:800;font-size:6px}.t-fac .tp{color:#15803d}.t-ret .tp{color:#b45309}.t-nc .tp{color:#b91c1c}.t-nd .tp{color:#1d4ed8}
 td.nf{color:#1d4ed8;font-weight:800}td.rt{color:#dc2626}td.rt2{color:#ea580c;font-weight:700}
-tr.total td{background:#0f172a;color:#f97316;font-weight:900;font-size:7.5px;border-color:#0f172a;border-top:2px solid #f97316}
-tr.total td.lbl{color:#fff;text-align:left;padding-left:8px}
+tr.total td{background:#f1f5f9;color:#0f172a;font-weight:900;font-size:7.5px;border-color:#cbd5e1;border-top:2px solid #f97316}
+tr.total td.lbl{color:#0f172a;text-align:left;padding-left:8px}
 .resumen{display:flex;gap:10px;margin-top:12px;page-break-inside:avoid;align-items:flex-start}
 .resumen .box{flex:1;border:1px solid #cbd5e1}.resumen .box.small{flex:.7}
-.resumen .bt{background:#1e293b;color:#fff;font-weight:900;font-size:8px;padding:4px 8px;letter-spacing:.5px}
+.resumen .bt{background:#e2e8f0;color:#0f172a;font-weight:900;font-size:8px;padding:4px 8px;letter-spacing:.5px}
 .resumen table{width:100%;border-collapse:collapse}.resumen td{font-size:7.2px;padding:2.6px 8px;border-bottom:.5px solid #e5e7eb}
 .resumen td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;width:26%}
 .resumen tr.bd td{font-weight:700}.resumen tr.sub td{background:#f1f5f9;font-weight:800}.resumen tr.hi td{background:#fef3c7;font-weight:800}
-.resumen tr.tot td{background:#0f172a;color:#fff;font-weight:900}.resumen tr.tot td.n{color:#f97316}
+.resumen tr.tot td{background:#f1f5f9;color:#0f172a;font-weight:900;border-top:1.5px solid #f97316}.resumen tr.tot td.n{color:#c2410c}
 @media print{html,body{background:#fff}.bar{display:none}.sheet{width:auto;margin:0}}`;
             const html=`<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>LibroVentas_${libroAnio}_${mes2}_Q${libroQuincena}</title><style>${css}</style></head><body>
 <div class="bar"><button onclick="window.print()">IMPRIMIR / GUARDAR PDF</button><span>Papel: Oficio / Folio (8,5 x 13 in) \u00b7 Horizontal \u00b7 Escala 100% \u00b7 M\u00e1rgenes: predeterminados</span></div>
