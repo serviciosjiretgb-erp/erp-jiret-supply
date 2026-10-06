@@ -23107,6 +23107,7 @@ function App() {
   const [pvCategoriaFilter, setPvCategoriaFilter] = useState('TODAS');
   const [pvFiltCliente, setPvFiltCliente] = useState('');
   const [pvFiltDoc, setPvFiltDoc] = useState('');
+  const [pvFiltProd, setPvFiltProd] = useState('');
   const [cotizaciones, setCotizaciones] = useState([]);
   const [cobrosCxc, setCobrosCxc] = useState([]);
   // Reintegros a clientes (Banco/Caja con esAjusteCxC) vinculados a un anticipo sin aplicar: consumen
@@ -34712,6 +34713,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const _tieneOp=!!(inv.opAsignada||(inv.opsAsignadas&&inv.opsAsignadas.length>0));
             if(pvFiltOp==='con' && !_tieneOp) return false;
             if(pvFiltOp==='sin' && _tieneOp) return false;
+            if(pvFiltProd){ const q=pvFiltProd.toUpperCase(); if(!(inv.itemsFacturados||[]).some(it=>((it.desc||'')+' '+(it.invCode||'')+' '+(it.fgId||'')).toUpperCase().includes(q))) return false; }
             return true;
           }).sort((a,b)=>((b.fechaFactura||b.fecha||'')).localeCompare(a.fechaFactura||a.fecha||''));
           const rows = [];
@@ -34860,10 +34862,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
           });
           // ── Filtrar filas sin Nro. Fiscal ──
-          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—');
+          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—' && (!pvFiltProd || ((r.producto||'')+' '+(r.codigo||'')).toUpperCase().includes(pvFiltProd.toUpperCase())));
           
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
+            if(pvFiltProd) return false;
             if(nc.naturaleza!=='FISCAL') return false;
             // Anulación Fiscal genera su propia NC obligatoria (para que SENIAT no vea un hueco
             // en la numeración de la factura dañada), pero no representa una venta ni un
@@ -34950,6 +34953,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <Search size={12} className="text-gray-400"/>
                     <input type="text" value={pvFiltDoc} onChange={e=>setPvFiltDoc(e.target.value.toUpperCase())} placeholder="Documento / Fiscal..." className="outline-none text-xs font-bold w-36 bg-white uppercase"/>
                     {pvFiltDoc && <button onClick={()=>setPvFiltDoc('')} className="text-gray-400 hover:text-red-500"><X size={10}/></button>}
+                  </div>
+                  <div className="relative flex items-center gap-1 border-2 border-gray-200 rounded-xl px-3 py-2 bg-white">
+                    <Search size={12} className="text-gray-400"/>
+                    <input type="text" value={pvFiltProd} onChange={e=>setPvFiltProd(e.target.value.toUpperCase())} placeholder="Filtrar producto / codigo..." className="outline-none text-xs font-bold w-44 bg-white uppercase"/>
+                    {pvFiltProd && <button onClick={()=>setPvFiltProd('')} className="text-gray-400 hover:text-red-500"><X size={10}/></button>}
                   </div>
                   <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
                     {[['todos','Todas'],['con','Con OP'],['sin','Sin OP']].map(([v,lbl])=>(
@@ -35044,7 +35052,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   </tbody>
                   {rows.length>0 && <tfoot><tr className="bg-black text-white font-black text-[8px]">
                     <td colSpan={9} className="py-2 px-1.5 uppercase">TOTALES</td>
-                    <td className="py-2 px-1.5 text-right">{formatNum(rows.reduce((s,r)=>s+r.qty,0))}</td>
+                    <td className="py-2 px-1.5 text-right">{formatNum(allRows.reduce((s,r)=>s+(r.qty||0),0))}</td>
                     <td/>
                     <td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalVentas)}</td>
                     <td/><td className="py-2 px-1.5 text-right whitespace-nowrap">{formatNum(totalCosto)}</td>
@@ -54756,9 +54764,13 @@ ${resumen}
                       const impactoPorProducto = simCostosLista.map(x=>{
                         let cantTotal=0, costoTotalOriginal=0;
                         const facturasDetalle = [];
+                        const _nfVistoSim=new Map(); (invoices||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal) return; const p=_nfVistoSim.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoSim.set(nf,f);});
                         [...(invoices||[])].forEach(f=>{
-                          if (contFiltDesde && (f.fecha||'')<contFiltDesde) return;
-                          if (contFiltHasta && (f.fecha||'')>contFiltHasta) return;
+                          if (f.esAnulacionFiscal) return;
+                          { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoSim.get(nf)?.id!==f.id) return; }
+                          const _fSim=(f.fechaFactura||f.fecha||'');
+                          if (contFiltDesde && _fSim<contFiltDesde) return;
+                          if (contFiltHasta && _fSim>contFiltHasta) return;
                           (f.itemsFacturados||[]).forEach(it=>{
                             const nombreIt = (it.desc||it.descripcion||'').trim().toUpperCase();
                             if (nombreIt!==x.nombre.trim().toUpperCase()) return;
@@ -54766,7 +54778,7 @@ ${resumen}
                             const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
                             cantTotal += cant; costoTotalOriginal += costoOrig;
                             const op = f.opAsignada || (f.opsAsignadas&&f.opsAsignadas[0]) || '';
-                            facturasDetalle.push({factura:f.nroFiscal||f.documento||f.id, fecha:f.fecha, op, cant, costoOrig});
+                            facturasDetalle.push({factura:f.nroFiscal||f.documento||f.id, fecha:_fSim, op, cant, costoOrig});
                           });
                         });
                         const costoActualUnit = cantTotal>0 ? costoTotalOriginal/cantTotal : 0;
