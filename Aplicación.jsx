@@ -4114,10 +4114,10 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
               const per=r.periodoLibroMes||(r.fechaComprobante||r.fecha||'').substring(0,7)||'';
               return `<tr class="${i%2?'alt':''}"><td class="n0">${i+1}</td><td class="nc">${esc(r.nroRetencion||'\u2014')}</td><td class="nm">${esc(r._manualCliente||r.clientName||'\u2014')}</td><td>${esc(r._manualRif||r.clientRif||'')}</td><td class="c">${esc(nroFacR)}</td><td class="c">${pD(r.fechaComprobante||r.fecha)}</td><td class="c">${per?per.split('-').reverse().join('/'):'\u2014'}</td><td class="c">${(r.quincena||'1')==='1'?'I Q.':'II Q.'}</td><td class="c">${r.porcentaje||3}%</td><td class="r">${fmtN(r.montoRetenidoUSD)}</td><td class="r">${fmtN(r.montoRetenido)}</td></tr>`;
             }).join('');
-            const css=`@page{size:14in 8.5in;margin:8mm 8mm 12mm 8mm;@bottom-left{content:"${esc(empNom)} \u00b7 IGTF percibido \u00b7 ${esc(mesTxt)} \u00b7 ${esc(qTxt)}";font:7px Arial;color:#666}@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}@bottom-right{content:"Generado el ${pD(getTodayDate())}";font:7px Arial;color:#666}}
+            const css=`@page{size:11in 8.5in;margin:8mm 8mm 12mm 8mm;@bottom-left{content:"${esc(empNom)} \u00b7 IGTF percibido \u00b7 ${esc(mesTxt)} \u00b7 ${esc(qTxt)}";font:7px Arial;color:#666}@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}@bottom-right{content:"Generado el ${pD(getTodayDate())}";font:7px Arial;color:#666}}
 *{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}.bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer}
-.sheet{width:340mm;margin:10px auto}
+.sheet{width:263mm;margin:10px auto}
 .top{display:flex;justify-content:space-between;gap:10px;border-bottom:3px solid #f97316;padding:6px 8px}
 .emp{font-size:14px;font-weight:900}.sub{font-size:8px;color:#334155;margin-top:1px}.dir{font-size:7px;color:#64748b;margin-top:1px}.ttl{font-size:15px;font-weight:900;color:#ea580c;margin-top:4px;letter-spacing:1px}
 .box{min-width:230px;border:1px solid #f97316;font-size:8px}.box div{padding:2.5px 8px;text-align:center}.box .h{color:#ea580c;font-weight:900;border-bottom:1px solid #f97316}.box .m{font-weight:800;font-size:9px}.box .d{color:#475569}
@@ -4129,7 +4129,7 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
 .res{display:flex;gap:10px;margin-top:10px;page-break-inside:avoid}.res .b{border:1px solid #cbd5e1;min-width:240px}.res .bt{background:#e2e8f0;font-weight:900;font-size:8px;padding:4px 8px}.res td{font-size:8px;padding:3px 8px;border:0;border-bottom:.5px solid #e5e7eb}
 @media print{.bar{display:none}.sheet{width:auto;margin:0}}`;
             const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>IGTF ${esc(mesTxt)} ${esc(qTxt)}</title><style>${css}</style></head><body>
-<div class="bar"><button onclick="window.print()">Imprimir / Guardar PDF</button><span>Tama\u00f1o Oficio \u00b7 horizontal</span></div>
+<div class="bar"><button onclick="window.print()">Imprimir / Guardar PDF</button><span>Tama\u00f1o Carta \u00b7 horizontal</span></div>
 <div class="sheet"><div class="top"><div><div class="emp">${esc(empNom)}</div><div class="sub">RIF: ${esc(empRif)}</div><div class="dir">${esc(empDir)}</div><div class="ttl">RELACI\u00d3N DE IGTF PERCIBIDO</div></div>
 <div class="box"><div class="h">IMPUESTO A LAS GRANDES TRANSACCIONES FINANCIERAS</div><div class="m">${esc(mesTxt)}</div><div class="m">${esc(qTxt)}</div><div class="d">${esc(rangoTxt)}</div><div class="d">${igtfFilt.length} comprobante${igtfFilt.length===1?'':'s'}</div></div></div>
 <table><colgroup><col style="width:3%"><col style="width:12%"><col style="width:25%"><col style="width:9%"><col style="width:8%"><col style="width:7%"><col style="width:6%"><col style="width:5%"><col style="width:4%"><col style="width:9%"><col style="width:12%"></colgroup>
