@@ -14435,7 +14435,17 @@ const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, notasCompr
   // esto hace que una factura de mes anterior "aprovechada" en este período aparezca
   // naturalmente cerca del inicio, y que las retenciones queden intercaladas donde
   // realmente ocurrieron (no siempre pegadas justo debajo de su factura).
-  rows.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  // Dentro de una misma fecha: primero facturas/notas y luego las retenciones, estas ultimas en orden
+  // ascendente del N de comprobante (la numeracion legal de las retenciones debe ir creciendo).
+  const _compNum=r=>parseInt((r.retComp||'').replace(/\D/g,''))||0;
+  rows.sort((a,b)=>{
+    const c=(a.fecha||'').localeCompare(b.fecha||'');
+    if(c!==0) return c;
+    const ra=a.tipo==='RETENCI\u00d3N'?1:0, rb=b.tipo==='RETENCI\u00d3N'?1:0;
+    if(ra!==rb) return ra-rb;
+    if(ra===1) return _compNum(a)-_compNum(b);
+    return 0;
+  });
   // Validación de consistencia: dentro de las retenciones, el N° de comprobante debe ir
   // subiendo en el mismo sentido que la fecha. Si no es así, se marca para revisar (no se reordena solo).
   let _ultimoCompNum=null;
