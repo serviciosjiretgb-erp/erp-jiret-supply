@@ -3716,8 +3716,8 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         const orig=(retIVA||[]).find(x=>x.tipoDocumento!=='NC'&&x.tipoDocumento!=='ND'&&_soloRif(x.rifProveedor)===rifM&&fa&&_nfx(x.nroFactura)===fa);
         if(orig){
           const _ya=_extras.some(e=>e.orig===orig);
-          if(!_ya)_extras.push({idx:i,orig,line:_mk(orig,true)});
-          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}); se copio en este TXT (con sus montos reales) porque el portal exige que la NC apunte a una factura de este mismo archivo y que su monto no la exceda. OJO: esa factura y su retencion ya se declararon en su periodo, asi que quedan declaradas dos veces; confirma con el SENIAT si debes rectificar el periodo original.`);
+          const _cc=lineas[i].split('\t'); _cc[11]='0'; lineas[i]=_cc.join('\t');
+          _avisos.push(`${etq}: la factura es de otro periodo (${orig.fecha||''}) y ya esta declarada; el portal no permite repetirla. Se dejo el documento afectado en 0 para probar. Si el portal lo rechaza, hay que rectificar el periodo original.`);
         }else _avisos.push(`${etq}: esa factura NO se encontro en el sistema ni en este TXT.`);
         return;
       }
