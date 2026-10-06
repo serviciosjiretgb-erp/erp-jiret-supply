@@ -29154,13 +29154,25 @@ function App() {
                       ))}
                     </tbody>
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-black">
+                      {(()=>{
+                        const fl=movs.filter(m=>{
+                          if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
+                          if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
+                          if(filterDateTo && (m.date||'') > filterDateTo) return false;
+                          if(filterTipoMov!=='TODOS' && m.type!==filterTipoMov) return false;
+                          return true;
+                        });
+                        const ok=fl.filter(m=>m.status!=='ANULADO'); const an=fl.length-ok.length;
+                        return (
                       <tr>
-                        <td colSpan="3" className="py-2.5 px-3 text-[10px] uppercase text-gray-500">Total: {movs.filter(m=>m.status!=='ANULADO').length} registros{movs.some(m=>m.status==='ANULADO')?` (+${movs.filter(m=>m.status==='ANULADO').length} anulado(s), no cuentan)`:''}</td>
-                        <td className="py-2.5 px-3 text-center">{formatNum(movs.filter(m=>m.status!=='ANULADO').reduce((s,m)=>s+parseNum(m.qty),0))}</td>
+                        <td colSpan="3" className="py-2.5 px-3 text-[10px] uppercase text-gray-500">Total: {ok.length} registros{an>0?` (+${an} anulado(s), no cuentan)`:''}</td>
+                        <td className="py-2.5 px-3 text-center">{formatNum(ok.reduce((s,m)=>s+parseNum(m.qty),0))}</td>
                         <td></td>
-                        <td className="py-2.5 px-3 text-right">${formatNum(movs.filter(m=>m.status!=='ANULADO').reduce((s,m)=>s+parseNum(m.totalValue||0),0))}</td>
+                        <td className="py-2.5 px-3 text-right">${formatNum(ok.reduce((s,m)=>s+parseNum(m.totalValue||0),0))}</td>
                         <td colSpan="3"></td>
                       </tr>
+                        );
+                      })()}
                     </tfoot>
                   </table>
                 </div>
