@@ -4092,6 +4092,57 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
           const totMontoUSD=igtfFilt.reduce((s,r)=>s+pNum(r.montoRetenidoUSD||0),0);
           const totMontoBs=igtfFilt.reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
 
+          // \u2500\u2500 PDF del listado de IGTF (Oficio horizontal, membretado, segun mes/quincena filtrados) \u2500\u2500
+          const exportarListadoIgtfPDF=()=>{
+            const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const empNom=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+            const empRif=settings?.empresaRif||'J-412309374';
+            const empDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
+            const MN=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+            const mesTxt=igtfMes==='TODOS'?'TODOS LOS MESES':`${MN[parseInt(igtfMes,10)-1]} ${igtfAnio}`.toUpperCase();
+            const qTxt=igtfQ==='AMBAS'?'AMBAS QUINCENAS':igtfQ==='1'?'I QUINCENA':'II QUINCENA';
+            let rangoTxt=`A\u00d1O ${igtfAnio}`;
+            if(igtfMes!=='TODOS'){
+              const ld=new Date(parseInt(igtfAnio,10),parseInt(igtfMes,10),0).getDate();
+              const d1=igtfQ==='2'?'16':'01', d2=igtfQ==='1'?'15':String(ld).padStart(2,'0');
+              rangoTxt=`DEL ${d1}/${igtfMes}/${igtfAnio} AL ${d2}/${igtfMes}/${igtfAnio}`;
+            }
+            const totBase=igtfFilt.reduce((s,r)=>{const p=pNum(r.porcentaje||3);return s+(p>0?pNum(r.montoRetenido||0)/(p/100):0);},0);
+            const filas=igtfFilt.map((r,i)=>{
+              const invR=(detInvoices||[]).find(inv=>inv.id===r.facturaId);
+              const nroFacR=r.nroFiscal||invR?.nroFiscal||invR?.documento||'\u2014';
+              const per=r.periodoLibroMes||(r.fechaComprobante||r.fecha||'').substring(0,7)||'';
+              return `<tr class="${i%2?'alt':''}"><td class="n0">${i+1}</td><td class="nc">${esc(r.nroRetencion||'\u2014')}</td><td class="nm">${esc(r._manualCliente||r.clientName||'\u2014')}</td><td>${esc(r._manualRif||r.clientRif||'')}</td><td class="c">${esc(nroFacR)}</td><td class="c">${pD(r.fechaComprobante||r.fecha)}</td><td class="c">${per?per.split('-').reverse().join('/'):'\u2014'}</td><td class="c">${(r.quincena||'1')==='1'?'I Q.':'II Q.'}</td><td class="c">${r.porcentaje||3}%</td><td class="r">${fmtN(r.montoRetenidoUSD)}</td><td class="r">${fmtN(r.montoRetenido)}</td></tr>`;
+            }).join('');
+            const css=`@page{size:14in 8.5in;margin:8mm 8mm 12mm 8mm;@bottom-left{content:"${esc(empNom)} \u00b7 IGTF percibido \u00b7 ${esc(mesTxt)} \u00b7 ${esc(qTxt)}";font:7px Arial;color:#666}@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}@bottom-right{content:"Generado el ${pD(getTodayDate())}";font:7px Arial;color:#666}}
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}.bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer}
+.sheet{width:340mm;margin:10px auto}
+.top{display:flex;justify-content:space-between;gap:10px;border-bottom:3px solid #f97316;padding:6px 8px}
+.emp{font-size:14px;font-weight:900}.sub{font-size:8px;color:#334155;margin-top:1px}.dir{font-size:7px;color:#64748b;margin-top:1px}.ttl{font-size:15px;font-weight:900;color:#ea580c;margin-top:4px;letter-spacing:1px}
+.box{min-width:230px;border:1px solid #f97316;font-size:8px}.box div{padding:2.5px 8px;text-align:center}.box .h{color:#ea580c;font-weight:900;border-bottom:1px solid #f97316}.box .m{font-weight:800;font-size:9px}.box .d{color:#475569}
+table{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px}thead{display:table-header-group}tr{page-break-inside:avoid}
+th{background:#e2e8f0;color:#0f172a;font-size:7px;font-weight:800;text-align:center;padding:4px 3px;border:.5px solid #94a3b8;border-bottom:2px solid #f97316;text-transform:uppercase}
+td{font-size:7.4px;padding:2.6px 4px;border:.5px solid #d1d5db;vertical-align:middle;overflow-wrap:anywhere}
+tr.alt td{background:#f8fafc}td.c{text-align:center}td.r{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}td.nm{font-weight:700}td.nc{font-weight:800;color:#c2410c}td.n0{text-align:center;color:#64748b}
+tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid #f97316}
+.res{display:flex;gap:10px;margin-top:10px;page-break-inside:avoid}.res .b{border:1px solid #cbd5e1;min-width:240px}.res .bt{background:#e2e8f0;font-weight:900;font-size:8px;padding:4px 8px}.res td{font-size:8px;padding:3px 8px;border:0;border-bottom:.5px solid #e5e7eb}
+@media print{.bar{display:none}.sheet{width:auto;margin:0}}`;
+            const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>IGTF ${esc(mesTxt)} ${esc(qTxt)}</title><style>${css}</style></head><body>
+<div class="bar"><button onclick="window.print()">Imprimir / Guardar PDF</button><span>Tama\u00f1o Oficio \u00b7 horizontal</span></div>
+<div class="sheet"><div class="top"><div><div class="emp">${esc(empNom)}</div><div class="sub">RIF: ${esc(empRif)}</div><div class="dir">${esc(empDir)}</div><div class="ttl">RELACI\u00d3N DE IGTF PERCIBIDO</div></div>
+<div class="box"><div class="h">IMPUESTO A LAS GRANDES TRANSACCIONES FINANCIERAS</div><div class="m">${esc(mesTxt)}</div><div class="m">${esc(qTxt)}</div><div class="d">${esc(rangoTxt)}</div><div class="d">${igtfFilt.length} comprobante${igtfFilt.length===1?'':'s'}</div></div></div>
+<table><colgroup><col style="width:3%"><col style="width:12%"><col style="width:25%"><col style="width:9%"><col style="width:8%"><col style="width:7%"><col style="width:6%"><col style="width:5%"><col style="width:4%"><col style="width:9%"><col style="width:12%"></colgroup>
+<thead><tr><th>N\u00b0</th><th>N\u00b0 Comprobante</th><th>Cliente</th><th>RIF</th><th>N\u00b0 Factura</th><th>Fecha</th><th>Per\u00edodo</th><th>Quinc.</th><th>%</th><th>Monto USD</th><th>Monto Bs.</th></tr></thead>
+<tbody>${filas||'<tr><td colspan="11" style="text-align:center;padding:16px;color:#94a3b8">Sin registros de IGTF para los filtros aplicados</td></tr>'}
+<tr class="tot"><td colspan="9" style="text-align:right;padding-right:10px">TOTALES (${igtfFilt.length})</td><td class="r">${fmtN(totMontoUSD)}</td><td class="r">${fmtN(totMontoBs)}</td></tr></tbody></table>
+<div class="res"><div class="b"><div class="bt">RESUMEN DEL PER\u00cdODO</div><table><tr><td>Base estimada de operaciones (Bs.)</td><td class="r">${fmtN(totBase)}</td></tr><tr><td>IGTF percibido (USD)</td><td class="r">${fmtN(totMontoUSD)}</td></tr><tr><td><b>IGTF percibido (Bs.)</b></td><td class="r"><b>${fmtN(totMontoBs)}</b></td></tr></table></div></div>
+</div><script>window.onload=function(){setTimeout(function(){window.print();},500);};<\/script></body></html>`;
+            const w=window.open('','_blank');
+            if(w){w.document.write(html);w.document.close();}
+            else setImpDialog({title:'Ventana bloqueada',text:'Permite las ventanas emergentes para generar el PDF.',type:'alert'});
+          };
+
           const imprimirComprobanteIgtf=(ret)=>{
             const fmtFecha=(f)=>{if(!f)return'—';const p=f.split('-');return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:f;};
             const retRifDisplay=ret._manualRif||ret.clientRif||'—';
@@ -4212,6 +4263,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                 <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">Buscar</label>
                 <input value={igtfBusqueda} onChange={e=>{setIgtfBusqueda(e.target.value);setIgtfPage(0);}} placeholder="Cliente, comprobante, factura..." className="w-full border-2 border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold outline-none focus:border-orange-400"/>
               </div>
+              <button onClick={exportarListadoIgtfPDF} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-black uppercase" title="PDF del listado segun el mes y la quincena filtrados"><Printer size={12}/> PDF</button>
             </div>
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               <table className="w-full text-xs">
