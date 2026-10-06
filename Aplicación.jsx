@@ -3758,6 +3758,12 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     setRetFiltros(f=>({...f,desde,hasta}));
     setRetPageIVA(1);setRetPageISLR(1);
   };
+  const aplicarMesRet=(anio,mes)=>{
+    const lastDay=new Date(parseInt(anio),parseInt(mes),0).getDate();
+    setRetQSel('M');
+    setRetFiltros(f=>({...f,desde:`${anio}-${mes}-01`,hasta:`${anio}-${mes}-${String(lastDay).padStart(2,'0')}`}));
+    setRetPageIVA(1);setRetPageISLR(1);
+  };
   const renderRetToolbar=(tipoR)=>(
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-3 mb-4">
       <div className="flex flex-wrap items-center gap-2 mb-2.5">
@@ -3779,16 +3785,16 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         {hayFiltrosRetActivos&&<button onClick={limpiarFiltrosRet} className="flex items-center gap-1 px-2.5 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-[9px] font-black uppercase text-slate-500"><X size={11}/>Limpiar</button>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mb-2.5 pt-2.5 border-t border-slate-100">
-        <span className="text-[8px] text-slate-400 font-black uppercase mr-0.5">Quincena</span>
-        <select value={retQMes} onChange={e=>setRetQMes(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
+        <span className="text-[8px] text-slate-400 font-black uppercase mr-0.5">{tipoR==='ISLR'?'Mes':'Quincena'}</span>
+        <select value={retQMes} onChange={e=>{setRetQMes(e.target.value);if(tipoR==='ISLR')aplicarMesRet(retQAnio,e.target.value);else if(retQSel==='1'||retQSel==='2'){const r=_qRangeRet(retQAnio,e.target.value,retQSel);setRetFiltros(f=>({...f,desde:r.desde,hasta:r.hasta}));}}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
           {_MESES.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
         </select>
-        <select value={retQAnio} onChange={e=>setRetQAnio(e.target.value)} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
+        <select value={retQAnio} onChange={e=>{setRetQAnio(e.target.value);if(tipoR==='ISLR')aplicarMesRet(e.target.value,retQMes);else if(retQSel==='1'||retQSel==='2'){const r=_qRangeRet(e.target.value,retQMes,retQSel);setRetFiltros(f=>({...f,desde:r.desde,hasta:r.hasta}));}}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
           {[parseInt(retQAnio)-1,parseInt(retQAnio),parseInt(retQAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
         </select>
-        <button onClick={()=>aplicarQuincenaRet('1')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='1'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>I Quincena</button>
-        <button onClick={()=>aplicarQuincenaRet('2')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='2'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>II Quincena</button>
-        {retQSel&&<span className="text-[9px] text-slate-400">{retQSel==='1'?'01':'16'} al {retQSel==='1'?'15':'fin de mes'} de {_MESES[parseInt(retQMes,10)-1]}</span>}
+        {tipoR==='ISLR'?<span className="text-[9px] text-slate-400">Las retenciones de ISLR se declaran por mes completo{retQSel==='M'?`   ${_MESES[parseInt(retQMes,10)-1]} ${retQAnio}`:''}</span>:<><button onClick={()=>aplicarQuincenaRet('1')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='1'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>I Quincena</button>
+        <button onClick={()=>aplicarQuincenaRet('2')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='2'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>II Quincena</button></>}
+        {(retQSel==='1'||retQSel==='2')&&tipoR!=='ISLR'&&<span className="text-[9px] text-slate-400">{retQSel==='1'?'01':'16'} al {retQSel==='1'?'15':'fin de mes'} de {_MESES[parseInt(retQMes,10)-1]}</span>}
       </div>
       <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-slate-100">
         <span className="text-[9px] text-slate-400 font-black uppercase">
@@ -5144,12 +5150,12 @@ td,th{border:1px solid #333;padding:5px 7px}
 
           const _enMes=(r)=>_fechaRefRet(r).substring(0,7)===`${rtAnio}-${rtMes}`;
           const _qDeRet=(r)=>(r&&r._periodoQ)?(String(r._periodoQ)==='2'?'2':'1'):_detectQ(r&&r.periodo);
-          const _enQuincena=(r)=>_enMes(r)&&_qDeRet(r)===rtQ;
+          const _enQuincena=(r)=>(r.fecha||'').substring(0,7)===`${rtAnio}-${rtMes}`&&_detectQ(r.periodo)===rtQ;
           const _qDiaRet=(r)=>{if(r&&r._periodoQ)return String(r._periodoQ)==='2'?'2':'1';const d=parseInt((_fechaRefRet(r)||'').substring(8,10),10);return d>=16?'2':'1';};
           const retIvaBs=(retIVA||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           // Retenciones de ISLR se declaran MENSUALMENTE ante el SENIAT (no por quincena, a diferencia de IVA) —
           // por eso este total suma todo el mes, no solo la quincena seleccionada arriba.
-          const retIslrBs=(retISLR||[]).filter(r=>_enMes(r)&&_qDiaRet(r)===rtQ).reduce((s,r)=>s+pNum(r.montoBs||0),0);
+          const retIslrBs=(retISLR||[]).filter(_enMes).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           const anticipoIslrBs=parseFloat((ventasQ.totGravada*0.01).toFixed(2));
           // IGTF — antes era manual; ahora sale solo, sumando el IGTF realmente percibido y registrado
           // (pestaña Impuestos → IGTF) cuyo período/quincena de libro sea el seleccionado aquí. Cuando el
@@ -5181,7 +5187,7 @@ td,th{border:1px solid #333;padding:5px 7px}
             {label:'RETENCIÓN DE IVA',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:retIvaBs,campo:'venceIva'},
             {label:'ANTICIPO ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:anticipoIslrBs,campo:'venceAnticipoIslr'},
             {label:'IGTF',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:igtfBs,campo:'venceIgtf'},
-            {label:'RETENCIONES DE ISLR',periodo:`${rtQ==='1'?'I':'II'} QUINCENA`,monto:retIslrBs,campo:'venceRetIslr'},
+            {label:'RETENCIONES DE ISLR',periodo:'MENSUAL',monto:retIslrBs,campo:'venceRetIslr'},
             {label:'PENSIONES',periodo:'MENSUAL',monto:pensionesBs,campo:'vencePensiones'},
             {label:'IMPUESTO SOBRE LA RENTA',periodo:'ANUAL',monto:islrAnualBs,campo:'venceIslrAnual',editable:true},
           ];
