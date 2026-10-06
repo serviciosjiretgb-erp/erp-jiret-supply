@@ -3720,8 +3720,26 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     const periodoAAAAMM=`${yyyy}${mm}`;
     const N2=n=>(parseFloat(n)||0).toFixed(2);
     const fOp=f=>{const[y,m,d]=(f||'').split('-');return(y&&m&&d)?`${d}/${m}/${y}`:'';};
-    const detalles=lista.map(r=>{
-      const base=pNum(r.baseImponibleBs||0);
+    // El SENIAT NO acepta montos negativos: las Notas de Credito se restan de la factura que afectan (mismo RIF,
+    // misma factura, mismo concepto) y se declara la factura por el monto neto. Si la factura original no esta
+    // en este mes, la NC no se puede incluir en el XML y se avisa.
+    const _nf=x=>(x||'').toString().replace(/\D/g,'').replace(/^0+/,'');
+    const _items=lista.map(r=>({r,base:pNum(r.baseImponibleBs||0)}));
+    const _pos=_items.filter(x=>x.base>=0&&r_ok(x.r));
+    function r_ok(r){return !(r.tipoDocumento==='NC');}
+    const _negs=_items.filter(x=>x.base<0||x.r.tipoDocumento==='NC');
+    const _sinPar=[];
+    _negs.forEach(n=>{
+      let resto=Math.abs(n.base);
+      const rif=_soloRif(n.r.rifProveedor), fa=_nf(n.r.facturaAfectada);
+      const cand=_pos.filter(x=>_soloRif(x.r.rifProveedor)===rif&&fa&&_nf(x.r.nroFactura)===fa&&x.base>0.004);
+      const pref=cand.filter(x=>(x.r.codConcepto||'')===(n.r.codConcepto||'')).concat(cand.filter(x=>(x.r.codConcepto||'')!==(n.r.codConcepto||'')));
+      for(const x of pref){if(resto<=0.004)break;const t=Math.min(x.base,resto);x.base-=t;resto-=t;}
+      if(resto>0.004)_sinPar.push(`${n.r.nroFactura||''} (${n.r.proveedor||''}, afecta ${n.r.facturaAfectada||'?'}): Bs. ${resto.toFixed(2)}`);
+    });
+    const _final=_pos.filter(x=>x.base>0.004);
+    if(_final.length===0){setImpDialog({title:'Sin registros',text:'Despues de restar las Notas de Credito no quedan retenciones para declarar en este mes.',type:'alert'});return;}
+    const detalles=_final.map(({r,base})=>{
       const pct=pNum(r.pct||0);
       return `\t<DetalleRetencion>\r\n`+
         `\t\t<RifRetenido>${_soloRif(r.rifProveedor)}</RifRetenido>\r\n`+
@@ -3742,7 +3760,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
     a.click();
     URL.revokeObjectURL(url);
     setShowXmlModal(false);
-    setImpDialog({title:'✅ XML Generado',text:`${lista.length} retención(es) exportada(s) para ${xmlMes}.`,type:'alert'});
+    setImpDialog({title:'\u2705 XML Generado',text:`${_final.length} retenci\u00f3n(es) exportada(s) para ${xmlMes}.`+(_negs.length?` Las Notas de Cr\u00e9dito se restaron de su factura (el SENIAT no acepta montos negativos).`:'')+(_sinPar.length?`\n\nATENCI\u00d3N: estas NC no tienen su factura en este mes y NO se incluyeron en el XML; aj\u00fastalas manualmente en el portal:\n`+_sinPar.join('\n'):''),type:'alert'});
   };
 
   // ── Toolbar de filtros + export, reutilizable para IVA e ISLR ──
