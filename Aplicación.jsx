@@ -6326,7 +6326,11 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   }
   // 1) Si ya existe un asiento formal vinculado, se usan SUS líneas reales tal cual.
   const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
-  if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
+  // Si el asiento guardado no coincide con el monto de ESTE movimiento (ej. varios movimientos comparten id/vinculo),
+  // se ignora y se reconstruye desde el movimiento.
+  const _totAsiento = asientoLigado ? Math.max((asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.debeUSD||0),0),(asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.haberUSD||0),0)) : 0;
+  const _asientoOk = asientoLigado && !(Math.abs(montoUSD)>0.005 && _totAsiento>0.005 && Math.abs(_totAsiento-Math.abs(montoUSD))>0.02);
+  if(_asientoOk && asientoLigado.lineas && asientoLigado.lineas.length>0){
     return (asientoLigado.lineas||[]).map((l,li)=>{
       const r = aplicarReclas(tabId, compId, li, l.codigo||'', l.cuenta||'—');
       return aplicarLadoDH(r, {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)});
@@ -6751,7 +6755,7 @@ const _cuentaRelVigente = (cod, nom, planCuentas) => {
 const _esAnclaSaldos = (a) => String(a?.nroComprobante||'').trim().toUpperCase()==='SALDOS AGOSTO-2026';
 const _resolverMovRelacionada = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
-  const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId);
+  const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId) && (!(Math.abs(Number(p.monto||0))>0) || Math.abs(Math.abs(Number(m.montoUSD||0))-Math.abs(Number(p.monto||0)))<0.01);
   const montoP = Math.abs(Number(p.monto||0));
   const colecciones = p.origen==='caja'
     ? [{movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}, {movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}]
@@ -6823,7 +6827,10 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
   // no se resuelve bien (movimiento no encontrado, ajuste manual, etc.), el Bs. termine saliendo
   // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
-  const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : (Math.abs(Number(p.montoBs||0)) || montoUSD*tasa);
+  let montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : (Math.abs(Number(p.montoBs||0)) || montoUSD*tasa);
+  // Sin movimiento vinculado, un Bs. guardado que no guarda relacion con USD x tasa (ej. Bs igual al USD,
+  // o el Bs de otro movimiento) se reemplaza por USD x tasa.
+  if (!movLigado && tasa>1 && montoUSD>0) { const _rz = montoBs/montoUSD; if (_rz < tasa*0.5 || _rz > tasa*2) montoBs = montoUSD*tasa; }
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
   const _vig2 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), ctx.planCuentas);
   const codRel = _vig2.cod;
