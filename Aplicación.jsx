@@ -3810,7 +3810,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
         <select value={retQAnio} onChange={e=>{setRetQAnio(e.target.value);if(tipoR==='ISLR')aplicarMesRet(e.target.value,retQMes);else if(retQSel==='1'||retQSel==='2'){const r=_qRangeRet(e.target.value,retQMes,retQSel);setRetFiltros(f=>({...f,desde:r.desde,hasta:r.hasta}));}}} className="border border-slate-200 rounded-lg px-2 py-2 text-[10px] font-bold outline-none focus:border-orange-500">
           {[parseInt(retQAnio)-1,parseInt(retQAnio),parseInt(retQAnio)+1].map(y=><option key={y} value={y}>{y}</option>)}
         </select>
-        {tipoR==='ISLR'?<span className="text-[9px] text-slate-400">Las retenciones de ISLR se declaran por mes completo{retQSel==='M'?`   ${_MESES[parseInt(retQMes,10)-1]} ${retQAnio}`:''}</span>:<><button onClick={()=>aplicarQuincenaRet('1')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='1'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>I Quincena</button>
+        {tipoR==='ISLR'?<span className="text-[9px] text-slate-400">Las retenciones de ISLR se declaran por mes completo{retQSel==='M'?` \u00b7 ${_MESES[parseInt(retQMes,10)-1]} ${retQAnio}`:''}</span>:<><button onClick={()=>aplicarQuincenaRet('1')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='1'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>I Quincena</button>
         <button onClick={()=>aplicarQuincenaRet('2')} className={`px-2.5 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${retQSel==='2'?'bg-orange-500 text-white':'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>II Quincena</button></>}
         {(retQSel==='1'||retQSel==='2')&&tipoR!=='ISLR'&&<span className="text-[9px] text-slate-400">{retQSel==='1'?'01':'16'} al {retQSel==='1'?'15':'fin de mes'} de {_MESES[parseInt(retQMes,10)-1]}</span>}
       </div>
@@ -20370,7 +20370,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
           return;
         }
       }
-      // Resto de pesta as (o movimiento sin asiento guardado): reclasificacion de lado (tipoOverride)
+      // Resto de pesta\u00f1as (o movimiento sin asiento guardado): reclasificacion de lado (tipoOverride)
       const nuevo = l.tipo==='D' ? 'H' : 'D';
       const original = ex.tipoOriginal || l.tipo;
       await setDoc(getDocRef('comprobantes_reclasificaciones', key), {
@@ -23666,6 +23666,8 @@ function App() {
 
   const [dialog, setDialog] = useState(null);
   const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [clientVendFilter, setClientVendFilter] = useState('TODOS');
+  const [clientEstadoFilter, setClientEstadoFilter] = useState('TODOS');
   const [invClientSearch, setInvClientSearch] = useState('');
   const [showInvClientDropdown, setShowInvClientDropdown] = useState(false);
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
@@ -27793,6 +27795,106 @@ function App() {
     ),
     [clients, clientSearchTerm]
   );
+
+  // -- Directorio de Clientes: lista filtrada (busqueda + vendedor) compartida por pantalla, PDF y Excel --
+  const _vendNorm = (v) => String(v||'').trim().toUpperCase();
+  const _esActivo = (c) => c?.activo!==false;
+  const toggleClienteActivo = async (c) => {
+    try{ await setDoc(getDocRef('clientes', c.id||c.rif||String(c.name||'').replace(/[^A-Z0-9\-]/g,'').substring(0,24)), {activo:!_esActivo(c)}, {merge:true}); }
+    catch(e){ setDialog({title:'Error',text:'No se pudo cambiar el estatus: '+e.message,type:'alert'}); }
+  };
+  const clientesDirFiltrados = () => (clients||[]).filter(c=>{
+    const q=(clientSearchTerm||'').toUpperCase();
+    if(q && !(String(c?.name||'').toUpperCase().includes(q) || String(c?.rif||'').toUpperCase().includes(q))) return false;
+    if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false;
+    if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false;
+    if(clientVendFilter && clientVendFilter!=='TODOS'){
+      const v=_vendNorm(c?.vendedor);
+      if(clientVendFilter==='__SIN__') return !v;
+      return v===clientVendFilter;
+    }
+    return true;
+  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||'')));
+  // Ultima fecha de facturacion por cliente: solo facturas que vienen de una Nota de Entrega (neOrigen o NE vinculada).
+  const ultFactPorCliente = () => {
+    const conNE=new Set((notasEntrega||[]).map(n=>n?.facturaId).filter(Boolean));
+    const byRif=new Map(), byName=new Map();
+    (invoices||[]).forEach(f=>{
+      if(!f || f.esAnulacionFiscal) return;
+      if(!(f.neOrigen || conNE.has(f.id) || conNE.has(f.documento))) return;
+      const d=String(f.fechaFactura||f.fecha||'').substring(0,10); if(!d) return;
+      const r=String(f.clientRif||'').toUpperCase().replace(/\s+/g,''), n=String(f.clientName||f.client||'').toUpperCase().trim();
+      if(r && (!byRif.get(r)||d>byRif.get(r))) byRif.set(r,d);
+      if(n && (!byName.get(n)||d>byName.get(n))) byName.set(n,d);
+    });
+    return (c)=>{
+      const r=String(c?.rif||'').toUpperCase().replace(/\s+/g,''), n=String(c?.name||c?.razonSocial||'').toUpperCase().trim();
+      const a=r?byRif.get(r):'', b=n?byName.get(n):'';
+      return (a&&b)?(a>b?a:b):(a||b||'');
+    };
+  };
+  const _fmtFechaDir = (d) => d?String(d).split('-').reverse().join('/'):'';
+  const _diasCredTxt = (c) => { const d=parseInt(c?.diasCredito,10); return (!d||d<=0)?'Contado':`${d} d\u00edas`; };
+  const _vendLabelDir = () => clientVendFilter==='TODOS'?'TODOS LOS VENDEDORES':clientVendFilter==='__SIN__'?'SIN VENDEDOR ASIGNADO':clientVendFilter;
+  const exportarDirectorioPDF = () => {
+    const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const empNom=(settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.');
+    const empRif=settings?.empresaRif||'J-412309374';
+    const empDir=settings?.empresaDireccion||'AV CIRCUNVALACION 2 CC EL DIVIDIVI NIVEL PB LOCAL G-9 SECTOR EL TREBOL MARACAIBO ZULIA';
+    const lista=clientesDirFiltrados(); const _uf=ultFactPorCliente();
+    const hoy=getTodayDate().split('-').reverse().join('/');
+    const credito=lista.filter(c=>(parseInt(c?.diasCredito,10)||0)>0).length; const nAct=lista.filter(_esActivo).length;
+    const filas=lista.map((c,i)=>`<tr class="${i%2?'alt':''}"><td class="n0">${i+1}</td><td class="c">${esc(c?.rif||'\u2014')}</td><td class="nm">${esc(c?.name||c?.razonSocial||'')}</td><td>${esc(c?.direccion||'')}</td><td class="c">${esc(c?.telefono||'')}</td><td>${esc(c?.personaContacto||'')}</td><td class="c">${esc(_vendNorm(c?.vendedor)||'\u2014')}</td><td class="c dc ${(parseInt(c?.diasCredito,10)||0)>0?'cr':''}">${esc(_diasCredTxt(c))}</td><td class="c">${esc(_fmtFechaDir(_uf(c))||'\u2014')}</td><td class="c"><span class="st ${_esActivo(c)?'on':'off'}">${_esActivo(c)?'ACTIVO':'INACTIVO'}</span></td></tr>`).join('');
+    const css=`@page{size:11in 8.5in;margin:8mm 8mm 12mm 8mm;@bottom-left{content:"${esc(empNom).replace(/&amp;/g,'&')} \u00b7 Directorio de Clientes \u00b7 ${esc(_vendLabelDir())}";font:7px Arial;color:#666}@bottom-center{content:"P\u00e1gina " counter(page) " de " counter(pages);font:7px Arial;color:#666}@bottom-right{content:"Generado el ${hoy}";font:7px Arial;color:#666}}
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.bar{background:#0f172a;color:#fff;padding:10px 16px;display:flex;gap:14px;align-items:center;font-size:12px}.bar button{background:#f97316;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-weight:800;cursor:pointer}
+.sheet{width:263mm;margin:10px auto}
+.top{display:flex;justify-content:space-between;gap:10px;border-bottom:3px solid #f97316;padding:6px 8px}
+.emp{font-size:14px;font-weight:900}.sub{font-size:8px;color:#334155;margin-top:1px}.dir{font-size:7px;color:#64748b;margin-top:1px}.ttl{font-size:15px;font-weight:900;color:#ea580c;margin-top:4px;letter-spacing:1px}
+.box{min-width:230px;border:1px solid #f97316;font-size:8px}.box div{padding:2.5px 8px;text-align:center}.box .h{color:#ea580c;font-weight:900;border-bottom:1px solid #f97316}.box .m{font-weight:800;font-size:9px}.box .d{color:#475569}
+table{width:100%;table-layout:fixed;border-collapse:collapse;margin-top:6px}thead{display:table-header-group}tr{page-break-inside:avoid}
+th{background:#e2e8f0;color:#0f172a;font-size:7px;font-weight:800;text-align:center;padding:4px 3px;border:.5px solid #94a3b8;border-bottom:2px solid #f97316;text-transform:uppercase}
+td{font-size:7.4px;padding:3px 4px;border:.5px solid #d1d5db;vertical-align:middle;overflow-wrap:anywhere}
+tr.alt td{background:#f8fafc}td.c{text-align:center}td.nm{font-weight:800}td.n0{text-align:center;color:#64748b}td.dc{font-weight:700;color:#475569}td.cr{color:#c2410c;font-weight:900}.st{display:inline-block;padding:1.5px 6px;border-radius:8px;font-size:6.5px;font-weight:900;border:.5px solid}.st.on{color:#15803d;background:#f0fdf4;border-color:#86efac}.st.off{color:#b91c1c;background:#fef2f2;border-color:#fca5a5}
+tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid #f97316}
+@media print{.bar{display:none}.sheet{width:auto;margin:0}}`;
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Directorio de Clientes</title><style>${css}</style></head><body>
+<div class="bar"><button onclick="window.print()">Imprimir / Guardar PDF</button><span>Tama\u00f1o Carta \u00b7 horizontal</span></div>
+<div class="sheet"><div class="top"><div><div class="emp">${esc(empNom)}</div><div class="sub">RIF: ${esc(empRif)}</div><div class="dir">${esc(empDir)}</div><div class="ttl">DIRECTORIO DE CLIENTES</div></div>
+<div class="box"><div class="h">LISTADO DE CLIENTES</div><div class="m">${esc(_vendLabelDir())}</div><div class="d">${lista.length} cliente${lista.length===1?'':'s'} \u00b7 ${nAct} activos \u00b7 ${lista.length-nAct} inactivos</div><div class="d">${credito} con cr\u00e9dito</div><div class="d">Emitido el ${hoy}</div></div></div>
+<table><colgroup><col style="width:3%"><col style="width:8%"><col style="width:19%"><col style="width:23%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:7%"><col style="width:7%"><col style="width:7%"></colgroup>
+<thead><tr><th>N\u00b0</th><th>RIF</th><th>Raz\u00f3n Social</th><th>Direcci\u00f3n</th><th>Tel\u00e9fono</th><th>Contacto</th><th>Vendedor</th><th>D\u00edas de cr\u00e9dito</th><th>\u00dalt. facturaci\u00f3n (NE)</th><th>Estatus</th></tr></thead>
+<tbody>${filas||'<tr><td colspan="10" style="text-align:center;padding:16px;color:#94a3b8">Sin clientes para el filtro aplicado</td></tr>'}
+<tr class="tot"><td colspan="10" style="text-align:right;padding-right:10px">TOTAL CLIENTES: ${lista.length} (${nAct} activos / ${lista.length-nAct} inactivos)</td></tr></tbody></table>
+</div><script>window.onload=function(){setTimeout(function(){window.print();},500);};<\/script></body></html>`;
+    const w=window.open('','_blank');
+    if(w){w.document.write(html);w.document.close();}
+    else setDialog({title:'Ventana bloqueada',text:'Permite las ventanas emergentes para generar el PDF.',type:'alert'});
+  };
+  const exportarDirectorioExcel = async () => {
+    try{
+      const ExcelJS = await ccLoadExcelJS();
+      const lista=clientesDirFiltrados(); const _uf=ultFactPorCliente();
+      const wb=new ExcelJS.Workbook(); const ws=wb.addWorksheet('Clientes',{views:[{state:'frozen',ySplit:5}]});
+      const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
+      ws.addRow([emp]); ws.addRow(['DIRECTORIO DE CLIENTES']); ws.addRow(['Vendedor: '+_vendLabelDir()+'  \u00b7  '+lista.length+' clientes  \u00b7  Emitido el '+getTodayDate().split('-').reverse().join('/')]); ws.addRow([]);
+      ws.getRow(1).font={bold:true,size:13}; ws.getRow(2).font={bold:true,size:12,color:{argb:'FFEA580C'}};
+      const hdr=ws.addRow(['N\u00b0','RIF','Raz\u00f3n Social','Direcci\u00f3n','Tel\u00e9fono','Contacto','Vendedor','D\u00edas de cr\u00e9dito','\u00dalt. facturaci\u00f3n (NE)','Estatus']);
+      hdr.eachCell(c=>{c.font={bold:true,size:9}; c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE2E8F0'}}; c.alignment={horizontal:'center',vertical:'middle',wrapText:true}; c.border={top:{style:'thin'},left:{style:'thin'},right:{style:'thin'},bottom:{style:'medium',color:{argb:'FFF97316'}}};});
+      lista.forEach((c,i)=>{
+        const r=ws.addRow([i+1,c?.rif||'',c?.name||c?.razonSocial||'',c?.direccion||'',c?.telefono||'',c?.personaContacto||'',_vendNorm(c?.vendedor),parseInt(c?.diasCredito,10)||0,_fmtFechaDir(_uf(c)),_esActivo(c)?'ACTIVO':'INACTIVO']);
+        r.eachCell((cell,n)=>{cell.font={size:9,bold:n===3}; cell.alignment={vertical:'middle',wrapText:n===4,horizontal:[1,2,5,7,8,9,10].includes(n)?'center':'left'}; cell.border={top:{style:'hair'},left:{style:'hair'},right:{style:'hair'},bottom:{style:'hair'}}; if(i%2) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF8FAFC'}};});
+        r.getCell(8).numFmt='0" d\u00edas";;"Contado"';
+      });
+      [5,16,38,52,16,22,20,14,20,12].forEach((w,i)=>ws.getColumn(i+1).width=w);
+      ws.autoFilter={from:{row:5,column:1},to:{row:5,column:10}};
+      ws.pageSetup={paperSize:1,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:.3,right:.3,top:.4,bottom:.5,header:.2,footer:.2}};
+      ws.pageSetup.printTitlesRow='5:5';
+      const buf=await wb.xlsx.writeBuffer();
+      const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='Directorio_Clientes'+(clientVendFilter!=='TODOS'?'_'+(clientVendFilter==='__SIN__'?'SIN_VENDEDOR':clientVendFilter.replace(/\s+/g,'_')):'')+'_'+getTodayDate()+'.xlsx'; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+    }catch(e){ setDialog({title:'Error',text:'No se pudo generar el Excel: '+e.message,type:'alert'}); }
+  };
 
   const filteredInvoicesMemo = useMemo(() =>
     (invoices || []).filter(inv =>
@@ -37513,7 +37615,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     } catch(err){ setDialog({title:'Error al importar',text:err.message,type:'alert'}); }
                   }}/>
                 </label>
-                <button onClick={()=>setShowClientReport(true)} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">IMPRIMIR</button>
+                <button onClick={exportarDirectorioExcel} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">EXCEL</button>
+                <button onClick={exportarDirectorioPDF} className="bg-white border-2 border-gray-100 text-gray-700 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50">PDF</button>
               </div>
             </div>
             {(showAddClientForm || editingClientId) && (
@@ -37624,9 +37727,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             </div>
             )}
             <div className="p-6">
-              <div className="relative max-w-2xl mb-6"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>{setClientSearchTerm(e.target.value);setClientesPagina(0);}} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div>
+              <div className="flex gap-3 flex-wrap items-center mb-6"><div className="relative flex-1 min-w-[260px] max-w-2xl"><Search className="absolute left-4 top-4 text-gray-400" size={18} /><input type="text" placeholder="BUSCAR POR NOMBRE O RIF..." value={clientSearchTerm} onChange={e=>{setClientSearchTerm(e.target.value);setClientesPagina(0);}} className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none focus:bg-white text-black" /></div>
+              <select value={clientVendFilter} onChange={e=>{setClientVendFilter(e.target.value);setClientesPagina(0);}} className="px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none text-black">
+                <option value="TODOS">Todos los vendedores</option>
+                {Array.from(new Set((clients||[]).map(c=>_vendNorm(c?.vendedor)).filter(Boolean))).sort().map(v=><option key={v} value={v}>{v}</option>)}
+                <option value="__SIN__">Sin vendedor</option>
+              </select>
+              <select value={clientEstadoFilter} onChange={e=>{setClientEstadoFilter(e.target.value);setClientesPagina(0);}} className="px-4 py-4 bg-gray-50 border-2 border-gray-100 rounded-2xl text-xs font-black uppercase outline-none text-black">
+                <option value="TODOS">Activos e inactivos</option>
+                <option value="ACTIVOS">Solo activos</option>
+                <option value="INACTIVOS">Solo inactivos</option>
+              </select>
+              {clientVendFilter!=='TODOS' && <button onClick={()=>{setClientVendFilter('TODOS');setClientesPagina(0);}} className="text-[10px] font-black uppercase text-gray-400 hover:text-red-500">Limpiar</button>}
+              </div>
               {(()=>{
-                const allCli=(clients||[]).filter(c=>!clientSearchTerm||(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase())));
+                const _ufScr=ultFactPorCliente();
+                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; });
                 const totalCli=allCli.length;
                 const pgCli=Math.max(0,Math.min(clientesPagina,Math.ceil(totalCli/PAGE_SIZE_DEFAULT)-1));
                 const pageCli=allCli.slice(pgCli*PAGE_SIZE_DEFAULT,(pgCli+1)*PAGE_SIZE_DEFAULT);
@@ -37635,8 +37751,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <span className="text-[10px] text-gray-500 font-bold">{totalCli} clientes registrados</span>
                     <PaginadorUI total={totalCli} pagina={pgCli} setPagina={setClientesPagina}/>
                   </div>
-                  <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/3">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4">Cuenta Contable</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">
-                  {pageCli.map(c=>{
+                  <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4">RIF</th><th className="py-4 px-4 w-1/3">Razón Social</th><th className="py-4 px-4">Contacto</th><th className="py-4 px-4">Cuenta Contable</th><th className="py-4 px-4 text-center">Cr\u00e9dito</th><th className="py-4 px-4 text-center">\u00dalt. facturaci\u00f3n (NE)</th><th className="py-4 px-4 text-center">Estatus</th><th className="py-4 px-4 text-center">Acciones</th></tr></thead><tbody className="divide-y divide-gray-100 text-black">
+                  {(()=>{ return null; })()}{pageCli.map(c=>{
                     // Auto-assign CxC account if not set
                     const cuentaNombre=c?.cuentaContableNombre||(()=>{const cxc=planDeCuentas.find(p=>/(cuentas?\s+por\s+cobrar|cxc|clientes)/i.test(p.nombre||''));return cxc?`${cxc.codigo} — ${cxc.nombre}`:'CxC Clientes';})();
                     return(
@@ -37645,6 +37761,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <td className="py-4 px-4"><span className="font-black uppercase block text-sm">{c?.name}</span><span className="text-[10px] font-bold text-gray-400 block">{c?.direccion}</span></td>
                       <td className="py-4 px-4"><span className="font-bold text-gray-700 text-xs">{c?.personaContacto}</span></td>
                       <td className="py-4 px-4"><span className="text-[10px] text-blue-600 font-medium">{cuentaNombre}</span></td>
+                      <td className="py-4 px-4 text-center"><span className="text-[10px] font-black text-gray-600">{_diasCredTxt(c)}</span></td>
+                      <td className="py-4 px-4 text-center"><span className="text-[10px] font-black text-gray-600">{_fmtFechaDir(_ufScr(c))||'\u2014'}</span></td>
+                      <td className="py-4 px-4 text-center"><button onClick={()=>toggleClienteActivo(c)} title={_esActivo(c)?'Clic para desactivar':'Clic para activar'} className={`px-3 py-1 rounded-full text-[9px] font-black uppercase border transition-all ${_esActivo(c)?'bg-green-50 text-green-700 border-green-300 hover:bg-green-100':'bg-red-50 text-red-600 border-red-300 hover:bg-red-100'}`}>{_esActivo(c)?'Activo':'Inactivo'}</button></td>
                       <td className="py-4 px-4 text-center"><div className="flex justify-center gap-2">
                          <button onClick={()=>{
                            const empresa=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
