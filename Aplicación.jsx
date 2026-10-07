@@ -6317,9 +6317,20 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
   const montoBs = Number(m.montoBs||0), montoUSD = Number(m.montoUSD||0);
   const compId = m._docId||m.id;
+  // 0) Si este movimiento esta ligado a un pago de Cuentas por Pagar Relacionadas, su asiento ES el de
+  // Relacionadas (cuenta propia del banco/caja + cuenta CxP configurada del tercero), no el asiento
+  // generico guardado, que podia traer otra cuenta de pasivo y duplicar el registro.
+  // (Relacionadas ya NO genera comprobante propio: el asiento sale del movimiento de Banco/Caja, y si ese movimiento
+  // esta ligado a un tercero Relacionado, la contrapartida es la cuenta CxP vigente de ese tercero.)
+  const prRel = ctx.relPorMov ? (ctx.relPorMov.get(m._docId) || ctx.relPorMov.get(m.id) || null) : null;
+  const relTercId = (prRel && prRel.terceroId) ? prRel.terceroId : ((m.tipoTercero==='Relacionado' && m.terceroId) ? m.terceroId : null);
   // 1) Si ya existe un asiento formal vinculado, se usan SUS líneas reales tal cual.
   const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
-  if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
+  // Si el asiento guardado no coincide con el monto de ESTE movimiento (ej. varios movimientos comparten id/vinculo),
+  // se ignora y se reconstruye desde el movimiento.
+  const _totAsiento = asientoLigado ? Math.max((asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.debeUSD||0),0),(asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.haberUSD||0),0)) : 0;
+  const _asientoOk = asientoLigado && !(Math.abs(montoUSD)>0.005 && _totAsiento>0.005 && Math.abs(_totAsiento-Math.abs(montoUSD))>0.02);
+  if(!prRel && _asientoOk && asientoLigado.lineas && asientoLigado.lineas.length>0){
     return (asientoLigado.lineas||[]).map((l,li)=>{
       const r = aplicarReclas(tabId, compId, li, l.codigo||'', l.cuenta||'—');
       return aplicarLadoDH(r, {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)});
@@ -6339,17 +6350,18 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
   const cuentaGenerica=(patron)=>{const c2=(planCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
   let contra;
-  if(m.cuentaContableCreditoNombre){
+  if(!relTercId && m.cuentaContableCreditoNombre){
     // Contrapartida explícita ya resuelta al crear el movimiento (ej. IGTF Percibido) — tiene
     // prioridad sobre inferir por el nombre del tercero, porque ese nombre en este caso es solo
     // informativo (a quién se le cobró el IGTF), no significa que el movimiento sea una
     // transacción normal de CxC/CxP con ese tercero.
     const [codExp,nomExp]=m.cuentaContableCreditoNombre.split('—').map(s=>s.trim());
     contra={codigo:m.cuentaContableCreditoId||codExp||'', cuenta:nomExp||m.cuentaContableCreditoNombre};
-  } else if(m.tipoTercero==='Relacionado' && m.terceroId){
-    const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
-    const codRel = (tercRel?.cuentaContableCod||'').trim();
-    const nomRel = (tercRel?.cuentaContableNom||'').trim();
+  } else if(relTercId){
+    const tercRel=(tercerosRel||[]).find(t=>t.id===relTercId);
+    const _vig1 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), planCuentas);
+    const codRel = _vig1.cod;
+    const nomRel = _vig1.nom;
     const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
     contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
   } else if(tercero && (codTercero||nomTercero)){
@@ -6722,6 +6734,85 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
 // Caja) y solo si no hay ninguna cae a la propia de Relacionadas. Antes esta revisión solo la
 // hacía el motor central; Comprobantes Contables no, así que su pestaña "Relacionadas" podía
 // mostrar una cuenta de origen distinta a la que realmente terminaba en Mayor Analítico.
+// Localiza el movimiento de Banco/Caja REAL al que corresponde un registro de Relacionadas y su
+// cuenta de banco/caja. Antes solo buscaba por p.movimientoId dentro de la coleccion declarada en
+// p.origen y, si no coincidia (id distinto, movimiento en la otra coleccion, cuenta guardada con
+// otro campo), el lado del banco quedaba como "Movimiento no encontrado" y el Balance mostraba
+// una cuenta SIN-MOV inventada. Ahora prueba, en orden y SIN inventar nada: (1) id en la coleccion
+// declarada, (2) id en la otra, (3) mismo tercero + fecha + monto, (4) misma referencia + monto,
+// y para la cuenta, el campo propio del movimiento (cuentaId/cajaId) o el que traiga el registro.
+const _cuentaRelVigente = (cod, nom, planCuentas) => {
+  const plan = planCuentas || [];
+  if (!plan.length) return {cod, nom};
+  const codPlan = (c) => String(c?.codigo||c?.id||'').trim();
+  if (cod && plan.some(c=>codPlan(c)===cod)) return {cod, nom};
+  const nrm = (x) => String(x||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  const nn = nrm(nom); if (!nn) return {cod, nom};
+  const hits = plan.filter(c=>nrm(c?.nombre)===nn);
+  if (hits.length===1) return {cod: codPlan(hits[0])||cod, nom: nom||hits[0].nombre};
+  return {cod, nom};
+};
+const _esAnclaSaldos = (a) => String(a?.nroComprobante||'').trim().toUpperCase()==='SALDOS AGOSTO-2026';
+const _resolverMovRelacionada = (p, ctx) => {
+  const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
+  const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId) && (!(Math.abs(Number(p.monto||0))>0) || Math.abs(Math.abs(Number(m.montoUSD||0))-Math.abs(Number(p.monto||0)))<0.01);
+  const montoP = Math.abs(Number(p.monto||0));
+  const colecciones = p.origen==='caja'
+    ? [{movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}, {movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}]
+    : [{movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}, {movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}];
+  let hit = null;
+  for (const col of colecciones) { const m=(col.movs||[]).find(idEq); if (m) { hit={m,col}; break; } }
+  if (!hit && montoP>0) {
+    // Mismo dia + mismo monto USD (+ mismo sentido). Si hay varios, se desempata por tercero y por
+    // parecido del concepto/referencia; solo se acepta si queda UNO (nunca se adivina entre varios).
+    const normTxt=(x)=>String(x||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+    const palabras=(x)=>normTxt(x).split(' ').filter(w=>w.length>3);
+    const ptxt=normTxt((p.concepto||'')+' '+(p.terceroNombre||'')+' '+(p.referencia||''));
+    const esIng = Number(p.monto||0)<0;
+    for (const col of colecciones) {
+      let cands=(col.movs||[]).filter(m=>(m.fecha||'')===(p.fecha||'') && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      const conSentido=cands.filter(m=>(m.tipo==='Ingreso'||m.tipo==='Nota de Cr\u00e9dito')===esIng);
+      if (conSentido.length) cands=conSentido;
+      if (cands.length>1) { const porTerc=cands.filter(m=>p.terceroId && m.terceroId===p.terceroId); if (porTerc.length) cands=porTerc; }
+      if (cands.length>1) { const pw=new Set(palabras(ptxt)); const pts=cands.map(m=>({m,n:palabras((m.concepto||'')+' '+(m.referencia||'')).filter(w=>pw.has(w)).length})); const mx=Math.max(...pts.map(x=>x.n)); const top=pts.filter(x=>x.n===mx); if (mx>0 && top.length===1) cands=[top[0].m]; }
+      if (cands.length===1) { hit={m:cands[0],col}; break; }
+    }
+  }
+  if (!hit && p.referencia && montoP>0) {
+    for (const col of colecciones) {
+      const cands=(col.movs||[]).filter(m=>m.referencia && m.referencia===p.referencia && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      if (cands.length===1) { hit={m:cands[0],col}; break; }
+    }
+  }
+  let cta = null, tipoCta = hit ? hit.col.tipo : (p.origen==='caja'?'caja':'banco');
+  if (hit) {
+    cta = (hit.col.cuentas||[]).find(c=>c.id===hit.m[hit.col.campo]) || null;
+    if (!cta) { const otros=[{cuentas:cuentasBanco,campo:'cuentaId',t:'banco'},{cuentas:cuentasCaja,campo:'cajaId',t:'caja'}]; for (const o of otros){ const c2=(o.cuentas||[]).find(c=>c.id===hit.m[o.campo]||c.id===hit.m.cuentaId||c.id===hit.m.cajaId); if(c2){cta=c2;tipoCta=o.t;break;} } }
+  }
+  if (!cta) {
+    const hint=[p.cuentaId,p.cajaId,p.cuentaBancariaId].filter(Boolean).map(x=>String(x).replace('CAJA::',''));
+    for (const h of hint) { const cb=(cuentasBanco||[]).find(c=>c.id===h); if(cb){cta=cb;tipoCta='banco';break;} const cc=(cuentasCaja||[]).find(c=>c.id===h); if(cc){cta=cc;tipoCta='caja';break;} }
+  }
+  return {mov: hit?hit.m:null, cta, tipoCta, tabOrigen: hit?hit.col.tipo:(p.origen==='caja'?'caja':'banco')};
+};
+// Banco/Caja es la fuente de verdad: un registro de Relacionadas que dice venir de Banco/Caja (origen) solo se
+// contabiliza si existe SU movimiento real, y cada movimiento respalda como maximo UN registro (los duplicados y los
+// que no tienen movimiento se ignoran, no se contabilizan). Los registros manuales (sin origen) siempre cuentan.
+const _filtrarPagosRelValidos = (pagos, ctx, esExcluido) => {
+  const validos = [], ignorados = [], cand = [];
+  (pagos||[]).forEach(p=>{
+    if (esExcluido && esExcluido(p)) return;
+    if (!p.origen) { validos.push(p); return; }
+    const r = _resolverMovRelacionada(p, ctx);
+    if (!r.mov) { ignorados.push({p, motivo:'sin movimiento de Banco/Caja'}); return; }
+    const exacto = !!p.movimientoId && (r.mov.id===p.movimientoId || r.mov._docId===p.movimientoId);
+    cand.push({p, k:(r.mov._docId||r.mov.id), exacto});
+  });
+  cand.sort((a,b)=>(a.exacto===b.exacto?0:(a.exacto?-1:1)));
+  const usados = new Set();
+  cand.forEach(c=>{ if (usados.has(c.k)) ignorados.push({p:c.p, motivo:'duplicado (ese movimiento ya tiene otro registro)'}); else { usados.add(c.k); validos.push(c.p); } });
+  return {validos, ignorados};
+};
 const construirLineasRelacionadaCompartida = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja, tercerosRel, planCuentas, settingsTasa, tabId, aplicarReclas} = ctx;
   const montoConSigno = (pp) => {
@@ -6732,34 +6823,36 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const montoSigno = montoConSigno(p);
   const esIngreso = montoSigno < 0;
   const montoUSD = Math.abs(montoSigno);
-  const movLigado = p.origen==='caja'
-    ? (movCaja||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId)
-    : p.origen==='banco' ? (movBanco||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
-  const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
-  const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
-  const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
+  const _res = p.origen ? _resolverMovRelacionada(p, ctx) : {mov:null,cta:null,tipoCta:'banco',tabOrigen:'banco'};
+  const movLigado = _res.mov;
+  const ctaOrigen = _res.cta;
+  const _esCajaOrigen = _res.tipoCta==='caja';
   // Si el movimiento de Banco/Caja vinculado no se encuentra (dato roto — visto en datos reales:
   // p.movimientoId sin match en movBanco), antes esto quedaba con código VACÍO — lo que hacía que
   // la línea entera desapareciera de cualquier cuenta al agregar (las líneas sin código se
   // descartan), dejando el asiento descuadrado sin que se notara. Ahora queda marcado visible, con
   // un código propio, en vez de desaparecer o simular una cuenta bancaria que no existe.
-  const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco)
-    : (p.origen ? `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})` : 'Ajuste manual (sin cuenta bancaria)');
+  const nombreCtaOrigen = ctaOrigen ? (_esCajaOrigen?ctaOrigen.nombre:ctaOrigen.banco)
+    : (p.origen ? (movLigado ? `\u26a0\ufe0f Movimiento de ${_res.tabOrigen} encontrado (id: ${movLigado.id||movLigado._docId}) pero su cuenta ${movLigado.cuentaId||movLigado.cajaId||'(sin cuenta)'} no existe en ${_res.tabOrigen==='caja'?'Cajas':'Bancos'}` : `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})`) : 'Ajuste manual (sin cuenta bancaria)');
   // Prefijo '1.' (grupo Activo, es cuenta de banco/caja) para que ccBuildArbol la clasifique
   // como Activo — sin el prefijo numérico, el código no empataba con ningún gruposIncluir
   // ('1'/'2'/'3') y la línea desaparecía por completo de Balance General/Estado de Resultados,
   // dejando el asiento descuadrado silenciosamente (visto en datos reales: diferencia de
   // USD 148,40 / Bs.110.328,66 entre Total Activos y Total Pasivo+Patrimonio).
   const codCtaOrigen = ctaOrigen?.cuentaContableCod || (p.origen && p.movimientoId ? `1.SIN-MOV-${p.movimientoId}` : '');
-  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
+  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(p.tasa||0)>1 ? Number(p.tasa) : (Number(settingsTasa||0)||1));
   // El monto en Bs. se toma DIRECTO del movimiento de Banco/Caja vinculado (que ya lo guarda
   // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
   // no se resuelve bien (movimiento no encontrado, ajuste manual, etc.), el Bs. termine saliendo
   // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
-  const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : montoUSD*tasa;
+  let montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : (Math.abs(Number(p.montoBs||0)) || montoUSD*tasa);
+  // Sin movimiento vinculado, un Bs. guardado que no guarda relacion con USD x tasa (ej. Bs igual al USD,
+  // o el Bs de otro movimiento) se reemplaza por USD x tasa.
+  if (!movLigado && tasa>1 && montoUSD>0) { const _rz = montoBs/montoUSD; if (_rz < tasa*0.5 || _rz > tasa*2) montoBs = montoUSD*tasa; }
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
-  const codRel = (tercRel?.cuentaContableCod||'').trim();
-  const nomRel = (tercRel?.cuentaContableNom||'').trim();
+  const _vig2 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), ctx.planCuentas);
+  const codRel = _vig2.cod;
+  const nomRel = _vig2.nom;
   // Antes, si el tercero no tenía cuenta configurada, se adivinaba buscando en TODO el Plan de
   // Cuentas la primera cuyo nombre contenga "préstamo" o "relacionad" — eso hacía que caudales de
   // terceros SIN configurar terminaran mezclados en una cuenta genérica ajena (visto en datos
@@ -6771,7 +6864,7 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const codRelFinal = codRel || `2.SIN-CTA-${p.terceroId||'?'}`;
   const nomRelFinal = nomRel || `⚠️ Sin cuenta configurada — ${p.terceroNombre||tercRel?.nombre||'tercero desconocido'}`;
   const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-  const tabOrigen = p.origen==='caja'?'caja':'banco';
+  const tabOrigen = _res.tabOrigen;
   const reclasOrigen = (li,codigo,cuenta) => (aplicarReclas && movLigado) ? aplicarReclas(tabOrigen, movLigado._docId||movLigado.id, li, codigo, cuenta) : {codigo,cuenta};
   const reclasProp = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, p.id, li, codigo, cuenta) : {codigo,cuenta};
   const origenReclas0 = reclasOrigen(0, codCtaOrigen, nombreCtaOrigen);
@@ -16957,6 +17050,12 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const cuentas = esBanco ? cuentasBanco : cuentasCaja;
     const idField = esBanco ? 'cuentaId' : 'cajaId';
     const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
+    const relPorMov = new Map();
+    _filtrarPagosRelValidos(pagosRelC, {movBanco,movCaja,cuentasBanco,cuentasCaja}, p=>!!reclasificacionesC['EXCL__relacionadas__'+p.id]).validos.forEach(pr=>{
+      if(!pr.origen) return;
+      const rs=_resolverMovRelacionada(pr,{movBanco,movCaja,cuentasBanco,cuentasCaja});
+      if(rs.mov){ if(rs.mov._docId) relPorMov.set(rs.mov._docId,pr); if(rs.mov.id) relPorMov.set(rs.mov.id,pr); }
+    });
     const filtrados = movs.filter(m => {
       if (m.fecha < filtDesde || m.fecha > filtHasta) return false;
       if (filtCuenta && m[idField] !== filtCuenta) return false;
@@ -16970,6 +17069,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         cuentas, idField, nombreCta, asientos:asientosCC, provs:provsC, clientes:clientesC,
         tercerosRel:tercerosRelC, planCuentas:planCuentasC, tabId:(esBanco?'banco':'caja'),
         aplicarReclas:aplicarReclasLinea,
+        relPorMov, movBanco, movCaja, cuentasBanco, cuentasCaja, settingsTasa:settingsCC?.tasaBCV,
       });
       const lineas = lineasRaw.map(l => ({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0||l.debeUSD>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD}));
       return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', proveedor: m.proveedor||m.terceroNombre||m.clientName||'', tasa, lineas };
@@ -17098,7 +17198,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // movimiento real (origen+movimientoId, monto ya con signo) y los manuales (con campo
   // tipo aparte, monto sin signo) — se normalizan ambos aquí.
   const construirLineasRelacionadas = () => {
-    const filtradas = (pagosRelC||[]).filter(p => {
+    const filtradas = _filtrarPagosRelValidos(pagosRelC, {movBanco,movCaja,cuentasBanco,cuentasCaja}, p=>!!reclasificacionesC['EXCL__relacionadas__'+p.id]).validos.filter(p => {
       if (filtDesde && p.fecha < filtDesde) return false;
       if (filtHasta && p.fecha > filtHasta) return false;
       return true;
@@ -19659,6 +19759,96 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
 
 
+  // Saldo de Agosto 2026: balance completo al 31/08/2026 que sirve de PUNTO DE PARTIDA. El Balance
+  // General (con corte desde el 31/08) y el Mayor/Balance de Comprobaci\u00f3n (con Desde posterior
+  // al 31/08) parten de este comprobante e ignoran lo anterior en cuentas de balance; los dem\u00e1s
+  // reportes lo ignoran para no duplicar (ver getAsientosAncla).
+  const importarSaldosAgosto2026 = async () => {
+    const yaExiste = (ajustesC||[]).find(a => (a.nroComprobante||'').trim().toUpperCase() === 'SALDOS AGOSTO-2026');
+    if (yaExiste) { alert('Ya existe "SALDOS AGOSTO-2026" \u2014 no se cre\u00f3 de nuevo. Si necesitas reemplazarlo, b\u00f3rralo primero desde esta pesta\u00f1a.'); return; }
+    const lineas = [
+      {codigo:'1.1.01.01.001',cuenta:'CAJA PRINCIPAL',tipo:'D',montoUSD:7895.52,montoBs:6276872.87},
+      {codigo:'1.1.01.01.002',cuenta:'CAJA Z1',tipo:'D',montoUSD:1949.84,montoBs:1550109.63},
+      {codigo:'1.1.01.02.001',cuenta:'BBVA PROVINCIAL',tipo:'D',montoUSD:26.29,montoBs:20902.04},
+      {codigo:'1.1.01.02.002',cuenta:'BANCO MERCANTIL',tipo:'D',montoUSD:31.47,montoBs:25019.42},
+      {codigo:'1.1.01.02.003',cuenta:'BANCARIBE',tipo:'D',montoUSD:13458.3,montoBs:10699236.05},
+      {codigo:'1.1.01.02.006',cuenta:'BANCO NACIONAL DE CREDITO 2958',tipo:'D',montoUSD:11.9,montoBs:9459.24},
+      {codigo:'1.1.01.02.009',cuenta:'BANCAMIGA',tipo:'D',montoUSD:1.1,montoBs:872.23},
+      {codigo:'1.1.01.02.010',cuenta:'BANCO BANPLUS',tipo:'D',montoUSD:2046.14,montoBs:1626668.16},
+      {codigo:'1.1.01.02.011',cuenta:'BANESCO',tipo:'D',montoUSD:437.9,montoBs:348126.88},
+      {codigo:'1.1.01.03.001',cuenta:'BANCO PROVINCIAL (ME)',tipo:'D',montoUSD:1037.15,montoBs:824525.64},
+      {codigo:'1.1.01.03.002',cuenta:'BANCO MERCANTIL (ME)',tipo:'D',montoUSD:75.0,montoBs:59624.38},
+      {codigo:'1.1.01.03.009',cuenta:'BANCAMIGA (ME)',tipo:'D',montoUSD:8.88,montoBs:7059.53},
+      {codigo:'1.1.01.03.010',cuenta:'BANPLUS (ME)',tipo:'D',montoUSD:3.22,montoBs:2559.87},
+      {codigo:'1.1.01.03.011',cuenta:'BANESCO (ME)',tipo:'D',montoUSD:60.0,montoBs:47699.5},
+      {codigo:'1.1.01.04.001',cuenta:'BANPLUS (ELECTRONICA)',tipo:'D',montoUSD:2200.0,montoBs:1748981.74},
+      {codigo:'1.1.01.04.002',cuenta:'BANCARIBE (ELECTRONICA)',tipo:'D',montoUSD:8021.0,montoBs:6376628.43},
+      {codigo:'1.1.01.04.003',cuenta:'BANESCO (ELECTRONICA)',tipo:'D',montoUSD:300.0,montoBs:238497.51},
+      {codigo:'1.1.01.04.005',cuenta:'PROVINCIAL (ELECTRONICA)',tipo:'D',montoUSD:6500.0,montoBs:5167446.05},
+      {codigo:'1.1.01.05.001',cuenta:'BANPLUS TDD INTERNACIONAL',tipo:'D',montoUSD:144.8,montoBs:115114.8},
+      {codigo:'1.1.01.06.001',cuenta:'AMERANT BANK, N.A.',tipo:'D',montoUSD:12079.42,montoBs:9603038.64},
+      {codigo:'1.1.02.01.001',cuenta:'CUENTAS POR COBRAR CLIENTES',tipo:'D',montoUSD:141243.45,montoBs:102528173.05},
+      {codigo:'1.1.02.01.002',cuenta:'PROVISI\u00d3N CUENTAS INCOBRABLES (-)',tipo:'H',montoUSD:8230.73,montoBs:6543362.03},
+      {codigo:'1.1.02.03.001',cuenta:'CUENTAS POR COBRAR JUAN D. BOHORQUEZ',tipo:'D',montoUSD:561.16,montoBs:446118.57},
+      {codigo:'1.1.02.05.001',cuenta:'ANTICIPO PRESTACIONES SOCIALES',tipo:'D',montoUSD:10731.47,montoBs:1616929.87},
+      {codigo:'1.1.03.01.002',cuenta:'MERCANCIA (INV-INICIAL)',tipo:'D',montoUSD:233992.87,montoBs:186022390.07},
+      {codigo:'1.1.03.01.003',cuenta:'INVENTARIO DE CONSUMIBLES',tipo:'D',montoUSD:2282.63,montoBs:1814669.37},
+      {codigo:'1.1.03.01.005',cuenta:'MATERIA PRIMA (INV-INICIAL)',tipo:'D',montoUSD:57374.41,montoBs:45612181.49},
+      {codigo:'1.1.04.01.001',cuenta:'I.V.A CREDITOS FISCALES (COMPRAS)',tipo:'D',montoUSD:24609.9,montoBs:19564670.06},
+      {codigo:'1.1.04.01.002',cuenta:'I.S.L.R. RETENIDO (CLIENTES)',tipo:'D',montoUSD:194.07,montoBs:154282.87},
+      {codigo:'1.1.04.01.003',cuenta:'I.V.A. RETENCI\u00d3N 75% - 100% (CLIENTES)',tipo:'D',montoUSD:52153.08,montoBs:41461271.1},
+      {codigo:'1.1.04.01.008',cuenta:'ANTICIPO DE I.S.L.R (1.% DE VENTAS)',tipo:'D',montoUSD:10804.49,montoBs:8589483.0},
+      {codigo:'1.1.04.01.009',cuenta:'RETENCION CLIENTES SOBRE ACTIVIDADES ECONOMICAS',tipo:'D',montoUSD:81.06,montoBs:64443.44},
+      {codigo:'1.1.05.01.002',cuenta:'ANTICIPOS A PROVEEDORES',tipo:'D',montoUSD:106247.02,montoBs:83876692.4},
+      {codigo:'1.1.05.01.005',cuenta:'ANTICIPOS A PROVEEDORES ZULIANA DE EMPAQUE',tipo:'D',montoUSD:70681.72,montoBs:56191380.74},
+      {codigo:'1.1.06.01.001',cuenta:'INMUEBLE (GALPON)',tipo:'D',montoUSD:169547.91,montoBs:134789181.2},
+      {codigo:'1.1.06.01.002',cuenta:'DEP. ACUMULADA MEJORAS AL INMUEBLE (GALPON)',tipo:'H',montoUSD:7064.5,montoBs:6776898.8},
+      {codigo:'1.1.06.02.001',cuenta:'MAQUINARIAS Y EQUIPOS',tipo:'D',montoUSD:299015.26,montoBs:237714649.9},
+      {codigo:'1.1.06.02.002',cuenta:'DEP. ACUMULADA MAQUINARIA Y EQUIPOS',tipo:'H',montoUSD:31320.77,montoBs:24899752.19},
+      {codigo:'1.1.06.03.001',cuenta:'EQUIPOS DE COMPUTACI\u00d3N',tipo:'D',montoUSD:7459.15,montoBs:5929962.34},
+      {codigo:'1.1.06.03.002',cuenta:'DEP. ACUMULADA EQUIPOS DE COMPUTACI\u00d3N',tipo:'H',montoUSD:1060.03,montoBs:842715.05},
+      {codigo:'1.1.06.04.001',cuenta:'VEH\u00cdCULOS',tipo:'D',montoUSD:56364.24,montoBs:44809102.98},
+      {codigo:'1.1.06.04.002',cuenta:'DEP. ACUMULADA VEH\u00cdCULOS',tipo:'H',montoUSD:3842.75,montoBs:4444401.1},
+      {codigo:'1.1.06.06.001',cuenta:'MOBILIARIO Y EQUIPO',tipo:'D',montoUSD:16969.07,montoBs:13490269.81},
+      {codigo:'1.1.06.06.002',cuenta:'DEP. ACUMULADA MOBILIARIO',tipo:'H',montoUSD:3338.31,montoBs:2653928.74},
+      {codigo:'1.1.06.08.001',cuenta:'PLANTA ELECTRICA',tipo:'D',montoUSD:53550.0,montoBs:42571805.54},
+      {codigo:'1.1.06.08.002',cuenta:'DEP. ACUMULADA PLANTA ELECTRICA',tipo:'H',montoUSD:4239.17,montoBs:3370104.97},
+      {codigo:'1.1.08.02.001',cuenta:'MEJORAS A LA PROPIEDAD',tipo:'D',montoUSD:140701.36,montoBs:111856411.56},
+      {codigo:'1.1.08.02.002',cuenta:'AMPLIACIONES A LA PROPIEDA',tipo:'D',montoUSD:5897.25,montoBs:4688268.34},
+      {codigo:'2.1.01.01.001',cuenta:'CUENTAS POR PAGAR PROVEEDORES',tipo:'H',montoUSD:93974.66,montoBs:16140656.29},
+      {codigo:'2.1.01.01.004',cuenta:'CUENTAS POR PAGAR SURE PACK',tipo:'H',montoUSD:107900.21,montoBs:123219706.74},
+      {codigo:'2.1.02.01.003',cuenta:'PRESTAMOS BANCARIOS',tipo:'H',montoUSD:3051.53,montoBs:2425938.59},
+      {codigo:'2.1.02.01.008',cuenta:'VEH\u00cdCULOS POR PAGAR',tipo:'H',montoUSD:29776.15,montoBs:23911466.21},
+      {codigo:'2.1.03.01.001',cuenta:'CUENTAS POR PAGAR JUAN D. BOHORQUEZ',tipo:'H',montoUSD:12174.67,montoBs:9678759.18},
+      {codigo:'2.1.03.01.002',cuenta:'CUENTAS POR PAGAR JUAN CARLOS BOHORQUEZ',tipo:'H',montoUSD:700829.09,montoBs:557153354.44},
+      {codigo:'2.1.03.01.003',cuenta:'CUENTAS POR PAGAR LUIS GUILLERMO BOHORQUEZ',tipo:'H',montoUSD:19770.64,montoBs:15717494.7},
+      {codigo:'2.1.04.01.001',cuenta:'RETENCIONES I.S.L.R. POR PAGAR',tipo:'H',montoUSD:541.12,montoBs:412255.32},
+      {codigo:'2.1.04.01.005',cuenta:'PROTECCION DE PENSIONES (I.D.P.P) POR PAGAR',tipo:'H',montoUSD:475.52,montoBs:378037.46},
+      {codigo:'2.1.04.02.002',cuenta:'RETENCI\u00d3N IVA (100-75%)',tipo:'H',montoUSD:1285.53,montoBs:1010446.14},
+      {codigo:'2.1.04.03.001',cuenta:'I.V.S.S. POR PAGAR',tipo:'H',montoUSD:4.05,montoBs:3220.5},
+      {codigo:'2.1.04.03.002',cuenta:'F.A.O.V. POR PAGAR',tipo:'H',montoUSD:213.01,montoBs:169339.02},
+      {codigo:'2.1.04.03.003',cuenta:'I.N.C.E.S. POR PAGAR',tipo:'H',montoUSD:265.07,montoBs:210727.14},
+      {codigo:'2.1.04.03.005',cuenta:'IMPUESTOS SOBRE ACTIVIDADES ECON\u00d3MICAS',tipo:'H',montoUSD:1335.77,montoBs:1286633.41},
+      {codigo:'2.1.04.03.012',cuenta:'ANTICIPO DE I.S.L.R (1% DE VENTAS) POR PAGAR',tipo:'H',montoUSD:744.41,montoBs:616176.84},
+      {codigo:'2.1.05.01.004',cuenta:'BENEFICIO ALIMENTACION COMPLEMTARIA POR PAGAR',tipo:'H',montoUSD:430.86,montoBs:342530.12},
+      {codigo:'2.1.06.01.001',cuenta:'HCM POR PAGAR',tipo:'H',montoUSD:851.57,montoBs:676991.08},
+      {codigo:'3.1.01.01.001',cuenta:'CAPITAL SOCIAL',tipo:'H',montoUSD:9434.06,montoBs:7500000.0},
+      {codigo:'3.3.01.01.001',cuenta:'UTILIDAD (P\u00c9RDIDAS)',tipo:'D',montoUSD:1901.66,montoBs:1511804.04},
+      {codigo:'3.3.01.01.002',cuenta:'UTILIDAD (P\u00c9RDIDA) ACUMULADA',tipo:'H',montoUSD:476496.99,montoBs:379667688.29},
+    ];
+    const totD = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoUSD,0);
+    const totH = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoUSD,0);
+    const totDBs = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoBs,0);
+    const totHBs = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoBs,0);
+    if (Math.abs(totD-totH) > 0.02 || Math.abs(totDBs-totHBs) > 0.05) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} \u2014 no se import\u00f3, revisa el origen.`); return; }
+    try {
+      await addDoc(getColRef('comprobantes_ajustes'), {
+        fecha:'2026-08-31', nroComprobante:'SALDOS AGOSTO-2026', concepto:'SALDO AGOSTO 2026 BALANCE GENERAL',
+        tasa:781.3956, lineas, createdAt:Date.now(), user:'Importaci\u00f3n Saldos Agosto', origen:'saldos_iniciales',
+      });
+      alert(`\u2705 Se cre\u00f3 "SALDOS AGOSTO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`);
+    } catch(e) { alert('Error: '+e.message); }
+  };
   // Importa el ajuste de saldos iniciales "SALDOS JUNIO-2026" (53 cuentas, balance completo al
   // 30/06/2026) desde el archivo que ya se validó cuadra Debe=Haber=$771.941,00. Con chequeo de
   // duplicado — si ya existe un comprobante con ese nombre, avisa en vez de crear otro.
@@ -20638,7 +20828,6 @@ ${valoresHtml}
     { id:'nomina', label:'Nómina', icon:'💰', activo:true },
     { id:'costos_produccion', label:'Costos OP', icon:'🏭', activo:true },
     { id:'consumos_internos', label:'Consumos Internos', icon:'📦', activo:true },
-    { id:'relacionadas', label:'Ctas x Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
     { id:'cierre_iva', label:'Cierre IVA', icon:'🧮', activo:true },
   ];
@@ -20706,6 +20895,16 @@ ${valoresHtml}
             </div>
             <button onClick={repararCuentasContables} className="bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13}/> Reparar</button>
           </div>
+          {(()=>{ const elim=Object.entries(reclasificacionesC||{}).filter(([,rc])=>rc.tabId==='excl').sort((a,b)=>(b[1].timestamp||0)-(a[1].timestamp||0)); if(!elim.length) return null; return (
+            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-black text-red-800 uppercase">Asientos eliminados ({elim.length})</p>
+              {elim.map(([k,rc])=>(
+                <div key={k} className="flex items-center justify-between gap-3 bg-white border border-red-100 rounded-lg px-3 py-2">
+                  <span className="text-[10px] font-bold text-gray-700 uppercase">{rc.conceptoComprobante||k} <span className="text-gray-400 font-mono ml-2">{rc.fechaComprobante||''}</span></span>
+                  <button onClick={async()=>{ try{ await deleteDoc(getDocRef('comprobantes_reclasificaciones', k)); }catch(e){ alert('Error: '+e.message); } }} className="px-3 py-1 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700">Restaurar</button>
+                </div>
+              ))}
+            </div>); })()}
           {lista.length===0 ? (
             <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
           ) : (
@@ -21105,6 +21304,7 @@ ${valoresHtml}
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
             <button onClick={revertirAjustesSoloGastos} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ClipboardEdit size={14}/>Revertir a Solo-Gastos Ene-Abr</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano.\n\n¿Continuar?')) importarSaldosIniciales2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
+            <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS AGOSTO-2026" (balance completo al 31/08/2026). Desde esa fecha el Balance General parte de este saldo. Si algo sale mal hay que borrarlo desde esta pesta\u00f1a.\n\n\u00bfContinuar?')) importarSaldosAgosto2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Saldo Agosto 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-ENERO-2026" con el detalle línea por línea de Enero 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistEnero2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Enero 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-FEBRERO-2026" con el detalle línea por línea de Febrero 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistFebrero2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Febrero 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-MARZO-2026" con el detalle línea por línea de Marzo 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistMarzo2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Marzo 2026</button>
@@ -21555,8 +21755,10 @@ ${valoresHtml}
     if (activo === 'relacionadas') {
       const lineasRel = filtrarPorBusquedaCC(conTipoCC('relacionadas', construirLineasRelacionadas()));
       const totalRelUSD = lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      const _relIgn = _filtrarPagosRelValidos(pagosRelC, {movBanco,movCaja,cuentasBanco,cuentasCaja}, p=>!!reclasificacionesC['EXCL__relacionadas__'+p.id]).ignorados;
       return (
         <div className="p-6 space-y-4">
+          {_relIgn.length>0 && <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-3 text-[10px] text-yellow-800 font-bold">{'\u26a0\ufe0f'} {_relIgn.length} registro(s) de Relacionadas NO se contabilizan porque Banco/Caja es la fuente de verdad: {_relIgn.map(x=>`${x.p.fecha||''} ${x.p.referencia||x.p.id} ($${contFmt(Math.abs(Number(x.p.monto||0)))}) \u2014 ${x.motivo}`).join(' | ')}</div>}
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
@@ -21575,8 +21777,8 @@ ${valoresHtml}
           ):(
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acci\u00f3n'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8&&i<=11?'text-right':(i===4||i===12)?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
                   {lineasRel.flatMap((r,ri)=>r.lineas.map((l,li)=>(
@@ -21592,15 +21794,22 @@ ${valoresHtml}
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className="px-3 py-2 text-center">{li===0 && (
+                        <button title="Eliminar este asiento" onClick={async()=>{
+                          if(!window.confirm('\u00bfEliminar el asiento de '+r.comprobante+' ('+r.doc+')? Deja de contabilizarse en Mayor, Balance y Estados. El registro en Estado de Cuenta de Relacionados no se toca. Se puede restaurar desde la pesta\u00f1a Reclasificaciones.')) return;
+                          try{ await setDoc(getDocRef('comprobantes_reclasificaciones', `EXCL__relacionadas__${r.id}`), {tabId:'excl', compId:r.id, origenTab:'relacionadas', excluido:true, conceptoComprobante:'ASIENTO ELIMINADO (Relacionadas) - '+r.comprobante+' / '+(r.doc||''), fechaComprobante:r.fecha||'', timestamp:Date.now()}); }catch(e){ alert('Error: '+e.message); }
+                        }} className="px-1.5 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-500 hover:text-white text-[9px] font-black">Eliminar</button>
+                      )}</td>
                     </tr>
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
+                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                  <td></td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -22638,7 +22847,28 @@ function App() {
   // lineas:[{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}]}. A propósito NO incluye
   // Retenciones a Proveedores: esa información ya viene completa dentro de cada asiento
   // de Procura (confirmado en generarAsientoFC), y sumarla aparte duplicaría los montos.
-  const getAsientosReales = (simulacionCostos) => {
+  // Punto de partida "SALDOS AGOSTO-2026": getAsientosReales() lo omite (para que ning\u00fan otro reporte
+  // lo duplique); este helper lo usa SOLO donde corresponde.
+  //  modo 'balance' (ref.corte): con corte >= fecha del saldo, se reemplaza TODO lo anterior por el saldo.
+  //  modo 'rango' (ref.desde): con Desde > fecha del saldo, lo anterior se ignora SOLO en cuentas de balance (1/2/3).
+  const getAsientosAncla = (modo, ref) => {
+    const todos = getAsientosReales(undefined, true);
+    const anc = todos.find(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante}));
+    if(!anc) return todos;
+    const F = anc.fecha||'';
+    const activo = modo==='balance' ? ((ref?.corte||'')>=F) : (!!ref?.desde && ref.desde>F);
+    if(!activo) return todos.filter(a=>a!==anc);
+    const esBal = (c) => /^[123]/.test(String(c||''));
+    const res = [];
+    todos.forEach(a=>{
+      if(a===anc || (a.fecha||'')>F){ res.push(a); return; }
+      if(modo==='balance') return;
+      const ls = (a.lineas||[]).filter(l=>!esBal(l.codigo));
+      if(ls.length) res.push({...a, lineas:ls});
+    });
+    return res;
+  };
+  const getAsientosReales = (simulacionCostos, conAncla) => {
     const out = [];
     // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
     // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
@@ -22815,6 +23045,12 @@ function App() {
     // (ver derivarMovsCajaDesdeCxcCxp) — antes esos cobros/pagos no llegaban nunca a Mayor
     // Analítico ni a Estado de Resultados/Balance General, aunque el cliente/proveedor ya
     // apareciera cobrado/pagado en su estado de cuenta operativo.
+    const _idsMovRelApp = new Set();
+    const _relValidosApp = _filtrarPagosRelValidos(pagosRelApp, {movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}, p=>!!reclasificacionesApp['EXCL__relacionadas__'+p.id]).validos;
+    const _relPorMovApp = new Map();
+    _relValidosApp.forEach(p=>{
+      if(p.origen){ const r=_resolverMovRelacionada(p,{movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}); if(r.mov){ if(r.mov._docId) _relPorMovApp.set(r.mov._docId,p); if(r.mov.id) _relPorMovApp.set(r.mov.id,p); } }
+    });
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
      {movs:[...movCajaApp, ...derivarMovsCajaDesdeCxcCxp(cobrosCxc, procuraPagosCxpApp, movCajaApp, settings?.tasaBCV)], cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
@@ -22825,10 +23061,9 @@ function App() {
         // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
         // con su propia cuenta puente hacia el mismo banco. Relacionadas ya genera el asiento
         // completo y balanceado para este movimiento, incluyendo el lado del banco/caja.
-        if((pagosRelApp||[]).some(p=>p.movimientoId===m.id||p.movimientoId===m._docId)) return;
         const lineasRaw = construirLineasMovimientoBancoCaja(m, {
           cuentas, idField, nombreCta, asientos:asientosApp, provs:proveedoresApp, clientes:clients,
-          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg,
+          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg, relPorMov:_relPorMovApp,
         });
         out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', proveedor:m.proveedor||m.terceroNombre||m.clientName||'',
           lineas: lineasRaw.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeBs:l.debeBs, haberBs:l.haberBs, debeUSD:l.debeUSD, haberUSD:l.haberUSD}))});
@@ -22836,19 +23071,11 @@ function App() {
     });
     // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
     // ningún otro módulo.
-    (pagosRelApp||[]).forEach(p=>{
-      const res = construirLineasRelacionadaCompartida(p, {
-        movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp,
-        tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, settingsTasa:settings?.tasaBCV,
-        tabId:'relacionadas', aplicarReclas:aplicarReclasLinea,
-      });
-      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
-        concepto:`${res.esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${res.nombreTercero}`,
-        lineas:res.lineas});
-    });
+    // (Relacionadas ya no genera comprobante propio: ver construirLineasMovimientoBancoCaja.)
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
+      if(!conAncla && _esAnclaSaldos(a)) return;
       const lineas = construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea});
       const tieneFechaPropia = lineas.some(l=>l.fecha);
       if (!tieneFechaPropia) {
@@ -27814,7 +28041,7 @@ function App() {
       return v===clientVendFilter;
     }
     return true;
-  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||'')));
+  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''),'es',{sensitivity:'base'}));
   // Ultima fecha de facturacion por cliente: solo facturas que vienen de una Nota de Entrega (neOrigen o NE vinculada).
   const ultFactPorCliente = () => {
     const conNE=new Set((notasEntrega||[]).map(n=>n?.facturaId).filter(Boolean));
@@ -37742,7 +37969,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>
               {(()=>{
                 const _ufScr=ultFactPorCliente();
-                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; });
+                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''),'es',{sensitivity:'base'}));
                 const totalCli=allCli.length;
                 const pgCli=Math.max(0,Math.min(clientesPagina,Math.ceil(totalCli/PAGE_SIZE_DEFAULT)-1));
                 const pageCli=allCli.slice(pgCli*PAGE_SIZE_DEFAULT,(pgCli+1)*PAGE_SIZE_DEFAULT);
@@ -54246,7 +54473,7 @@ ${resumen}
       'Retenciones a Clientes':'📋 Retenciones a Clientes', 'Banco':'🏦 Comprobante de Banco',
       'Caja':'💵 Comprobante de Caja', 'Relacionadas':'🤝 Cuentas por Pagar Relacionadas', 'Ajustes':'🛠️ Ajustes',
     };
-    const todosLosAsientos = getAsientosReales();
+    const todosLosAsientos = getAsientosAncla('rango',{desde:contFiltDesde});
     const asientosPeriodo = todosLosAsientos.filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
@@ -54540,7 +54767,7 @@ ${resumen}
   const renderBalanceComprobacionModule = () => {
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
-    const asientosPeriodo = getAsientosReales().filter(a=>{
+    const asientosPeriodo = getAsientosAncla('rango',{desde:contFiltDesde}).filter(a=>{
       const fNum = _fNum(a.fecha);
       if (fNum===null) return true;
       return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
@@ -54679,8 +54906,11 @@ ${resumen}
     // comprada para reventa (no producción propia), y Muestras Clientes es actividad comercial.
     const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
     const CODIGOS_VENTA_DESDE_5_1 = ['5.1.01.01.001','5.1.01.02.001', ...(codCostoMercancia?[codCostoMercancia]:[])];
-    const _esCostoPlanta = (codigo) => (codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo);
-    const _esCostoVenta = (codigo) => codigo.startsWith('5.3') || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
+    // Excepcion inversa (confirmada por el usuario): 5.3.04.01.010 Agenciamiento y Asesoria Aduanal es
+    // resultado de PLANTA aunque empiece con 5.3.
+    const CODIGOS_PLANTA_DESDE_5_3 = ['5.3.04.01.010'];
+    const _esCostoPlanta = (codigo) => ((codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo)) || CODIGOS_PLANTA_DESDE_5_3.includes(codigo);
+    const _esCostoVenta = (codigo) => (codigo.startsWith('5.3') && !CODIGOS_PLANTA_DESDE_5_3.includes(codigo)) || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
     // 5.4.x (Costos de Nacionalización — aduana, fletes de contenedor) queda fuera de ambas
     // vistas a propósito, por decisión explícita del usuario.
 
@@ -55035,7 +55265,22 @@ ${resumen}
   // ============================================================================
   const renderBalanceGeneralModule = () => {
     const corte = contFiltHasta || getTodayDate();
-    const asientosHastaCorte = getAsientosReales().filter(a=>(a.fecha||'')<=corte);
+    // Punto de partida SALDOS AGOSTO-2026: solo si no hay "Desde" anterior o igual a esa fecha (con ese
+    // Desde se necesita el detalle de resultados previo, y se usa el c\u00e1lculo normal).
+    let asientosHastaCorte = (()=>{
+      const _t = getAsientosReales(undefined, true);
+      const _anc = _t.find(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante}));
+      const _usa = _anc && corte>=(_anc.fecha||'') && !(contFiltDesde && contFiltDesde<=(_anc.fecha||''));
+      let base = _usa ? getAsientosAncla('balance',{corte}) : getAsientosAncla('rango',{desde:''});
+      base = base.filter(a=>(a.fecha||'')<=corte);
+      const _ini = contFiltDesde || `${corte.slice(0,7)}-01`;
+      if(_usa && _ini>(_anc.fecha||'') && cuentaResultadoCfg.codigo && cuentaUtilAcumCfg.codigo){
+        // Pasado agosto, la utilidad que trae el saldo pasa a Utilidad Acumulada.
+        base = base.map(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante})
+          ? {...a, lineas:(a.lineas||[]).map(l=>l.codigo===cuentaResultadoCfg.codigo?{...l,codigo:cuentaUtilAcumCfg.codigo,cuenta:cuentaUtilAcumCfg.nombre||l.cuenta}:l)} : a);
+      }
+      return base;
+    })();
     const porCuenta = {};
     asientosHastaCorte.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
