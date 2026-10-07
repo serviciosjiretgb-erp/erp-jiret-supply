@@ -6748,6 +6748,7 @@ const _cuentaRelVigente = (cod, nom, planCuentas) => {
   if (hits.length===1) return {cod: codPlan(hits[0])||cod, nom: nom||hits[0].nombre};
   return {cod, nom};
 };
+const _esAnclaSaldos = (a) => String(a?.nroComprobante||'').trim().toUpperCase()==='SALDOS AGOSTO-2026';
 const _resolverMovRelacionada = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
   const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId);
@@ -19734,6 +19735,96 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
 
 
+  // Saldo de Agosto 2026: balance completo al 31/08/2026 que sirve de PUNTO DE PARTIDA. El Balance
+  // General (con corte desde el 31/08) y el Mayor/Balance de Comprobaci\u00f3n (con Desde posterior
+  // al 31/08) parten de este comprobante e ignoran lo anterior en cuentas de balance; los dem\u00e1s
+  // reportes lo ignoran para no duplicar (ver getAsientosAncla).
+  const importarSaldosAgosto2026 = async () => {
+    const yaExiste = (ajustesC||[]).find(a => (a.nroComprobante||'').trim().toUpperCase() === 'SALDOS AGOSTO-2026');
+    if (yaExiste) { alert('Ya existe "SALDOS AGOSTO-2026" \u2014 no se cre\u00f3 de nuevo. Si necesitas reemplazarlo, b\u00f3rralo primero desde esta pesta\u00f1a.'); return; }
+    const lineas = [
+      {codigo:'1.1.01.01.001',cuenta:'CAJA PRINCIPAL',tipo:'D',montoUSD:7895.52,montoBs:6276872.87},
+      {codigo:'1.1.01.01.002',cuenta:'CAJA Z1',tipo:'D',montoUSD:1949.84,montoBs:1550109.63},
+      {codigo:'1.1.01.02.001',cuenta:'BBVA PROVINCIAL',tipo:'D',montoUSD:26.29,montoBs:20902.04},
+      {codigo:'1.1.01.02.002',cuenta:'BANCO MERCANTIL',tipo:'D',montoUSD:31.47,montoBs:25019.42},
+      {codigo:'1.1.01.02.003',cuenta:'BANCARIBE',tipo:'D',montoUSD:13458.3,montoBs:10699236.05},
+      {codigo:'1.1.01.02.006',cuenta:'BANCO NACIONAL DE CREDITO 2958',tipo:'D',montoUSD:11.9,montoBs:9459.24},
+      {codigo:'1.1.01.02.009',cuenta:'BANCAMIGA',tipo:'D',montoUSD:1.1,montoBs:872.23},
+      {codigo:'1.1.01.02.010',cuenta:'BANCO BANPLUS',tipo:'D',montoUSD:2046.14,montoBs:1626668.16},
+      {codigo:'1.1.01.02.011',cuenta:'BANESCO',tipo:'D',montoUSD:437.9,montoBs:348126.88},
+      {codigo:'1.1.01.03.001',cuenta:'BANCO PROVINCIAL (ME)',tipo:'D',montoUSD:1037.15,montoBs:824525.64},
+      {codigo:'1.1.01.03.002',cuenta:'BANCO MERCANTIL (ME)',tipo:'D',montoUSD:75.0,montoBs:59624.38},
+      {codigo:'1.1.01.03.009',cuenta:'BANCAMIGA (ME)',tipo:'D',montoUSD:8.88,montoBs:7059.53},
+      {codigo:'1.1.01.03.010',cuenta:'BANPLUS (ME)',tipo:'D',montoUSD:3.22,montoBs:2559.87},
+      {codigo:'1.1.01.03.011',cuenta:'BANESCO (ME)',tipo:'D',montoUSD:60.0,montoBs:47699.5},
+      {codigo:'1.1.01.04.001',cuenta:'BANPLUS (ELECTRONICA)',tipo:'D',montoUSD:2200.0,montoBs:1748981.74},
+      {codigo:'1.1.01.04.002',cuenta:'BANCARIBE (ELECTRONICA)',tipo:'D',montoUSD:8021.0,montoBs:6376628.43},
+      {codigo:'1.1.01.04.003',cuenta:'BANESCO (ELECTRONICA)',tipo:'D',montoUSD:300.0,montoBs:238497.51},
+      {codigo:'1.1.01.04.005',cuenta:'PROVINCIAL (ELECTRONICA)',tipo:'D',montoUSD:6500.0,montoBs:5167446.05},
+      {codigo:'1.1.01.05.001',cuenta:'BANPLUS TDD INTERNACIONAL',tipo:'D',montoUSD:144.8,montoBs:115114.8},
+      {codigo:'1.1.01.06.001',cuenta:'AMERANT BANK, N.A.',tipo:'D',montoUSD:12079.42,montoBs:9603038.64},
+      {codigo:'1.1.02.01.001',cuenta:'CUENTAS POR COBRAR CLIENTES',tipo:'D',montoUSD:141243.45,montoBs:102528173.05},
+      {codigo:'1.1.02.01.002',cuenta:'PROVISI\u00d3N CUENTAS INCOBRABLES (-)',tipo:'H',montoUSD:8230.73,montoBs:6543362.03},
+      {codigo:'1.1.02.03.001',cuenta:'CUENTAS POR COBRAR JUAN D. BOHORQUEZ',tipo:'D',montoUSD:561.16,montoBs:446118.57},
+      {codigo:'1.1.02.05.001',cuenta:'ANTICIPO PRESTACIONES SOCIALES',tipo:'D',montoUSD:10731.47,montoBs:1616929.87},
+      {codigo:'1.1.03.01.002',cuenta:'MERCANCIA (INV-INICIAL)',tipo:'D',montoUSD:233992.87,montoBs:186022390.07},
+      {codigo:'1.1.03.01.003',cuenta:'INVENTARIO DE CONSUMIBLES',tipo:'D',montoUSD:2282.63,montoBs:1814669.37},
+      {codigo:'1.1.03.01.005',cuenta:'MATERIA PRIMA (INV-INICIAL)',tipo:'D',montoUSD:57374.41,montoBs:45612181.49},
+      {codigo:'1.1.04.01.001',cuenta:'I.V.A CREDITOS FISCALES (COMPRAS)',tipo:'D',montoUSD:24609.9,montoBs:19564670.06},
+      {codigo:'1.1.04.01.002',cuenta:'I.S.L.R. RETENIDO (CLIENTES)',tipo:'D',montoUSD:194.07,montoBs:154282.87},
+      {codigo:'1.1.04.01.003',cuenta:'I.V.A. RETENCI\u00d3N 75% - 100% (CLIENTES)',tipo:'D',montoUSD:52153.08,montoBs:41461271.1},
+      {codigo:'1.1.04.01.008',cuenta:'ANTICIPO DE I.S.L.R (1.% DE VENTAS)',tipo:'D',montoUSD:10804.49,montoBs:8589483.0},
+      {codigo:'1.1.04.01.009',cuenta:'RETENCION CLIENTES SOBRE ACTIVIDADES ECONOMICAS',tipo:'D',montoUSD:81.06,montoBs:64443.44},
+      {codigo:'1.1.05.01.002',cuenta:'ANTICIPOS A PROVEEDORES',tipo:'D',montoUSD:106247.02,montoBs:83876692.4},
+      {codigo:'1.1.05.01.005',cuenta:'ANTICIPOS A PROVEEDORES ZULIANA DE EMPAQUE',tipo:'D',montoUSD:70681.72,montoBs:56191380.74},
+      {codigo:'1.1.06.01.001',cuenta:'INMUEBLE (GALPON)',tipo:'D',montoUSD:169547.91,montoBs:134789181.2},
+      {codigo:'1.1.06.01.002',cuenta:'DEP. ACUMULADA MEJORAS AL INMUEBLE (GALPON)',tipo:'H',montoUSD:7064.5,montoBs:6776898.8},
+      {codigo:'1.1.06.02.001',cuenta:'MAQUINARIAS Y EQUIPOS',tipo:'D',montoUSD:299015.26,montoBs:237714649.9},
+      {codigo:'1.1.06.02.002',cuenta:'DEP. ACUMULADA MAQUINARIA Y EQUIPOS',tipo:'H',montoUSD:31320.77,montoBs:24899752.19},
+      {codigo:'1.1.06.03.001',cuenta:'EQUIPOS DE COMPUTACI\u00d3N',tipo:'D',montoUSD:7459.15,montoBs:5929962.34},
+      {codigo:'1.1.06.03.002',cuenta:'DEP. ACUMULADA EQUIPOS DE COMPUTACI\u00d3N',tipo:'H',montoUSD:1060.03,montoBs:842715.05},
+      {codigo:'1.1.06.04.001',cuenta:'VEH\u00cdCULOS',tipo:'D',montoUSD:56364.24,montoBs:44809102.98},
+      {codigo:'1.1.06.04.002',cuenta:'DEP. ACUMULADA VEH\u00cdCULOS',tipo:'H',montoUSD:3842.75,montoBs:4444401.1},
+      {codigo:'1.1.06.06.001',cuenta:'MOBILIARIO Y EQUIPO',tipo:'D',montoUSD:16969.07,montoBs:13490269.81},
+      {codigo:'1.1.06.06.002',cuenta:'DEP. ACUMULADA MOBILIARIO',tipo:'H',montoUSD:3338.31,montoBs:2653928.74},
+      {codigo:'1.1.06.08.001',cuenta:'PLANTA ELECTRICA',tipo:'D',montoUSD:53550.0,montoBs:42571805.54},
+      {codigo:'1.1.06.08.002',cuenta:'DEP. ACUMULADA PLANTA ELECTRICA',tipo:'H',montoUSD:4239.17,montoBs:3370104.97},
+      {codigo:'1.1.08.02.001',cuenta:'MEJORAS A LA PROPIEDAD',tipo:'D',montoUSD:140701.36,montoBs:111856411.56},
+      {codigo:'1.1.08.02.002',cuenta:'AMPLIACIONES A LA PROPIEDA',tipo:'D',montoUSD:5897.25,montoBs:4688268.34},
+      {codigo:'2.1.01.01.001',cuenta:'CUENTAS POR PAGAR PROVEEDORES',tipo:'H',montoUSD:93974.66,montoBs:16140656.29},
+      {codigo:'2.1.01.01.004',cuenta:'CUENTAS POR PAGAR SURE PACK',tipo:'H',montoUSD:107900.21,montoBs:123219706.74},
+      {codigo:'2.1.02.01.003',cuenta:'PRESTAMOS BANCARIOS',tipo:'H',montoUSD:3051.53,montoBs:2425938.59},
+      {codigo:'2.1.02.01.008',cuenta:'VEH\u00cdCULOS POR PAGAR',tipo:'H',montoUSD:29776.15,montoBs:23911466.21},
+      {codigo:'2.1.03.01.001',cuenta:'CUENTAS POR PAGAR JUAN D. BOHORQUEZ',tipo:'H',montoUSD:12174.67,montoBs:9678759.18},
+      {codigo:'2.1.03.01.002',cuenta:'CUENTAS POR PAGAR JUAN CARLOS BOHORQUEZ',tipo:'H',montoUSD:700829.09,montoBs:557153354.44},
+      {codigo:'2.1.03.01.003',cuenta:'CUENTAS POR PAGAR LUIS GUILLERMO BOHORQUEZ',tipo:'H',montoUSD:19770.64,montoBs:15717494.7},
+      {codigo:'2.1.04.01.001',cuenta:'RETENCIONES I.S.L.R. POR PAGAR',tipo:'H',montoUSD:541.12,montoBs:412255.32},
+      {codigo:'2.1.04.01.005',cuenta:'PROTECCION DE PENSIONES (I.D.P.P) POR PAGAR',tipo:'H',montoUSD:475.52,montoBs:378037.46},
+      {codigo:'2.1.04.02.002',cuenta:'RETENCI\u00d3N IVA (100-75%)',tipo:'H',montoUSD:1285.53,montoBs:1010446.14},
+      {codigo:'2.1.04.03.001',cuenta:'I.V.S.S. POR PAGAR',tipo:'H',montoUSD:4.05,montoBs:3220.5},
+      {codigo:'2.1.04.03.002',cuenta:'F.A.O.V. POR PAGAR',tipo:'H',montoUSD:213.01,montoBs:169339.02},
+      {codigo:'2.1.04.03.003',cuenta:'I.N.C.E.S. POR PAGAR',tipo:'H',montoUSD:265.07,montoBs:210727.14},
+      {codigo:'2.1.04.03.005',cuenta:'IMPUESTOS SOBRE ACTIVIDADES ECON\u00d3MICAS',tipo:'H',montoUSD:1335.77,montoBs:1286633.41},
+      {codigo:'2.1.04.03.012',cuenta:'ANTICIPO DE I.S.L.R (1% DE VENTAS) POR PAGAR',tipo:'H',montoUSD:744.41,montoBs:616176.84},
+      {codigo:'2.1.05.01.004',cuenta:'BENEFICIO ALIMENTACION COMPLEMTARIA POR PAGAR',tipo:'H',montoUSD:430.86,montoBs:342530.12},
+      {codigo:'2.1.06.01.001',cuenta:'HCM POR PAGAR',tipo:'H',montoUSD:851.57,montoBs:676991.08},
+      {codigo:'3.1.01.01.001',cuenta:'CAPITAL SOCIAL',tipo:'H',montoUSD:9434.06,montoBs:7500000.0},
+      {codigo:'3.3.01.01.001',cuenta:'UTILIDAD (P\u00c9RDIDAS)',tipo:'D',montoUSD:1901.66,montoBs:1511804.04},
+      {codigo:'3.3.01.01.002',cuenta:'UTILIDAD (P\u00c9RDIDA) ACUMULADA',tipo:'H',montoUSD:476496.99,montoBs:379667688.29},
+    ];
+    const totD = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoUSD,0);
+    const totH = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoUSD,0);
+    const totDBs = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoBs,0);
+    const totHBs = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoBs,0);
+    if (Math.abs(totD-totH) > 0.02 || Math.abs(totDBs-totHBs) > 0.05) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} \u2014 no se import\u00f3, revisa el origen.`); return; }
+    try {
+      await addDoc(getColRef('comprobantes_ajustes'), {
+        fecha:'2026-08-31', nroComprobante:'SALDOS AGOSTO-2026', concepto:'SALDO AGOSTO 2026 BALANCE GENERAL',
+        tasa:781.3956, lineas, createdAt:Date.now(), user:'Importaci\u00f3n Saldos Agosto', origen:'saldos_iniciales',
+      });
+      alert(`\u2705 Se cre\u00f3 "SALDOS AGOSTO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`);
+    } catch(e) { alert('Error: '+e.message); }
+  };
   // Importa el ajuste de saldos iniciales "SALDOS JUNIO-2026" (53 cuentas, balance completo al
   // 30/06/2026) desde el archivo que ya se validó cuadra Debe=Haber=$771.941,00. Con chequeo de
   // duplicado — si ya existe un comprobante con ese nombre, avisa en vez de crear otro.
@@ -21190,6 +21281,7 @@ ${valoresHtml}
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
             <button onClick={revertirAjustesSoloGastos} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ClipboardEdit size={14}/>Revertir a Solo-Gastos Ene-Abr</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano.\n\n¿Continuar?')) importarSaldosIniciales2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
+            <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS AGOSTO-2026" (balance completo al 31/08/2026). Desde esa fecha el Balance General parte de este saldo. Si algo sale mal hay que borrarlo desde esta pesta\u00f1a.\n\n\u00bfContinuar?')) importarSaldosAgosto2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Saldo Agosto 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-ENERO-2026" con el detalle línea por línea de Enero 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistEnero2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Enero 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-FEBRERO-2026" con el detalle línea por línea de Febrero 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistFebrero2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Febrero 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-MARZO-2026" con el detalle línea por línea de Marzo 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistMarzo2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Marzo 2026</button>
@@ -22730,7 +22822,28 @@ function App() {
   // lineas:[{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}]}. A propósito NO incluye
   // Retenciones a Proveedores: esa información ya viene completa dentro de cada asiento
   // de Procura (confirmado en generarAsientoFC), y sumarla aparte duplicaría los montos.
-  const getAsientosReales = (simulacionCostos) => {
+  // Punto de partida "SALDOS AGOSTO-2026": getAsientosReales() lo omite (para que ning\u00fan otro reporte
+  // lo duplique); este helper lo usa SOLO donde corresponde.
+  //  modo 'balance' (ref.corte): con corte >= fecha del saldo, se reemplaza TODO lo anterior por el saldo.
+  //  modo 'rango' (ref.desde): con Desde > fecha del saldo, lo anterior se ignora SOLO en cuentas de balance (1/2/3).
+  const getAsientosAncla = (modo, ref) => {
+    const todos = getAsientosReales(undefined, true);
+    const anc = todos.find(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante}));
+    if(!anc) return todos;
+    const F = anc.fecha||'';
+    const activo = modo==='balance' ? ((ref?.corte||'')>=F) : (!!ref?.desde && ref.desde>F);
+    if(!activo) return todos.filter(a=>a!==anc);
+    const esBal = (c) => /^[123]/.test(String(c||''));
+    const res = [];
+    todos.forEach(a=>{
+      if(a===anc || (a.fecha||'')>F){ res.push(a); return; }
+      if(modo==='balance') return;
+      const ls = (a.lineas||[]).filter(l=>!esBal(l.codigo));
+      if(ls.length) res.push({...a, lineas:ls});
+    });
+    return res;
+  };
+  const getAsientosReales = (simulacionCostos, conAncla) => {
     const out = [];
     // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
     // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
@@ -22948,6 +23061,7 @@ function App() {
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
+      if(!conAncla && _esAnclaSaldos(a)) return;
       const lineas = construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea});
       const tieneFechaPropia = lineas.some(l=>l.fecha);
       if (!tieneFechaPropia) {
@@ -54345,7 +54459,7 @@ ${resumen}
       'Retenciones a Clientes':'📋 Retenciones a Clientes', 'Banco':'🏦 Comprobante de Banco',
       'Caja':'💵 Comprobante de Caja', 'Relacionadas':'🤝 Cuentas por Pagar Relacionadas', 'Ajustes':'🛠️ Ajustes',
     };
-    const todosLosAsientos = getAsientosReales();
+    const todosLosAsientos = getAsientosAncla('rango',{desde:contFiltDesde});
     const asientosPeriodo = todosLosAsientos.filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
@@ -54639,7 +54753,7 @@ ${resumen}
   const renderBalanceComprobacionModule = () => {
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
-    const asientosPeriodo = getAsientosReales().filter(a=>{
+    const asientosPeriodo = getAsientosAncla('rango',{desde:contFiltDesde}).filter(a=>{
       const fNum = _fNum(a.fecha);
       if (fNum===null) return true;
       return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
@@ -54778,8 +54892,11 @@ ${resumen}
     // comprada para reventa (no producción propia), y Muestras Clientes es actividad comercial.
     const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
     const CODIGOS_VENTA_DESDE_5_1 = ['5.1.01.01.001','5.1.01.02.001', ...(codCostoMercancia?[codCostoMercancia]:[])];
-    const _esCostoPlanta = (codigo) => (codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo);
-    const _esCostoVenta = (codigo) => codigo.startsWith('5.3') || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
+    // Excepcion inversa (confirmada por el usuario): 5.3.04.01.010 Agenciamiento y Asesoria Aduanal es
+    // resultado de PLANTA aunque empiece con 5.3.
+    const CODIGOS_PLANTA_DESDE_5_3 = ['5.3.04.01.010'];
+    const _esCostoPlanta = (codigo) => ((codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo)) || CODIGOS_PLANTA_DESDE_5_3.includes(codigo);
+    const _esCostoVenta = (codigo) => (codigo.startsWith('5.3') && !CODIGOS_PLANTA_DESDE_5_3.includes(codigo)) || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
     // 5.4.x (Costos de Nacionalización — aduana, fletes de contenedor) queda fuera de ambas
     // vistas a propósito, por decisión explícita del usuario.
 
@@ -55134,7 +55251,22 @@ ${resumen}
   // ============================================================================
   const renderBalanceGeneralModule = () => {
     const corte = contFiltHasta || getTodayDate();
-    const asientosHastaCorte = getAsientosReales().filter(a=>(a.fecha||'')<=corte);
+    // Punto de partida SALDOS AGOSTO-2026: solo si no hay "Desde" anterior o igual a esa fecha (con ese
+    // Desde se necesita el detalle de resultados previo, y se usa el c\u00e1lculo normal).
+    let asientosHastaCorte = (()=>{
+      const _t = getAsientosReales(undefined, true);
+      const _anc = _t.find(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante}));
+      const _usa = _anc && corte>=(_anc.fecha||'') && !(contFiltDesde && contFiltDesde<=(_anc.fecha||''));
+      let base = _usa ? getAsientosAncla('balance',{corte}) : getAsientosAncla('rango',{desde:''});
+      base = base.filter(a=>(a.fecha||'')<=corte);
+      const _ini = contFiltDesde || `${corte.slice(0,7)}-01`;
+      if(_usa && _ini>(_anc.fecha||'') && cuentaResultadoCfg.codigo && cuentaUtilAcumCfg.codigo){
+        // Pasado agosto, la utilidad que trae el saldo pasa a Utilidad Acumulada.
+        base = base.map(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante})
+          ? {...a, lineas:(a.lineas||[]).map(l=>l.codigo===cuentaResultadoCfg.codigo?{...l,codigo:cuentaUtilAcumCfg.codigo,cuenta:cuentaUtilAcumCfg.nombre||l.cuenta}:l)} : a);
+      }
+      return base;
+    })();
     const porCuenta = {};
     asientosHastaCorte.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
