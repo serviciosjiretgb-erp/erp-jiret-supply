@@ -6722,6 +6722,45 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
 // Caja) y solo si no hay ninguna cae a la propia de Relacionadas. Antes esta revisión solo la
 // hacía el motor central; Comprobantes Contables no, así que su pestaña "Relacionadas" podía
 // mostrar una cuenta de origen distinta a la que realmente terminaba en Mayor Analítico.
+// Localiza el movimiento de Banco/Caja REAL al que corresponde un registro de Relacionadas y su
+// cuenta de banco/caja. Antes solo buscaba por p.movimientoId dentro de la coleccion declarada en
+// p.origen y, si no coincidia (id distinto, movimiento en la otra coleccion, cuenta guardada con
+// otro campo), el lado del banco quedaba como "Movimiento no encontrado" y el Balance mostraba
+// una cuenta SIN-MOV inventada. Ahora prueba, en orden y SIN inventar nada: (1) id en la coleccion
+// declarada, (2) id en la otra, (3) mismo tercero + fecha + monto, (4) misma referencia + monto,
+// y para la cuenta, el campo propio del movimiento (cuentaId/cajaId) o el que traiga el registro.
+const _resolverMovRelacionada = (p, ctx) => {
+  const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
+  const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId);
+  const montoP = Math.abs(Number(p.monto||0));
+  const colecciones = p.origen==='caja'
+    ? [{movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}, {movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}]
+    : [{movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}, {movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}];
+  let hit = null;
+  for (const col of colecciones) { const m=(col.movs||[]).find(idEq); if (m) { hit={m,col}; break; } }
+  if (!hit && p.terceroId && montoP>0) {
+    for (const col of colecciones) {
+      const cands=(col.movs||[]).filter(m=>m.tipoTercero==='Relacionado' && m.terceroId===p.terceroId && (m.fecha||'')===(p.fecha||'') && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      if (cands.length===1) { hit={m:cands[0],col}; break; }
+    }
+  }
+  if (!hit && p.referencia && montoP>0) {
+    for (const col of colecciones) {
+      const cands=(col.movs||[]).filter(m=>m.referencia && m.referencia===p.referencia && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      if (cands.length===1) { hit={m:cands[0],col}; break; }
+    }
+  }
+  let cta = null, tipoCta = hit ? hit.col.tipo : (p.origen==='caja'?'caja':'banco');
+  if (hit) {
+    cta = (hit.col.cuentas||[]).find(c=>c.id===hit.m[hit.col.campo]) || null;
+    if (!cta) { const otros=[{cuentas:cuentasBanco,campo:'cuentaId',t:'banco'},{cuentas:cuentasCaja,campo:'cajaId',t:'caja'}]; for (const o of otros){ const c2=(o.cuentas||[]).find(c=>c.id===hit.m[o.campo]||c.id===hit.m.cuentaId||c.id===hit.m.cajaId); if(c2){cta=c2;tipoCta=o.t;break;} } }
+  }
+  if (!cta) {
+    const hint=[p.cuentaId,p.cajaId,p.cuentaBancariaId].filter(Boolean).map(x=>String(x).replace('CAJA::',''));
+    for (const h of hint) { const cb=(cuentasBanco||[]).find(c=>c.id===h); if(cb){cta=cb;tipoCta='banco';break;} const cc=(cuentasCaja||[]).find(c=>c.id===h); if(cc){cta=cc;tipoCta='caja';break;} }
+  }
+  return {mov: hit?hit.m:null, cta, tipoCta, tabOrigen: hit?hit.col.tipo:(p.origen==='caja'?'caja':'banco')};
+};
 const construirLineasRelacionadaCompartida = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja, tercerosRel, planCuentas, settingsTasa, tabId, aplicarReclas} = ctx;
   const montoConSigno = (pp) => {
@@ -6732,31 +6771,29 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const montoSigno = montoConSigno(p);
   const esIngreso = montoSigno < 0;
   const montoUSD = Math.abs(montoSigno);
-  const movLigado = p.origen==='caja'
-    ? (movCaja||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId)
-    : p.origen==='banco' ? (movBanco||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
-  const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
-  const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
-  const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
+  const _res = p.origen ? _resolverMovRelacionada(p, ctx) : {mov:null,cta:null,tipoCta:'banco',tabOrigen:'banco'};
+  const movLigado = _res.mov;
+  const ctaOrigen = _res.cta;
+  const _esCajaOrigen = _res.tipoCta==='caja';
   // Si el movimiento de Banco/Caja vinculado no se encuentra (dato roto — visto en datos reales:
   // p.movimientoId sin match en movBanco), antes esto quedaba con código VACÍO — lo que hacía que
   // la línea entera desapareciera de cualquier cuenta al agregar (las líneas sin código se
   // descartan), dejando el asiento descuadrado sin que se notara. Ahora queda marcado visible, con
   // un código propio, en vez de desaparecer o simular una cuenta bancaria que no existe.
-  const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco)
-    : (p.origen ? `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})` : 'Ajuste manual (sin cuenta bancaria)');
+  const nombreCtaOrigen = ctaOrigen ? (_esCajaOrigen?ctaOrigen.nombre:ctaOrigen.banco)
+    : (p.origen ? (movLigado ? `\u26a0\ufe0f Movimiento de ${_res.tabOrigen} encontrado (id: ${movLigado.id||movLigado._docId}) pero su cuenta ${movLigado.cuentaId||movLigado.cajaId||'(sin cuenta)'} no existe en ${_res.tabOrigen==='caja'?'Cajas':'Bancos'}` : `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})`) : 'Ajuste manual (sin cuenta bancaria)');
   // Prefijo '1.' (grupo Activo, es cuenta de banco/caja) para que ccBuildArbol la clasifique
   // como Activo — sin el prefijo numérico, el código no empataba con ningún gruposIncluir
   // ('1'/'2'/'3') y la línea desaparecía por completo de Balance General/Estado de Resultados,
   // dejando el asiento descuadrado silenciosamente (visto en datos reales: diferencia de
   // USD 148,40 / Bs.110.328,66 entre Total Activos y Total Pasivo+Patrimonio).
   const codCtaOrigen = ctaOrigen?.cuentaContableCod || (p.origen && p.movimientoId ? `1.SIN-MOV-${p.movimientoId}` : '');
-  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
+  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(p.tasa||0)>1 ? Number(p.tasa) : (Number(settingsTasa||0)||1));
   // El monto en Bs. se toma DIRECTO del movimiento de Banco/Caja vinculado (que ya lo guarda
   // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
   // no se resuelve bien (movimiento no encontrado, ajuste manual, etc.), el Bs. termine saliendo
   // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
-  const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : montoUSD*tasa;
+  const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : (Math.abs(Number(p.montoBs||0)) || montoUSD*tasa);
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
   const codRel = (tercRel?.cuentaContableCod||'').trim();
   const nomRel = (tercRel?.cuentaContableNom||'').trim();
@@ -6771,7 +6808,7 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const codRelFinal = codRel || `2.SIN-CTA-${p.terceroId||'?'}`;
   const nomRelFinal = nomRel || `⚠️ Sin cuenta configurada — ${p.terceroNombre||tercRel?.nombre||'tercero desconocido'}`;
   const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-  const tabOrigen = p.origen==='caja'?'caja':'banco';
+  const tabOrigen = _res.tabOrigen;
   const reclasOrigen = (li,codigo,cuenta) => (aplicarReclas && movLigado) ? aplicarReclas(tabOrigen, movLigado._docId||movLigado.id, li, codigo, cuenta) : {codigo,cuenta};
   const reclasProp = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, p.id, li, codigo, cuenta) : {codigo,cuenta};
   const origenReclas0 = reclasOrigen(0, codCtaOrigen, nombreCtaOrigen);
@@ -22815,6 +22852,11 @@ function App() {
     // (ver derivarMovsCajaDesdeCxcCxp) — antes esos cobros/pagos no llegaban nunca a Mayor
     // Analítico ni a Estado de Resultados/Balance General, aunque el cliente/proveedor ya
     // apareciera cobrado/pagado en su estado de cuenta operativo.
+    const _idsMovRelApp = new Set();
+    (pagosRelApp||[]).forEach(p=>{
+      if(p.movimientoId) _idsMovRelApp.add(p.movimientoId);
+      if(p.origen){ const r=_resolverMovRelacionada(p,{movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}); if(r.mov){ _idsMovRelApp.add(r.mov.id); if(r.mov._docId) _idsMovRelApp.add(r.mov._docId); } }
+    });
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
      {movs:[...movCajaApp, ...derivarMovsCajaDesdeCxcCxp(cobrosCxc, procuraPagosCxpApp, movCajaApp, settings?.tasaBCV)], cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
@@ -22825,7 +22867,7 @@ function App() {
         // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
         // con su propia cuenta puente hacia el mismo banco. Relacionadas ya genera el asiento
         // completo y balanceado para este movimiento, incluyendo el lado del banco/caja.
-        if((pagosRelApp||[]).some(p=>p.movimientoId===m.id||p.movimientoId===m._docId)) return;
+        if(_idsMovRelApp.has(m.id) || (m._docId && _idsMovRelApp.has(m._docId))) return;
         const lineasRaw = construirLineasMovimientoBancoCaja(m, {
           cuentas, idField, nombreCta, asientos:asientosApp, provs:proveedoresApp, clientes:clients,
           tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg,
