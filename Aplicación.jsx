@@ -6317,6 +6317,13 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
   const montoBs = Number(m.montoBs||0), montoUSD = Number(m.montoUSD||0);
   const compId = m._docId||m.id;
+  // 0) Si este movimiento esta ligado a un pago de Cuentas por Pagar Relacionadas, su asiento ES el de
+  // Relacionadas (cuenta propia del banco/caja + cuenta CxP configurada del tercero), no el asiento
+  // generico guardado, que podia traer otra cuenta de pasivo y duplicar el registro.
+  if(ctx.relPorMov){
+    const pr = ctx.relPorMov.get(m._docId) || ctx.relPorMov.get(m.id);
+    if(pr) return construirLineasRelacionadaCompartida(pr, {movBanco:ctx.movBanco, movCaja:ctx.movCaja, cuentasBanco:ctx.cuentasBanco, cuentasCaja:ctx.cuentasCaja, tercerosRel, planCuentas, settingsTasa:ctx.settingsTasa, tabId:null, aplicarReclas}).lineas;
+  }
   // 1) Si ya existe un asiento formal vinculado, se usan SUS líneas reales tal cual.
   const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
   if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
@@ -6738,9 +6745,19 @@ const _resolverMovRelacionada = (p, ctx) => {
     : [{movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}, {movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}];
   let hit = null;
   for (const col of colecciones) { const m=(col.movs||[]).find(idEq); if (m) { hit={m,col}; break; } }
-  if (!hit && p.terceroId && montoP>0) {
+  if (!hit && montoP>0) {
+    // Mismo dia + mismo monto USD (+ mismo sentido). Si hay varios, se desempata por tercero y por
+    // parecido del concepto/referencia; solo se acepta si queda UNO (nunca se adivina entre varios).
+    const normTxt=(x)=>String(x||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+    const palabras=(x)=>normTxt(x).split(' ').filter(w=>w.length>3);
+    const ptxt=normTxt((p.concepto||'')+' '+(p.terceroNombre||'')+' '+(p.referencia||''));
+    const esIng = Number(p.monto||0)<0;
     for (const col of colecciones) {
-      const cands=(col.movs||[]).filter(m=>m.tipoTercero==='Relacionado' && m.terceroId===p.terceroId && (m.fecha||'')===(p.fecha||'') && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      let cands=(col.movs||[]).filter(m=>(m.fecha||'')===(p.fecha||'') && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      const conSentido=cands.filter(m=>(m.tipo==='Ingreso'||m.tipo==='Nota de Cr\u00e9dito')===esIng);
+      if (conSentido.length) cands=conSentido;
+      if (cands.length>1) { const porTerc=cands.filter(m=>p.terceroId && m.terceroId===p.terceroId); if (porTerc.length) cands=porTerc; }
+      if (cands.length>1) { const pw=new Set(palabras(ptxt)); const pts=cands.map(m=>({m,n:palabras((m.concepto||'')+' '+(m.referencia||'')).filter(w=>pw.has(w)).length})); const mx=Math.max(...pts.map(x=>x.n)); const top=pts.filter(x=>x.n===mx); if (mx>0 && top.length===1) cands=[top[0].m]; }
       if (cands.length===1) { hit={m:cands[0],col}; break; }
     }
   }
@@ -16994,6 +17011,12 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const cuentas = esBanco ? cuentasBanco : cuentasCaja;
     const idField = esBanco ? 'cuentaId' : 'cajaId';
     const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
+    const relPorMov = new Map();
+    (pagosRelC||[]).forEach(pr=>{
+      if(!pr.origen || reclasificacionesC['EXCL__relacionadas__'+pr.id]) return;
+      const rs=_resolverMovRelacionada(pr,{movBanco,movCaja,cuentasBanco,cuentasCaja});
+      if(rs.mov){ if(rs.mov._docId) relPorMov.set(rs.mov._docId,pr); if(rs.mov.id) relPorMov.set(rs.mov.id,pr); }
+    });
     const filtrados = movs.filter(m => {
       if (m.fecha < filtDesde || m.fecha > filtHasta) return false;
       if (filtCuenta && m[idField] !== filtCuenta) return false;
@@ -17007,6 +17030,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         cuentas, idField, nombreCta, asientos:asientosCC, provs:provsC, clientes:clientesC,
         tercerosRel:tercerosRelC, planCuentas:planCuentasC, tabId:(esBanco?'banco':'caja'),
         aplicarReclas:aplicarReclasLinea,
+        relPorMov, movBanco, movCaja, cuentasBanco, cuentasCaja, settingsTasa:settingsCC?.tasaBCV,
       });
       const lineas = lineasRaw.map(l => ({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0||l.debeUSD>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD}));
       return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', proveedor: m.proveedor||m.terceroNombre||m.clientName||'', tasa, lineas };
@@ -17136,6 +17160,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // tipo aparte, monto sin signo) — se normalizan ambos aquí.
   const construirLineasRelacionadas = () => {
     const filtradas = (pagosRelC||[]).filter(p => {
+      if (reclasificacionesC['EXCL__relacionadas__'+p.id]) return false;
       if (filtDesde && p.fecha < filtDesde) return false;
       if (filtHasta && p.fecha > filtHasta) return false;
       return true;
@@ -20743,6 +20768,16 @@ ${valoresHtml}
             </div>
             <button onClick={repararCuentasContables} className="bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13}/> Reparar</button>
           </div>
+          {(()=>{ const elim=Object.entries(reclasificacionesC||{}).filter(([,rc])=>rc.tabId==='excl').sort((a,b)=>(b[1].timestamp||0)-(a[1].timestamp||0)); if(!elim.length) return null; return (
+            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-black text-red-800 uppercase">Asientos eliminados ({elim.length})</p>
+              {elim.map(([k,rc])=>(
+                <div key={k} className="flex items-center justify-between gap-3 bg-white border border-red-100 rounded-lg px-3 py-2">
+                  <span className="text-[10px] font-bold text-gray-700 uppercase">{rc.conceptoComprobante||k} <span className="text-gray-400 font-mono ml-2">{rc.fechaComprobante||''}</span></span>
+                  <button onClick={async()=>{ try{ await deleteDoc(getDocRef('comprobantes_reclasificaciones', k)); }catch(e){ alert('Error: '+e.message); } }} className="px-3 py-1 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700">Restaurar</button>
+                </div>
+              ))}
+            </div>); })()}
           {lista.length===0 ? (
             <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
           ) : (
@@ -21612,8 +21647,8 @@ ${valoresHtml}
           ):(
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acci\u00f3n'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8&&i<=11?'text-right':(i===4||i===12)?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
                   {lineasRel.flatMap((r,ri)=>r.lineas.map((l,li)=>(
@@ -21629,15 +21664,22 @@ ${valoresHtml}
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className="px-3 py-2 text-center">{li===0 && (
+                        <button title="Eliminar este asiento" onClick={async()=>{
+                          if(!window.confirm('\u00bfEliminar el asiento de '+r.comprobante+' ('+r.doc+')? Deja de contabilizarse en Mayor, Balance y Estados. El registro en Estado de Cuenta de Relacionados no se toca. Se puede restaurar desde la pesta\u00f1a Reclasificaciones.')) return;
+                          try{ await setDoc(getDocRef('comprobantes_reclasificaciones', `EXCL__relacionadas__${r.id}`), {tabId:'excl', compId:r.id, origenTab:'relacionadas', excluido:true, conceptoComprobante:'ASIENTO ELIMINADO (Relacionadas) - '+r.comprobante+' / '+(r.doc||''), fechaComprobante:r.fecha||'', timestamp:Date.now()}); }catch(e){ alert('Error: '+e.message); }
+                        }} className="px-1.5 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-500 hover:text-white text-[9px] font-black">Eliminar</button>
+                      )}</td>
                     </tr>
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
+                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                  <td></td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -22854,6 +22896,7 @@ function App() {
     // apareciera cobrado/pagado en su estado de cuenta operativo.
     const _idsMovRelApp = new Set();
     (pagosRelApp||[]).forEach(p=>{
+      if(reclasificacionesApp['EXCL__relacionadas__'+p.id]) return;
       if(p.movimientoId) _idsMovRelApp.add(p.movimientoId);
       if(p.origen){ const r=_resolverMovRelacionada(p,{movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}); if(r.mov){ _idsMovRelApp.add(r.mov.id); if(r.mov._docId) _idsMovRelApp.add(r.mov._docId); } }
     });
@@ -22879,6 +22922,7 @@ function App() {
     // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
     // ningún otro módulo.
     (pagosRelApp||[]).forEach(p=>{
+      if(reclasificacionesApp['EXCL__relacionadas__'+p.id]) return;
       const res = construirLineasRelacionadaCompartida(p, {
         movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp,
         tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, settingsTasa:settings?.tasaBCV,
