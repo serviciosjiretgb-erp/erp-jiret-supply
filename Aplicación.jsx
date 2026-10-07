@@ -6355,8 +6355,9 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
     contra={codigo:m.cuentaContableCreditoId||codExp||'', cuenta:nomExp||m.cuentaContableCreditoNombre};
   } else if(m.tipoTercero==='Relacionado' && m.terceroId){
     const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
-    const codRel = (tercRel?.cuentaContableCod||'').trim();
-    const nomRel = (tercRel?.cuentaContableNom||'').trim();
+    const _vig1 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), planCuentas);
+    const codRel = _vig1.cod;
+    const nomRel = _vig1.nom;
     const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
     contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
   } else if(tercero && (codTercero||nomTercero)){
@@ -6736,6 +6737,17 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
 // una cuenta SIN-MOV inventada. Ahora prueba, en orden y SIN inventar nada: (1) id en la coleccion
 // declarada, (2) id en la otra, (3) mismo tercero + fecha + monto, (4) misma referencia + monto,
 // y para la cuenta, el campo propio del movimiento (cuentaId/cajaId) o el que traiga el registro.
+const _cuentaRelVigente = (cod, nom, planCuentas) => {
+  const plan = planCuentas || [];
+  if (!plan.length) return {cod, nom};
+  const codPlan = (c) => String(c?.codigo||c?.id||'').trim();
+  if (cod && plan.some(c=>codPlan(c)===cod)) return {cod, nom};
+  const nrm = (x) => String(x||'').toUpperCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\\s+/g,' ').trim();
+  const nn = nrm(nom); if (!nn) return {cod, nom};
+  const hits = plan.filter(c=>nrm(c?.nombre)===nn);
+  if (hits.length===1) return {cod: codPlan(hits[0])||cod, nom: nom||hits[0].nombre};
+  return {cod, nom};
+};
 const _resolverMovRelacionada = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
   const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId);
@@ -6812,8 +6824,9 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
   const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : (Math.abs(Number(p.montoBs||0)) || montoUSD*tasa);
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
-  const codRel = (tercRel?.cuentaContableCod||'').trim();
-  const nomRel = (tercRel?.cuentaContableNom||'').trim();
+  const _vig2 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), ctx.planCuentas);
+  const codRel = _vig2.cod;
+  const nomRel = _vig2.nom;
   // Antes, si el tercero no tenía cuenta configurada, se adivinaba buscando en TODO el Plan de
   // Cuentas la primera cuyo nombre contenga "préstamo" o "relacionad" — eso hacía que caudales de
   // terceros SIN configurar terminaran mezclados en una cuenta genérica ajena (visto en datos
