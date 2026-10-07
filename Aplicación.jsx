@@ -6742,7 +6742,7 @@ const _cuentaRelVigente = (cod, nom, planCuentas) => {
   if (!plan.length) return {cod, nom};
   const codPlan = (c) => String(c?.codigo||c?.id||'').trim();
   if (cod && plan.some(c=>codPlan(c)===cod)) return {cod, nom};
-  const nrm = (x) => String(x||'').toUpperCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\\s+/g,' ').trim();
+  const nrm = (x) => String(x||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
   const nn = nrm(nom); if (!nn) return {cod, nom};
   const hits = plan.filter(c=>nrm(c?.nombre)===nn);
   if (hits.length===1) return {cod: codPlan(hits[0])||cod, nom: nom||hits[0].nombre};
@@ -27913,7 +27913,7 @@ function App() {
       return v===clientVendFilter;
     }
     return true;
-  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||'')));
+  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''),'es',{sensitivity:'base'}));
   // Ultima fecha de facturacion por cliente: solo facturas que vienen de una Nota de Entrega (neOrigen o NE vinculada).
   const ultFactPorCliente = () => {
     const conNE=new Set((notasEntrega||[]).map(n=>n?.facturaId).filter(Boolean));
@@ -37841,7 +37841,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>
               {(()=>{
                 const _ufScr=ultFactPorCliente();
-                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; });
+                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''),'es',{sensitivity:'base'}));
                 const totalCli=allCli.length;
                 const pgCli=Math.max(0,Math.min(clientesPagina,Math.ceil(totalCli/PAGE_SIZE_DEFAULT)-1));
                 const pageCli=allCli.slice(pgCli*PAGE_SIZE_DEFAULT,(pgCli+1)*PAGE_SIZE_DEFAULT);
