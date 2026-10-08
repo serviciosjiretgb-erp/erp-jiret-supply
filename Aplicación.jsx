@@ -39933,6 +39933,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Encontrar invoice vinculado a NE usando mapas pre-computados
           const findInvForNE=(ne)=>{
+            // ND directa (sin NE ni factura): nunca se enlaza a una factura, aunque su numero de documento
+            // coincida con el de una factura -- si no, heredaba las NC/retenciones de esa factura.
+            if(ne._esNDDirecta) return null;
             const neId=ne.id||''; const neDoc=ne.documento||'';
             return (_invsByNe.get(neId)||_invsByNe.get(neDoc)||[])[0]
               ||(ne.facturaId?findInv(ne.facturaId):null)
@@ -39955,6 +39958,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _cobradoDirectoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
           const _saldoDirectoNE=(ne,fRef)=>parseNum(ne.total||ne.totalUSD||0)-_cobradoDirectoNEAtFecha(ne,fRef)-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
           const getSaldoNEAtFecha = (ne, fRef) => {
+            // ND directa: su saldo es solo su monto menos lo cobrado contra ella (cobros con neId 'ND-<id>',
+            // incluidos los que aplican un anticipo), igual que en Estado de Cuenta. No lleva NC, retencion
+            // ni reparto por grupo de factura.
+            if(ne._esNDDirecta) return parseNum(ne.total||0)-_cobradoDirectoNEAtFecha(ne,fRef);
             const grupo=getGrupoInvoiceNEs(ne);
             if(grupo.length<=1) return _saldoDirectoNE(ne,fRef);
             // Solo se redistribuye si el GRUPO tiene alguna hermana en negativo (crédito "a favor"
