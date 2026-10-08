@@ -10866,6 +10866,17 @@ const CxPView = ({
   const [reclasAntCxpSel, setReclasAntCxpSel] = useState({});
   const [reclasAntCxpFecha, setReclasAntCxpFecha] = useState('');
   const [reclasAntCxpBusy, setReclasAntCxpBusy] = useState(false);
+  // Depuracion de aplicaciones de anticipo duplicadas (ver calcularDepuracionAnticiposCxp)
+  const [depAntDoc, setDepAntDoc] = useState(null);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('comprobantes_ajustes','DEPURA-APLICACIONES-ANTICIPOS-CXP'),d=>setDepAntDoc(d.exists()?d.data():null));
+    return ()=>u();
+  },[]);
+  const [showDepAntModal, setShowDepAntModal] = useState(false);
+  const [depAntFecha, setDepAntFecha] = useState('');
+  const [depAntBusy, setDepAntBusy] = useState(false);
+  const [showAlinFechaModal, setShowAlinFechaModal] = useState(false);
+  const [alinFechaBusy, setAlinFechaBusy] = useState(false);
   // Limpieza retroactiva — mueve SOLO el saldo aún abierto (monto - montoAplicado) de cada
   // anticipo ya registrado desde "Cuentas por Pagar Proveedores" (donde cayó por el bug ya
   // corregido) hacia "Anticipos a Proveedores", en un solo comprobante de ajuste con la fecha
@@ -10977,6 +10988,194 @@ const CxPView = ({
       setShowReclasAntCxpModal(false);
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
     setReclasAntCxpBusy(false);
+  };
+  // ── Depuracion de "Aplicaciones de anticipo" duplicadas ─────────────────────────────────────
+  // Un anticipo que sale por Banco/Caja hacia un proveedor con cuenta CxP asignada ya debito esa cuenta
+  // al pagarse (ver construirLineasMovimientoBancoCaja). Aplicarlo luego a una factura NO necesita otro
+  // asiento, salvo que el anticipo se haya reclasificado a Anticipos (D Anticipos / H CxP): en ese caso
+  // la aplicacion revierte esa reclasificacion. Antes el asiento de aplicacion se generaba siempre y
+  // duplicaba el debito (la CxP del proveedor quedaba por debajo del Estado de Cuenta).
+  // Por proveedor y cuenta de anticipo:
+  //   correccion = abierto reclasificado - (reclasificado - aplicado + ya depurado)
+  //   > 0: sobra aplicacion -> D Anticipos / H CxP.     < 0: falta aplicacion -> D CxP / H Anticipos.
+  // Nunca toca Banco, Caja, facturas ni anticipos: solo calcula y, al confirmar, agrega UN comprobante de ajuste.
+  // Proveedores sin cuenta CxP asignada no se tocan (sus anticipos salen contra Anticipos, no contra CxP).
+  const calcularDepuracionAnticiposCxp = () => {
+    const SEP = '\u2014';
+    const r2 = n => Math.round((Number(n)||0)*100)/100;
+    const kNom = s => String(s||'').toUpperCase().replace(/\s+/g,' ').trim();
+    const partir = (n, def) => { const t=String(n||'').split(SEP).map(x=>x.trim()); return (t.length>=2 && t[0]) ? [t[0], t.slice(1).join(' '+SEP+' ')] : def; };
+    const [codAntP,nomAntP] = partir(cuentasAnticipoCfg?.anticipoProveedoresNombre, ['1.1.05.01.002','ANTICIPOS A PROVEEDORES']);
+    const [codAntImp,nomAntImp] = partir(cuentasAnticipoCfg?.anticipoImportacionNombre, ['1.1.05.01.004','ANTICIPOS POR IMPORTACION']);
+    const ctaAnt = { proveedores:{cod:codAntP, nom:nomAntP}, importacion:{cod:codAntImp, nom:nomAntImp} };
+    const claveDe = (cod) => { const c=String(cod||'').trim(); return c===String(codAntImp).trim() ? 'importacion' : (c===String(codAntP).trim() ? 'proveedores' : null); };
+    const vacio = () => ({ usd:0, bs:0, n:0, fMax:'' });
+    const prov = new Map();
+    const obt = (nombre) => {
+      const k = kNom(nombre);
+      if(!prov.has(k)) prov.set(k, { k, nombre:String(nombre||'').trim()||'(sin proveedor)', ctaCxp:null, provId:'',
+        ad:{proveedores:vacio(), importacion:vacio()}, rd:{proveedores:vacio(), importacion:vacio()},
+        dp:{proveedores:vacio(), importacion:vacio()}, o:{proveedores:0, importacion:0} });
+      return prov.get(k);
+    };
+    // Aplicaciones ya registradas: lineas H contra una cuenta de anticipo (la D anterior trae la cuenta CxP usada)
+    const lnA = antAplicadosProvDoc?.lineas || [];
+    lnA.forEach((l,i)=>{
+      if(l.tipo!=='H') return;
+      const key = claveDe(l.codigo); if(!key) return;
+      const r = obt(l.proveedor); const a = r.ad[key];
+      a.usd += pN(l.montoUSD); a.bs += pN(l.montoBs); a.n++; if((l.fecha||'')>a.fMax) a.fMax = l.fecha||'';
+      const ant = lnA[i-1];
+      if(!r.ctaCxp && ant && ant.tipo==='D' && Math.abs(pN(ant.montoUSD)-pN(l.montoUSD))<0.005) r.ctaCxp = {cod:ant.codigo, nom:ant.cuenta};
+    });
+    // Reclasificaciones: lineas D contra una cuenta de anticipo (la H siguiente trae la cuenta CxP)
+    const lnR = reclasAbiertosCxpDoc?.lineas || [];
+    lnR.forEach((l,i)=>{
+      if(l.tipo!=='D') return;
+      const key = claveDe(l.codigo); if(!key) return;
+      const r = obt(l.proveedor); const a = r.rd[key];
+      a.usd += pN(l.montoUSD); a.bs += pN(l.montoBs); a.n++;
+      const sig = lnR[i+1];
+      if(!r.ctaCxp && sig && sig.tipo==='H' && Math.abs(pN(sig.montoUSD)-pN(l.montoUSD))<0.005) r.ctaCxp = {cod:sig.codigo, nom:sig.cuenta};
+    });
+    // Correcciones ya generadas antes por esta misma herramienta (neto debitado a la cuenta de anticipo)
+    (depAntDoc?.lineas || []).forEach(l=>{
+      const key = claveDe(l.codigo); if(!key) return;
+      const r = obt(l.proveedor); const sg = l.tipo==='D' ? 1 : -1;
+      r.dp[key].usd += sg*pN(l.montoUSD); r.dp[key].bs += sg*pN(l.montoBs);
+    });
+    // Saldo abierto actual de los anticipos reclasificados, por cuenta destino
+    (pagosCxP||[]).filter(p=>p.esAnticipo && p.reclasificado).forEach(p=>{
+      const key = p.cuentaReclasificada==='importacion' ? 'importacion' : 'proveedores';
+      const nombreP = p.proveedor || (proveedores||[]).find(x=>x.id===p.proveedorId)?.nombre || '';
+      const r = obt(nombreP);
+      r.o[key] += Math.max(0, pN(p.monto||0)-pN(p.montoAplicado||0));
+      if(!r.provId && p.proveedorId) r.provId = p.proveedorId;
+    });
+    const filas = [], omitidos = [];
+    prov.forEach(r=>{
+      const pv = (proveedores||[]).find(x=>(r.provId && x.id===r.provId) || kNom(x.nombre)===r.k || kNom(x.razonSocial)===r.k);
+      ['proveedores','importacion'].forEach(key=>{
+        const o=r.o[key], rd=r.rd[key], ad=r.ad[key], dp=r.dp[key];
+        const C = r2(o - (rd.usd - ad.usd + dp.usd));
+        if(Math.abs(C)<0.01) return;
+        const ctaTxt = String(pv?.cuentaContableNombre||'').trim();
+        if(!ctaTxt){ omitidos.push({nombre:r.nombre, ctaA:ctaAnt[key], C, motivo: pv ? 'Sin cuenta de Cuentas por Pagar asignada' : 'No se encontró el proveedor'}); return; }
+        const ctaCxpPar = r.ctaCxp ? [r.ctaCxp.cod, r.ctaCxp.nom] : partir(ctaTxt, ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES']);
+        const absC = Math.abs(C);
+        let cbs;
+        if(C>0){
+          if(ad.usd>0.005 && Math.abs(absC-ad.usd)<0.01) cbs = ad.bs;
+          else { const t = ad.usd>0.005 ? ad.bs/ad.usd : (rd.usd>0.005 ? rd.bs/rd.usd : (Number(tasaBCV)||1)); cbs = absC*t; }
+        } else {
+          if(rd.usd>0.005 && Math.abs(absC-rd.usd)<0.01) cbs = rd.bs;
+          else { const t = rd.usd>0.005 ? rd.bs/rd.usd : (ad.usd>0.005 ? ad.bs/ad.usd : (Number(tasaBCV)||1)); cbs = absC*t; }
+        }
+        filas.push({k:r.k, key, nombre:r.nombre, ctaA:ctaAnt[key], ctaCxp:{cod:ctaCxpPar[0], nom:ctaCxpPar[1]}, ad, rd, dp, o, C, cbs:r2(cbs)});
+      });
+    });
+    filas.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+    const fechaDefault = filas.filter(f=>f.C>0).reduce((m,f)=>f.ad.fMax>m?f.ad.fMax:m,'');
+    return {filas, omitidos, fechaDefault};
+  };
+  const ejecutarDepuracionAnticiposCxp = async () => {
+    if(!depAntFecha) return setDialog({title:'Falta la fecha',text:'Elige la fecha del comprobante de corrección.',type:'alert'});
+    setDepAntBusy(true);
+    try{
+      const {filas} = calcularDepuracionAnticiposCxp();
+      if(!filas.length){ setDialog({title:'Nada que depurar',text:'Las aplicaciones de anticipo ya cuadran; no hay nada que corregir.',type:'alert'}); setDepAntBusy(false); return; }
+      const nuevas = [];
+      filas.forEach(f=>{
+        const monto = Math.abs(f.C), bs = Math.abs(f.cbs);
+        const detalle = `${f.nombre} · ${f.C>0?'Reverso de aplicación de anticipo duplicada':'Aplicación de anticipo pendiente de registrar'}`;
+        nuevas.push({codigo:f.ctaA.cod, cuenta:f.ctaA.nom, tipo:f.C>0?'D':'H', montoUSD:monto, montoBs:bs, detalle, proveedor:f.nombre, fecha:depAntFecha});
+        nuevas.push({codigo:f.ctaCxp.cod, cuenta:f.ctaCxp.nom, tipo:f.C>0?'H':'D', montoUSD:monto, montoBs:bs, detalle, proveedor:f.nombre, fecha:depAntFecha});
+      });
+      const batch = writeBatch(db);
+      batch.set(getDocRef('comprobantes_ajustes','DEPURA-APLICACIONES-ANTICIPOS-CXP'), {
+        fecha:depAntFecha, nroComprobante:'DEPURA-APLICACIONES-ANTICIPOS-CXP',
+        concepto:'Depuración de Aplicaciones de Anticipos a Proveedores (anticipo ya debitado a Cuentas por Pagar al pagarse por Banco/Caja)',
+        lineas:[...(depAntDoc?.lineas||[]), ...nuevas],
+        createdAt:depAntDoc?.createdAt||Date.now(), updatedAt:Date.now(), user:appUser?.name||'Sistema', origen:'depuracion_anticipos_cxp',
+      });
+      await batch.commit();
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Depuración de aplicaciones de anticipo: ${filas.length} corrección(es) con fecha ${depAntFecha}.`);
+      setDialog({title:'✅ Depuración registrada',text:`${filas.length} corrección(es) registradas en el comprobante DEPURA-APLICACIONES-ANTICIPOS-CXP con fecha ${depAntFecha}. Revisa el Mayor Analítico de Cuentas por Pagar. Si algo no cuadra, borra ese comprobante desde Ajustes y queda como estaba.`,type:'alert'});
+      setShowDepAntModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setDepAntBusy(false);
+  };
+  // -- Fecha de la aplicacion de un anticipo ---------------------------------------------------
+  // La aplicacion de un anticipo a una factura lleva la fecha de registro del propio anticipo (no la del dia en que se
+  // aplica): asi el Estado de Cuenta por fecha de corte cruza con el Mayor, donde el anticipo ya debito la CxP del
+  // proveedor al salir por Banco/Caja. El asiento de aplicacion (solo existe si el anticipo estaba reclasificado o el
+  // proveedor no tiene cuenta CxP asignada) usa esa misma fecha, pero nunca antes de la reclasificacion: asi no queda
+  // la cuenta de Anticipos en negativo en los meses anteriores a la reclasificacion.
+  const fechaAsientoAplicacionAnticipo = (ant, hoyX) => {
+    const fAnt = ant?.fecha || hoyX;
+    const fRec = ant?.reclasificado ? (ant?.fechaReclasificacion || '') : '';
+    return (fRec && fRec > fAnt) ? fRec : fAnt;
+  };
+  // -- Alinear fechas de aplicaciones ya registradas -------------------------------------------
+  // Aplicaciones de anticipo ya hechas (pago con cuentaId 'ANTICIPO::<id>') que quedaron con la fecha del dia en que se
+  // aplicaron: se les pone la fecha de su anticipo. Solo cambia el campo fecha de ese pago (la original queda guardada en
+  // fechaAplicacionOriginal para poder restaurarla). No se tocan las de anticipos reclasificados ni las de proveedores
+  // sin cuenta CxP asignada: su asiento contable ya registrado conserva la fecha de aplicacion y deben seguir juntas.
+  const calcularAlineacionFechasAnticipos = () => {
+    const kNom = s => String(s||'').toUpperCase().replace(/\s+/g,' ').trim();
+    const antMap = new Map((pagosCxP||[]).filter(p=>p.esAnticipo).map(a=>[a.id,a]));
+    const facMap = new Map((facturasCompra||[]).map(f=>[f.id,f]));
+    const filas = [], omitidos = [], restaurables = [];
+    (pagosCxP||[]).forEach(p=>{
+      if(p.esAnticipo) return;
+      const cid = String(p.cuentaId||'');
+      if(!cid.startsWith('ANTICIPO::')) return;
+      if(p.fechaAplicacionOriginal && p.fechaAplicacionOriginal!==p.fecha) restaurables.push({id:p.id, fechaOriginal:p.fechaAplicacionOriginal});
+      const ant = antMap.get(cid.slice('ANTICIPO::'.length));
+      if(!ant || !ant.fecha || (p.fecha||'')===ant.fecha) return;
+      const nomP = kNom(p.proveedor||ant.proveedor);
+      const pv = (proveedores||[]).find(x=>(p.proveedorId && x.id===p.proveedorId) || (ant.proveedorId && x.id===ant.proveedorId))
+        || (proveedores||[]).find(x=>kNom(x.nombre)===nomP || (x.razonSocial && kNom(x.razonSocial)===nomP));
+      const sinCta = !String(pv?.cuentaContableNombre||'').trim();
+      if(ant.reclasificado || sinCta){ omitidos.push({id:p.id, motivo: ant.reclasificado ? 'anticipo reclasificado' : 'proveedor sin cuenta CxP asignada'}); return; }
+      const f = facMap.get(p.facturaId);
+      filas.push({id:p.id, proveedor:p.proveedor||ant.proveedor||'', factura:f?.nroFactura||'', refAnt:ant.referencia||ant.id, monto:pN(p.monto||0),
+        fechaActual:p.fecha||'', fechaNueva:ant.fecha, fechaOrig:p.fechaAplicacionOriginal||p.fecha||''});
+    });
+    filas.sort((a,b)=>String(a.proveedor).localeCompare(String(b.proveedor),'es') || String(a.fechaNueva).localeCompare(String(b.fechaNueva)));
+    return {filas, omitidos, restaurables};
+  };
+  const ejecutarAlineacionFechasAnticipos = async () => {
+    setAlinFechaBusy(true);
+    try{
+      const {filas} = calcularAlineacionFechasAnticipos();
+      if(!filas.length){ setDialog({title:'Nada que alinear',text:'Todas las aplicaciones de anticipo ya tienen la fecha de su anticipo.',type:'alert'}); setAlinFechaBusy(false); return; }
+      for(let i=0;i<filas.length;i+=400){
+        const batch = writeBatch(db);
+        filas.slice(i,i+400).forEach(f=>batch.update(getDocRef('procura_pagos_cxp',f.id),{fecha:f.fechaNueva, fechaAplicacionOriginal:f.fechaOrig, updatedAt:Date.now()}));
+        await batch.commit();
+      }
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Alineación de fechas de aplicaciones de anticipo: ${filas.length} pago(s) pasaron a la fecha de su anticipo.`);
+      setDialog({title:'✅ Fechas alineadas',text:`${filas.length} aplicación(es) de anticipo pasaron a la fecha de su anticipo. La fecha original quedó guardada: si algo no cuadra, abre otra vez este botón y usa "Restaurar fechas originales".`,type:'alert'});
+      setShowAlinFechaModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setAlinFechaBusy(false);
+  };
+  const restaurarFechasAplicacionAnticipos = async () => {
+    setAlinFechaBusy(true);
+    try{
+      const {restaurables} = calcularAlineacionFechasAnticipos();
+      if(!restaurables.length){ setDialog({title:'Nada que restaurar',text:'Ninguna aplicación tiene guardada una fecha original distinta a la actual.',type:'alert'}); setAlinFechaBusy(false); return; }
+      for(let i=0;i<restaurables.length;i+=400){
+        const batch = writeBatch(db);
+        restaurables.slice(i,i+400).forEach(r=>batch.update(getDocRef('procura_pagos_cxp',r.id),{fecha:r.fechaOriginal, fechaAplicacionOriginal:null, updatedAt:Date.now()}));
+        await batch.commit();
+      }
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Restauración de fechas originales de aplicaciones de anticipo: ${restaurables.length} pago(s).`);
+      setDialog({title:'↩ Fechas restauradas',text:`${restaurables.length} aplicación(es) volvieron a su fecha original.`,type:'alert'});
+      setShowAlinFechaModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setAlinFechaBusy(false);
   };
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
@@ -11353,6 +11552,8 @@ ${body}
               setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,'proveedores'])));
               setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
             }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores/Importación" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+          <button onClick={()=>{ const rDep=calcularDepuracionAnticiposCxp(); setDepAntFecha(rDep.fechaDefault||getTodayDate()); setShowDepAntModal(true); }} title="Calcula y corrige las Aplicaciones de anticipo que duplican un débito que el anticipo ya hizo en Cuentas por Pagar (vista previa antes de aplicar)" className="px-3 py-2 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-[10px] font-black uppercase hover:bg-amber-100">🧹 Depurar Aplicaciones de Anticipos</button>
+          <button onClick={()=>setShowAlinFechaModal(true)} title="Pone en las aplicaciones de anticipo ya registradas la fecha de su anticipo (vista previa antes de aplicar; se puede restaurar)" className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">📅 Alinear Fechas de Aplicación</button>
           <button onClick={()=>setDialog({title:'¿Reparar anticipos en la raíz?',text:'Corrige directamente los movimientos de banco históricos que les faltaba la marca de anticipo (por eso caían en Cuentas por Pagar). Si ya usaste "Reclasificar Anticipos Abiertos" antes, esto lo deshace automáticamente primero para no duplicar. No crea comprobantes nuevos — corrige el dato de origen.',type:'confirm',onConfirm:repararAnticiposBancoRaiz})}
             disabled={reparandoRaiz} title="Corrige los banco_movimientos históricos que les falta esAnticipo:true — arreglo de raíz, sin comprobantes de compensación" className="px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 disabled:opacity-50">{reparandoRaiz?'Reparando...':'🔧 Reparar Anticipos en la Raíz'}</button>
           {(pagosCxP||[]).some(p=>p.reclasificado) && (
@@ -11421,6 +11622,129 @@ ${body}
                 <div className="flex gap-2 pt-1">
                   <button disabled={reclasAntCxpBusy} onClick={()=>setShowReclasAntCxpModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
                   <button disabled={reclasAntCxpBusy||seleccionados.length===0} onClick={ejecutarReclasAnticiposAbiertosCxp} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasAntCxpBusy?'Procesando...':`Ejecutar (${seleccionados.length})`}</button>
+                </div>
+              </div>
+            </div>
+            );
+          })()}
+          {showDepAntModal && (() => {
+            const dep = calcularDepuracionAnticiposCxp();
+            const totalPos = dep.filas.filter(f=>f.C>0).reduce((s,f)=>s+f.C,0);
+            const totalNeg = dep.filas.filter(f=>f.C<0).reduce((s,f)=>s+Math.abs(f.C),0);
+            const fechaAntes = !!depAntFecha && dep.filas.some(f=>f.C>0 && f.ad.fMax && depAntFecha<f.ad.fMax);
+            return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!depAntBusy&&setShowDepAntModal(false)}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl p-5 space-y-3 max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <h3 className="font-black text-gray-800">🧹 Depurar Aplicaciones de Anticipos (CxP)</h3>
+                <p className="text-[11px] text-gray-500">Un anticipo que sale por Banco/Caja ya debita la Cuenta por Pagar del proveedor en ese momento, así que al aplicarlo a una factura no hace falta otro asiento (solo si el anticipo se reclasificó a Anticipos). Aquí se calcula, por proveedor, cuánto de las "Aplicación de anticipo" ya registradas está duplicado y se corrige con un solo comprobante de ajuste. No toca Banco, Caja, facturas ni anticipos, y el comprobante se puede borrar desde Ajustes.</p>
+                {dep.filas.length===0 ? (
+                  <p className="text-xs font-bold text-gray-400 py-4 text-center">Nada que depurar: las aplicaciones de anticipo ya cuadran con las reclasificaciones.</p>
+                ) : (
+                  <div className="border rounded-xl overflow-hidden overflow-x-auto">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-gray-100"><tr>
+                        <th className="text-left px-2 py-1.5">Proveedor</th>
+                        <th className="text-left px-2 py-1.5">Cuenta CxP</th>
+                        <th className="text-right px-2 py-1.5">Aplicaciones registradas</th>
+                        <th className="text-right px-2 py-1.5">Reclasificado</th>
+                        <th className="text-right px-2 py-1.5">Abierto reclasif.</th>
+                        <th className="text-right px-2 py-1.5">Corrección USD</th>
+                        <th className="text-right px-2 py-1.5">Corrección Bs.</th>
+                        <th className="text-left px-2 py-1.5">Asiento</th>
+                      </tr></thead>
+                      <tbody>
+                        {dep.filas.map(f=>(
+                          <tr key={f.k+'|'+f.key} className="border-t">
+                            <td className="px-2 py-1.5 font-bold">{f.nombre}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{f.ctaCxp.cod} {f.ctaCxp.nom}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">${fN(f.ad.usd)} <span className="text-gray-400">({f.ad.n})</span></td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-500">${fN(f.rd.usd)}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-500">${fN(f.o)}</td>
+                            <td className={`px-2 py-1.5 text-right font-mono font-black ${f.C>0?'text-amber-700':'text-blue-700'}`}>{f.C<0?'-':''}${fN(Math.abs(f.C))}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-600">{fN(Math.abs(f.cbs))}</td>
+                            <td className="px-2 py-1.5 text-[9px] text-gray-600">{f.C>0?`D ${f.ctaA.nom} / H CxP`:`D CxP / H ${f.ctaA.nom}`}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot><tr className="border-t-2 bg-amber-50 font-black">
+                        <td colSpan={5} className="px-2 py-1.5 text-right">Total duplicado a reversar:</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-amber-700">${fN(totalPos)}</td>
+                        <td colSpan={2} className="px-2 py-1.5 text-[9px] text-gray-500">{totalNeg>0.005?`Además, aplicaciones faltantes: $${fN(totalNeg)}`:''}</td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )}
+                {dep.omitidos.length>0 && (
+                  <div className="border border-gray-200 rounded-xl p-3 bg-gray-50">
+                    <p className="text-[10px] font-black text-gray-600 uppercase mb-1">No se tocan (revisar a mano)</p>
+                    {dep.omitidos.map((o,i)=>(
+                      <p key={i} className="text-[10px] text-gray-500">{o.nombre} · {o.ctaA.nom} · ${fN(Math.abs(o.C))} · {o.motivo}</p>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha del comprobante de corrección (para cierre de mes usa el último día)</label>
+                  <input type="date" value={depAntFecha} onChange={e=>setDepAntFecha(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500"/>
+                  {fechaAntes&&<p className="text-[9px] text-red-500 font-bold mt-1">Ojo: esta fecha es anterior a alguna de las aplicaciones que se reversan; en el Mayor esas quedarán desfasadas hasta esa fecha.</p>}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button disabled={depAntBusy} onClick={()=>setShowDepAntModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                  <button disabled={depAntBusy||dep.filas.length===0||!depAntFecha} onClick={ejecutarDepuracionAnticiposCxp} className="flex-1 bg-amber-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-amber-700 disabled:opacity-40">{depAntBusy?'Procesando...':`Generar comprobante de corrección (${dep.filas.length})`}</button>
+                </div>
+              </div>
+            </div>
+            );
+          })()}
+          {showAlinFechaModal && (() => {
+            const alin = calcularAlineacionFechasAnticipos();
+            const totalMontoAlin = alin.filas.reduce((s,f)=>s+f.monto,0);
+            return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!alinFechaBusy&&setShowAlinFechaModal(false)}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl p-5 space-y-3 max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <h3 className="font-black text-gray-800">📅 Alinear Fechas de Aplicación de Anticipos (CxP)</h3>
+                <p className="text-[11px] text-gray-500">Una aplicación de anticipo debe llevar la fecha del propio anticipo, no la del día en que se aplicó. Aquí se cambia solo la fecha de esos pagos en Cuentas por Pagar y Estado de Cuenta (queda guardada la fecha original y se puede restaurar). No toca Banco, Caja, facturas, saldos ni comprobantes contables.</p>
+                {alin.filas.length===0 ? (
+                  <p className="text-xs font-bold text-gray-400 py-4 text-center">Nada que alinear: todas las aplicaciones ya tienen la fecha de su anticipo.</p>
+                ) : (
+                  <div className="border rounded-xl overflow-hidden overflow-x-auto">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-gray-100"><tr>
+                        <th className="text-left px-2 py-1.5">Proveedor</th>
+                        <th className="text-left px-2 py-1.5">Factura</th>
+                        <th className="text-left px-2 py-1.5">Anticipo (ref.)</th>
+                        <th className="text-right px-2 py-1.5">Monto USD</th>
+                        <th className="text-left px-2 py-1.5">Fecha actual</th>
+                        <th className="text-left px-2 py-1.5">Fecha nueva</th>
+                      </tr></thead>
+                      <tbody>
+                        {alin.filas.map(f=>(
+                          <tr key={f.id} className="border-t">
+                            <td className="px-2 py-1.5 font-bold">{f.proveedor}</td>
+                            <td className="px-2 py-1.5">{f.factura||'—'}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{f.refAnt}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">${fN(f.monto)}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{f.fechaActual}</td>
+                            <td className="px-2 py-1.5 font-black text-indigo-700">{f.fechaNueva}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot><tr className="border-t-2 bg-indigo-50 font-black">
+                        <td colSpan={3} className="px-2 py-1.5 text-right">Total ({alin.filas.length}):</td>
+                        <td className="px-2 py-1.5 text-right font-mono">${fN(totalMontoAlin)}</td>
+                        <td colSpan={2}></td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )}
+                {alin.omitidos.length>0 && (
+                  <p className="text-[10px] text-gray-500 border border-gray-200 rounded-xl p-3 bg-gray-50">No se tocan {alin.omitidos.length} aplicación(es) de anticipos reclasificados o de proveedores sin cuenta de Cuentas por Pagar asignada: su asiento contable ya registrado conserva la fecha en que se aplicó.</p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <button disabled={alinFechaBusy} onClick={()=>setShowAlinFechaModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                  {alin.restaurables.length>0 && (
+                    <button disabled={alinFechaBusy} onClick={restaurarFechasAplicacionAnticipos} className="flex-1 bg-white text-indigo-700 border-2 border-indigo-300 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 disabled:opacity-40">{`↩ Restaurar fechas originales (${alin.restaurables.length})`}</button>
+                  )}
+                  <button disabled={alinFechaBusy||alin.filas.length===0} onClick={ejecutarAlineacionFechasAnticipos} className="flex-1 bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-700 disabled:opacity-40">{alinFechaBusy?'Procesando...':`Alinear fechas (${alin.filas.length})`}</button>
                 </div>
               </div>
             </div>
@@ -11830,8 +12154,17 @@ ${body}
             });
             // Asiento de reclasificación Anticipo → Cuentas por Pagar, por cada anticipo aplicado
             // en esta operación — un solo comprobante que va creciendo, cada línea con su propia
-            // fecha (la de HOY, que es cuando se aplica, no la fecha original del anticipo).
-            const aplicacionesCxpEsteLote = Object.entries(antAplicadoCxp).filter(([,ap])=>ap>0.005);
+            // fecha (la del anticipo, igual que el pago en Procura; si ya se reclasifico, nunca antes de esa reclasificacion).
+            // Solo se genera asiento de aplicacion si el anticipo fue reclasificado a una cuenta de Anticipos (el asiento
+            // revierte esa reclasificacion contra la misma cuenta). Un anticipo pagado por Banco/Caja ya debito la CxP del
+            // proveedor al pagarse, asi que aplicarlo a una factura no necesita otro asiento (generarlo duplicaba el debito).
+            // Proveedores sin cuenta CxP asignada conservan el comportamiento anterior (su anticipo salio contra Anticipos).
+            const _sinCtaCxpProv = !String(provSel?.cuentaContableNombre||'').trim();
+            const aplicacionesCxpEsteLote = Object.entries(antAplicadoCxp).filter(([antIdX,ap])=>{
+              if(!(ap>0.005)) return false;
+              const antX=(pagosCxP||[]).find(a=>a.id===antIdX);
+              return !!antX && (!!antX.reclasificado || _sinCtaCxpProv);
+            });
             if (aplicacionesCxpEsteLote.length){
               const [codAntP,nomAntP] = cuentasAnticipoCfg?.anticipoProveedoresNombre
                 ? cuentasAnticipoCfg.anticipoProveedoresNombre.split('—').map(s=>s.trim())
@@ -11839,6 +12172,9 @@ ${body}
               const [codCxpTerc,nomCxpTerc] = provSel?.cuentaContableNombre
                 ? provSel.cuentaContableNombre.split('—').map(s=>s.trim())
                 : ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES'];
+              const [codAntImpAp,nomAntImpAp] = cuentasAnticipoCfg?.anticipoImportacionNombre
+                ? cuentasAnticipoCfg.anticipoImportacionNombre.split('\u2014').map(s=>s.trim())
+                : ['1.1.05.01.004','ANTICIPOS POR IMPORTACION'];
               const refDoc = getDocRef('comprobantes_ajustes','ANTICIPOS-APLICADOS-PROVEEDORES');
               const lineasPrevias = antAplicadosProvDoc?.lineas || [];
               const nuevasLineas = [];
@@ -11849,8 +12185,10 @@ ${body}
                 const montoUSDAp = parseFloat(aplicado.toFixed(2));
                 const provNombre = provSel?.nombre||ant?.proveedor||'Proveedor';
                 const detalleAp = `${provNombre} · Aplicación de anticipo${ant?.referencia?' · Ref.'+ant.referencia:''}`;
-                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:hoy});
-                nuevasLineas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:hoy});
+                const [codAntX,nomAntX] = (ant?.reclasificado && ant?.cuentaReclasificada==='importacion') ? [codAntImpAp,nomAntImpAp] : [codAntP,nomAntP];
+                const fechaLnAp = fechaAsientoAplicacionAnticipo(ant, hoy);
+                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:fechaLnAp});
+                nuevasLineas.push({codigo:codAntX, cuenta:nomAntX, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:fechaLnAp});
               });
               batch.set(refDoc, {
                 fecha:hoy, nroComprobante:'ANTICIPOS-APLICADOS-PROVEEDORES', concepto:'Aplicación de Anticipos a Proveedores (Anticipo ↔ Cuentas por Pagar)',
@@ -11972,7 +12310,7 @@ ${body}
                   {/* Anticipos disponibles */}
                   {!pm.esAnticipo&&totalAnticiposProv>0.01&&(
                     <div style={{padding:'8px 14px',borderBottom:'1px solid #dcfce7',background:'#f0fdf4'}}>
-                      <div style={{fontSize:9,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:4}}>💰 Anticipos disponibles: ${fN(totalAnticiposProv)}</div>
+                      <div style={{fontSize:9,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:4}}>💰 Anticipos disponibles: ${fN(totalAnticiposProv)}<span style={{fontWeight:700,textTransform:'none',color:'#166534',marginLeft:6}}>· al usarlo, la aplicación toma la fecha del anticipo</span></div>
                       {anticiposProv.map(a=>{
                         const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id);
                         return(
@@ -11981,7 +12319,7 @@ ${body}
                           <div style={{display:'flex',gap:4,flexShrink:0}}>
                             <button title="Corregir: marcar este anticipo como ya utilizado antes — no toca banco, caja ni facturas, solo su saldo disponible" onClick={()=>setDialog({title:'Marcar anticipo como ya usado', text:`Esto deja "$${fN(a._saldoAnt)} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" en $0 disponible.\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo. Úsalo cuando el anticipo ya se había usado antes y volvió a aparecer disponible por error.`, type:'confirm', onConfirm: async ()=>{ try{ await updateDoc(getDocRef('procura_pagos_cxp',a.id),{montoAplicado:pN(a.monto||0)}); logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Anticipo ${a.id} (${a.proveedor||''}) marcado manualmente como ya usado — saldo corregido a $0, sin tocar banco/caja/facturas.`); }catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); } }})}
                               style={{fontSize:8,fontWeight:900,padding:'3px 6px',borderRadius:6,border:'1px solid #dc2626',background:'#fff',color:'#dc2626',cursor:'pointer'}}>🚫</button>
-                            <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                            <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:(a.fecha||hoy),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                               style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                           </div>
                         </div>);
@@ -12091,6 +12429,7 @@ ${body}
                             <span>{l.cuentaNombre||'Sin cuenta'}</span>
                             {l.referencia&&<span>Ref: {l.referencia}</span>}
                             <span>{l.fecha}</span>
+                            {l.anticipoId&&<span style={{color:'#15803d',fontWeight:700}}>fecha del anticipo</span>}
                           </div>
                         </div>
                         <button onClick={()=>setPM(m=>({lineasPago:(m.lineasPago||[]).filter((_,j)=>j!==i)}))}
@@ -12609,6 +12948,19 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const batch = writeBatch(db);
       await archivarEnPapelera('procura_pagos_cxp', p.id, p, `Pago $${fN(pN(p.monto||0))} — ${p.proveedor||''}`, appUser);
       batch.delete(getDocRef('procura_pagos_cxp', p.id));
+      // Si el pago que se reversa es la aplicacion de un anticipo (cuentaId 'ANTICIPO::<id>'), ese monto vuelve al
+      // saldo disponible del anticipo -- antes el anticipo quedaba consumido aunque la factura volviera a quedar
+      // pendiente. El asiento de aplicacion (solo existe si el anticipo estaba reclasificado) se ajusta despues
+      // con "Depurar Aplicaciones de Anticipos".
+      let antRestaurado = null;
+      if(!p.esAnticipo && String(p.cuentaId||'').startsWith('ANTICIPO::')){
+        const antIdRev = String(p.cuentaId).slice('ANTICIPO::'.length);
+        const antRev = (pagosCxP||[]).find(a=>a.id===antIdRev);
+        if(antRev){
+          batch.update(getDocRef('procura_pagos_cxp', antIdRev), {montoAplicado: Math.max(0, parseFloat((pN(antRev.montoAplicado||0)-pN(p.monto||0)).toFixed(2))), updatedAt: Date.now()});
+          antRestaurado = {ref: antRev.referencia||antIdRev, monto: pN(p.monto||0), reclas: !!antRev.reclasificado};
+        }
+      }
       const f = _factMap.get(p.facturaId);
       if(f){
         const saldoActual = pN(f.saldoPendiente||0);
@@ -12657,7 +13009,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       }
       await batch.commit();
       logAuditoria(appUser,'Cuentas por Pagar','ELIMINACIÓN',`Pago REVERSADO: $${fN(pN(p.monto||0))} a ${p.proveedor||'—'} · Ref: ${p.referencia||'—'} · Factura: ${f?.nroFiscal||f?.documento||p.facturaId||'—'}`);
-      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. Saldo de factura y de banco/caja restaurados.`,type:'alert'});
+      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. Saldo de factura y de banco/caja restaurados.${antRestaurado?` Se devolvieron $${fN(antRestaurado.monto)} al saldo disponible del anticipo ${antRestaurado.ref}.${antRestaurado.reclas?' Ese anticipo está reclasificado: usa "Depurar Aplicaciones de Anticipos" para ajustar su asiento.':''}`:''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
