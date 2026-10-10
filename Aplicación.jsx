@@ -85,13 +85,205 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 };
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
+// == RRHH - Beneficios de nomina: HCM (medicina prepagada) y Bolsa de alimentos ==
+// Calculo puro (sin React), se prueba aparte. Montos en USD; el Bs. sale de USD x tasa del pago.
+// HCM: aporte mensual del trabajador = pctTrabajador % de (primaPersona x personas cubiertas);
+//      el resto lo paga la empresa. Se descuenta en 'cuotasPorMes' pagos (por defecto 4).
+// Bolsa: bolsas x descuentoBolsa (la parte de la empresa = costo - descuento es solo informativa).
+const BENEFICIOS_DEF = {
+  hcm:   { activo:true, primaPersona:18, pctTrabajador:50, cuotasPorMes:4, edadMaxHijos:19, codigoConcepto:'24000', codigoPasivo:'', nombrePasivo:'', codigoGasto:'', nombreGasto:'' },
+  bolsa: { activo:true, costoBolsa:15.04, descuentoBolsa:5, codigoConcepto:'22000', codigoCuenta:'', nombreCuenta:'' },
+};
+const benR2 = (n) => parseFloat((Number(n)||0).toFixed(2));
+// Firestore rechaza los campos con valor undefined: se quitan antes de guardar una linea del recibo.
+const benSinUndefined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const benNum = (v) => { const n = parseFloat(String(v==null?'':v).replace(',','.')); return isFinite(n) ? n : 0; };
+const benNumComa = (s) => parseFloat(String(s||'0').replace(/[^0-9,.-]/g,'').replace(',','.'))||0;
+const benMerge = (c) => ({ hcm:{...BENEFICIOS_DEF.hcm, ...((c&&c.hcm)||{})}, bolsa:{...BENEFICIOS_DEF.bolsa, ...((c&&c.bolsa)||{})} });
+const benMesOk = (mes) => /^\d{4}-\d{2}$/.test(String(mes||''));
+const benMesActual = () => new Date().toISOString().slice(0,7);
+const benUltimoDia = (mes) => { const p = String(mes).split('-').map(Number); return new Date(p[0], p[1], 0).getDate(); };
+// Edad cumplida al dia refISO ('YYYY-MM-DD'); null si falta algun dato.
+const benEdadAl = (fechaNac, refISO) => {
+  if(!fechaNac || !refISO) return null;
+  const n = String(fechaNac).slice(0,10).split('-').map(Number), r = String(refISO).slice(0,10).split('-').map(Number);
+  if(n.length<3 || r.length<3 || n.some(isNaN) || r.some(isNaN)) return null;
+  let e = r[0]-n[0];
+  if(r[1]<n[1] || (r[1]===n[1] && r[2]<n[2])) e--;
+  return e>=0 ? e : null;
+};
+// Personas cubiertas por el HCM en un mes 'YYYY-MM': el titular (si esta en el plan) + cada carga
+// marcada con HCM, siempre que esten vigentes en ese mes (ingreso <= ultimo dia, egreso >= primer dia).
+const hcmPersonasMes = (t, mes) => {
+  const vacio = { total:0, titular:false, cargas:0 };
+  if(!t || t.hcmActivo!==true || !benMesOk(mes)) return vacio;
+  const ini = mes + '-01';
+  const fin = mes + '-' + String(benUltimoDia(mes)).padStart(2,'0');
+  const vigente = (desde, hasta) => (!desde || String(desde) <= fin) && (!hasta || String(hasta) >= ini);
+  if(!vigente(t.hcmDesde, t.hcmHasta)) return vacio;
+  const cargas = (t.cargasFamiliares||[]).filter(cg => cg && cg.hcm===true && vigente(cg.hcmDesde, cg.hcmHasta)).length;
+  return { total:1+cargas, titular:true, cargas };
+};
+// Hijos(as) cubiertos por el HCM que ya cumplieron (o cumplen en el mes) la edad limite.
+const hcmHijosPasadosEdad = (t, mes, edadMax) => {
+  if(!t || t.hcmActivo!==true || !benMesOk(mes)) return [];
+  const ini = mes + '-01';
+  const fin = mes + '-' + String(benUltimoDia(mes)).padStart(2,'0');
+  const lim = benNum(edadMax) > 0 ? benNum(edadMax) : 19;
+  return (t.cargasFamiliares||[]).filter(cg => {
+    if(!cg || cg.hcm!==true || !/hijo/i.test(String(cg.parentesco||''))) return false;
+    if(cg.hcmDesde && String(cg.hcmDesde) > fin) return false;
+    if(cg.hcmHasta && String(cg.hcmHasta) < ini) return false;
+    const e = benEdadAl(cg.fechaNacimiento, fin);
+    return e!==null && e >= lim;
+  }).map(cg => cg.nombre || 'hijo(a)');
+};
+const hcmCalcularMes = (t, mes, cfg) => {
+  const c = benMerge(cfg).hcm;
+  const p = hcmPersonasMes(t, mes);
+  const cm = parseInt(c.cuotasPorMes, 10);
+  const cuotasMes = cm > 0 ? cm : 4;
+  const pct = Math.min(100, Math.max(0, benNum(c.pctTrabajador)));
+  const prima = benR2(p.total * benNum(c.primaPersona));
+  const aporteTrab = benR2(prima * pct / 100);
+  const aporteEmp = benR2(prima - aporteTrab);
+  return { personas:p.total, cargas:p.cargas, prima, aporteTrab, aporteEmp, cuotasMes, porPagoTrab:benR2(aporteTrab / cuotasMes), porPagoEmp:benR2(aporteEmp / cuotasMes) };
+};
+const bolsaCalcular = (t, cfg) => {
+  const c = benMerge(cfg).bolsa;
+  const n = Math.max(0, parseInt(t && t.bolsasAlimentos, 10) || 0);
+  const costoU = benNum(c.costoBolsa), descU = benNum(c.descuentoBolsa);
+  return { bolsas:n, descuento:benR2(n * descU), costo:benR2(n * costoU), subsidio:benR2(n * (costoU - descU)), descuentoUnit:descU, costoUnit:costoU };
+};
+// Arma las lineas de deduccion automaticas (HCM y Bolsa) de un trabajador para un pago.
+//  detalleExistente: detalle ya guardado de este trabajador en este pago (o null)
+//  detallesMes: detalles de OTROS pagos del mismo mes para este trabajador (para los avisos)
+// Reglas: lo guardado por el usuario (editado a mano, o linea heredada del esquema anterior) se
+// conserva tal cual; lo automatico se recalcula al abrir. Primera vez: se incluye solo si el pago
+// tiene marcado aplicaHCM / aplicaBolsa.
+const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExistente, detallesMes }) => {
+  const t = trabajador || {};
+  const conf = benMerge(cfg);
+  const tasa = benNum(nomina && nomina.tasa);
+  const mes = benMesOk(nomina && nomina.mes) ? nomina.mes : benMesActual();
+  const guardadas = (detalleExistente && detalleExistente.deducciones) || [];
+  const hayDetalle = !!detalleExistente;
+  const lista = conceptos || [];
+  const conceptoDe = (cod) => lista.find(x => x.codigo === cod) || null;
+  const nombreDe = (cod, def) => { const c = conceptoDe(cod); return (c && c.nombre) ? c.nombre : def; };
+  const cuentaDe = (cod) => {
+    const c = conceptoDe(cod);
+    const cu = (c && c.cuentasPorCentro) ? c.cuentasPorCentro[t.centroCostoId] : null;
+    return cu ? { codigo: cu.codigo || '', nombre: cu.nombre || '' } : { codigo:'', nombre:'' };
+  };
+  const cuotasPrevias = (detallesMes || []).reduce((s, d) => s + (d.deducciones || []).filter(x => x.tipoBeneficio === 'hcm').reduce((s2, x) => s2 + (Number(x.cuotas) || 0), 0), 0);
+  const bolsasPrevias = (detallesMes || []).reduce((s, d) => s + ((d.deducciones || []).some(x => x.tipoBeneficio === 'bolsa' && Number(x.montoUSD) > 0) ? 1 : 0), 0);
+  const lineas = [];
+
+  {
+    const cod = conf.hcm.codigoConcepto || '24000';
+    const auto = conf.hcm.activo !== false && t.hcmActivo === true;      // el trabajador entra al calculo automatico
+    // Linea automatica ya guardada (siempre se respeta, aunque despues se apague la automatizacion o se desmarque
+    // al trabajador) o, solo si el trabajador esta marcado en la ficha, la linea manual heredada del esquema anterior.
+    // Al trabajador NO marcado se le deja su fila manual normal (no se duplica).
+    const g = guardadas.find(x => x.tipoBeneficio === 'hcm')
+      || (auto ? guardadas.find(x => !x.esLegal && !x.esBeneficio && !x.tipoBeneficio && x.codigo === cod) : null)
+      || null;
+    if (auto || g) {
+      const calc = hcmCalcularMes(t, mes, conf);
+      const cuentaPas = conf.hcm.codigoPasivo ? { codigo: conf.hcm.codigoPasivo, nombre: conf.hcm.nombrePasivo || '' } : cuentaDe(cod);
+      const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'hcm' || !auto);
+      const cuotas = (g && Number(g.cuotas) > 0) ? Math.round(Number(g.cuotas)) : 1;
+      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual;
+      if (conservar) {
+        montoUSD = benR2(g.montoUSD);
+        montoBs = benR2(g.montoBs != null ? g.montoBs : g.montoUSD * tasa);
+        montoPatronalUSD = benR2(g.montoPatronalUSD);
+        montoPatronalBs = benR2(g.montoPatronalBs != null ? g.montoPatronalBs : g.montoPatronalUSD * tasa);
+        incluida = true; editadoManual = true;
+      } else {
+        montoUSD = benR2(calc.porPagoTrab * cuotas);
+        montoPatronalUSD = benR2(calc.porPagoEmp * cuotas);
+        montoBs = benR2(montoUSD * tasa);
+        montoPatronalBs = benR2(montoPatronalUSD * tasa);
+        editadoManual = false;
+        incluida = g ? true : (hayDetalle ? false : (!!(nomina && nomina.aplicaHCM) && calc.personas > 0 && calc.aporteTrab > 0));
+      }
+      const pasados = hcmHijosPasadosEdad(t, mes, conf.hcm.edadMaxHijos);
+      let aviso = '';
+      if (t.hcmActivo === true && calc.personas === 0) aviso = 'El titular no tiene HCM vigente en el mes del pago (revisa las fechas de ingreso/egreso al plan)';
+      else if (t.hcmActivo === true && calc.aporteTrab <= 0) aviso = 'Aporte en 0: revisa la prima y el % del trabajador en Beneficios';
+      else if (pasados.length > 0) aviso = 'Hijo(a) con ' + (benNum(conf.hcm.edadMaxHijos) > 0 ? benNum(conf.hcm.edadMaxHijos) : 19) + ' años o más sigue en el HCM: ' + pasados.join(', ');
+      else if (cuotasPrevias + cuotas > calc.cuotasMes) aviso = 'Con este pago el mes lleva ' + (cuotasPrevias + cuotas) + ' de ' + calc.cuotasMes + ' cuotas de HCM';
+      lineas.push({
+        tipoBeneficio: 'hcm', esBeneficio: true, esLegal: false, incluida,
+        concepto: nombreDe(cod, 'POLIZA HCM'), codigo: cod,
+        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs,
+        codigoCuenta: cuentaPas.codigo, nombreCuenta: cuentaPas.nombre,
+        codigoCuentaPatronal: conf.hcm.codigoGasto || '', nombreCuentaPatronal: conf.hcm.nombreGasto || '',
+        personas: calc.personas, primaMes: calc.prima, aporteMesTrab: calc.aporteTrab, aporteMesEmp: calc.aporteEmp,
+        cuotasMes: calc.cuotasMes, cuotas, previosMes: cuotasPrevias, editadoManual, aviso,
+      });
+    }
+  }
+
+  {
+    const cod = conf.bolsa.codigoConcepto || '22000';
+    const b = bolsaCalcular(t, conf);
+    const auto = conf.bolsa.activo !== false && b.bolsas > 0;
+    const g = guardadas.find(x => x.tipoBeneficio === 'bolsa')
+      || (auto ? guardadas.find(x => !x.esLegal && !x.esBeneficio && !x.tipoBeneficio && x.codigo === cod) : null)
+      || null;
+    if (auto || g) {
+      const cuenta = conf.bolsa.codigoCuenta ? { codigo: conf.bolsa.codigoCuenta, nombre: conf.bolsa.nombreCuenta || '' } : cuentaDe(cod);
+      const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'bolsa' || !auto);
+      let montoUSD, montoBs, incluida, editadoManual;
+      if (conservar) {
+        montoUSD = benR2(g.montoUSD);
+        montoBs = benR2(g.montoBs != null ? g.montoBs : g.montoUSD * tasa);
+        incluida = true; editadoManual = true;
+      } else {
+        montoUSD = b.descuento;
+        montoBs = benR2(montoUSD * tasa);
+        editadoManual = false;
+        incluida = g ? true : (hayDetalle ? false : (!!(nomina && nomina.aplicaBolsa) && b.bolsas > 0));
+      }
+      const aviso = bolsasPrevias > 0 ? 'La bolsa ya se descontó este mes en otro pago' : '';
+      lineas.push({
+        tipoBeneficio: 'bolsa', esBeneficio: true, esLegal: false, incluida,
+        concepto: nombreDe(cod, 'BOLSA ALIMENTOS'), codigo: cod,
+        montoUSD, montoBs, montoPatronalUSD: 0, montoPatronalBs: 0,
+        codigoCuenta: cuenta.codigo, nombreCuenta: cuenta.nombre,
+        bolsas: b.bolsas, descuentoUnit: b.descuentoUnit, costoUnit: b.costoUnit, subsidioEmpresa: b.subsidio,
+        previosMes: bolsasPrevias, editadoManual, aviso,
+      });
+    }
+  }
+  return lineas;
+};
+// Cambia las cuotas de HCM a descontar en este pago (p. ej. 3 para el que ingreso a mitad de mes).
+const benAplicarCuotas = (l, cuotasIn, tasa) => {
+  const { montoBsTexto, ...resto } = l;
+  const cuotas = Math.max(1, parseInt(cuotasIn, 10) || 1);
+  const cm = l.cuotasMes > 0 ? l.cuotasMes : 4;
+  const montoUSD = benR2(benR2(l.aporteMesTrab / cm) * cuotas);
+  const montoPatronalUSD = benR2(benR2(l.aporteMesEmp / cm) * cuotas);
+  const aviso = ((l.previosMes || 0) + cuotas > cm) ? ('Con este pago el mes lleva ' + ((l.previosMes || 0) + cuotas) + ' de ' + cm + ' cuotas de HCM') : '';
+  return { ...resto, cuotas, montoUSD, montoBs: benR2(montoUSD * tasa), montoPatronalUSD, montoPatronalBs: benR2(montoPatronalUSD * tasa), editadoManual: false, aviso };
+};
+// El usuario escribe el monto en Bs. (como en el resto de la pantalla): el USD sale de dividir entre la tasa.
+const benEditarMontoBs = (l, textoBs, tasa) => {
+  const bs = benNumComa(textoBs);
+  return { ...l, montoUSD: tasa > 0 ? benR2(bs / tasa) : 0, montoBs: benR2(bs), montoBsTexto: textoBs, editadoManual: true };
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
   useEffect(()=>{
     const perms=appUser?.permissions||{};
     const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
     if(appUser?.role==='Master'||!tieneSubs) return;
-    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores'};
+    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',beneficios:'rrhh_beneficios',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores'};
     if(perms[mapa[rhTab]]) return;
     const primero=Object.keys(mapa).find(k=>perms[mapa[k]]);
     if(primero) setRhTab(primero);
@@ -128,6 +320,23 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     faov:{pctTrabajador:1, pctPatronal:2, codigoPasivo:'', nombrePasivo:''},
     inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, codigoPasivo:'', nombrePasivo:''},
   });
+  // Beneficios (HCM y Bolsa de alimentos): se guardan en rrhh_config/beneficios
+  const [configBeneficios,setConfigBeneficios]=useState(benMerge(null));
+  const [busqCuentaBen,setBusqCuentaBen]=useState({});
+  const [benMesVer,setBenMesVer]=useState(benMesActual());
+  const guardarConfigBeneficios = async () => {
+    const h = configBeneficios.hcm, b = configBeneficios.bolsa;
+    const pct = benNum(h.pctTrabajador);
+    if(pct<0 || pct>100) return alert('El % que paga el trabajador debe estar entre 0 y 100.');
+    if(!(parseInt(h.cuotasPorMes,10)>0)) return alert('Las cuotas (pagos) por mes del HCM deben ser 1 o más.');
+    if(benNum(h.primaPersona)<0 || benNum(b.costoBolsa)<0 || benNum(b.descuentoBolsa)<0) return alert('Los montos no pueden ser negativos.');
+    const limpio = {
+      hcm:{...h, primaPersona:benNum(h.primaPersona), pctTrabajador:pct, cuotasPorMes:parseInt(h.cuotasPorMes,10), edadMaxHijos:benNum(h.edadMaxHijos)>0?benNum(h.edadMaxHijos):19, codigoConcepto:String(h.codigoConcepto||'').trim()},
+      bolsa:{...b, costoBolsa:benNum(b.costoBolsa), descuentoBolsa:benNum(b.descuentoBolsa), codigoConcepto:String(b.codigoConcepto||'').trim()},
+    };
+    try{ await setDoc(getDocRef('rrhh_config','beneficios'),limpio); setConfigBeneficios(benMerge(limpio)); alert('Configuración de Beneficios guardada.'); }
+    catch(e){ alert('Error: '+e.message); }
+  };
   const RIESGO_PCT = {minimo:9, medio:10, maximo:11};
   const guardarConfigParafiscal = async () => {
     try{ await setDoc(getDocRef('rrhh_config','parafiscal'),configParafiscal); alert('Configuración guardada.'); }
@@ -171,6 +380,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s9=onSnapshot(getColRef('rrhh_conceptos'),s=>setConceptos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s10=onSnapshot(getColRef('rrhh_parametros_formula'),s=>setParametrosFormula(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s11=onSnapshot(getColRef('rrhh_tabulador_cargos'),s=>setTabuladorCargos(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s12=onSnapshot(getDocRef('rrhh_config','beneficios'),d=>{ if(!d.exists()) return; setConfigBeneficios(benMerge(d.data())); });
     const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{
       if(!d.exists()) return;
       const cargado = d.data();
@@ -184,7 +394,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();};
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -486,6 +696,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     ivss:'', rpe:'', faov:'', rif:'',
     alergias:'', certificadoMedicoFecha:'', eppAsignado:'', eppFechaEntrega:'',
     polizaHCMAseguradora:'', polizaHCMNumero:'', cestaTicketTipo:'Tarjeta digital', cestaTicketNumero:'',
+    hcmActivo:false, hcmDesde:'', hcmHasta:'', bolsasAlimentos:'',
     tallaCamisa:'', tallaPantalon:'', tallaZapatos:'',
     vehiculoAsignado:false, vehiculoMarca:'', vehiculoModelo:'', vehiculoAnio:'', vehiculoColor:'',
     vacacionesAcumuladas:'', vacacionesDisfrutadas:'',
@@ -516,7 +727,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(isNaN(fin.getTime())) return null;
     return Math.round((fin-hoy)/86400000);
   };
-  const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
+  const CARGA_VACIA = {nombre:'',parentesco:'Hijo(a)',fechaNacimiento:'',cedula:'',sexo:'',hcm:false,hcmDesde:'',hcmHasta:''};
+  const [nuevaCarga,setNuevaCarga]=useState(CARGA_VACIA);
   const [nuevaEval,setNuevaEval]=useState({mes:'',resultado:'Satisfactorio'});
   const [nuevaAmon,setNuevaAmon]=useState({fecha:getTodayDate(),tipo:'Verbal',motivo:''});
 
@@ -540,9 +752,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const agregarCarga = () => {
     if(!nuevaCarga.nombre.trim()) return;
     setTrabajadorForm(f=>({...f,cargasFamiliares:[...f.cargasFamiliares,{...nuevaCarga}]}));
-    setNuevaCarga({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
+    setNuevaCarga(CARGA_VACIA);
   };
   const quitarCarga = (i) => setTrabajadorForm(f=>({...f,cargasFamiliares:f.cargasFamiliares.filter((_,j)=>j!==i)}));
+  const actualizarCarga = (i, patch) => setTrabajadorForm(f=>({...f,cargasFamiliares:f.cargasFamiliares.map((c,j)=>j===i?{...c,...patch}:c)}));
   const agregarEval = async (t) => {
     if(!nuevaEval.mes) return alert('Elige el mes de la evaluación');
     try{
@@ -573,7 +786,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
   const [subiendoFoto,setSubiendoFoto]=useState(false);
   // ── Registro de Nómina ────────────────────────────────────────────────────
-  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||'')});
+  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||''), aplicaHCM:true, aplicaBolsa:false});
   const [nominaForm,setNominaForm]=useState(initNominaForm());
   const [nominaActiva,setNominaActiva]=useState(null);
   const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador'
@@ -600,6 +813,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const cerrarNomina = async (n) => {
     if(!window.confirm(`¿Cerrar "${n.concepto}"? Ya no se podrán cargar ni editar trabajadores en este pago.`)) return;
     try{ await updateDoc(getDocRef('rrhh_nominas',n.id),{estado:'cerrada'}); if(nominaActiva?.id===n.id) setNominaActiva(v=>({...v,estado:'cerrada'})); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  // En un pago abierto: marcar/desmarcar si se descuenta HCM o Bolsa de alimentos automáticamente.
+  const cambiarFlagNomina = async (campo, valor) => {
+    if(!nominaActiva || nominaActiva.estado!=='abierta') return;
+    try{ await updateDoc(getDocRef('rrhh_nominas',nominaActiva.id),{[campo]:valor}); setNominaActiva(v=>v?({...v,[campo]:valor}):v); }
     catch(e){ alert('Error: '+e.message); }
   };
   const eliminarNomina = async (n) => {
@@ -776,6 +995,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     return v==null?0:v;
   };
   const cuentaDeConcepto = (c, centroCostoId) => c.cuentasPorCentro?.[centroCostoId] || null;
+  // Detalles de este trabajador en OTROS pagos del mismo mes (para avisar de cuotas de HCM o bolsa repetidas).
+  const detallesMesDe = (trabajadorId) => nominaDetalles.filter(d=>d.trabajadorId===trabajadorId && d.nominaId!==nominaActiva?.id && (nominas.find(n=>n.id===d.nominaId)?.mes)===nominaActiva?.mes);
   const abrirCargarTrabajador = (trabajador) => {
     // Predeterminados: tomados del catálogo real de Conceptos (Recursos Humanos → Conceptos), el
     // mismo con el que se arma la nómina — no una lista aparte.
@@ -784,7 +1005,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // pagan al trabajador). Patronal y Resultado quedan fuera — son costo de la empresa o totales
     // calculados, no líneas que se agreguen sueltas a un recibo.
     const asignacionesCfg = conceptosActivos.filter(c=>['A','V','L'].includes(c.tipo));
-    const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c));
+    // HCM y Bolsa de alimentos se calculan solos (pestaña Beneficios) para quien los tiene marcados en la ficha:
+    // su concepto no sale como fila manual para no duplicarlo. Lo guardado a mano antes se conserva (benConstruirLineas).
+    // Tampoco sale como fila manual el concepto de una línea automática que ya está guardada en este pago.
+    const _confBen = benMerge(configBeneficios);
+    const _detBenGuardado = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
+    const codigosAutoBen = [
+      (_confBen.hcm.activo!==false && trabajador.hcmActivo===true) ? (_confBen.hcm.codigoConcepto||'24000') : null,
+      (_confBen.bolsa.activo!==false && (parseInt(trabajador.bolsasAlimentos,10)||0)>0) ? (_confBen.bolsa.codigoConcepto||'22000') : null,
+      ...((_detBenGuardado?.deducciones||[]).filter(d=>d.esBeneficio).map(d=>d.codigo)),
+    ].filter(Boolean);
+    const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c) && !codigosAutoBen.includes(c.codigo));
     // Si el trabajador ya tiene un detalle guardado en esta nómina (lo estamos re-abriendo, p.ej. con
     // Anterior/Siguiente), recargamos sus montos ya guardados en vez de empezar de cero.
     const detalleExistente = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
@@ -811,7 +1042,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const tieneFormula = esConceptoCalculable(c);
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
-      const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal);
+      const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal && !d.esBeneficio);
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
       return {concepto:c.nombre, codigo:c.codigo, incluida:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
@@ -828,10 +1059,27 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       if(legalesGuardadas && !guardada) return {...fresca, incluida:false}; // la había quitado
       return fresca; // recalculada sola, sin editar a mano
     });
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
+    const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
+  // Beneficios automáticos (HCM / Bolsa de alimentos) del trabajador abierto
+  const toggleBeneficio = (idx) => setCargarTrabModal(m=>({...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
+  const actualizarMontoBeneficio = (idx, montoBsInput) => setCargarTrabModal(m=>{
+    const tasa = Number(nominaActiva?.tasa||0);
+    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benEditarMontoBs(d, montoBsInput, tasa):d)};
+  });
+  const actualizarCuotasHCM = (idx, valor) => setCargarTrabModal(m=>{
+    const tasa = Number(nominaActiva?.tasa||0);
+    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benAplicarCuotas(d, valor, tasa):d)};
+  });
+  const recalcularBeneficiosAhora = () => setCargarTrabModal(m=>{
+    if(!m) return m;
+    const frescas = benConstruirLineas({trabajador:m.trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente:null, detallesMes:detallesMesDe(m.trabajador.id)});
+    const previas = m.deduccionesBeneficios||[];
+    return {...m, deduccionesBeneficios:frescas.map(f=>{ const p = previas.find(x=>x.tipoBeneficio===f.tipoBeneficio); return p ? {...f, incluida:p.incluida} : f; })};
+  });
   // Los montos manuales (sin fórmula — Diferencia de Sueldo, y cualquier otro que se agregue a
   // mano) se escriben en Bs., que es como naturalmente se conocen esos montos — el USD se calcula
   // solo dividiendo entre la tasa de la nómina.
@@ -891,8 +1139,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // editado o quitado) — no se vuelven a calcular de cero aquí.
     const deduccionesLegales = (cargarTrabModal.deduccionesLegales||[]).filter(d=>d.incluida).map(({incluida,...d})=>d);
     const deduccionesManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).map(({incluida,...d})=>({...d, esLegal:false}));
+    // HCM / Bolsa automáticos: se guardan como una deducción más (sin los campos que son solo de pantalla)
+    const deduccionesBen = (cargarTrabModal.deduccionesBeneficios||[]).filter(d=>d.incluida).map(({incluida,aviso,previosMes,montoBsTexto,...d})=>d);
+    const totalPatronalBenUSD = deduccionesBen.reduce((s,d)=>s+(d.montoPatronalUSD||0),0); // aporte de la empresa en HCM (aparte de las cargas sociales)
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
-    const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual].reduce((s,d)=>s+d.montoUSD,0);
+    const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual,...deduccionesBen].reduce((s,d)=>s+d.montoUSD,0);
     const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
     const {desde:periodoDesde, hasta:periodoHasta, esQ2} = periodoQuincena(nominaActiva);
     const mesM = String(nominaActiva.mes||'').split('-')[1], añoM = String(nominaActiva.mes||'').split('-')[0];
@@ -911,9 +1162,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       batchRecibo.set(getDocRef('rrhh_nomina_detalles',key),{
         nominaId:nominaActiva.id, trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula,
         centroCostoId:t.centroCostoId, departamentoId:t.departamentoId,
-        asignaciones, deducciones:[...deduccionesLegales,...deduccionesManual],
+        // Se quitan los campos undefined: Firestore los rechaza (pasaba al volver a guardar un trabajador ya cargado y re-abierto)
+        asignaciones:asignaciones.map(benSinUndefined), deducciones:[...deduccionesLegales,...deduccionesManual,...deduccionesBen].map(benSinUndefined),
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
         totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
+        totalPatronalBenUSD:parseFloat(totalPatronalBenUSD.toFixed(2)), totalPatronalBenBs:parseFloat((totalPatronalBenUSD*tasa).toFixed(2)),
         netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
         tasa, nroRecibo, periodoDesde, periodoHasta, novedades:cargarTrabModal.novedadesValores||{}, updatedAt:Date.now(),
       },{merge:true});
@@ -979,7 +1232,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoUSD);
         if(ded.montoPatronalUSD>0){
           addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoPatronalUSD);
-          totalPatronalDepto += ded.montoPatronalUSD;
+          if(ded.esBeneficio){
+            // El aporte de la empresa en HCM va a su propia cuenta de gasto (pestaña Beneficios), no a Cargas Sociales
+            addCuenta(ded.codigoCuentaPatronal||'', ded.nombreCuentaPatronal||('Gasto '+ded.concepto+' (empresa) (⚠️ sin cuenta configurada)'), 'debe', ded.montoPatronalUSD);
+          } else {
+            totalPatronalDepto += ded.montoPatronalUSD;
+          }
         }
       });
       addCuenta('', 'Nómina por Pagar (Banco)', 'haber', d.netoUSD);
@@ -1179,9 +1437,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
           ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
           ${box('Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]])}
-          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];}))}
+          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];}))}
           ${box('Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]])}
-          ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
+          ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['HCM (titular)',t.hcmActivo===true?('Sí'+(t.hcmDesde?' desde '+contDd(t.hcmDesde):'')):'No'],['Bolsas de alimentos',t.bolsasAlimentos||0],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
         </div>
         <div class="grid3">
           ${box('Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]])}
@@ -1247,6 +1505,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               {id:'elaboracion', label:'Elaboración de Nómina', icon:<Calculator size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null, perm:'rrhh_nomina'},
               {id:'nomina', label:'Reporte de Nómina', icon:<DollarSign size={13}/>, perm:'rrhh_nomina'},
               {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>, perm:'rrhh_parafiscales'},
+              {id:'beneficios', label:'Beneficios', icon:<Award size={13}/>, perm:'rrhh_beneficios'},
               {id:'conceptos', label:'Conceptos', icon:<Calculator size={13}/>, badge:conceptos.length||null, perm:'rrhh_conceptos'},
               {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null, perm:'rrhh_trabajadores'},
             ].filter(t=>permRRHH(t.perm));
@@ -1548,6 +1807,137 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         </div>
       </div>
       )}
+
+      {rhTab==='beneficios' && (()=>{
+        const cfgH = configBeneficios.hcm, cfgB = configBeneficios.bolsa;
+        const setH = (p)=>setConfigBeneficios(c=>({...c,hcm:{...c.hcm,...p}}));
+        const setB = (p)=>setConfigBeneficios(c=>({...c,bolsa:{...c.bolsa,...p}}));
+        const inpCls = "w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right";
+        const lblCls = "text-[9px] font-black text-gray-500 uppercase block mb-1";
+        const pctEmp = Math.max(0, benR2(100 - benNum(cfgH.pctTrabajador)));
+        const subsidioU = benR2(benNum(cfgB.costoBolsa) - benNum(cfgB.descuentoBolsa));
+        // Selector de cuenta del Plan de Cuentas (se llama como función, no como componente, para no perder el foco al escribir)
+        const selectorCuenta = (clave, etiqueta, codigo, nombre, alElegir, alQuitar) => {
+          const q = busqCuentaBen[clave]||'';
+          const coincidencias = q ? planCuentasRH.filter(c=>(c.codigo||'').includes(q)||(c.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,15) : [];
+          return (
+            <div>
+              <label className={lblCls}>{etiqueta}</label>
+              {codigo ? (
+                <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-2">
+                  <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{codigo}</span>{nombre}</span>
+                  <button onClick={alQuitar} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+                </div>
+              ) : (
+                <>
+                  <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  {q && (
+                    <div className="border-2 border-gray-100 rounded-xl max-h-36 overflow-y-auto mt-1.5">
+                      {coincidencias.map(c=>(
+                        <div key={c.id} onClick={()=>{alElegir(c);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
+                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
+                        </div>
+                      ))}
+                      {coincidencias.length===0 && <div className="px-3 py-3 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        };
+        // Resumen del mes con los trabajadores registrados en la app
+        const activosB = trabajadores.filter(t=>t.estado!=='Egresado');
+        const filasHcm = activosB.map(t=>({t, c:hcmCalcularMes(t, benMesVer, configBeneficios)})).filter(x=>x.c.personas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
+        const filasBolsa = activosB.map(t=>({t, b:bolsaCalcular(t, configBeneficios)})).filter(x=>x.b.bolsas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
+        const sumF = (arr, f)=>benR2(arr.reduce((s,x)=>s+f(x),0));
+        return (
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-white rounded-2xl border border-gray-200 p-5">
+              <div className="flex items-center justify-between mb-1">
+                <p className="font-black text-gray-800">HCM — Medicina prepagada</p>
+                <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgH.activo!==false} onChange={e=>setH({activo:e.target.checked})}/> Automático en nómina</label>
+              </div>
+              <p className="text-[10px] text-gray-400 mb-4">Aporte mensual = % del trabajador × (prima por persona × personas cubiertas: titular + cargas con HCM). Se descuenta en las cuotas (pagos) del mes.</p>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div><label className={lblCls}>Prima mensual por persona ($)</label><input type="number" step="0.01" min="0" value={cfgH.primaPersona} onChange={e=>setH({primaPersona:e.target.value})} className={inpCls}/></div>
+                <div><label className={lblCls}>% que paga el trabajador</label><input type="number" step="0.1" min="0" max="100" value={cfgH.pctTrabajador} onChange={e=>setH({pctTrabajador:e.target.value})} className={inpCls}/><p className="text-[9px] text-gray-400 mt-1 text-right">Empresa: {formatNum(pctEmp)} %</p></div>
+                <div><label className={lblCls}>Cuotas (pagos) por mes</label><input type="number" step="1" min="1" value={cfgH.cuotasPorMes} onChange={e=>setH({cuotasPorMes:e.target.value})} className={inpCls}/></div>
+                <div><label className={lblCls}>Edad máxima de hijos (años)</label><input type="number" step="1" min="1" value={cfgH.edadMaxHijos} onChange={e=>setH({edadMaxHijos:e.target.value})} className={inpCls}/></div>
+              </div>
+              <div className="mb-3"><label className={lblCls}>Código del concepto de nómina</label><input value={cfgH.codigoConcepto} onChange={e=>setH({codigoConcepto:e.target.value})} placeholder="24000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+              <div className="space-y-3 mb-4">
+                {selectorCuenta('hcmPasivo','Cuenta de pasivo (HCM por pagar: lo descontado + aporte de la empresa)',cfgH.codigoPasivo,cfgH.nombrePasivo,(c)=>setH({codigoPasivo:c.codigo,nombrePasivo:c.nombre}),()=>setH({codigoPasivo:'',nombrePasivo:''}))}
+                {selectorCuenta('hcmGasto','Cuenta de gasto (aporte de la empresa)',cfgH.codigoGasto,cfgH.nombreGasto,(c)=>setH({codigoGasto:c.codigo,nombreGasto:c.nombre}),()=>setH({codigoGasto:'',nombreGasto:''}))}
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3">
+                <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Así queda con esta configuración</p>
+                <table className="w-full text-[11px]">
+                  <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Personas</th><th className="text-right font-black">Prima/mes</th><th className="text-right font-black">Trabajador/mes</th><th className="text-right font-black">Empresa/mes</th><th className="text-right font-black">Trabajador/pago</th></tr></thead>
+                  <tbody>
+                    {[1,2,3,4,5,6,7].map(n=>{
+                      const prima = benR2(n*benNum(cfgH.primaPersona));
+                      const tr = benR2(prima*Math.min(100,Math.max(0,benNum(cfgH.pctTrabajador)))/100);
+                      const cm = parseInt(cfgH.cuotasPorMes,10)>0 ? parseInt(cfgH.cuotasPorMes,10) : 4;
+                      return (<tr key={n} className="border-t border-gray-100"><td className="py-1 font-bold">{n}</td><td className="py-1 text-right font-mono">${formatNum(prima)}</td><td className="py-1 text-right font-mono">${formatNum(tr)}</td><td className="py-1 text-right font-mono">${formatNum(prima-tr)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(tr/cm)}</td></tr>);
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 p-5">
+              <div className="flex items-center justify-between mb-1">
+                <p className="font-black text-gray-800">Bolsa de alimentos</p>
+                <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgB.activo!==false} onChange={e=>setB({activo:e.target.checked})}/> Automático en nómina</label>
+              </div>
+              <p className="text-[10px] text-gray-400 mb-4">Descuento al trabajador = bolsas × descuento por bolsa. La diferencia con el costo es el subsidio de la empresa (informativo).</p>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div><label className={lblCls}>Costo por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.costoBolsa} onChange={e=>setB({costoBolsa:e.target.value})} className={inpCls}/></div>
+                <div><label className={lblCls}>Descuento al trabajador por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.descuentoBolsa} onChange={e=>setB({descuentoBolsa:e.target.value})} className={inpCls}/></div>
+              </div>
+              <p className="text-[10px] font-bold text-cyan-700 bg-cyan-50 rounded-lg px-2.5 py-1.5 mb-3">Subsidio de la empresa por bolsa: ${formatNum(subsidioU)}</p>
+              <div className="mb-3"><label className={lblCls}>Código del concepto de nómina</label><input value={cfgB.codigoConcepto} onChange={e=>setB({codigoConcepto:e.target.value})} placeholder="22000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+              {selectorCuenta('bolsaCuenta','Cuenta contable del descuento (crédito)',cfgB.codigoCuenta,cfgB.nombreCuenta,(c)=>setB({codigoCuenta:c.codigo,nombreCuenta:c.nombre}),()=>setB({codigoCuenta:'',nombreCuenta:''}))}
+            </div>
+          </div>
+
+          <button onClick={guardarConfigBeneficios} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-black text-gray-800">Resumen del mes con los trabajadores registrados</p>
+              <input type="month" value={benMesVer} onChange={e=>setBenMesVer(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <p className="text-[10px] font-black text-gray-400 uppercase mb-2">HCM — {filasHcm.length} titular(es) · {sumF(filasHcm,x=>x.c.personas)} persona(s)</p>
+                <table className="w-full text-[11px]">
+                  <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Trabajador</th><th className="text-right font-black">Pers.</th><th className="text-right font-black">Trabajador/mes</th><th className="text-right font-black">Empresa/mes</th><th className="text-right font-black">Trab./pago</th></tr></thead>
+                  <tbody>
+                    {filasHcm.map(({t,c})=>(<tr key={t.id} className="border-t border-gray-100"><td className="py-1 font-bold">{t.nombre}</td><td className="py-1 text-right">{c.personas}</td><td className="py-1 text-right font-mono">${formatNum(c.aporteTrab)}</td><td className="py-1 text-right font-mono">${formatNum(c.aporteEmp)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(c.porPagoTrab)}</td></tr>))}
+                    {filasHcm.length===0 && <tr><td colSpan={5} className="py-4 text-center text-gray-400">Ningún trabajador con HCM vigente en ese mes. Márcalo en la ficha del trabajador.</td></tr>}
+                  </tbody>
+                  {filasHcm.length>0 && <tfoot><tr className="border-t-2 border-gray-200 font-black"><td className="py-1">Total</td><td className="py-1 text-right">{sumF(filasHcm,x=>x.c.personas)}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasHcm,x=>x.c.aporteTrab))}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasHcm,x=>x.c.aporteEmp))}</td><td className="py-1 text-right font-mono text-cyan-600">${formatNum(sumF(filasHcm,x=>x.c.porPagoTrab))}</td></tr></tfoot>}
+                </table>
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-gray-400 uppercase mb-2">Bolsas de alimentos — {filasBolsa.length} trabajador(es) · {sumF(filasBolsa,x=>x.b.bolsas)} bolsa(s)</p>
+                <table className="w-full text-[11px]">
+                  <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Trabajador</th><th className="text-right font-black">Bolsas</th><th className="text-right font-black">Costo</th><th className="text-right font-black">Descuento</th><th className="text-right font-black">Subsidio</th></tr></thead>
+                  <tbody>
+                    {filasBolsa.map(({t,b})=>(<tr key={t.id} className="border-t border-gray-100"><td className="py-1 font-bold">{t.nombre}</td><td className="py-1 text-right">{b.bolsas}</td><td className="py-1 text-right font-mono">${formatNum(b.costo)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(b.descuento)}</td><td className="py-1 text-right font-mono">${formatNum(b.subsidio)}</td></tr>))}
+                    {filasBolsa.length===0 && <tr><td colSpan={5} className="py-4 text-center text-gray-400">Ningún trabajador con bolsas. Indica la cantidad en la ficha del trabajador.</td></tr>}
+                  </tbody>
+                  {filasBolsa.length>0 && <tfoot><tr className="border-t-2 border-gray-200 font-black"><td className="py-1">Total</td><td className="py-1 text-right">{sumF(filasBolsa,x=>x.b.bolsas)}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasBolsa,x=>x.b.costo))}</td><td className="py-1 text-right font-mono text-cyan-600">${formatNum(sumF(filasBolsa,x=>x.b.descuento))}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasBolsa,x=>x.b.subsidio))}</td></tr></tfoot>}
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {rhTab==='conceptos' && (
       <div className="p-6">
@@ -1927,6 +2317,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <input type="number" step="0.01" value={nominaForm.tasa} onChange={e=>setNominaForm(f=>({...f,tasa:e.target.value}))} placeholder="Tasa de cambio a usar" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
               </div>
               <p className="text-[10px] text-gray-400 mb-3">Esta tasa la fijas tú — igual para todos los trabajadores de este pago, no se vuelve a pedir por cada uno.</p>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3">
+                <span className="text-[10px] font-black text-gray-400 uppercase">Descontar automáticamente:</span>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaHCM===true} onChange={e=>setNominaForm(f=>({...f,aplicaHCM:e.target.checked}))}/> HCM</label>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaBolsa===true} onChange={e=>setNominaForm(f=>({...f,aplicaBolsa:e.target.checked}))}/> Bolsa de alimentos</label>
+              </div>
               <button onClick={crearNomina} disabled={busyNomina} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Creando...':'Comenzar a Cargar Trabajadores →'}</button>
             </div>
 
@@ -1977,6 +2372,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
               <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · Tasa {nominaActiva.tasa}</p>
             </div>
+
+            {nominaActiva.estado==='abierta' && (
+              <div className="bg-white rounded-2xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+                <span className="text-[10px] font-black text-gray-400 uppercase">Descuentos automáticos en este pago</span>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaActiva.aplicaHCM===true} onChange={e=>cambiarFlagNomina('aplicaHCM',e.target.checked)}/> HCM</label>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaActiva.aplicaBolsa===true} onChange={e=>cambiarFlagNomina('aplicaBolsa',e.target.checked)}/> Bolsa de alimentos</label>
+                <span className="text-[10px] text-gray-400">Rige para los trabajadores que cargues desde ahora; los ya guardados no cambian (usa «Recalcular HCM/Bolsa» dentro del trabajador).</span>
+              </div>
+            )}
 
             {nominaActiva.estado==='abierta' && trabajadoresPendientes.length>0 && (()=>{
                 const coincidenciasTrab = cargarTrabBusq.trim() ? trabajadoresPendientes.filter(t=>(t.nombre||'').toUpperCase().includes(cargarTrabBusq.toUpperCase())||(t.cedula||'').includes(cargarTrabBusq)).slice(0,8) : [];
@@ -2066,12 +2470,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           const asigDisponibles = cargarTrabModal.asignaciones.map((a,i)=>({...a,_idx:i,_tipo:'asig'})).filter(a=>!a.incluida);
           const dedIncluidas = cargarTrabModal.deduccionesManual.map((d,i)=>({...d,_idx:i,_tipo:'ded'})).filter(d=>d.incluida);
           const dedDisponibles = cargarTrabModal.deduccionesManual.map((d,i)=>({...d,_idx:i,_tipo:'ded'})).filter(d=>!d.incluida);
+          const benTodos = (cargarTrabModal.deduccionesBeneficios||[]).map((d,i)=>({...d,_idx:i,_tipo:'ben'}));
+          const benIncluidas = benTodos.filter(d=>d.incluida);
+          const benDisponibles = benTodos.filter(d=>!d.incluida);
           const totalAsig = asigIncluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
           const totalDedManual = dedIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
           const totalDedLegal = legalesIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
-          const totalDed = totalDedManual+totalDedLegal;
+          const totalDedBen = benIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
+          const totalDed = totalDedManual+totalDedLegal+totalDedBen;
           const neto = totalAsig - totalDed;
-          const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length;
+          const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length + benIncluidas.length;
           // Navegación Anterior/Siguiente entre los trabajadores de esta nómina (mismo orden que la lista)
           const listaNav = trabajadores.filter(w=>w.estado!=='Egresado' && w.departamentoId).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
           const idxNav = listaNav.findIndex(w=>w.id===t.id);
@@ -2084,6 +2492,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
             const deducciones = [
               ...legalesIncluidas.map(({_idx,_tipo,incluida,...d})=>d),
+              ...benIncluidas.map(({_idx,_tipo,incluida,aviso,previosMes,montoBsTexto,...d})=>d),
               ...dedIncluidas.map(({_idx,_tipo,incluida,...d})=>({...d, montoBs:parseFloat((d.montoUSD*tasa).toFixed(2)), esLegal:false})),
             ];
             return {trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula, departamentoId:t.departamentoId, asignaciones, deducciones, nroRecibo:cargarTrabModal._nroReciboExistente};
@@ -2160,6 +2569,31 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionLegal(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
                   ))}
+                  {benIncluidas.map(d=>(
+                    <tr key={'ben'+d._idx} className="border-t border-gray-100 bg-cyan-50/40">
+                      <td className="py-1.5 px-3 font-bold text-cyan-800">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{d.concepto}</span>
+                          <span className="text-[9px] font-normal text-cyan-600">(automático)</span>
+                          {d.tipoBeneficio==='hcm' && d.personas>0 && (
+                            <>
+                              <span className="text-[10px] text-gray-500 font-normal">{d.personas} persona(s) · cuotas en este pago:</span>
+                              <input type="number" min="1" step="1" value={d.cuotas} onChange={e=>actualizarCuotasHCM(d._idx,e.target.value)} className="w-12 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                            </>
+                          )}
+                          {d.tipoBeneficio==='bolsa' && <span className="text-[10px] text-gray-500 font-normal">{d.bolsas} bolsa(s) × ${formatNum(d.descuentoUnit)}</span>}
+                        </div>
+                        {d.tipoBeneficio==='hcm' && d.personas>0 && <div className="text-[9px] font-normal text-gray-400">Aporte del mes ${formatNum(d.aporteMesTrab)} ÷ {d.cuotasMes} cuotas · la empresa aporta ${formatNum(d.montoPatronalUSD)} en este pago · cuotas en otros pagos del mes: {d.previosMes}</div>}
+                        {d.aviso && <div className="text-[9px] font-black text-amber-600">⚠ {d.aviso}</div>}
+                      </td>
+                      <td className="py-1.5 px-3"></td>
+                      <td className="py-1.5 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={d.montoBsTexto??String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoBeneficio(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></div>
+                        <div className="text-[9px] text-gray-400 font-normal">≈ ${formatNum(d.montoUSD)}</div>
+                      </td>
+                      <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleBeneficio(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
+                    </tr>
+                  ))}
                   {dedIncluidas.map(d=>(
                     <tr key={'d'+d._idx} className="border-t border-gray-100">
                       <td className="py-1.5 px-3 font-bold">
@@ -2182,12 +2616,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   {asigIncluidas.length+dedIncluidas.length===0 && <tr><td colSpan={4} className="py-8 text-center text-gray-400">Sin conceptos incluidos — agrega uno abajo.</td></tr>}
                 </tbody>
               </table>
-              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0) && (()=>{
-                const todosDisponibles = [...asigDisponibles.map(a=>({...a,_grupo:'asig'})), ...legalesDisponibles.map(d=>({...d,_grupo:'leg'})), ...dedDisponibles.map(d=>({...d,_grupo:'ded'}))];
+              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0 || benDisponibles.length>0 || benIncluidas.length>0) && (()=>{
+                const todosDisponibles = [...asigDisponibles.map(a=>({...a,_grupo:'asig'})), ...legalesDisponibles.map(d=>({...d,_grupo:'leg'})), ...dedDisponibles.map(d=>({...d,_grupo:'ded'})), ...benDisponibles.map(d=>({...d,_grupo:'ben'}))];
                 const coincidencias = agregarConceptoBusq.trim() ? todosDisponibles.filter(c=>c.concepto.toUpperCase().includes(agregarConceptoBusq.toUpperCase())).slice(0,8) : [];
                 const agregarYLimpiar = (c) => {
                   if(c._grupo==='asig') toggleAsignacion(c._idx);
                   else if(c._grupo==='leg') toggleDeduccionLegal(c._idx);
+                  else if(c._grupo==='ben') toggleBeneficio(c._idx);
                   else toggleDeduccionManual(c._idx);
                   setAgregarConceptoBusq('');
                 };
@@ -2198,7 +2633,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400"/>
                       <input value={agregarConceptoBusq} onChange={e=>setAgregarConceptoBusq(e.target.value)} placeholder={`Buscar concepto para agregar... (${todosDisponibles.length} disponibles)`} className="w-full pl-8 pr-3 py-1.5 border-2 border-gray-200 rounded-lg text-xs font-bold outline-none focus:border-cyan-500"/>
                     </div>
-                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>
+                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>{benTodos.length>0 && <button onClick={recalcularBeneficiosAhora} title="Vuelve a calcular HCM y Bolsa de alimentos desde cero según la ficha y la configuración" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex-shrink-0"><RefreshCw size={11}/>Recalcular HCM/Bolsa</button>}
                   </div>
                   {agregarConceptoBusq.trim() && (
                     <div className="mt-1.5 border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm">
@@ -2486,6 +2921,26 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
 
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">HCM y Bolsa de alimentos</h3>
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input type="checkbox" checked={f.hcmActivo===true} onChange={e=>set({hcmActivo:e.target.checked})}/>
+                  <span className="text-xs font-bold text-gray-700">El trabajador (titular) está en el plan HCM</span>
+                </label>
+                {f.hcmActivo===true && (
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Ingreso al plan</label><input type="date" value={f.hcmDesde||''} onChange={e=>set({hcmDesde:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Egreso del plan (si aplica)</label><input type="date" value={f.hcmHasta||''} onChange={e=>set({hcmHasta:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  </div>
+                )}
+                {f.hcmActivo===true && (()=>{ const r=hcmCalcularMes(f, benMesActual(), configBeneficios); return (
+                  <p className="text-[10px] font-bold text-cyan-700 bg-cyan-50 rounded-lg px-2.5 py-1.5 mb-2">Este mes: {r.personas} persona(s) cubierta(s) · aporte del trabajador ${formatNum(r.aporteTrab)}/mes (${formatNum(r.porPagoTrab)} por pago) · aporte de la empresa ${formatNum(r.aporteEmp)}/mes. Las cargas se marcan abajo, en Cargas Familiares.</p>
+                ); })()}
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1 mt-1">Bolsas de alimentos (cantidad)</label>
+                <input type="number" min="0" step="1" value={f.bolsasAlimentos} onChange={e=>set({bolsasAlimentos:e.target.value})} placeholder="0" className="w-32 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                {(parseInt(f.bolsasAlimentos,10)||0)>0 && <p className="text-[10px] font-bold text-cyan-700 mt-1.5">Descuento: ${formatNum(bolsaCalcular(f, configBeneficios).descuento)} por vez ({parseInt(f.bolsasAlimentos,10)} × ${formatNum(benNum(configBeneficios.bolsa.descuentoBolsa))})</p>}
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Tallas (Uniforme)</h3>
                 <div className="grid grid-cols-3 gap-2">
                   <input value={f.tallaCamisa} onChange={e=>set({tallaCamisa:e.target.value})} placeholder="Camisa" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
@@ -2514,10 +2969,25 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="space-y-1 mb-2">
                   {f.cargasFamiliares.map((cg,i)=>{
                     const edadCg=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);
+                    const alerta19 = cg.hcm===true && !cg.hcmHasta && /hijo/i.test(cg.parentesco||'') && edadCg!==null && edadCg>=(benNum(configBeneficios.hcm.edadMaxHijos)>0?benNum(configBeneficios.hcm.edadMaxHijos):19);
                     return (
-                    <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
-                      <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{edadCg!==null?' · '+edadCg+' años':''}</span></span>
-                      <button onClick={()=>quitarCarga(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                    <div key={i} className="bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{edadCg!==null?' · '+edadCg+' años':''}{cg.cedula?' · C.I. '+cg.cedula:''}</span></span>
+                        <button onClick={()=>quitarCarga(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <label className="flex items-center gap-1 text-[10px] font-black text-gray-600 cursor-pointer"><input type="checkbox" checked={cg.hcm===true} onChange={e=>actualizarCarga(i,{hcm:e.target.checked})}/> HCM</label>
+                        {cg.hcm===true && (
+                          <>
+                            <span className="text-[9px] text-gray-400">desde</span>
+                            <input type="date" value={cg.hcmDesde||''} onChange={e=>actualizarCarga(i,{hcmDesde:e.target.value})} className="border border-gray-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"/>
+                            <span className="text-[9px] text-gray-400">hasta</span>
+                            <input type="date" value={cg.hcmHasta||''} onChange={e=>actualizarCarga(i,{hcmHasta:e.target.value})} className="border border-gray-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"/>
+                          </>
+                        )}
+                        {alerta19 && <span className="text-[9px] font-black text-amber-600">⚠ {edadCg} años: sacar del HCM</span>}
+                      </div>
                     </div>
                   );})}
                 </div>
@@ -2529,6 +2999,14 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     {calcularEdad(nuevaCarga.fechaNacimiento)!==null&&<span className="absolute -bottom-3.5 left-1 text-[8px] font-black text-cyan-600">{calcularEdad(nuevaCarga.fechaNacimiento)} años</span>}
                   </div>
                 </div>
+                <div className="grid grid-cols-4 gap-1.5 mt-5">
+                  <input value={nuevaCarga.cedula} onChange={e=>setNuevaCarga(c=>({...c,cedula:e.target.value}))} placeholder="Cédula" className="col-span-2 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                  <select value={nuevaCarga.sexo} onChange={e=>setNuevaCarga(c=>({...c,sexo:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-1 py-1.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"><option value="">Sexo</option><option value="F">F</option><option value="M">M</option></select>
+                  <label className="flex items-center gap-1 text-[10px] font-black text-gray-600 cursor-pointer"><input type="checkbox" checked={nuevaCarga.hcm===true} onChange={e=>setNuevaCarga(c=>({...c,hcm:e.target.checked}))}/> HCM</label>
+                </div>
+                {nuevaCarga.hcm===true && (
+                  <div className="flex items-center gap-2 mt-1.5"><span className="text-[9px] text-gray-400">Ingreso al plan</span><input type="date" value={nuevaCarga.hcmDesde} onChange={e=>setNuevaCarga(c=>({...c,hcmDesde:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-cyan-500"/></div>
+                )}
                 <button onClick={agregarCarga} className="mt-1.5 w-full bg-gray-100 text-gray-600 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-gray-200">+ Agregar carga</button>
               </div>
 
@@ -2595,9 +3073,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
                   ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
                   ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
-                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];})],
+                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];})],
                   ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
-                  ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
+                  ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['HCM (titular)',t.hcmActivo===true?('Sí'+(t.hcmDesde?' desde '+contDd(t.hcmDesde):'')):'No'],['Bolsas de alimentos',t.bolsasAlimentos||0],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
                   ['Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]]],
                   ...(t.vehiculoAsignado?[['Vehículo Asignado',[['Marca/Modelo',`${t.vehiculoMarca||''} ${t.vehiculoModelo||''}`],['Año',t.vehiculoAnio],['Color',t.vehiculoColor]]]]:[]),
                   ['Vacaciones',[['Acumulados',t.vacacionesAcumuladas||0],['Disfrutados',t.vacacionesDisfrutadas||0],['Pendientes',(Number(t.vacacionesAcumuladas||0)-Number(t.vacacionesDisfrutadas||0))]]],
@@ -16083,6 +16561,7 @@ const SYSTEM_MODULES = [
       { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Cuentas)' },
       { id: 'rrhh_nomina',        label: 'Registro de Nómina' },
       { id: 'rrhh_parafiscales',  label: 'Parafiscales (IVSS, RPE, FAOV, INCES)' },
+      { id: 'rrhh_beneficios',    label: 'Beneficios (HCM, Bolsa de alimentos)' },
       { id: 'rrhh_conceptos',     label: 'Conceptos de Nómina' },
       { id: 'rrhh_trabajadores',  label: 'Trabajadores (Fichas)' },
     ]
@@ -16681,7 +17160,7 @@ const ccLoadExcelJS = () => {
     const s = document.createElement('script');
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
     s.onload = () => resolve(window.ExcelJS);
-    s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel (revisa tu conexión).'));
+    s.onerror = () => { _ccExcelJSPromise = null; s.remove(); reject(new Error('No se pudo cargar la librería de Excel (revisa tu conexión).')); }; // permite reintentar sin recargar la página
     document.head.appendChild(s);
   });
   return _ccExcelJSPromise;
@@ -16764,6 +17243,152 @@ const ccExportXLSX = async (titulo, subtitulo, tree, currency, totalBase, getDet
   document.body.appendChild(link); link.click(); document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
+// ===== Exporte a Excel del Historial de Entradas / Salidas de Inventario (ExcelJS) =====
+// Recibe SOLO las filas que se ven en pantalla (ya filtradas por producto, fechas y tipo), en el mismo orden:
+// lo que se ve es lo que baja. Misma linea visual del Libro de Ventas: membrete, franja naranja, encabezado con
+// el color de la pantalla (verde = entradas, rojo = salidas), filtros de Excel, panel congelado y fila de totales.
+const invExportMovimientosXLSX = async ({ rows, isEntradas, filtros, empresa, rif, direccion }) => {
+  const EJ = await ccLoadExcelJS();
+  const f = filtros || {};
+  const NCOL = 13;
+  const HR = 7; // fila del encabezado de columnas
+  const ACC = isEntradas ? 'FF15803D' : 'FFB91C1C';
+  const INK = 'FF0F172A', ORANGE = 'FFF97316', WHITE = 'FFFFFFFF', GRID = 'FFD1D5DB', SLATE = 'FFF1F5F9', ZEBRA = 'FFF8FAFC', MUTED = 'FF9CA3AF';
+  const NF_QTY = '#,##0.00##';
+  const NF_USD = '"$"#,##0.00##';
+  const NF_TOT = '"$"#,##0.00';
+  const fill = a => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: a } });
+  const thin = { style: 'thin', color: { argb: GRID } };
+  const bd = { top: thin, left: thin, bottom: thin, right: thin };
+  const n0 = v => { const n = parseNum(v); return Number.isFinite(n) ? n : 0; };
+  const fmtF = d => { const p = String(d || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(d || ''); };
+  const hoy = fmtF(getTodayDate());
+  const idCod = raw => String(raw || '').split('___')[0].split('__')[0];
+  const idAlm = raw => { const r = String(raw || ''); const p = r.includes('___') ? r.split('___')[1] : (r.includes('__') ? r.split('__')[1] : ''); return String(p || '').replace(/-/g, ' '); };
+  const fechaCell = s => { const p = String(s || '').slice(0, 10).split('-').map(Number); return (p.length === 3 && p[0] > 1900 && p[1] >= 1 && p[1] <= 12 && p[2] >= 1 && p[2] <= 31) ? new Date(Date.UTC(p[0], p[1] - 1, p[2])) : (s || null); };
+
+  const lista = rows || [];
+  if (!lista.length) throw new Error('No hay registros para exportar.');
+  const ok = lista.filter(m => m.status !== 'ANULADO');
+  const nAn = lista.length - ok.length;
+  const totQty = ok.reduce((s, m) => s + n0(m.qty), 0);
+  const totVal = ok.reduce((s, m) => s + n0(m.totalValue), 0);
+  const hayF = !!(f.producto || f.desde || f.hasta || f.tipo);
+  const tipoTxt = f.tipo ? (f.tipoLabel || f.tipo) : 'TODOS';
+  const prodTxt = f.producto ? `"${f.producto}"` : 'TODOS';
+  const periodoTxt = (f.desde && f.hasta) ? `${fmtF(f.desde)} AL ${fmtF(f.hasta)}` : f.desde ? `DESDE ${fmtF(f.desde)}` : f.hasta ? `HASTA ${fmtF(f.hasta)}` : 'TODO EL HISTORIAL';
+  const titulo = `HISTORIAL DE ${isEntradas ? 'ENTRADAS' : 'SALIDAS'} DE INVENTARIO`;
+  const nombreArchivo = `Historial_${isEntradas ? 'Entradas' : 'Salidas'}${hayF ? '_filtrado' : ''}_${getTodayDate()}.xlsx`;
+
+  const wb = new EJ.Workbook();
+  wb.creator = String(empresa || ''); wb.created = new Date();
+  const ws = wb.addWorksheet(isEntradas ? 'Entradas' : 'Salidas', {
+    properties: { tabColor: { argb: ACC } },
+    views: [{ state: 'frozen', ySplit: HR, showGridLines: false }],
+    pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true,
+      margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: `${HR}:${HR}` },
+    headerFooter: { oddFooter: `&L&8&"Arial,Regular"${isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}&C&8&"Arial,Regular"P\u00e1gina &P de &N&R&8&"Arial,Regular"Generado el ${hoy}` },
+  });
+  [12, 28, 44, 15, 22, 12, 13, 15, 13, 20, 36, 21, 11].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+  // Membrete (filas 1-4): empresa a la izquierda, resumen de filtros en el recuadro de la derecha
+  const put = (r, c1, c2, val, font, al) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = val; cell.font = font; cell.alignment = al || { vertical: 'middle', horizontal: 'left', indent: 1 }; return cell; };
+  put(1, 1, 9, String(empresa || ''), { name: 'Arial', size: 15, bold: true, color: { argb: INK } });
+  put(2, 1, 9, `RIF: ${rif || ''}`, { name: 'Arial', size: 9, color: { argb: 'FF475569' } });
+  put(3, 1, 9, String(direccion || ''), { name: 'Arial', size: 8, color: { argb: 'FF64748B' } });
+  put(4, 1, 9, titulo, { name: 'Arial', size: 17, bold: true, color: { argb: ORANGE } });
+  const boxC = { vertical: 'middle', horizontal: 'center' };
+  put(1, 10, 13, `ALMAC\u00c9N  \u00b7  ${isEntradas ? 'ENTRADAS' : 'SALIDAS'}`, { name: 'Arial', size: 9, bold: true, color: { argb: 'FFEA580C' } }, boxC).fill = fill(SLATE);
+  put(2, 10, 13, `PER\u00cdODO:  ${periodoTxt}`, { name: 'Arial', size: 10, bold: true, color: { argb: INK } }, boxC).fill = fill(SLATE);
+  put(3, 10, 13, `TIPO:  ${tipoTxt}`, { name: 'Arial', size: 10, bold: true, color: { argb: INK } }, boxC).fill = fill(SLATE);
+  put(4, 10, 13, `PRODUCTO:  ${prodTxt}`, { name: 'Arial', size: 9, color: { argb: 'FF475569' } }, boxC).fill = fill(SLATE);
+  [24, 15, 14, 28].forEach((h, i) => { ws.getRow(i + 1).height = h; });
+  // Franja naranja (fila 5) y linea de resumen (fila 6)
+  for (let c = 1; c <= NCOL; c++) ws.getCell(5, c).fill = fill(ORANGE);
+  ws.getRow(5).height = 4;
+  const infoTxt = hayF
+    ? `Mostrando ${lista.length} de ${f.total != null ? f.total : lista.length} registros (filtros aplicados)  \u00b7  Emitido el ${hoy}`
+    : `${lista.length} registros (historial completo)  \u00b7  Emitido el ${hoy}`;
+  put(6, 1, NCOL, infoTxt, { name: 'Arial', size: 9, italic: true, color: { argb: 'FF64748B' } });
+  ws.getRow(6).height = 18;
+
+  // Encabezado de columnas (fila 7)
+  const heads = ['FECHA', 'C\u00d3DIGO', 'DESCRIPCI\u00d3N', 'ALMAC\u00c9N', 'TIPO', 'CANTIDAD', 'COSTO U. ($)', 'TOTAL ($)', 'STOCK NUEVO', 'DOC. REFERENCIA', 'NOTAS', 'USUARIO', 'ESTADO'];
+  heads.forEach((t, i) => {
+    const c = ws.getCell(HR, i + 1);
+    c.value = t;
+    c.font = { name: 'Arial', size: 9, bold: true, color: { argb: WHITE } };
+    c.fill = fill(ACC);
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = { left: { style: 'thin', color: { argb: WHITE } }, right: { style: 'thin', color: { argb: WHITE } }, bottom: { style: 'medium', color: { argb: ORANGE } } };
+  });
+  ws.getRow(HR).height = 30;
+  ws.autoFilter = { from: { row: HR, column: 1 }, to: { row: HR + Math.max(lista.length, 1), column: NCOL } };
+
+  // Datos: mismas filas y mismo orden que la tabla en pantalla (los ANULADOS atenuados, como en pantalla)
+  const FIRST = HR + 1;
+  const ALIGN = { 1: 'center', 2: 'left', 3: 'left', 4: 'center', 5: 'center', 6: 'right', 7: 'right', 8: 'right', 9: 'right', 10: 'left', 11: 'left', 12: 'left', 13: 'center' };
+  lista.forEach((m, i) => {
+    const ri = FIRST + i;
+    const an = m.status === 'ANULADO';
+    const bg = an ? 'FFF3F4F6' : (i % 2 ? ZEBRA : WHITE);
+    const vals = [
+      fechaCell(m.date), idCod(m.itemId), m.itemDesc || '', m.almacen || idAlm(m.itemId), String(m.type || '').replace(/_/g, ' '),
+      n0(m.qty), n0(m.unitCost), n0(m.totalValue), n0(m.newStock),
+      m.docRef || '', m.notes || '', m.user || '', an ? 'ANULADO' : 'VIGENTE',
+    ];
+    vals.forEach((v, ci) => {
+      const col = ci + 1;
+      const c = ws.getCell(ri, col);
+      c.value = (v === '' ? null : v);
+      let color = INK, bold = false;
+      if (col === 2) { color = 'FFEA580C'; bold = true; }
+      if (col === 3 || col === 11) color = 'FF4B5563';
+      if (col === 5) { color = ACC; bold = true; }
+      if (col === 6 || col === 8) bold = true;
+      if (col === 9) { color = 'FF2563EB'; bold = true; }
+      if (col === 13) color = 'FF475569';
+      if (an && col !== 13) color = MUTED;
+      if (an && col === 13) { color = 'FF7C3AED'; bold = true; }
+      c.font = { name: 'Arial', size: 9, bold, color: { argb: color } };
+      c.fill = fill(bg);
+      c.border = bd;
+      c.alignment = { vertical: 'middle', horizontal: ALIGN[col], wrapText: col === 3 || col === 11, indent: (ALIGN[col] === 'left' || ALIGN[col] === 'right') ? 1 : 0 };
+      if (col === 1) c.numFmt = 'dd/mm/yyyy';
+      if (col === 6 || col === 9) c.numFmt = NF_QTY;
+      if (col === 7) c.numFmt = NF_USD;
+      if (col === 8) c.numFmt = NF_TOT;
+    });
+  });
+
+  // Totales (mismo criterio que el pie de la pantalla: los ANULADOS no cuentan)
+  const LAST = FIRST + lista.length - 1;
+  const T = LAST + 1;
+  ws.mergeCells(T, 1, T, 5);
+  for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(T, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'medium', color: { argb: ACC } } }; }
+  const tl = ws.getCell(T, 1);
+  tl.value = `TOTAL  \u2014  ${ok.length} registros${nAn > 0 ? `  (+${nAn} anulado(s), no cuentan)` : ''}`;
+  tl.font = { name: 'Arial', size: 10, bold: true, color: { argb: INK } };
+  tl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+  [[6, 'F', totQty, NF_QTY], [8, 'H', totVal, NF_TOT]].forEach(([c, L, res, nf]) => {
+    const cell = ws.getCell(T, c);
+    cell.value = { formula: `SUMIFS(${L}${FIRST}:${L}${LAST},M${FIRST}:M${LAST},"<>ANULADO")`, result: res };
+    cell.numFmt = nf;
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: INK } };
+    cell.alignment = { horizontal: 'right', vertical: 'middle', indent: 1 };
+  });
+  ws.getRow(T).height = 22;
+  if (nAn > 0) put(T + 2, 1, NCOL, '* Los registros ANULADOS se muestran atenuados y no se suman en los totales.', { name: 'Arial', size: 8, italic: true, color: { argb: 'FF64748B' } });
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nombreArchivo;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+
 const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
@@ -24559,6 +25184,7 @@ function App() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterProduct, setFilterProduct] = useState('');
   const [filterTipoMov, setFilterTipoMov] = useState('TODOS');
+  const [exportandoMov, setExportandoMov] = useState(false); // descarga a Excel del historial de entradas/salidas en curso
   const [editandoMov, setEditandoMov] = useState(null);
   const [osaFilterDate, setOsaFilterDate] = useState('');
   const [osaFilterNum, setOsaFilterNum] = useState('');
@@ -29392,6 +30018,34 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
       const tipoVals = tipos.map(t=>t.val);
       const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
+      // Filas que se ven en pantalla: MISMOS 4 filtros que la tabla y su pie de totales. Es exactamente lo que baja a Excel.
+      const movsFiltrados = movs.filter(m=>{
+        if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
+        if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
+        if(filterDateTo && (m.date||'') > filterDateTo) return false;
+        if(filterTipoMov!=='TODOS' && m.type!==filterTipoMov) return false;
+        return true;
+      });
+      const hayFiltrosMov = !!(filterProduct||filterDateFrom||filterDateTo||filterTipoMov!=='TODOS');
+      const exportarMovsExcel = async () => {
+        if(exportandoMov) return;
+        if(movsFiltrados.length===0) return setDialog({title:'Aviso',text:'No hay registros para exportar con los filtros actuales.',type:'alert'});
+        setExportandoMov(true);
+        try{
+          await invExportMovimientosXLSX({
+            rows: movsFiltrados,
+            isEntradas,
+            filtros: { producto: filterProduct.trim(), desde: filterDateFrom, hasta: filterDateTo, tipo: filterTipoMov!=='TODOS'?filterTipoMov:'', tipoLabel: (tipos.find(t=>t.val===filterTipoMov)||{}).label||'', total: movs.length },
+            empresa: settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',
+            rif: settings?.empresaRif||settings?.empresaRIF||'J-412309374',
+            direccion: settings?.empresaDireccion||settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA',
+          });
+        }catch(e){
+          setDialog({title:'Error',text:'No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)),type:'alert'});
+        }finally{
+          setExportandoMov(false);
+        }
+      };
 
       // handleSaveMov defined at component level
 
@@ -29665,12 +30319,7 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
                   {isEntradas ? <ArrowDownToLine size={20} className="text-green-600"/> : <ArrowUpFromLine size={20} className="text-red-500"/>}
                   {isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}
                 </h2>
-                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.filter(m=>{
-                  if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
-                  if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
-                  if(filterDateTo && (m.date||'') > filterDateTo) return false;
-                  return true;
-                }).length} de {movs.length} registros</p>
+                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movsFiltrados.length} de {movs.length} registros</p>
               </div>
               <div className="flex flex-wrap gap-2 items-center no-pdf">
                 <div className="relative">
@@ -29693,6 +30342,9 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
                 </button>
                 <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
                   <Printer size={13}/> Imprimir
+                </button>
+                <button onClick={exportarMovsExcel} disabled={exportandoMov} title={hayFiltrosMov?`Descargar en Excel los ${movsFiltrados.length} registros filtrados`:`Descargar en Excel todo el historial (${movsFiltrados.length} registros)`} className="bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-50 hover:border-emerald-400 transition-colors flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait">
+                  {exportandoMov ? <Loader2 size={13} className="animate-spin"/> : <FileSpreadsheet size={13} className="text-emerald-600"/>} {exportandoMov ? 'Generando...' : 'Excel'}
                 </button>
               </div>
             </div>
