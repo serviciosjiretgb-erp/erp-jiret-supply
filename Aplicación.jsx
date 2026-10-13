@@ -465,7 +465,8 @@ const rhConceptosAnalizar = (filas, ctx) => {
     if(vals.formula!==undefined){
       const ft = String(vals.formula).trim();
       if(ft && !rfTieneLlaves(ft) && ft!==rhTxt(ex&&ex.formula).trim()){
-        const inf = rfInfoFormula(ft, { parametros:(ctx&&ctx.parametros)||{}, conceptos, codigoActual:codigo });
+        const inactivo = vals.activo!==undefined ? vals.activo===false : !!(ex && ex.activo===false); // concepto inactivo: sin avisos de datos que faltan
+        const inf = rfInfoFormula(ft, { parametros:(ctx&&ctx.parametros)||{}, conceptos, codigoActual:codigo, inactivo });
         if(!inf.ok) fila.errores.push(`Fórmula «${ft}»: ${inf.error || inf.errores[0]}`);
         else inf.avisos.forEach(t=>fila.avisos.push(`Fórmula: ${t}`));
       }
@@ -569,6 +570,26 @@ const rhConceptosAnalizar = (filas, ctx) => {
 // decimales van con coma o con punto). Las variables son las de siempre (CE00016, N00001, RF03, CN30000, REF00013...) y su valor lo sigue dando resolverVariableFormula.
 // El texto viejo con llaves { } (Formato en el recibo) sigue calculando igual que antes mientras la Fórmula esté vacía. Son funciones puras (sin React) para poder probarlas aparte.
 const RF_PREFIJOS_PARAM = ['RF','CNR','DFSERIE'];
+// Variables que el sistema da solo (no se escriben en la nómina): CE00001 = sueldo del trabajador; CE00088 = cuota HCM del trabajador por pago (la misma que se descuenta sola desde Configuración → HCM)
+const RF_VARS_AUTO = ['CE00001','CE00088'];
+// Parámetros que el sistema ya trae resueltos (en «Parámetros de fórmula» salen como «Del sistema»). Si se crea uno con el mismo código, manda el creado.
+//   RF03 = 1: en las horas extras (00005 y 00006) lo que se escribe en la nómina ya es la cantidad de horas.
+const RF_PARAMS_SISTEMA = { RF03:{ codigo:'RF03', valor:1, nota:'Horas extras: lo que se escribe en la nómina ya es la cantidad de horas (factor 1)', sistema:true } };
+// Parámetros vigentes {CODIGO:{codigo,valor,nota}} = los del sistema + los creados por el usuario (estos mandan)
+const rfParametrosMapa = (lista) => {
+  const m = {};
+  Object.keys(RF_PARAMS_SISTEMA).forEach(k=>{ m[k] = RF_PARAMS_SISTEMA[k]; });
+  (lista || []).forEach(p=>{ if(p && p.codigo!=null && String(p.codigo).trim()!=='') m[String(p.codigo).trim().toUpperCase()] = p; });
+  return m;
+};
+// Lo mismo, solo con los valores {CODIGO:valor}: es lo que usa el motor de cálculo
+const rfParametrosValores = (lista) => { const m = rfParametrosMapa(lista), r = {}; Object.keys(m).forEach(k=>{ r[k] = m[k].valor; }); return r; };
+// Variables que el sistema saca del sueldo de cada trabajador (el del tabulador, el mismo de CE00001): CN30000 = sueldo ÷ 2 (quincena) y CNR0007 = sueldo ÷ 30 (salario diario).
+// Las usan las fórmulas de Vacaciones y Prestaciones. No se escriben en la nómina ni hay que crearlas; si se crea un parámetro con el mismo código, manda el creado.
+const RF_VARS_SUELDO = {
+  CN30000:{ divisor:2, etiqueta:'Salario quincenal del trabajador (automático: sueldo ÷ 2)', corta:'sueldo ÷ 2', nota:'Salario quincenal: el sueldo del tabulador de cada trabajador ÷ 2' },
+  CNR0007:{ divisor:30, etiqueta:'Salario diario del trabajador (automático: sueldo ÷ 30)', corta:'sueldo ÷ 30', nota:'Salario diario: el sueldo del tabulador de cada trabajador ÷ 30' }
+};
 const rfTieneLlaves = (s) => /[{}]/.test(String(s==null?'':s));
 // Texto -> lista de piezas. Devuelve {ok, tokens} o {ok:false, error, pos}
 const rfTokenizar = (texto) => {
@@ -748,13 +769,13 @@ const rfEvaluarTexto = (texto, resolver) => {
   const v = rfValor(a.ast, resolver);
   return isFinite(v) ? v : null;
 };
-// El dato que se escribe en la nómina: la primera variable CE/N que no sea el sueldo (CE00001)
+// El dato que se escribe en la nómina: la primera variable CE/N que no sea automática (sueldo CE00001, cuota HCM CE00088)
 const rfTokenPrincipal = (texto) => {
   const m = String(texto==null?'':texto).match(/[A-Za-z]+\d+/g) || [];
-  return m.map(t=>t.toUpperCase()).find(t=>/^(CE|N)\d+/.test(t) && t!=='CE00001') || null;
+  return m.map(t=>t.toUpperCase()).find(t=>/^(CE|N)\d+/.test(t) && !RF_VARS_AUTO.includes(t)) || null;
 };
 // Qué es cada variable de la fórmula (el «diccionario» sale de lo que ya existe: parámetros, conceptos y reglas del motor)
-// ctx: {parametros:{CODIGO:{valor,nota}}, conceptos:[...], codigoActual, principal}
+// ctx: {parametros:{CODIGO:{valor,nota}}, conceptos:[...], codigoActual, principal, inactivo}  (inactivo: el concepto no se usa en la nómina, no se avisa lo que le falta)
 const rfClasificarVariable = (token, ctx) => {
   const t = String(token).toUpperCase();
   const c = ctx || {};
@@ -764,6 +785,12 @@ const rfClasificarVariable = (token, ctx) => {
   const prm = params[t] || null;
   const v = { token:t, tipo:'', etiqueta:'', aviso:'', error:'', valorDef:10, param:null };
   if(t==='CE00001'){ v.tipo = 'sueldo'; v.etiqueta = 'Sueldo mensual del trabajador (automático)'; v.valorDef = 300; return v; }
+  if(t==='CE00088'){ v.tipo = 'hcm'; v.etiqueta = 'Cuota HCM del trabajador por pago (automática: sale de Configuración → HCM y de su ficha)'; v.valorDef = (c.hcmCuotaEjemplo!=null ? c.hcmCuotaEjemplo : 10); return v; }
+  if(RF_VARS_SUELDO[t]){ // CN30000 / CNR0007: salen del sueldo (salvo que exista un parámetro con ese código: ese manda)
+    const sd = RF_VARS_SUELDO[t];
+    if(prm && prm.valor!=null){ v.tipo = 'parametro'; v.param = prm; v.valorDef = Number(prm.valor) || 0; v.etiqueta = 'Parámetro fijo tuyo — manda sobre el automático (' + sd.corta + ')' + (prm.nota ? ' — ' + prm.nota : ''); return v; }
+    v.tipo = 'sueldo'; v.divisor = sd.divisor; v.etiqueta = sd.etiqueta; v.valorDef = 300 / sd.divisor; return v;
+  }
   if(pref==='CE' && /^0*1$/.test(resto)) v.aviso = `«${t}» se parece al sueldo (CE00001); si quieres el sueldo, escríbelo CE00001.`;
   if(pref==='CE' || pref==='N'){
     if(c.principal===t){ v.tipo = 'captura'; v.etiqueta = 'Cantidad que se escribe en la nómina (días, horas, unidades…)'; }
@@ -784,7 +811,7 @@ const rfClasificarVariable = (token, ctx) => {
     return v;
   }
   v.tipo = 'parametro'; v.param = prm; v.valorDef = prm ? (Number(prm.valor) || 0) : 0;
-  if(prm) v.etiqueta = 'Parámetro fijo' + (prm.nota ? ' — ' + prm.nota : '');
+  if(prm) v.etiqueta = 'Parámetro fijo' + (prm.sistema ? ' del sistema' : '') + (prm.nota ? ' — ' + prm.nota : '');
   else if(RF_PREFIJOS_PARAM.includes(pref)){ v.etiqueta = 'Parámetro fijo'; v.aviso = `«${t}» no existe en «Parámetros de fórmula»: valdrá 0 hasta que lo crees.`; }
   else { v.etiqueta = 'Variable desconocida'; v.error = `La variable «${t}» no existe: usa datos como CE00016 o N00001, parámetros como RF03, o crea «${t}» en «Parámetros de fórmula».`; }
   return v;
@@ -799,6 +826,7 @@ const rfInfoFormula = (texto, ctx) => {
   info.vars = a.vars.map(v=>({ ...rfClasificarVariable(v.token, c2), veces:v.veces }));
   info.vars.forEach(v=>{ if(v.error) info.errores.push(v.error); if(v.aviso) info.avisos.push(v.aviso); });
   if(!info.principal) info.avisos.push('Esta fórmula no usa ningún dato que se escriba en la nómina (CE… o N…): en la nómina el monto se seguirá escribiendo a mano; la fórmula se puede ver en la Calculadora.');
+  if(c2.inactivo) info.avisos = []; // concepto inactivo: no se usa en la nómina, no hay nada que avisar (los errores de escritura sí se muestran)
   if(info.errores.length) info.ok = false;
   return info;
 };
@@ -806,6 +834,7 @@ const rfInfoFormula = (texto, ctx) => {
 const rfAplicarEntrada = (ctx, token, valor) => {
   const t = String(token).toUpperCase();
   if(t==='CE00001') ctx.salarioBase = valor;
+  else if(t==='CE00088') ctx.hcmCuota = valor;
   else if(/^REFCE\d+/.test(t)) ctx.valores['CE' + t.replace(/^REFCE/,'')] = valor;
   else if(/^REF\d+/.test(t)) ctx.valores['CE' + t.replace(/^REF/,'')] = valor;
   else if(/^(CE|N)\d+/.test(t)) ctx.valores[t] = valor;
@@ -815,12 +844,10 @@ const rfAplicarEntrada = (ctx, token, valor) => {
 const rfContextoPrueba = (vars, entradas, parametros) => {
   const ctx = { salarioBase:300, valores:{}, parametros:{}, resultados:{} };
   Object.keys(parametros || {}).forEach(k=>{ const p = parametros[k]; ctx.parametros[k] = (p && typeof p==='object') ? p.valor : p; });
-  (vars || []).forEach(v=>{
-    const raw = entradas ? entradas[v.token] : undefined;
-    let n = (raw===undefined || raw===null) ? v.valorDef : parseFloat(String(raw).replace(',','.'));
-    if(!isFinite(n)) n = 0;
-    rfAplicarEntrada(ctx, v.token, n);
-  });
+  const escrito = (v) => { const raw = entradas ? entradas[v.token] : undefined; if(raw===undefined || raw===null) return null; const n = parseFloat(String(raw).replace(',','.')); return isFinite(n) ? n : 0; };
+  // primero todo lo demás (incluido el sueldo CE00001); después lo que sale del sueldo (CN30000, CNR0007): si no se escribe nada, el motor lo saca del sueldo de la prueba
+  (vars || []).filter(v=>!v.divisor).forEach(v=>{ const e = escrito(v); let n = e===null ? v.valorDef : e; if(!isFinite(n)) n = 0; rfAplicarEntrada(ctx, v.token, n); });
+  (vars || []).filter(v=>v.divisor).forEach(v=>{ const e = escrito(v); if(e!==null) rfAplicarEntrada(ctx, v.token, e); });
   return ctx;
 };
 // Convierte el texto viejo «{cantidad} TEXTO x {tarifa}» en una fórmula real «cantidad * (tarifa)».
@@ -910,7 +937,7 @@ const rfPlanConversion = (conceptos, deps) => {
     if(conv.estado==='sin') return fila;
     fila.formula = conv.formula; fila.motivos.push(...conv.motivos);
     if(conv.estado==='lista'){
-      const info = rfInfoFormula(conv.formula, { parametros:d.parametros, conceptos:lista, codigoActual:c.codigo });
+      const info = rfInfoFormula(conv.formula, { parametros:d.parametros, conceptos:lista, codigoActual:c.codigo, inactivo:c.activo===false });
       const eq = (d.evalLegacy && d.resolver) ? rfVerificarEquivalencia(viejo, conv.formula, d.evalLegacy, d.resolver) : { ok:false, pruebas:0, error:'No se pudo comparar con el cálculo anterior.' };
       fila.pruebas = eq.pruebas;
       if(!eq.ok){ fila.estado = 'revisar'; fila.motivos.push(eq.error); }
@@ -1149,8 +1176,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const abrirConcepto = (c) => { setConceptoSelCod(c.codigo); setEsNuevoConcepto(false); setFxPrueba({}); setFxAviso(null); setConceptoForm({...initConceptoForm(), ...c}); };
   const nuevoConceptoForm = () => { setConceptoSelCod(null); setEsNuevoConcepto(true); setFxPrueba({}); setFxAviso(null); setConceptoForm(initConceptoForm()); };
   // Fórmulas reales: parámetros por código y revisión de la fórmula del concepto abierto (se recalcula al escribir)
-  const paramMapFx = {}; parametrosFormula.forEach(p=>{ paramMapFx[String(p.codigo||'').toUpperCase()] = p; });
-  const fxInfo = (rhTab==='conceptos' && conceptoForm) ? rfInfoFormula(conceptoForm.formula, {parametros:paramMapFx, conceptos, codigoActual:String(conceptoForm.codigo||'').trim().toUpperCase()}) : null;
+  const paramMapFx = rfParametrosMapa(parametrosFormula);
+  // CE00088 (cuota HCM): en la prueba de la fórmula se propone la cuota de una persona con la configuración actual de HCM
+  const hcmCuotaEj = hcmCalcularMes({hcmActivo:true, cargasFamiliares:[]}, benMesActual(), configBeneficios).porPagoTrab;
+  const fxInfo = (rhTab==='conceptos' && conceptoForm) ? rfInfoFormula(conceptoForm.formula, {parametros:paramMapFx, conceptos, codigoActual:String(conceptoForm.codigo||'').trim().toUpperCase(), hcmCuotaEjemplo:hcmCuotaEj, inactivo:conceptoForm.activo===false}) : null;
   const fxFilas = () => rfPlanConversion(conceptos, {evalLegacy:evaluarFormulaConcepto, resolver:resolverVariableFormula, parametros:paramMapFx});
   const guardarConcepto = async () => {
     const f = conceptoForm;
@@ -1193,9 +1222,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // token viene tal cual aparece en la fórmula, ej: "CE00001", "RF03", "CN30000"
     const t = token.trim().toUpperCase();
     if (t==='CE00001') return parsearNumFormula(ctx.salarioBase); // el salario siempre viene del trabajador, no se captura a mano
+    if (t==='CE00088') return ctx.hcmCuota!=null ? ctx.hcmCuota : parsearNumFormula(ctx.valores['CE00088']); // cuota HCM del trabajador por pago: sale de Configuración → HCM y de su ficha (no se captura)
+    if (RF_VARS_SUELDO[t]) return (ctx.parametros && ctx.parametros[t]!=null) ? parsearNumFormula(ctx.parametros[t]) : parsearNumFormula(ctx.salarioBase) / RF_VARS_SUELDO[t].divisor; // CN30000 = sueldo ÷ 2 y CNR0007 = sueldo ÷ 30: salen del sueldo del trabajador; si hay un parámetro creado con ese código, manda ese (nunca el resultado de otro concepto)
     if (/^REFCE\d+/.test(t)) return parsearNumFormula(ctx.valores['CE'+t.replace(/^REFCE/,'')]); // REFCE00012 → mismo dato que CE00012
     if (/^REF\d+/.test(t)) return parsearNumFormula(ctx.valores['CE'+t.replace(/^REF/,'')]); // REF00013 → mismo dato que CE00013
-    if (/^CN\d+/.test(t)) { // CN30000 → resultado ya calculado del concepto 30000 en esta misma corrida; si no se ha calculado, usa el parámetro fijo
+    if (/^CN\d+/.test(t)) { // CN30001 → resultado ya calculado del concepto 30001 en esta misma corrida; si no se ha calculado, usa el parámetro fijo (CN30000 y CNR0007 ya salieron arriba: son del sueldo)
       const codConcepto = t.replace(/^CN/,'');
       if (ctx.resultados[codConcepto]!=null) return ctx.resultados[codConcepto];
       return parsearNumFormula(ctx.parametros[t]);
@@ -1228,8 +1259,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if (f && !rfTieneLlaves(f)) return rfEvaluarTexto(f, (tok)=>resolverVariableFormula(tok, ctx));
     return evaluarFormulaConcepto(c.formula||c.formato, ctx);
   };
+  // CE00088 = cuota HCM del trabajador por pago: la misma que se descuenta sola desde Configuración → HCM (aporte del trabajador del mes ÷ cuotas por mes), con el mes del pago abierto (o el mes actual)
+  const hcmCuotaDe = (trabajador) => hcmCalcularMes(trabajador, benMesOk(nominaActiva && nominaActiva.mes) ? nominaActiva.mes : benMesActual(), configBeneficios).porPagoTrab;
   const calcularTodosLosConceptos = (trabajador, valoresCapturados, parametrosMap) => {
-    const ctx = {salarioBase: trabajador?.salarioBase||0, valores: valoresCapturados||{}, parametros: parametrosMap||{}, resultados: {}};
+    const ctx = {salarioBase: trabajador?.salarioBase||0, valores: valoresCapturados||{}, parametros: parametrosMap||{}, resultados: {}, hcmCuota: hcmCuotaDe(trabajador)};
     const activos = conceptos.filter(c=>c.activo!==false).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     const out = [];
     activos.forEach(c=>{
@@ -1240,14 +1273,14 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     return out;
   };
   const tokensUsadosEnFormulas = () => {
-    // Junta todos los CE##### y N##### (menos CE00001, que es automático) que aparecen
+    // Junta todos los CE##### y N##### (menos CE00001 y CE00088, que son automáticos) que aparecen
     // en las fórmulas activas — son los datos que hay que capturar a mano por trabajador.
     const set = new Set();
     conceptos.filter(c=>c.activo!==false).forEach(c=>{
       const matches = (c.formula||c.formato||'').match(/[A-Za-z]+\d+/g)||[];
       matches.forEach(m=>{
         const t = m.toUpperCase();
-        if (/^(CE|N)\d+/.test(t) && t!=='CE00001') set.add(t);
+        if (/^(CE|N)\d+/.test(t) && !RF_VARS_AUTO.includes(t)) set.add(t);
       });
     });
     return Array.from(set).sort();
@@ -1980,7 +2013,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // nómina regular — incluidas si dan un monto, disponibles para agregar a mano si no.
   const calcularNovedadesAhora = () => setCargarTrabModal(m=>{
     if(!m) return m;
-    const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
+    const paramMap = rfParametrosValores(parametrosFormula);
     const ctxValores = {...m.novedadesValores};
     const sueldo = m.asignaciones.find(a=>a.cantidadDias!==undefined);
     if(sueldo) ctxValores.CE00003 = sueldo.cantidadDias; // por si alguna fórmula también referencia días trabajados
@@ -2015,15 +2048,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // su fórmula. Ej: "{ CE00013 } DIA DESCANSO TRABAJADO x {...}" → 'CE00013'.
   const tokenPrincipalDe = (c) => {
     const m = (c.formula||c.formato||'').match(/[A-Za-z]+\d+/g)||[];
-    return m.map(t=>t.toUpperCase()).find(t=>/^(CE|N)\d+/.test(t) && t!=='CE00001') || null;
+    return m.map(t=>t.toUpperCase()).find(t=>/^(CE|N)\d+/.test(t) && !RF_VARS_AUTO.includes(t)) || null;
   };
   // Evalúa la fórmula de un concepto en vivo, dado el valor de cantidad que el usuario acaba de
   // escribir para su token principal — así el monto se recalcula al momento, sin panel aparte.
   const evaluarConceptoEnVivo = (c, cantidad, trabajador) => {
     const token = tokenPrincipalDe(c);
     if(!token) return 0;
-    const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
-    const ctx = {salarioBase:trabajador?.salarioBase||0, valores:{[token]:cantidad}, parametros:paramMap, resultados:{}};
+    const paramMap = rfParametrosValores(parametrosFormula);
+    const ctx = {salarioBase:trabajador?.salarioBase||0, valores:{[token]:cantidad}, parametros:paramMap, resultados:{}, hcmCuota:hcmCuotaDe(trabajador)};
     const v = evaluarConcepto(c, ctx);
     return v==null?0:v;
   };
@@ -3470,7 +3503,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                           <tr key={f.codigo} className="border-t border-gray-100 align-top">
                             {tab==='lista' && <td className="px-3 py-2"><input type="checkbox" checked={m.sel[f.codigo]!==false} disabled={ocupado} onChange={e=>setFxModal({...m,tab,sel:{...m.sel,[f.codigo]:e.target.checked}})}/></td>}
                             <td className="px-3 py-2 font-mono font-bold text-cyan-700 whitespace-nowrap">{f.codigo}</td>
-                            <td className="px-3 py-2 font-bold text-gray-700">{f.nombre}</td>
+                            <td className="px-3 py-2 font-bold text-gray-700">{f.nombre}{!f.activo && <span className="ml-1.5 text-[8px] font-black uppercase text-gray-400 border border-gray-200 rounded-full px-1.5 py-0.5">inactivo</span>}</td>
                             <td className="px-3 py-2 font-mono text-[10px] text-gray-500 break-words" title={f.textoViejo}>{corto(f.textoViejo,80)||'—'}</td>
                             <td className="px-3 py-2 font-mono text-[10px] font-bold text-gray-800 break-words min-w-[210px]">{f.formula||'—'}</td>
                             <td className="px-3 py-2 space-y-0.5">
@@ -3517,7 +3550,27 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             </button>
             {mostrarParametros && (
               <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-2">
-                <p className="text-[9px] text-gray-400 mb-1">Valores fijos que usan tus fórmulas (RF03, CN30000...) — tú decides qué significan y cuánto valen.</p>
+                <p className="text-[9px] text-gray-400 mb-1">Valores fijos que usan tus fórmulas (RF10, DFSERIE0003...) — tú decides qué significan y cuánto valen. Los «del sistema» y los «automáticos» ya vienen resueltos: si creas uno con el mismo código, manda el tuyo.</p>
+                {Object.keys(RF_PARAMS_SISTEMA).filter(k=>!parametrosFormula.some(p=>String(p.codigo||'').trim().toUpperCase()===k)).map(k=>{ const s = RF_PARAMS_SISTEMA[k]; return (
+                  <div key={'sis-'+k} className="bg-sky-50 rounded-lg px-2 py-1.5 border border-sky-100" title="Lo trae el sistema. Si creas un parámetro con este código, manda el tuyo.">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] font-black text-cyan-700 w-16 flex-shrink-0 truncate">{s.codigo}</span>
+                      <span className="w-16 text-right text-[10px] font-bold text-gray-700 flex-shrink-0">{s.valor}</span>
+                      <span className="ml-auto text-[8px] font-black uppercase text-sky-600 flex-shrink-0">Del sistema</span>
+                    </div>
+                    <p className="text-[9px] text-gray-500 leading-snug mt-1">{s.nota}</p>
+                  </div>
+                ); })}
+                {Object.keys(RF_VARS_SUELDO).filter(k=>!parametrosFormula.some(p=>String(p.codigo||'').trim().toUpperCase()===k)).map(k=>{ const s = RF_VARS_SUELDO[k]; return (
+                  <div key={'sue-'+k} className="bg-sky-50 rounded-lg px-2 py-1.5 border border-sky-100" title="Sale solo del sueldo de cada trabajador. Si creas un parámetro con este código, manda el tuyo.">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[10px] font-black text-cyan-700 w-16 flex-shrink-0 truncate">{k}</span>
+                      <span className="text-[10px] font-bold text-gray-700 whitespace-nowrap flex-shrink-0">{s.corta}</span>
+                      <span className="ml-auto text-[8px] font-black uppercase text-sky-600 flex-shrink-0">Automático</span>
+                    </div>
+                    <p className="text-[9px] text-gray-500 leading-snug mt-1">{s.nota}</p>
+                  </div>
+                ); })}
                 {parametrosFormula.map(p=>(
                   <div key={p.id} className="flex items-center gap-1.5 bg-white rounded-lg px-2 py-1.5 border border-gray-200">
                     <span className="font-mono text-[10px] font-black text-cyan-700 w-16 flex-shrink-0 truncate">{p.codigo}</span>
@@ -3579,13 +3632,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 ) : (()=>{
                   const trab = trabajadores.find(t=>t.id===calcTrabajadorId);
                   const tokens = tokensUsadosEnFormulas();
-                  const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
+                  const paramMap = rfParametrosValores(parametrosFormula);
                   const resultados = calcularTodosLosConceptos(trab, calcValores, paramMap);
                   return (<>
                     <div className="bg-cyan-50 border-2 border-cyan-100 rounded-xl p-3 mb-4">
                       <p className="text-[9px] font-black text-cyan-700 uppercase mb-2">Datos a capturar (por este trabajador, este período)</p>
                       <div className="grid grid-cols-3 gap-2">
-                        {tokens.length===0 && <p className="text-[10px] text-gray-400 col-span-3">Ningún concepto activo usa datos capturados — solo CE00001 (salario, automático).</p>}
+                        {tokens.length===0 && <p className="text-[10px] text-gray-400 col-span-3">Ningún concepto activo usa datos capturados — solo CE00001 (salario), CE00088 (cuota HCM), CN30000 (sueldo ÷ 2) y CNR0007 (sueldo ÷ 30), automáticos.</p>}
                         {tokens.map(tok=>(
                           <div key={tok}>
                             <label className="text-[8px] font-black text-cyan-700 font-mono block mb-0.5">{tok}</label>
@@ -3653,6 +3706,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <div className="mt-1.5 space-y-0.5">
                       <p className="text-[10px] font-bold text-emerald-600">✔ Fórmula válida{fxInfo.texto!==String(conceptoForm.formula||'').trim() ? <> — se leerá así: <span className="font-mono">{fxInfo.texto}</span></> : null}</p>
                       {fxInfo.avisos.map((t,i)=><p key={i} className="text-[10px] font-bold text-amber-600">⚠ {t}</p>)}
+                      {conceptoForm.activo===false && <p className="text-[10px] text-gray-400">Concepto inactivo: no se usa en la nómina, por eso no se muestran avisos de datos que faltan.</p>}
                     </div>
                   ))}
                   {fxInfo && fxInfo.ok && (()=>{
@@ -3665,7 +3719,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                           {fxInfo.vars.map(x=>(
                             <div key={x.token} title={x.etiqueta}>
                               <label className="text-[8px] font-black text-cyan-700 font-mono block mb-0.5">{x.token}</label>
-                              <input type="text" inputMode="decimal" value={fxPrueba[x.token]!==undefined ? fxPrueba[x.token] : String(x.valorDef).replace('.',',')} onChange={e=>setFxPrueba(p=>({...p,[x.token]:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 text-right bg-white"/>
+                              <input type="text" inputMode="decimal" value={fxPrueba[x.token]!==undefined ? fxPrueba[x.token] : String(x.divisor ? Math.round(ctxP.salarioBase / x.divisor * 10000) / 10000 : x.valorDef).replace('.',',')} onChange={e=>setFxPrueba(p=>({...p,[x.token]:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 text-right bg-white"/>
                               <p className="text-[8px] text-gray-400 leading-tight">{x.etiqueta}</p>
                             </div>
                           ))}
@@ -3677,7 +3731,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       </div>
                     );
                   })()}
-                  <p className="mt-1.5 text-[10px] text-gray-400">Se escribe con paréntesis ( ) y las operaciones + − * / (la x también multiplica, % divide entre 100 y los decimales van con coma). CE00001 es el sueldo del trabajador; las demás CE… y N… son datos que se escriben en la nómina; RF… son parámetros fijos (se crean en «Parámetros de fórmula»).</p>
+                  <p className="mt-1.5 text-[10px] text-gray-400">Se escribe con paréntesis ( ) y las operaciones + − * / (la x también multiplica, % divide entre 100 y los decimales van con coma). CE00001 es el sueldo, CE00088 la cuota del HCM, CN30000 el sueldo ÷ 2 y CNR0007 el sueldo ÷ 30 del trabajador (los cuatro salen solos); las demás CE… y N… son datos que se escriben en la nómina; RF… son parámetros fijos (se crean en «Parámetros de fórmula»).</p>
                 </div>
                 <div className="mb-1">
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Formato en el recibo</label>
