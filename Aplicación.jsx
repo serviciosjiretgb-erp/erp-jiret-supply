@@ -85,13 +85,226 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 };
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
+// == RRHH - Beneficios de nomina: HCM (medicina prepagada) y Bolsa de alimentos ==
+// Calculo puro (sin React), se prueba aparte. Montos en USD; el Bs. sale de USD x tasa del pago.
+// HCM: aporte mensual del trabajador = pctTrabajador % de (primaPersona x personas cubiertas);
+//      el resto lo paga la empresa. Se descuenta en 'cuotasPorMes' pagos (por defecto 4).
+// Bolsa: bolsas x descuentoBolsa; la parte de la empresa (subsidio = costo - descuento) va como gasto/costo segun el centro de costo del trabajador.
+// Cuentas (todas opcionales; se configuran en Configuracion > HCM / Bolsa de alimentos):
+//  hcm.codigoPasivo/nombrePasivo   = cuenta por cobrar que se acredita en cada nomina (descuento del trabajador + aporte de la empresa)
+//  hcm.codigoPasivoCierre/...      = cuenta de pasivo contra la que se cierra esa cuenta por cobrar al cierre de mes
+//  hcm.gastoPorCentro[centroId]    = {codigo,nombre} cuenta de gasto/costo del aporte de la empresa segun el centro de costo del trabajador
+//  hcm.codigoGasto/nombreGasto     = cuenta de gasto unica del esquema anterior (solo se usa si el centro no tiene una propia)
+//  bolsa.codigoCuenta/nombreCuenta = cuenta por cobrar que se acredita en cada nomina (descuento del trabajador + aporte de la empresa); bolsa.codigoPasivoCierre/... = pasivo del cierre de mes
+//  bolsa.gastoPorCentro[centroId]  = {codigo,nombre} cuenta de gasto/costo de la parte de la empresa (costo - descuento) segun el centro de costo del trabajador
+//  hcm.polizaAseguradora/polizaNumero = Poliza HCM predeterminada de la ficha del trabajador (se usa en las fichas nuevas y donde el campo esta vacio)
+const BENEFICIOS_DEF = {
+  hcm:   { activo:true, primaPersona:18, pctTrabajador:50, cuotasPorMes:4, edadMaxHijos:19, codigoConcepto:'24000', codigoPasivo:'', nombrePasivo:'', codigoGasto:'', nombreGasto:'', codigoPasivoCierre:'', nombrePasivoCierre:'', gastoPorCentro:{}, polizaAseguradora:'GENTE SAGRADA', polizaNumero:'' },
+  bolsa: { activo:true, costoBolsa:15.04, descuentoBolsa:5, codigoConcepto:'22000', codigoCuenta:'', nombreCuenta:'', codigoPasivoCierre:'', nombrePasivoCierre:'', gastoPorCentro:{} },
+};
+const benR2 = (n) => parseFloat((Number(n)||0).toFixed(2));
+// Firestore rechaza los campos con valor undefined: se quitan antes de guardar una linea del recibo.
+const benSinUndefined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const benNum = (v) => { const n = parseFloat(String(v==null?'':v).replace(',','.')); return isFinite(n) ? n : 0; };
+const benNumComa = (s) => parseFloat(String(s||'0').replace(/[^0-9,.-]/g,'').replace(',','.'))||0;
+const benMerge = (c) => ({ hcm:{...BENEFICIOS_DEF.hcm, ...((c&&c.hcm)||{})}, bolsa:{...BENEFICIOS_DEF.bolsa, ...((c&&c.bolsa)||{})} });
+const benMesOk = (mes) => /^\d{4}-\d{2}$/.test(String(mes||''));
+const benMesActual = () => new Date().toISOString().slice(0,7);
+const benUltimoDia = (mes) => { const p = String(mes).split('-').map(Number); return new Date(p[0], p[1], 0).getDate(); };
+// Edad cumplida al dia refISO ('YYYY-MM-DD'); null si falta algun dato.
+const benEdadAl = (fechaNac, refISO) => {
+  if(!fechaNac || !refISO) return null;
+  const n = String(fechaNac).slice(0,10).split('-').map(Number), r = String(refISO).slice(0,10).split('-').map(Number);
+  if(n.length<3 || r.length<3 || n.some(isNaN) || r.some(isNaN)) return null;
+  let e = r[0]-n[0];
+  if(r[1]<n[1] || (r[1]===n[1] && r[2]<n[2])) e--;
+  return e>=0 ? e : null;
+};
+// Personas cubiertas por el HCM en un mes 'YYYY-MM': el titular (si esta en el plan) + cada carga
+// marcada con HCM, siempre que esten vigentes en ese mes (ingreso <= ultimo dia, egreso >= primer dia).
+const hcmPersonasMes = (t, mes) => {
+  const vacio = { total:0, titular:false, cargas:0 };
+  if(!t || t.hcmActivo!==true || !benMesOk(mes)) return vacio;
+  const ini = mes + '-01';
+  const fin = mes + '-' + String(benUltimoDia(mes)).padStart(2,'0');
+  const vigente = (desde, hasta) => (!desde || String(desde) <= fin) && (!hasta || String(hasta) >= ini);
+  if(!vigente(t.hcmDesde, t.hcmHasta)) return vacio;
+  const cargas = (t.cargasFamiliares||[]).filter(cg => cg && cg.hcm===true && vigente(cg.hcmDesde, cg.hcmHasta)).length;
+  return { total:1+cargas, titular:true, cargas };
+};
+// Hijos(as) cubiertos por el HCM que ya cumplieron (o cumplen en el mes) la edad limite.
+const hcmHijosPasadosEdad = (t, mes, edadMax) => {
+  if(!t || t.hcmActivo!==true || !benMesOk(mes)) return [];
+  const ini = mes + '-01';
+  const fin = mes + '-' + String(benUltimoDia(mes)).padStart(2,'0');
+  const lim = benNum(edadMax) > 0 ? benNum(edadMax) : 19;
+  return (t.cargasFamiliares||[]).filter(cg => {
+    if(!cg || cg.hcm!==true || !/hijo/i.test(String(cg.parentesco||''))) return false;
+    if(cg.hcmDesde && String(cg.hcmDesde) > fin) return false;
+    if(cg.hcmHasta && String(cg.hcmHasta) < ini) return false;
+    const e = benEdadAl(cg.fechaNacimiento, fin);
+    return e!==null && e >= lim;
+  }).map(cg => cg.nombre || 'hijo(a)');
+};
+const hcmCalcularMes = (t, mes, cfg) => {
+  const c = benMerge(cfg).hcm;
+  const p = hcmPersonasMes(t, mes);
+  const cm = parseInt(c.cuotasPorMes, 10);
+  const cuotasMes = cm > 0 ? cm : 4;
+  const pct = Math.min(100, Math.max(0, benNum(c.pctTrabajador)));
+  const prima = benR2(p.total * benNum(c.primaPersona));
+  const aporteTrab = benR2(prima * pct / 100);
+  const aporteEmp = benR2(prima - aporteTrab);
+  return { personas:p.total, cargas:p.cargas, prima, aporteTrab, aporteEmp, cuotasMes, porPagoTrab:benR2(aporteTrab / cuotasMes), porPagoEmp:benR2(aporteEmp / cuotasMes) };
+};
+const bolsaCalcular = (t, cfg) => {
+  const c = benMerge(cfg).bolsa;
+  const n = Math.max(0, parseInt(t && t.bolsasAlimentos, 10) || 0);
+  const costoU = benNum(c.costoBolsa), descU = benNum(c.descuentoBolsa);
+  return { bolsas:n, descuento:benR2(n * descU), costo:benR2(n * costoU), subsidio:benR2(n * (costoU - descU)), descuentoUnit:descU, costoUnit:costoU };
+};
+// Arma las lineas de deduccion automaticas (HCM y Bolsa) de un trabajador para un pago.
+//  detalleExistente: detalle ya guardado de este trabajador en este pago (o null)
+//  detallesMes: detalles de OTROS pagos del mismo mes para este trabajador (para los avisos)
+// Reglas: lo guardado por el usuario (editado a mano, o linea heredada del esquema anterior) se
+// conserva tal cual; lo automatico se recalcula al abrir. Primera vez: se incluye solo si el pago
+// tiene marcado aplicaHCM / aplicaBolsa.
+const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExistente, detallesMes }) => {
+  const t = trabajador || {};
+  const conf = benMerge(cfg);
+  const tasa = benNum(nomina && nomina.tasa);
+  const mes = benMesOk(nomina && nomina.mes) ? nomina.mes : benMesActual();
+  const guardadas = (detalleExistente && detalleExistente.deducciones) || [];
+  const hayDetalle = !!detalleExistente;
+  const lista = conceptos || [];
+  const conceptoDe = (cod) => lista.find(x => x.codigo === cod) || null;
+  const nombreDe = (cod, def) => { const c = conceptoDe(cod); return (c && c.nombre) ? c.nombre : def; };
+  const cuentaDe = (cod) => {
+    const c = conceptoDe(cod);
+    const cu = (c && c.cuentasPorCentro) ? c.cuentasPorCentro[t.centroCostoId] : null;
+    return cu ? { codigo: cu.codigo || '', nombre: cu.nombre || '' } : { codigo:'', nombre:'' };
+  };
+  const cuotasPrevias = (detallesMes || []).reduce((s, d) => s + (d.deducciones || []).filter(x => x.tipoBeneficio === 'hcm').reduce((s2, x) => s2 + (Number(x.cuotas) || 0), 0), 0);
+  const bolsasPrevias = (detallesMes || []).reduce((s, d) => s + ((d.deducciones || []).some(x => x.tipoBeneficio === 'bolsa' && Number(x.montoUSD) > 0) ? 1 : 0), 0);
+  const lineas = [];
+
+  {
+    const cod = conf.hcm.codigoConcepto || '24000';
+    const auto = conf.hcm.activo !== false && t.hcmActivo === true;      // el trabajador entra al calculo automatico
+    // Linea automatica ya guardada (siempre se respeta, aunque despues se apague la automatizacion o se desmarque
+    // al trabajador) o, solo si el trabajador esta marcado en la ficha, la linea manual heredada del esquema anterior.
+    // Al trabajador NO marcado se le deja su fila manual normal (no se duplica).
+    const g = guardadas.find(x => x.tipoBeneficio === 'hcm')
+      || (auto ? guardadas.find(x => !x.esLegal && !x.esBeneficio && !x.tipoBeneficio && x.codigo === cod) : null)
+      || null;
+    if (auto || g) {
+      const calc = hcmCalcularMes(t, mes, conf);
+      const cuentaPas = conf.hcm.codigoPasivo ? { codigo: conf.hcm.codigoPasivo, nombre: conf.hcm.nombrePasivo || '' } : cuentaDe(cod);
+      // Cuenta de gasto/costo del aporte de la empresa: la del centro de costo del trabajador; si ese centro no tiene, la unica del esquema anterior
+      const gc = (conf.hcm.gastoPorCentro && t.centroCostoId) ? conf.hcm.gastoPorCentro[t.centroCostoId] : null;
+      const ctaGasto = (gc && gc.codigo) ? { codigo: gc.codigo, nombre: gc.nombre || '' } : { codigo: conf.hcm.codigoGasto || '', nombre: conf.hcm.nombreGasto || '' };
+      const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'hcm' || !auto);
+      const cuotas = (g && Number(g.cuotas) > 0) ? Math.round(Number(g.cuotas)) : 1;
+      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual;
+      if (conservar) {
+        montoUSD = benR2(g.montoUSD);
+        montoBs = benR2(g.montoBs != null ? g.montoBs : g.montoUSD * tasa);
+        montoPatronalUSD = benR2(g.montoPatronalUSD);
+        montoPatronalBs = benR2(g.montoPatronalBs != null ? g.montoPatronalBs : g.montoPatronalUSD * tasa);
+        incluida = true; editadoManual = true;
+      } else {
+        montoUSD = benR2(calc.porPagoTrab * cuotas);
+        montoPatronalUSD = benR2(calc.porPagoEmp * cuotas);
+        montoBs = benR2(montoUSD * tasa);
+        montoPatronalBs = benR2(montoPatronalUSD * tasa);
+        editadoManual = false;
+        incluida = g ? true : (hayDetalle ? false : (!!(nomina && nomina.aplicaHCM) && calc.personas > 0 && calc.aporteTrab > 0));
+      }
+      const pasados = hcmHijosPasadosEdad(t, mes, conf.hcm.edadMaxHijos);
+      let aviso = '';
+      if (t.hcmActivo === true && calc.personas === 0) aviso = 'El titular no tiene HCM vigente en el mes del pago (revisa las fechas de ingreso/egreso al plan)';
+      else if (t.hcmActivo === true && calc.aporteTrab <= 0) aviso = 'Aporte en 0: revisa la prima y el % del trabajador en Configuración → HCM';
+      else if (pasados.length > 0) aviso = 'Hijo(a) con ' + (benNum(conf.hcm.edadMaxHijos) > 0 ? benNum(conf.hcm.edadMaxHijos) : 19) + ' años o más sigue en el HCM: ' + pasados.join(', ');
+      else if (cuotasPrevias + cuotas > calc.cuotasMes) aviso = 'Con este pago el mes lleva ' + (cuotasPrevias + cuotas) + ' de ' + calc.cuotasMes + ' cuotas de HCM';
+      lineas.push({
+        tipoBeneficio: 'hcm', esBeneficio: true, esLegal: false, incluida,
+        concepto: nombreDe(cod, 'POLIZA HCM'), codigo: cod,
+        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs,
+        codigoCuenta: cuentaPas.codigo, nombreCuenta: cuentaPas.nombre,
+        codigoCuentaPatronal: ctaGasto.codigo, nombreCuentaPatronal: ctaGasto.nombre,
+        personas: calc.personas, primaMes: calc.prima, aporteMesTrab: calc.aporteTrab, aporteMesEmp: calc.aporteEmp,
+        cuotasMes: calc.cuotasMes, cuotas, previosMes: cuotasPrevias, editadoManual, aviso,
+      });
+    }
+  }
+
+  {
+    const cod = conf.bolsa.codigoConcepto || '22000';
+    const b = bolsaCalcular(t, conf);
+    const auto = conf.bolsa.activo !== false && b.bolsas > 0;
+    const g = guardadas.find(x => x.tipoBeneficio === 'bolsa')
+      || (auto ? guardadas.find(x => !x.esLegal && !x.esBeneficio && !x.tipoBeneficio && x.codigo === cod) : null)
+      || null;
+    if (auto || g) {
+      const cuenta = conf.bolsa.codigoCuenta ? { codigo: conf.bolsa.codigoCuenta, nombre: conf.bolsa.nombreCuenta || '' } : cuentaDe(cod);
+      // Cuenta de gasto/costo de la parte de la empresa: la del centro de costo del trabajador (si el centro no tiene, queda vacia y el asiento lo avisa)
+      const gcB = (conf.bolsa.gastoPorCentro && t.centroCostoId) ? conf.bolsa.gastoPorCentro[t.centroCostoId] : null;
+      const ctaGastoB = (gcB && gcB.codigo) ? { codigo: gcB.codigo, nombre: gcB.nombre || '' } : { codigo: '', nombre: '' };
+      const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'bolsa' || !auto);
+      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual;
+      if (conservar) {
+        montoUSD = benR2(g.montoUSD);
+        montoBs = benR2(g.montoBs != null ? g.montoBs : g.montoUSD * tasa);
+        // lo guardado se respeta tal cual (una linea anterior a este cambio no trae aporte de la empresa: queda en 0)
+        montoPatronalUSD = benR2(g.montoPatronalUSD);
+        montoPatronalBs = benR2(g.montoPatronalBs != null ? g.montoPatronalBs : g.montoPatronalUSD * tasa);
+        incluida = true; editadoManual = true;
+      } else {
+        montoUSD = b.descuento;
+        montoPatronalUSD = Math.max(0, b.subsidio);
+        montoBs = benR2(montoUSD * tasa);
+        montoPatronalBs = benR2(montoPatronalUSD * tasa);
+        editadoManual = false;
+        incluida = g ? true : (hayDetalle ? false : (!!(nomina && nomina.aplicaBolsa) && b.bolsas > 0));
+      }
+      const aviso = bolsasPrevias > 0 ? 'La bolsa ya se descontó este mes en otro pago' : '';
+      lineas.push({
+        tipoBeneficio: 'bolsa', esBeneficio: true, esLegal: false, incluida,
+        concepto: nombreDe(cod, 'BOLSA ALIMENTOS'), codigo: cod,
+        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs,
+        codigoCuenta: cuenta.codigo, nombreCuenta: cuenta.nombre,
+        codigoCuentaPatronal: ctaGastoB.codigo, nombreCuentaPatronal: ctaGastoB.nombre,
+        bolsas: b.bolsas, descuentoUnit: b.descuentoUnit, costoUnit: b.costoUnit, subsidioEmpresa: b.subsidio,
+        previosMes: bolsasPrevias, editadoManual, aviso,
+      });
+    }
+  }
+  return lineas;
+};
+// Cambia las cuotas de HCM a descontar en este pago (p. ej. 3 para el que ingreso a mitad de mes).
+const benAplicarCuotas = (l, cuotasIn, tasa) => {
+  const { montoBsTexto, ...resto } = l;
+  const cuotas = Math.max(1, parseInt(cuotasIn, 10) || 1);
+  const cm = l.cuotasMes > 0 ? l.cuotasMes : 4;
+  const montoUSD = benR2(benR2(l.aporteMesTrab / cm) * cuotas);
+  const montoPatronalUSD = benR2(benR2(l.aporteMesEmp / cm) * cuotas);
+  const aviso = ((l.previosMes || 0) + cuotas > cm) ? ('Con este pago el mes lleva ' + ((l.previosMes || 0) + cuotas) + ' de ' + cm + ' cuotas de HCM') : '';
+  return { ...resto, cuotas, montoUSD, montoBs: benR2(montoUSD * tasa), montoPatronalUSD, montoPatronalBs: benR2(montoPatronalUSD * tasa), editadoManual: false, aviso };
+};
+// El usuario escribe el monto en Bs. (como en el resto de la pantalla): el USD sale de dividir entre la tasa.
+const benEditarMontoBs = (l, textoBs, tasa) => {
+  const bs = benNumComa(textoBs);
+  return { ...l, montoUSD: tasa > 0 ? benR2(bs / tasa) : 0, montoBs: benR2(bs), montoBsTexto: textoBs, editadoManual: true };
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
+  const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa'
   useEffect(()=>{
     const perms=appUser?.permissions||{};
     const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
     if(appUser?.role==='Master'||!tieneSubs) return;
-    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores'};
+    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',beneficios:'rrhh_beneficios',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores'};
     if(perms[mapa[rhTab]]) return;
     const primero=Object.keys(mapa).find(k=>perms[mapa[k]]);
     if(primero) setRhTab(primero);
@@ -123,16 +336,53 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [trabajadores,setTrabajadores]=useState([]);
   const [configParafiscal,setConfigParafiscal]=useState({
     salarioMinimo: 130,
-    ivss:{pctTrabajador:4, riesgo:'medio', pctPatronalMin:9, pctPatronalMedio:10, pctPatronalMax:11, topeMultiplo:5, codigoPasivo:'', nombrePasivo:''},
-    rpe:{pctTrabajador:0.5, pctPatronal:2, topeMultiplo:10, codigoPasivo:'', nombrePasivo:''},
-    faov:{pctTrabajador:1, pctPatronal:2, codigoPasivo:'', nombrePasivo:''},
+    ivss:{pctTrabajador:4, riesgo:'medio', pctPatronalMin:9, pctPatronalMedio:10, pctPatronalMax:11, topeMultiplo:5, codigoPasivo:'', nombrePasivo:'', numeroPredeterminado:'O11963190'},
+    rpe:{pctTrabajador:0.5, pctPatronal:2, topeMultiplo:10, codigoPasivo:'', nombrePasivo:'', numeroPredeterminado:'O11963190'},
+    faov:{pctTrabajador:1, pctPatronal:2, codigoPasivo:'', nombrePasivo:'', numeroPredeterminado:'03054262'},
     inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, codigoPasivo:'', nombrePasivo:''},
   });
-  const RIESGO_PCT = {minimo:9, medio:10, maximo:11};
-  const guardarConfigParafiscal = async () => {
-    try{ await setDoc(getDocRef('rrhh_config','parafiscal'),configParafiscal); alert('Configuración guardada.'); }
+  // Beneficios (HCM y Bolsa de alimentos): se guardan en rrhh_config/beneficios
+  const [configBeneficios,setConfigBeneficios]=useState(benMerge(null));
+  const [busqCuentaBen,setBusqCuentaBen]=useState({});
+  const [benMesVer,setBenMesVer]=useState(benMesActual());
+  const guardarConfigBeneficios = async () => {
+    const h = configBeneficios.hcm, b = configBeneficios.bolsa;
+    const pct = benNum(h.pctTrabajador);
+    if(pct<0 || pct>100) return alert('HCM: el % que paga el trabajador debe estar entre 0 y 100.');
+    if(!(parseInt(h.cuotasPorMes,10)>0)) return alert('Las cuotas (pagos) por mes del HCM deben ser 1 o más.');
+    if(benNum(h.primaPersona)<0 || benNum(b.costoBolsa)<0 || benNum(b.descuentoBolsa)<0) return alert('Los montos no pueden ser negativos.');
+    // Cuenta de gasto del aporte de la empresa por centro de costo: solo las que tienen cuenta, con texto (Firestore rechaza undefined)
+    const gastoPorCentro = {};
+    Object.entries(h.gastoPorCentro||{}).forEach(([k,v])=>{ if(v && v.codigo) gastoPorCentro[k] = { codigo:String(v.codigo), nombre:String(v.nombre||'') }; });
+    // Lo mismo para la parte de la empresa de la Bolsa de alimentos
+    const gastoPorCentroBolsa = {};
+    Object.entries(b.gastoPorCentro||{}).forEach(([k,v])=>{ if(v && v.codigo) gastoPorCentroBolsa[k] = { codigo:String(v.codigo), nombre:String(v.nombre||'') }; });
+    const limpio = {
+      hcm:{...h, primaPersona:benNum(h.primaPersona), pctTrabajador:pct, cuotasPorMes:parseInt(h.cuotasPorMes,10), edadMaxHijos:benNum(h.edadMaxHijos)>0?benNum(h.edadMaxHijos):19, codigoConcepto:String(h.codigoConcepto||'').trim(), gastoPorCentro, polizaAseguradora:String(h.polizaAseguradora||'').trim(), polizaNumero:String(h.polizaNumero||'').trim()},
+      bolsa:{...b, costoBolsa:benNum(b.costoBolsa), descuentoBolsa:benNum(b.descuentoBolsa), codigoConcepto:String(b.codigoConcepto||'').trim(), gastoPorCentro:gastoPorCentroBolsa},
+    };
+    try{ await setDoc(getDocRef('rrhh_config','beneficios'),limpio); setConfigBeneficios(benMerge(limpio)); alert('Configuración de HCM y Bolsa de alimentos guardada.'); }
     catch(e){ alert('Error: '+e.message); }
   };
+  const RIESGO_PCT = {minimo:9, medio:10, maximo:11};
+  const guardarConfigParafiscal = async () => {
+    // El N° predeterminado de la ficha se guarda sin espacios sobrantes (Firestore no admite undefined: siempre texto)
+    const limpioNum = (s) => String(s==null?'':s).trim();
+    const limpio = {...configParafiscal,
+      ivss:{...configParafiscal.ivss, numeroPredeterminado:limpioNum(configParafiscal.ivss.numeroPredeterminado)},
+      rpe:{...configParafiscal.rpe, numeroPredeterminado:limpioNum(configParafiscal.rpe.numeroPredeterminado)},
+      faov:{...configParafiscal.faov, numeroPredeterminado:limpioNum(configParafiscal.faov.numeroPredeterminado)}};
+    try{ await setDoc(getDocRef('rrhh_config','parafiscal'),limpio); alert('Configuración guardada.'); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  // Campo "N° predeterminado en la ficha" de IVSS / RPE / FAOV. Se llama como funcion (no como componente) para no perder el foco al escribir.
+  const campoNumeroFicha = (cfg, set, etiqueta) => (
+    <div className="mb-4">
+      <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">{etiqueta}</label>
+      <input value={cfg.numeroPredeterminado||''} onChange={e=>set({numeroPredeterminado:e.target.value})} placeholder="Sin predeterminado" className="w-64 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+      <p className="text-[9px] text-gray-400 mt-1">Se carga solo en "Seguridad Social" de la ficha de cada trabajador nuevo y de los que lo tengan vacío.</p>
+    </div>
+  );
   const BuscadorCuentaPasivo = ({cfg, set}) => (
     <div>
       <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cuenta Contable (Pasivo)</label>
@@ -171,6 +421,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s9=onSnapshot(getColRef('rrhh_conceptos'),s=>setConceptos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s10=onSnapshot(getColRef('rrhh_parametros_formula'),s=>setParametrosFormula(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s11=onSnapshot(getColRef('rrhh_tabulador_cargos'),s=>setTabuladorCargos(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const s12=onSnapshot(getDocRef('rrhh_config','beneficios'),d=>{ if(!d.exists()) return; setConfigBeneficios(benMerge(d.data())); });
     const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{
       if(!d.exists()) return;
       const cargado = d.data();
@@ -184,7 +435,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();};
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -192,14 +443,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [nuevoCentro,setNuevoCentro]=useState('');
   const [nuevaNaturalezaCentro,setNuevaNaturalezaCentro]=useState('Gasto');
   const [nuevoDepto,setNuevoDepto]=useState('');
-  const [busqCuenta,setBusqCuenta]=useState('');
-  const [nuevaLinea,setNuevaLinea]=useState({tipo:'asignacion',concepto:'',conceptoOtro:'',codigo:'',nombre:''});
   const [busy,setBusy]=useState(false);
-  const CONCEPTOS_NOMINA = {
-    asignacion: ['Sueldo Básico','Bono Nocturno','Horas Extra Diurnas','Horas Extra Nocturnas','Comisiones','Bono de Producción','Bono Vacacional','Utilidades','Días Feriados Trabajados','Otro (escribir)'],
-    deduccion: ['IVSS (Seguro Social)','RPE / Paro Forzoso','FAOV (Ley de Vivienda)','ISLR','INCES','Préstamo / Anticipo','Otro (escribir)'],
-    patronal: ['Cargas Sociales Patronales (IVSS+RPE+FAOV)'],
-  };
 
   const TIPOS_CONCEPTO = {
     A:{label:'Asignación', badge:'bg-emerald-100 text-emerald-700'},
@@ -212,9 +456,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const CATALOGO_CONCEPTOS_ESTANDAR = [{"codigo":"00001","nombre":"SALARIO Diario","tipo":"A","formula":"","formato":"{ CE00003 } DIAS TRABAJADOS x { CE00001/30 }","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00004","nombre":"DIAS PENDIENTES","tipo":"A","formula":"","formato":"{ CE00016 } DIAS PENDIENTES x { CE00001/30 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00005","nombre":"HORAS EXTRAS DIURNAS","tipo":"A","formula":"","formato":"{( RF03 * CE00004 )} HORA(S) EXTRAS DIURNAS x { (((CE00001/30) /8)*1,5)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00006","nombre":"HORAS EXTRAS NOCTURNAS","tipo":"A","formula":"","formato":"{( RF03 * CE00005 )} HORA(S) EXTRAS NOCTURNAS x { (((CE00001/30)/8)*1,8)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00007","nombre":"BONO NOCTURNO","tipo":"A","formula":"","formato":"{ CE00012 } HORAS DE BONO NOCTURNO x { ((((CE00001 /30)/8)*30)/100)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00008","nombre":"DESCANSO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00013 } DIA DESCANSO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00009","nombre":"DIA FERIADO NO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00014 } DIA FERIADO NO TRABAJADO x { CE00001/30 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00010","nombre":"DIA FERIADO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00015 }  DIA FERIADO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00011","nombre":"CESTA TICKET SOCIALISTA PARA LOS TRABAJADORES/(DORAS)","tipo":"A","formula":"","formato":"?{ (CE00033-CE00055-CE00056) } CESTA TICKET SOCIALISTA PARA LOS TRABAJADORES/(DORAS) x {","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00012","nombre":"PERMISO REMUNERADO","tipo":"A","formula":"","formato":"{CE00071} DIAS DE PERMISO REMUNERADO x {(CE00001/30)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00013","nombre":"SUSPENSION REMUNERADA","tipo":"A","formula":"","formato":"{ CE00089} SUSPENSION REMUNERADA","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00015","nombre":"DIAS DE REPOSO POST-NATAL","tipo":"A","formula":"","formato":"{ CE00064 } DIAS DE REPOSO POST- NATAL  x { ((CE00001 /30)*(33,33/100))}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00016","nombre":"SUSPENSION IVSS 33.33%","tipo":"A","formula":"","formato":"{CE00017}¨DIAS DE SUSPENSION IVSS 33.33% x {((CE00001 /30)*33,33/100)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00017","nombre":"COMPENSATORIO DISFRUTADO","tipo":"A","formula":"","formato":"{ CE00038 } DIAS DE COMPENSATORIO x { (CE00001 /30)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00018","nombre":"PERMISO POR PATERNIDAD","tipo":"A","formula":"","formato":"{ CE00050 } DIAS DE PERMISO POR PATERNIDAD x { (CE00001 /30)}","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00020","nombre":"DIA DE DESCANSO","tipo":"A","formula":"","formato":"{ CE00009 } DIAS DE DESCANSO x { (CE00001 /30)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00022","nombre":"BONIFICACION POR VIAJE","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00024","nombre":"DOMINGO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00065 } DOMINGOS TRABAJADOS x {CE00001/30*0,5}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00026","nombre":"CESTA TICKET","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01000","nombre":"REINTEGRO HCM","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01001","nombre":"DIFERENCIA DE SUELDO","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01VAT","nombre":"TOTAL VACACIONES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"02SUB","nombre":"SUBSIDIO OTORGADO POR EL EJECUTIVO NACIONAL","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20000","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20010","nombre":"REGIMEN PRESTACIONAL DE EMPLEO (PARO FORZOSO)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20030","nombre":"REGIMEN PRESTACIONAL VIVIENDA Y HABITAD (BANAVIH)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20031","nombre":"RETENCION DE I.S.L.R","tipo":"D","formula":"","formato":"IMPUESTO SOBRE LA RENTA x {CE00026} %","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20033","nombre":"DIAS DE AUSENCIA INJUSTIFICADAS","tipo":"D","formula":"","formato":"{ CE00056 } DIAS DE AUSENCIA INJUSTIFICADAS x { (CE00001/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20042","nombre":"CARTON DE HUEVOS","tipo":"D","formula":"","formato":"{ CE00040 } CARTONES DE HUEVOS x { CE00039 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"22000","nombre":"BOLSA ALIMENTOS","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"22001","nombre":"?Otras Deducciones","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24000","nombre":"POLIZA HCM","tipo":"D","formula":"","formato":"{ CE00086 } POLIZA HCM x { CE00088 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24001","nombre":"POLIZA HCM","tipo":"V","formula":"","formato":"{ CE00093 } POLIZA HCM x { CE00088 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24002","nombre":"DIFERENCIAL DE HCM","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24003","nombre":"DESCUENTO POLIZA HCM 9","tipo":"D","formula":"","formato":"{ CE00115 } POLIZA HCM x { CE00088 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24004","nombre":"DESCUENTO POLIZA HCM","tipo":"D","formula":"","formato":"{ CE00116 } POLIZA HCM x { CE00088 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"26587","nombre":"DIFERENCIA DE IVSS","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30000","nombre":"VACACIONES ART. 190","tipo":"V","formula":"","formato":"{ CE00002 } VACACIONES ART. 190 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30001","nombre":"DIAS ADICIONALES POR VACACIONES ART. 190","tipo":"V","formula":"","formato":"{ N00001 } DIAS ADICIONALES POR VACACIONES ART. 190 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30002","nombre":"RETENCION DE I.S.L.R","tipo":"V","formula":"","formato":"IMPUESTO SOBRE LA RENTA x {CE00026} %","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31000","nombre":"BONO VACACIONAL ART.192","tipo":"V","formula":"","formato":"{ CE00002 } DIAS DE BONO VACACIONAL ART.192 x {  ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31001","nombre":"DIAS ADICIONALES POR BONO VACACIONAL ART. 192","tipo":"V","formula":"","formato":"{N00021 }DIAS ADICIONALES POR BONO VACACIONAL ART. 192 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31002","nombre":"BONO POR DISFRUTE DE VACACIONES","tipo":"V","formula":"","formato":"BONO POR DISFRUTE DE VACACIONES","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32000","nombre":"DIAS DE DESCANSO EN VACACIONES","tipo":"V","formula":"","formato":"{ CE00043 } DIAS DE DESCANSO EN VACACIONE x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32001","nombre":"DOMINGOS EN VACACIONES","tipo":"V","formula":"","formato":"{ DFSERIE0003 } FERIADOS EN VACACIONES x { (CE00001 /30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32002","nombre":"FERIADOS EN VACACIONES","tipo":"V","formula":"","formato":"{ DFSERIE0003 } FERIADOS EN VACACIONES x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32111","nombre":"DIFERENCIA DE PARO FORZOZO","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33001","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33002","nombre":"REGIMEN PRESTACIONAL DE EMPLEO (PARO FORZOSO)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33003","nombre":"REGIMEN PRESTACIONAL VIVIENDA Y HABITAD (BANAVIH)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33005","nombre":"CARTON DE HUEVOS","tipo":"V","formula":"","formato":"{ CE00062 } CARTONES DE HUEVOS x { CE00063 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33006","nombre":"?OTRAS ASIGNACIONES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33007","nombre":"OTRAS ASIGNACIONES NO BONIFICABLES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33009","nombre":"DIAS TRABAJADOS","tipo":"L","formula":"","formato":"{ CE00103 } DIAS TRABAJADOS PENDIENTES x { (CE00001 /30)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40000","nombre":"PRESTACION DE ANTIGUEDAD ART. 142 LITERAL \"A\"","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40001","nombre":"INTERESES SOBRE LAS PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40003","nombre":"VACACIONES FRACCIONADAS","tipo":"R","formula":"","formato":"{ N00008 } DIAS DE VACACIONES FRACCIONADAS ART. 196 x { (CE00001/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40004","nombre":"BONO VACACIONAL FRACCIONADO","tipo":"R","formula":"","formato":"{ N00009 } DIAS DE BONO VACACIONAL FRACCIONADO ART. 196 x { CNR0007 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40006","nombre":"VACACIONES ACUMULADAS","tipo":"L","formula":"","formato":"{ CE00046 } DIAS DE VACACIONES ACUMULADAS ART. 199 x { CNR0007 }","afVac":false,"afLiq":false,"general":false,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40007","nombre":"BONO VACACIONAL ACUMULADO","tipo":"L","formula":"","formato":"{ CE00047 } DIAS DE BONO VACACIONAL ACUMULADO ART. 199 x { CNR0007 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40008","nombre":"DESCANSO TRABAJADO","tipo":"A","formula":"","formato":"{REF00013 } DIA DESCANSO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40009","nombre":"DIAS PENTIENTES","tipo":"V","formula":"","formato":"?{ CE00096 } DIAS PENDIENTES x { CE00001/30 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40010","nombre":"ANTICIPO DE PRESTACIONES SOCIALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40011","nombre":"PRESTACION DE ANTIGUEDAD ART. 142 LITERAL \"C\"","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40012","nombre":"VACACIONES EVENTUALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40402","nombre":"UTILIDADES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"48000","nombre":"IDEMNIZACION POR DESPIDO ART. 92 LOTT","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"48001","nombre":"DOMINGO TRABAJADOS","tipo":"A","formula":"","formato":"{ REF00065 } DOMINGOS TRABAJADOS x {CE00001/30*1,5}","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"49001","nombre":"ADELANTO DE PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"49005","nombre":"TOTAL PRESTACIONES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50000","nombre":"ALICUOTA DE UTILIDAD","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50001","nombre":"ALICUOTA BONO VACACIONAL","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50002","nombre":"TOTAL DEVENGADO DE SUELDO MENSUAL","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50009","nombre":"REGIMEN PRESTACIONAL VIVEINDA Y HABITAD (BANAVIH)","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50014","nombre":"INCES","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50015","nombre":"SALARIO INTEGRAL PARA PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50016","nombre":"TOTAL A DEVENGAR PRESTACIONES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50020","nombre":"INTERESES SOBRE PRESTACIONES SOCIALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50022","nombre":"?Otras Deducciones","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"68929","nombre":"OTRAS DEDUCIONES","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"70934","nombre":"?OTRAS DEDUCCIONES","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"77360","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"95082","nombre":"OTRAS ASIGNACIONES","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"E0007","nombre":"BONO NOCTURNO","tipo":"A","formula":"","formato":"{ REFCE00012} HORAS DE BONO NOCTURNO x { ((((CE00001 /30)/8)*30)/100)}","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"F0002","nombre":"PRESTACION COMPLEMENTARIA","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"F0003","nombre":"SALARIO DIARIO INTEGRAL","tipo":"R","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0001","nombre":"APORTE PATRONAL (IVSS)","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0002","nombre":"APORTE PATRONAL SPF","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0003","nombre":"APORTE PATRONAL BANAVIH","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0004","nombre":"APORTE PATRONAL INCES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0007","nombre":"SALARIO NORMAL","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0010","nombre":"VACACIONES FRACCIONADAS REP. PROVI","tipo":"L","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0011","nombre":"BONO VACACIONAL FRACCIONADO REP. PROVI","tipo":"L","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0014","nombre":"TOTAL DEVENGADO UTILIDADES","tipo":"R","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0016","nombre":"TOTAL DEVENGADO MENSUAL","tipo":"R","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0018","nombre":"BONIFICACION ALIMENTACION","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0019","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R001V","nombre":"APORTE PATRONAL (IVSS)","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0020","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0021","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0022","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0023","nombre":"BONIFICACION UNICA E IRREPETIBLE","tipo":"A","formula":"","formato":"BONIFICACION UNICA E IRREPETIBLE","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0024","nombre":"DEDUCCION EVENTUAL","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0025","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0026","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0027","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0028","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R002V","nombre":"APORTE PATRONAL SPF","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R003V","nombre":"APORTE PATRONAL BANAVIH","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R004V","nombre":"APORTE PATRONAL INCES","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RET01","nombre":"BONIFICACION RUTA TRANSPORTE","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RET02","nombre":"BONIFICACION POR REPARTO","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RETR0","nombre":"BONO PRESENCIAL DE PRODUCTIVIDAD","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true}];
 
   const deptosDelCentro = departamentos.filter(d=>d.centroCostoId===centroSel?.id);
-  const cuentasDelDepto = cuentasNomina.filter(c=>c.departamentoId===deptoSel?.id);
-  const asignaciones = cuentasDelDepto.filter(c=>c.tipo==='asignacion');
-  const deducciones = cuentasDelDepto.filter(c=>c.tipo==='deduccion');
 
   const crearCentro = async () => {
     if(!nuevoCentro.trim()) return;
@@ -229,7 +470,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const eliminarCentro = async (c) => {
     const deps = departamentos.filter(d=>d.centroCostoId===c.id);
-    if(!window.confirm(`¿Eliminar "${c.nombre}"?${deps.length?`\n\nTiene ${deps.length} departamento(s) asociado(s) — también se eliminarán, junto con sus cuentas de nómina.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    if(!window.confirm(`¿Eliminar "${c.nombre}"?${deps.length?`\n\nTiene ${deps.length} departamento(s) asociado(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
     try{
       const batch=writeBatch(db);
       deps.forEach(d=>{
@@ -250,7 +491,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const eliminarDepto = async (d) => {
     const cuentas = cuentasNomina.filter(c=>c.departamentoId===d.id);
-    if(!window.confirm(`¿Eliminar "${d.nombre}"?${cuentas.length?`\n\nTiene ${cuentas.length} cuenta(s) de nómina asociada(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    if(!window.confirm(`¿Eliminar "${d.nombre}"?\n\nEsta acción no se puede deshacer.`)) return;
     try{
       const batch=writeBatch(db);
       cuentas.forEach(c=>batch.delete(getDocRef('rrhh_cuentas_nomina',c.id)));
@@ -258,24 +499,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       await batch.commit();
       if(deptoSel?.id===d.id) setDeptoSel(null);
     } catch(e){ alert('Error al eliminar: '+e.message); }
-  };
-  const asociarCuenta = async (cuentaContable) => {
-    const conceptoFinal = nuevaLinea.concepto==='Otro (escribir)' ? nuevaLinea.conceptoOtro.trim() : nuevaLinea.concepto;
-    if(!conceptoFinal||!deptoSel) return alert('Elige o escribe un concepto primero');
-    setBusy(true);
-    try{
-      await addDoc(getColRef('rrhh_cuentas_nomina'),{
-        departamentoId:deptoSel.id, tipo:nuevaLinea.tipo, concepto:conceptoFinal,
-        codigoCuenta:cuentaContable.codigo, nombreCuenta:cuentaContable.nombre, createdAt:Date.now()
-      });
-      setNuevaLinea({tipo:nuevaLinea.tipo,concepto:'',conceptoOtro:'',codigo:'',nombre:''}); setBusqCuenta('');
-    } catch(e){ alert('Error al asociar la cuenta: '+e.message); }
-    finally { setBusy(false); }
-  };
-  const eliminarLinea = async (c) => {
-    if(!window.confirm(`¿Quitar "${c.concepto}" de este departamento?`)) return;
-    try{ await deleteDoc(getDocRef('rrhh_cuentas_nomina',c.id)); }
-    catch(e){ alert('Error al eliminar: '+e.message); }
   };
 
   // ── Conceptos de Nómina (catálogo con fórmula + cuenta por centro de costo) ─
@@ -477,15 +700,29 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
 
   // ── Trabajadores (ficha completa) ────────────────────────────────────────
-  const initTrabajador = () => ({
+  // Valores predeterminados de la ficha: IVSS / RPE / FAOV (Configuración → Parafiscales) y Póliza HCM (Configuración → HCM).
+  // Se usan en las fichas nuevas y donde el campo del trabajador está vacío (vista, PDF y formulario de Editar). Un valor propio del trabajador siempre manda.
+  const conPredeterminados = (t) => {
+    if(!t) return t;
+    const vacio = (v) => !String(v==null?'':v).trim();
+    const pred = {
+      ivss: configParafiscal.ivss.numeroPredeterminado, rpe: configParafiscal.rpe.numeroPredeterminado, faov: configParafiscal.faov.numeroPredeterminado,
+      polizaHCMAseguradora: configBeneficios.hcm.polizaAseguradora, polizaHCMNumero: configBeneficios.hcm.polizaNumero,
+    };
+    const r = {...t};
+    Object.keys(pred).forEach(k=>{ if(vacio(r[k]) && !vacio(pred[k])) r[k] = String(pred[k]).trim(); });
+    return r;
+  };
+  const initTrabajador = () => conPredeterminados({
     nombre:'', cedula:'', sexo:'Masculino', fechaNacimiento:'', estadoCivil:'Soltero', nivelEducativo:'Bachiller',
     nacionalidad:'Venezolano', tipoSangre:'', fotoUrl:'',
     telefono:'', correo:'', direccion:'', contactoEmergenciaNombre:'', contactoEmergenciaTelefono:'',
-    centroCostoId:'', departamentoId:'', cargo:'', fechaIngreso:'', tipoContrato:'Indefinido', fechaFinContrato:'', turno:'Diurno',
+    centroCostoId:'', departamentoId:'', cargo:'', escalaSalarial:'', fechaIngreso:'', tipoContrato:'Indefinido', fechaFinContrato:'', turno:'Diurno',
     salarioBase:'', formaPago:'Quincenal', cuentaBancaria:'', supervisor:'',
     ivss:'', rpe:'', faov:'', rif:'',
     alergias:'', certificadoMedicoFecha:'', eppAsignado:'', eppFechaEntrega:'',
     polizaHCMAseguradora:'', polizaHCMNumero:'', cestaTicketTipo:'Tarjeta digital', cestaTicketNumero:'',
+    hcmActivo:false, hcmDesde:'', hcmHasta:'', bolsasAlimentos:'',
     tallaCamisa:'', tallaPantalon:'', tallaZapatos:'',
     vehiculoAsignado:false, vehiculoMarca:'', vehiculoModelo:'', vehiculoAnio:'', vehiculoColor:'',
     vacacionesAcumuladas:'', vacacionesDisfrutadas:'',
@@ -493,6 +730,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     cargasFamiliares:[], evaluaciones:[], amonestaciones:[], historialAumentos:[],
     estado:'Activo', fechaEgreso:'', motivoEgreso:'',
   });
+  // "cargo" = cargo real del trabajador (es el que sale en el recibo y en el reporte de nomina).
+  // "escalaSalarial" = escala del Tabulador de Sueldos (solo fija el salario base).
+  // Las fichas anteriores no tenian la escala guardada: el campo "cargo" llevaba el nombre de la escala
+  // elegida, asi que se toma de ahi mientras siga coincidiendo con una escala del tabulador.
+  const escalaDe = (t) => {
+    if(!t) return '';
+    if(t.escalaSalarial!==undefined && t.escalaSalarial!==null) return String(t.escalaSalarial);
+    return tabuladorCargos.some(c=>c.cargo===t.cargo) ? t.cargo : '';
+  };
   const [trabajadorForm,setTrabajadorForm]=useState(null); // ficha en edición/creación, o null
   const [trabajadorVer,setTrabajadorVer]=useState(null); // ficha en modo solo lectura
   const [busyTrab,setBusyTrab]=useState(false);
@@ -516,7 +762,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(isNaN(fin.getTime())) return null;
     return Math.round((fin-hoy)/86400000);
   };
-  const [nuevaCarga,setNuevaCarga]=useState({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
+  const CARGA_VACIA = {nombre:'',parentesco:'Hijo(a)',fechaNacimiento:'',cedula:'',sexo:'',hcm:false,hcmDesde:'',hcmHasta:''};
+  const [nuevaCarga,setNuevaCarga]=useState(CARGA_VACIA);
   const [nuevaEval,setNuevaEval]=useState({mes:'',resultado:'Satisfactorio'});
   const [nuevaAmon,setNuevaAmon]=useState({fecha:getTodayDate(),tipo:'Verbal',motivo:''});
 
@@ -540,9 +787,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const agregarCarga = () => {
     if(!nuevaCarga.nombre.trim()) return;
     setTrabajadorForm(f=>({...f,cargasFamiliares:[...f.cargasFamiliares,{...nuevaCarga}]}));
-    setNuevaCarga({nombre:'',parentesco:'Hijo(a)',fechaNacimiento:''});
+    setNuevaCarga(CARGA_VACIA);
   };
   const quitarCarga = (i) => setTrabajadorForm(f=>({...f,cargasFamiliares:f.cargasFamiliares.filter((_,j)=>j!==i)}));
+  const actualizarCarga = (i, patch) => setTrabajadorForm(f=>({...f,cargasFamiliares:f.cargasFamiliares.map((c,j)=>j===i?{...c,...patch}:c)}));
   const agregarEval = async (t) => {
     if(!nuevaEval.mes) return alert('Elige el mes de la evaluación');
     try{
@@ -573,7 +821,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
   const [subiendoFoto,setSubiendoFoto]=useState(false);
   // ── Registro de Nómina ────────────────────────────────────────────────────
-  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||'')});
+  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||''), aplicaHCM:true, aplicaBolsa:false});
   const [nominaForm,setNominaForm]=useState(initNominaForm());
   const [nominaActiva,setNominaActiva]=useState(null);
   const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador'
@@ -600,6 +848,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const cerrarNomina = async (n) => {
     if(!window.confirm(`¿Cerrar "${n.concepto}"? Ya no se podrán cargar ni editar trabajadores en este pago.`)) return;
     try{ await updateDoc(getDocRef('rrhh_nominas',n.id),{estado:'cerrada'}); if(nominaActiva?.id===n.id) setNominaActiva(v=>({...v,estado:'cerrada'})); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  // En un pago abierto: marcar/desmarcar si se descuenta HCM o Bolsa de alimentos automáticamente.
+  const cambiarFlagNomina = async (campo, valor) => {
+    if(!nominaActiva || nominaActiva.estado!=='abierta') return;
+    try{ await updateDoc(getDocRef('rrhh_nominas',nominaActiva.id),{[campo]:valor}); setNominaActiva(v=>v?({...v,[campo]:valor}):v); }
     catch(e){ alert('Error: '+e.message); }
   };
   const eliminarNomina = async (n) => {
@@ -776,6 +1030,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     return v==null?0:v;
   };
   const cuentaDeConcepto = (c, centroCostoId) => c.cuentasPorCentro?.[centroCostoId] || null;
+  // Detalles de este trabajador en OTROS pagos del mismo mes (para avisar de cuotas de HCM o bolsa repetidas).
+  const detallesMesDe = (trabajadorId) => nominaDetalles.filter(d=>d.trabajadorId===trabajadorId && d.nominaId!==nominaActiva?.id && (nominas.find(n=>n.id===d.nominaId)?.mes)===nominaActiva?.mes);
   const abrirCargarTrabajador = (trabajador) => {
     // Predeterminados: tomados del catálogo real de Conceptos (Recursos Humanos → Conceptos), el
     // mismo con el que se arma la nómina — no una lista aparte.
@@ -784,7 +1040,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // pagan al trabajador). Patronal y Resultado quedan fuera — son costo de la empresa o totales
     // calculados, no líneas que se agreguen sueltas a un recibo.
     const asignacionesCfg = conceptosActivos.filter(c=>['A','V','L'].includes(c.tipo));
-    const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c));
+    // HCM y Bolsa de alimentos se calculan solos (se configuran en Configuración → HCM / Bolsa de alimentos) para quien los tiene marcados en la ficha:
+    // su concepto no sale como fila manual para no duplicarlo. Lo guardado a mano antes se conserva (benConstruirLineas).
+    // Tampoco sale como fila manual el concepto de una línea automática que ya está guardada en este pago.
+    const _confBen = benMerge(configBeneficios);
+    const _detBenGuardado = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
+    const codigosAutoBen = [
+      (_confBen.hcm.activo!==false && trabajador.hcmActivo===true) ? (_confBen.hcm.codigoConcepto||'24000') : null,
+      (_confBen.bolsa.activo!==false && (parseInt(trabajador.bolsasAlimentos,10)||0)>0) ? (_confBen.bolsa.codigoConcepto||'22000') : null,
+      ...((_detBenGuardado?.deducciones||[]).filter(d=>d.esBeneficio).map(d=>d.codigo)),
+    ].filter(Boolean);
+    const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c) && !codigosAutoBen.includes(c.codigo));
     // Si el trabajador ya tiene un detalle guardado en esta nómina (lo estamos re-abriendo, p.ej. con
     // Anterior/Siguiente), recargamos sus montos ya guardados en vez de empezar de cero.
     const detalleExistente = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
@@ -811,7 +1077,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const tieneFormula = esConceptoCalculable(c);
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
-      const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal);
+      const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal && !d.esBeneficio);
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
       return {concepto:c.nombre, codigo:c.codigo, incluida:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
@@ -828,10 +1094,27 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       if(legalesGuardadas && !guardada) return {...fresca, incluida:false}; // la había quitado
       return fresca; // recalculada sola, sin editar a mano
     });
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
+    const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
+  // Beneficios automáticos (HCM / Bolsa de alimentos) del trabajador abierto
+  const toggleBeneficio = (idx) => setCargarTrabModal(m=>({...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
+  const actualizarMontoBeneficio = (idx, montoBsInput) => setCargarTrabModal(m=>{
+    const tasa = Number(nominaActiva?.tasa||0);
+    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benEditarMontoBs(d, montoBsInput, tasa):d)};
+  });
+  const actualizarCuotasHCM = (idx, valor) => setCargarTrabModal(m=>{
+    const tasa = Number(nominaActiva?.tasa||0);
+    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benAplicarCuotas(d, valor, tasa):d)};
+  });
+  const recalcularBeneficiosAhora = () => setCargarTrabModal(m=>{
+    if(!m) return m;
+    const frescas = benConstruirLineas({trabajador:m.trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente:null, detallesMes:detallesMesDe(m.trabajador.id)});
+    const previas = m.deduccionesBeneficios||[];
+    return {...m, deduccionesBeneficios:frescas.map(f=>{ const p = previas.find(x=>x.tipoBeneficio===f.tipoBeneficio); return p ? {...f, incluida:p.incluida} : f; })};
+  });
   // Los montos manuales (sin fórmula — Diferencia de Sueldo, y cualquier otro que se agregue a
   // mano) se escriben en Bs., que es como naturalmente se conocen esos montos — el USD se calcula
   // solo dividiendo entre la tasa de la nómina.
@@ -891,8 +1174,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // editado o quitado) — no se vuelven a calcular de cero aquí.
     const deduccionesLegales = (cargarTrabModal.deduccionesLegales||[]).filter(d=>d.incluida).map(({incluida,...d})=>d);
     const deduccionesManual = cargarTrabModal.deduccionesManual.filter(d=>d.incluida).map(({incluida,...d})=>({...d, esLegal:false}));
+    // HCM / Bolsa automáticos: se guardan como una deducción más (sin los campos que son solo de pantalla)
+    const deduccionesBen = (cargarTrabModal.deduccionesBeneficios||[]).filter(d=>d.incluida).map(({incluida,aviso,previosMes,montoBsTexto,...d})=>d);
+    const totalPatronalBenUSD = deduccionesBen.reduce((s,d)=>s+(d.montoPatronalUSD||0),0); // aporte de la empresa en HCM (aparte de las cargas sociales)
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
-    const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual].reduce((s,d)=>s+d.montoUSD,0);
+    const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual,...deduccionesBen].reduce((s,d)=>s+d.montoUSD,0);
     const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
     const {desde:periodoDesde, hasta:periodoHasta, esQ2} = periodoQuincena(nominaActiva);
     const mesM = String(nominaActiva.mes||'').split('-')[1], añoM = String(nominaActiva.mes||'').split('-')[0];
@@ -911,9 +1197,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       batchRecibo.set(getDocRef('rrhh_nomina_detalles',key),{
         nominaId:nominaActiva.id, trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula,
         centroCostoId:t.centroCostoId, departamentoId:t.departamentoId,
-        asignaciones, deducciones:[...deduccionesLegales,...deduccionesManual],
+        // Se quitan los campos undefined: Firestore los rechaza (pasaba al volver a guardar un trabajador ya cargado y re-abierto)
+        asignaciones:asignaciones.map(benSinUndefined), deducciones:[...deduccionesLegales,...deduccionesManual,...deduccionesBen].map(benSinUndefined),
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
         totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
+        totalPatronalBenUSD:parseFloat(totalPatronalBenUSD.toFixed(2)), totalPatronalBenBs:parseFloat((totalPatronalBenUSD*tasa).toFixed(2)),
         netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
         tasa, nroRecibo, periodoDesde, periodoHasta, novedades:cargarTrabModal.novedadesValores||{}, updatedAt:Date.now(),
       },{merge:true});
@@ -979,7 +1267,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoUSD);
         if(ded.montoPatronalUSD>0){
           addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoPatronalUSD);
-          totalPatronalDepto += ded.montoPatronalUSD;
+          if(ded.esBeneficio){
+            // El aporte de la empresa en HCM y en la Bolsa de alimentos va a su cuenta de gasto según el centro de costo (Configuración → HCM / Bolsa de alimentos), no a Cargas Sociales
+            addCuenta(ded.codigoCuentaPatronal||'', ded.nombreCuentaPatronal||('Gasto '+ded.concepto+' (empresa) (⚠️ sin cuenta configurada)'), 'debe', ded.montoPatronalUSD);
+          } else {
+            totalPatronalDepto += ded.montoPatronalUSD;
+          }
         }
       });
       addCuenta('', 'Nómina por Pagar (Banco)', 'haber', d.netoUSD);
@@ -999,6 +1292,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     dir: settings?.empresaDireccion || 'Av. Circunvalación Nro 02, C.C. El Dividivi, Local G-9, Nivel PB, Sector El Trébol, Maracaibo - Zulia',
   });
   const _escRH = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Cargo que se imprime en el reporte de nomina: el mismo de la ficha del trabajador que sale en el recibo
+  const cargoDeDetalle = (d) => { const tr = trabajadores.find(x=>x.id===d.trabajadorId); return (tr && tr.cargo) ? tr.cargo : ''; };
   const _reciboCss = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:520px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:14px;text-transform:uppercase;}.membrete p{font-size:9px;opacity:.9;margin-top:1px;}.membrete .tit{font-size:11px;font-weight:900;text-transform:uppercase;text-align:right;}.btn-print{display:block;margin:14px 16px;padding:10px 0;background:#0891b2;color:#fff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 32px);}.contenido{padding:0 16px 16px;}.fila-top{display:flex;justify-content:space-between;margin-bottom:10px;}.fila-top p{font-size:10px;color:#6b7280;margin:1px 0 0;}.fila-top .nom{font-size:13px;font-weight:900;}table{width:100%;font-size:11px;border-collapse:collapse;}td{padding:3px 0;}.lbl{color:#6b7280;}.neg{color:#dc2626;}tr.tot td{border-top:1px solid #e5e7eb;padding-top:6px;font-weight:900;}.firma{font-size:9px;color:#9ca3af;margin-top:14px;padding-top:8px;border-top:1px solid #e5e7eb;}@media print{@page{margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
 
   const exportarReciboPDF = (d, nomina) => {
@@ -1021,7 +1316,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     ].join('');
     const stub = `<div class="stub">
       <div class="hdr">
-        <div class="box logo-box">Supply<br/><span>G&amp;B</span></div>
         <div class="box empresa-box">
           <b>${_escRH(empresa)}</b><br/>
           R.I.F.: ${_escRH(rif)}<br/>
@@ -1033,8 +1327,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       <table class="box datos-table">
         <tr><td class="lbl">CÉDULA:</td><td>${_escRH(t.cedula||d.trabajadorCedula||'—')}</td><td class="lbl">FECHA DE<br/>INGRESO:</td><td>${contDd(t.fechaIngreso)}</td></tr>
         <tr><td class="lbl">NOMBRE:</td><td>${_escRH((t.nombre||d.trabajadorNombre||'').toUpperCase())}</td><td class="lbl">DEPARTAMENTO:</td><td>${_escRH(nombreDepto(d.departamentoId).toUpperCase())}</td></tr>
-        <tr><td class="lbl">CARGO:</td><td>${_escRH((t.cargo||'—').toUpperCase())}</td><td class="lbl">SALARIO<br/>PERÍODO:</td><td>BS. ${formatNum(salarioPeriodoBs)}</td></tr>
+        <tr><td class="lbl">CARGO:</td><td colspan="3" class="ancho">${_escRH((t.cargo||'—').toUpperCase())}</td></tr>
+        <tr><td class="lbl">SALARIO<br/>PERÍODO:</td><td colspan="3" class="ancho">BS. ${formatNum(salarioPeriodoBs)}</td></tr>
         <tr><td class="lbl">FECHA DE<br/>PAGO:</td><td>${contDd(nomina.fechaPago)}</td><td class="lbl">PERÍODO DE<br/>PAGO:</td><td>DEL ${contDd(d.periodoDesde)} AL ${contDd(d.periodoHasta)}</td></tr>
+        <tr><td class="lbl">CUENTA<br/>BANCARIA:</td><td colspan="3" class="ancho">${_escRH(t.cuentaBancaria||'—')}</td></tr>
       </table>
       <table class="box conceptos-table">
         <thead><tr><th>CONCEPTO</th><th>DESCRIPCIÓN</th><th>ASIGNACIÓN</th><th>DEDUC/RETEN</th></tr></thead>
@@ -1056,17 +1352,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       .cut{width:0.7in;display:flex;justify-content:center;align-self:stretch;}
       .cut::before{content:'';border-left:2px dashed #999;}
       .box{border:1.5px solid #111;border-radius:11px;overflow:hidden;margin-bottom:0.09in;}
-      .hdr{display:grid;grid-template-columns:1.05in 1fr 1.15in;gap:0.08in;margin-bottom:0.09in;}
-      .logo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:13pt;color:#0891b2;text-align:center;line-height:1.15;}
-      .logo-box span{color:#111;}
+      .hdr{display:grid;grid-template-columns:1fr auto;gap:0.08in;margin-bottom:0.09in;}
       .empresa-box{padding:0.08in 0.1in;font-size:8.3pt;line-height:1.42;font-weight:700;}
-      .recibo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:9.5pt;text-align:center;line-height:1.3;}
+      .recibo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:8.4pt;text-align:center;line-height:1.35;padding:0.06in 0.12in;white-space:nowrap;}
       .datos-table{width:100%;border-collapse:collapse;font-size:8.3pt;}
       .datos-table td{border-top:1px solid #111;padding:0.04in 0.08in;vertical-align:middle;}
       .datos-table tr:first-child td{border-top:none;}
       .datos-table .lbl{font-weight:900;width:1.1in;font-size:7.6pt;line-height:1.15;}
       .datos-table td:nth-child(2){font-weight:700;width:1.35in;}
       .datos-table td:nth-child(3){font-weight:900;width:1.05in;font-size:7.6pt;line-height:1.15;}
+      .datos-table td.ancho{width:auto;}
       .conceptos-table{width:100%;border-collapse:collapse;font-size:8pt;}
       .conceptos-table th{background:#111;color:#fff;text-align:left;padding:0.05in 0.08in;font-size:7.6pt;}
       .conceptos-table th.num,.conceptos-table td.num{text-align:right;}
@@ -1098,7 +1393,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const totDedUSD = detalles.reduce((s,d)=>s+d.totalDeduccionesUSD,0);
     const totNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
     const totNetoBs = detalles.reduce((s,d)=>s+d.netoBs,0);
-    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}th:first-child,th:nth-child(2){text-align:left;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}td:first-child,td:nth-child(2){text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}th:first-child,th:nth-child(2),th:nth-child(3){text-align:left;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}tbody td:first-child,tbody td:nth-child(2),tbody td:nth-child(3){text-align:left;}tfoot td:first-child{text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Reporte Nómina - ${_escRH(nomina.concepto)}</title><style>${css}</style></head><body><div class="wrap">
       <div class="membrete"><div><h1>${_escRH(empresa)}</h1><p>RIF: ${_escRH(rif)} · ${_escRH(dir)}</p></div></div>
       <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
@@ -1106,9 +1401,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         <h2 style="font-size:14px;margin-bottom:4px">Reporte de Nómina — ${_escRH(nomina.concepto)}</h2>
         <p style="font-size:10px;color:#6b7280;margin-bottom:12px">${_escRH(nomina.mes)} · ${_escRH(nomina.quincena)} · Fecha de pago ${_escRH(contDd(nomina.fechaPago))} · Tasa ${_escRH(nomina.tasa)}</p>
         <table>
-          <thead><tr><th>Trabajador</th><th>Departamento</th><th>Asignaciones $</th><th>Deducciones $</th><th>Neto $</th><th>Neto Bs.</th></tr></thead>
-          <tbody>${detalles.map(d=>`<tr><td>${_escRH(d.trabajadorNombre)}</td><td>${_escRH(nombreDepto(d.departamentoId))}</td><td>$${formatNum(d.totalAsignacionesUSD)}</td><td>-$${formatNum(d.totalDeduccionesUSD)}</td><td>$${formatNum(d.netoUSD)}</td><td>${formatNum(d.netoBs)}</td></tr>`).join('')}</tbody>
-          <tfoot><tr><td colspan="2">TOTALES · ${detalles.length} trabajador(es)</td><td>$${formatNum(totAsigUSD)}</td><td>-$${formatNum(totDedUSD)}</td><td>$${formatNum(totNetoUSD)}</td><td>${formatNum(totNetoBs)}</td></tr></tfoot>
+          <thead><tr><th>Trabajador</th><th>Cargo</th><th>Departamento</th><th>Asignaciones $</th><th>Deducciones $</th><th>Neto $</th><th>Neto Bs.</th></tr></thead>
+          <tbody>${detalles.map(d=>`<tr><td>${_escRH(d.trabajadorNombre)}</td><td>${_escRH(cargoDeDetalle(d)||'—')}</td><td>${_escRH(nombreDepto(d.departamentoId))}</td><td>$${formatNum(d.totalAsignacionesUSD)}</td><td>-$${formatNum(d.totalDeduccionesUSD)}</td><td>$${formatNum(d.netoUSD)}</td><td>${formatNum(d.netoBs)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td colspan="3">TOTALES · ${detalles.length} trabajador(es)</td><td>$${formatNum(totAsigUSD)}</td><td>-$${formatNum(totDedUSD)}</td><td>$${formatNum(totNetoUSD)}</td><td>${formatNum(totNetoBs)}</td></tr></tfoot>
         </table>
       </div>
     </div></body></html>`;
@@ -1177,11 +1472,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         </div>
         <div class="grid">
           ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
-          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
+          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Cargo',t.cargo],['Tabulador',escalaDe(t)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
           ${box('Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]])}
-          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];}))}
+          ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];}))}
           ${box('Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]])}
-          ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
+          ${box('Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['HCM (titular)',t.hcmActivo===true?('Sí'+(t.hcmDesde?' desde '+contDd(t.hcmDesde):'')):'No'],['Bolsas de alimentos',t.bolsasAlimentos||0],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]])}
         </div>
         <div class="grid3">
           ${box('Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]])}
@@ -1247,6 +1542,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               {id:'elaboracion', label:'Elaboración de Nómina', icon:<Calculator size={13}/>, badge:nominas.filter(n=>n.estado==='abierta').length||null, perm:'rrhh_nomina'},
               {id:'nomina', label:'Reporte de Nómina', icon:<DollarSign size={13}/>, perm:'rrhh_nomina'},
               {id:'parafiscales', label:'Parafiscales', icon:<ShieldCheck size={13}/>, perm:'rrhh_parafiscales'},
+              {id:'beneficios', label:'Beneficios', icon:<Award size={13}/>, perm:'rrhh_beneficios'},
               {id:'conceptos', label:'Conceptos', icon:<Calculator size={13}/>, badge:conceptos.length||null, perm:'rrhh_conceptos'},
               {id:'trabajadores', label:'Trabajadores', icon:<Users size={13}/>, badge:trabajadores.length||null, perm:'rrhh_trabajadores'},
             ].filter(t=>permRRHH(t.perm));
@@ -1260,9 +1556,71 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       </div>
       <div className="flex-1 overflow-y-auto bg-gray-50">
 
-      {rhTab==='config' && (
+      {rhTab==='config' && (()=>{
+        const cfgH = configBeneficios.hcm, cfgB = configBeneficios.bolsa;
+        const setH = (p)=>setConfigBeneficios(c=>({...c,hcm:{...c.hcm,...p}}));
+        const setB = (p)=>setConfigBeneficios(c=>({...c,bolsa:{...c.bolsa,...p}}));
+        const inpCls = "w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right";
+        const lblCls = "text-[9px] font-black text-gray-500 uppercase block mb-1";
+        const pctEmp = Math.max(0, benR2(100 - benNum(cfgH.pctTrabajador)));
+        const subsidioU = benR2(benNum(cfgB.costoBolsa) - benNum(cfgB.descuentoBolsa));
+        // Selector de cuenta del Plan de Cuentas (se llama como función, no como componente, para no perder el foco al escribir)
+        const selectorCuenta = (clave, etiqueta, codigo, nombre, alElegir, alQuitar) => {
+          const q = busqCuentaBen[clave]||'';
+          const coincidencias = q ? planCuentasRH.filter(c=>(c.codigo||'').includes(q)||(c.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,15) : [];
+          return (
+            <div>
+              <label className={lblCls}>{etiqueta}</label>
+              {codigo ? (
+                <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-2">
+                  <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{codigo}</span>{nombre}</span>
+                  <button onClick={alQuitar} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+                </div>
+              ) : (
+                <>
+                  <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  {q && (
+                    <div className="border-2 border-gray-100 rounded-xl max-h-36 overflow-y-auto mt-1.5">
+                      {coincidencias.map(c=>(
+                        <div key={c.id} onClick={()=>{alElegir(c);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
+                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
+                        </div>
+                      ))}
+                      {coincidencias.length===0 && <div className="px-3 py-3 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        };
+        // Cuenta de gasto/costo del aporte de la empresa (HCM) según el centro de costo del trabajador
+        const gastoDe = (centroId) => (cfgH.gastoPorCentro||{})[centroId] || null;
+        const setGastoCentro = (centroId, cuenta) => {
+          const nuevo = {...(cfgH.gastoPorCentro||{})};
+          if(cuenta) nuevo[centroId] = {codigo:cuenta.codigo, nombre:cuenta.nombre}; else delete nuevo[centroId];
+          setH({gastoPorCentro:nuevo});
+        };
+        const centrosSinGasto = centros.filter(c=>!(gastoDe(c.id)&&gastoDe(c.id).codigo));
+        // Lo mismo para la Bolsa de alimentos: cuenta de gasto/costo de la parte de la empresa segun el centro de costo del trabajador
+        const gastoDeB = (centroId) => (cfgB.gastoPorCentro||{})[centroId] || null;
+        const setGastoCentroB = (centroId, cuenta) => {
+          const nuevo = {...(cfgB.gastoPorCentro||{})};
+          if(cuenta) nuevo[centroId] = {codigo:cuenta.codigo, nombre:cuenta.nombre}; else delete nuevo[centroId];
+          setB({gastoPorCentro:nuevo});
+        };
+        const centrosSinGastoB = centros.filter(c=>!(gastoDeB(c.id)&&gastoDeB(c.id).codigo));
+        const subTabsCfg = [['estructura','Centro de Costo y Departamento'],['tabulador','Tabulador de Sueldos y Cargos'],['hcm','HCM'],['bolsa','Bolsa de alimentos']];
+        return (
       <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="flex flex-wrap gap-2 mb-4">
+          {subTabsCfg.map(([id,label])=>(
+            <button key={id} onClick={()=>setCfgSub(id)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${cfgSub===id?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>{label}</button>
+          ))}
+        </div>
+
+        {cfgSub==='estructura' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
             <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">1. Centro de Costo</h3>
@@ -1312,82 +1670,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             )}
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-200 p-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. Cuentas de Nómina {deptoSel?`(${deptoSel.nombre})`:''}</h3>
-            {!deptoSel ? <p className="text-xs text-gray-400 text-center py-10">Selecciona un departamento</p> : (
-              <>
-                <p className="text-[9px] font-black text-emerald-600 uppercase mt-2 mb-1">Asignaciones</p>
-                <div className="space-y-1 mb-3">
-                  {asignaciones.length===0 && <p className="text-[10px] text-gray-400 py-2">Ninguna todavía</p>}
-                  {asignaciones.map(c=>(
-                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
-                      <span className="text-gray-700 font-bold">{c.concepto}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-emerald-600 font-black">{c.codigoCuenta}</span>
-                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[9px] font-black text-red-500 uppercase mb-1">Deducciones</p>
-                <div className="space-y-1 mb-3">
-                  {deducciones.length===0 && <p className="text-[10px] text-gray-400 py-2">Ninguna todavía</p>}
-                  {deducciones.map(c=>(
-                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
-                      <span className="text-gray-700 font-bold">{c.concepto}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-red-500 font-black">{c.codigoCuenta}</span>
-                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[9px] font-black text-amber-600 uppercase mb-1">Cargas Patronales ({centroSel?.naturaleza||'Gasto'})</p>
-                <div className="space-y-1 mb-3">
-                  {cuentasDelDepto.filter(c=>c.tipo==='patronal').length===0 && <p className="text-[10px] text-gray-400 py-2">Sin configurar — el aporte patronal no se contabilizará</p>}
-                  {cuentasDelDepto.filter(c=>c.tipo==='patronal').map(c=>(
-                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
-                      <span className="text-gray-700 font-bold">{c.concepto}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-amber-600 font-black">{c.codigoCuenta}</span>
-                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-gray-100 pt-3 space-y-2">
-                  <div className="flex gap-1">
-                    {['asignacion','deduccion','patronal'].map(t=>(
-                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t,concepto:'',conceptoOtro:''}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':t==='deduccion'?'Deducción':'Patronal'}</button>
-                    ))}
-                  </div>
-                  <select value={nuevaLinea.concepto} onChange={e=>setNuevaLinea(l=>({...l,concepto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                    <option value="">— Elige un concepto —</option>
-                    {CONCEPTOS_NOMINA[nuevaLinea.tipo].map(c=><option key={c} value={c}>{c}</option>)}
-                  </select>
-                  {nuevaLinea.concepto==='Otro (escribir)' && (
-                    <input value={nuevaLinea.conceptoOtro} onChange={e=>setNuevaLinea(l=>({...l,conceptoOtro:e.target.value}))} placeholder="Escribe el concepto..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  )}
-                  <input value={busqCuenta} onChange={e=>setBusqCuenta(e.target.value)} placeholder="Buscar cuenta contable a asociar..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  {busqCuenta && (
-                    <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto">
-                      {planCuentasRH.filter(c=>(c.codigo||'').includes(busqCuenta)||(c.nombre||'').toUpperCase().includes(busqCuenta.toUpperCase())).slice(0,15).map(c=>(
-                        <div key={c.id} onClick={()=>asociarCuenta(c)} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
-                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-
         </div>
+        )}
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
+        {cfgSub==='tabulador' && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase">4. Tabulador de Sueldos y Cargos</h3>
+            <h3 className="text-[10px] font-black text-gray-400 uppercase">Tabulador de Sueldos y Cargos</h3>
             <button onClick={()=>{
               const filas=tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||''));
               const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
@@ -1413,7 +1702,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               const w=window.open('','_blank','width=700,height=800'); if(w){w.document.write(html);w.document.close();}
             }} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
           </div>
-          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Cargo sale de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto.</p>
+          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Tabulador se elige de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto. El Cargo que sale en el recibo de pago y en los reportes se escribe aparte, en la ficha del trabajador.</p>
           <div className="border border-gray-200 rounded-xl overflow-hidden mb-3">
             <div className="grid grid-cols-[1fr_140px_56px] bg-gray-900 text-cyan-400 text-[9px] font-black uppercase">
               <div className="px-3 py-2">Cargo</div>
@@ -1442,9 +1731,124 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <button onClick={agregarCargoTab} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
           </div>
         </div>
+        )}
+
+        {cfgSub==='hcm' && (
+        <>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase">1. HCM — Medicina prepagada</h3>
+              <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgH.activo!==false} onChange={e=>setH({activo:e.target.checked})}/> Automático en nómina</label>
+            </div>
+            <p className="text-[10px] text-gray-400 mb-4">Aporte mensual = % del trabajador × (prima por persona × personas cubiertas: titular + cargas con HCM). Se descuenta en las cuotas (pagos) del mes.</p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div><label className={lblCls}>Prima mensual por persona ($)</label><input type="number" step="0.01" min="0" value={cfgH.primaPersona} onChange={e=>setH({primaPersona:e.target.value})} className={inpCls}/></div>
+              <div><label className={lblCls}>% que paga el trabajador</label><input type="number" step="0.1" min="0" max="100" value={cfgH.pctTrabajador} onChange={e=>setH({pctTrabajador:e.target.value})} className={inpCls}/><p className="text-[9px] text-gray-400 mt-1 text-right">Empresa: {formatNum(pctEmp)} %</p></div>
+              <div><label className={lblCls}>Cuotas (pagos) por mes</label><input type="number" step="1" min="1" value={cfgH.cuotasPorMes} onChange={e=>setH({cuotasPorMes:e.target.value})} className={inpCls}/></div>
+              <div><label className={lblCls}>Edad máxima de hijos (años)</label><input type="number" step="1" min="1" value={cfgH.edadMaxHijos} onChange={e=>setH({edadMaxHijos:e.target.value})} className={inpCls}/></div>
+            </div>
+            <div><label className={lblCls}>Código del concepto de nómina</label><input value={cfgH.codigoConcepto} onChange={e=>setH({codigoConcepto:e.target.value})} placeholder="24000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+            <div className="mt-4 pt-3 border-t border-gray-100">
+              <p className="text-[9px] font-black text-gray-500 uppercase mb-2">Póliza HCM predeterminada en la ficha del trabajador</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={lblCls}>Póliza HCM (aseguradora)</label><input value={cfgH.polizaAseguradora||''} onChange={e=>setH({polizaAseguradora:e.target.value})} placeholder="Ej.: GENTE SAGRADA" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                <div><label className={lblCls}>N° de póliza HCM</label><input value={cfgH.polizaNumero||''} onChange={e=>setH({polizaNumero:e.target.value})} placeholder="Opcional" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+              </div>
+              <p className="text-[9px] text-gray-400 mt-1.5">Se carga solo en "Beneficios de Ley" de la ficha de cada trabajador nuevo y de los que lo tengan vacío.</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cuentas contables</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Cada nómina acredita la cuenta por cobrar (lo descontado al trabajador y el aporte de la empresa). Al cierre del mes esa cuenta se cierra contra la cuenta de pasivo.</p>
+            <div className="space-y-3 mb-4">
+              {selectorCuenta('hcmPasivo','Cuenta por cobrar (se acredita en cada nómina)',cfgH.codigoPasivo,cfgH.nombrePasivo,(c)=>setH({codigoPasivo:c.codigo,nombrePasivo:c.nombre}),()=>setH({codigoPasivo:'',nombrePasivo:''}))}
+              {selectorCuenta('hcmCierre','Cuenta de pasivo (cierre de mes)',cfgH.codigoPasivoCierre,cfgH.nombrePasivoCierre,(c)=>setH({codigoPasivoCierre:c.codigo,nombrePasivoCierre:c.nombre}),()=>setH({codigoPasivoCierre:'',nombrePasivoCierre:''}))}
+            </div>
+            <p className="text-[9px] font-black text-gray-500 uppercase mb-2 pt-3 border-t border-gray-100">Gasto del aporte de la empresa, según el centro de costo del trabajador</p>
+            {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
+            <div className="space-y-3">
+              {centros.map(c=>{ const g = gastoDe(c.id); return (
+                <div key={c.id}>{selectorCuenta('hcmGasto:'+c.id, c.nombre+' ('+(c.naturaleza||'Gasto')+')', g?g.codigo:'', g?g.nombre:'', (cu)=>setGastoCentro(c.id,cu), ()=>setGastoCentro(c.id,null))}</div>
+              ); })}
+            </div>
+            {centros.length>0 && !cfgH.codigoGasto && centrosSinGasto.length>0 && (
+              <p className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5 mt-3">Falta la cuenta de: {centrosSinGasto.map(c=>c.nombre).join(', ')}. El aporte de la empresa de esos trabajadores saldrá "sin cuenta configurada" en el asiento.</p>
+            )}
+            {cfgH.codigoGasto && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                {selectorCuenta('hcmGasto','Cuenta de gasto general (anterior): solo para centros sin cuenta propia',cfgH.codigoGasto,cfgH.nombreGasto,(c)=>setH({codigoGasto:c.codigo,nombreGasto:c.nombre}),()=>setH({codigoGasto:'',nombreGasto:''}))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. Así queda con esta configuración</h3>
+            <table className="w-full text-[11px]">
+              <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Personas</th><th className="text-right font-black">Prima/mes</th><th className="text-right font-black">Trabajador/mes</th><th className="text-right font-black">Empresa/mes</th><th className="text-right font-black">Trabajador/pago</th></tr></thead>
+              <tbody>
+                {[1,2,3,4,5,6,7].map(n=>{
+                  const prima = benR2(n*benNum(cfgH.primaPersona));
+                  const tr = benR2(prima*Math.min(100,Math.max(0,benNum(cfgH.pctTrabajador)))/100);
+                  const cm = parseInt(cfgH.cuotasPorMes,10)>0 ? parseInt(cfgH.cuotasPorMes,10) : 4;
+                  return (<tr key={n} className="border-t border-gray-100"><td className="py-1 font-bold">{n}</td><td className="py-1 text-right font-mono">${formatNum(prima)}</td><td className="py-1 text-right font-mono">${formatNum(tr)}</td><td className="py-1 text-right font-mono">${formatNum(prima-tr)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(tr/cm)}</td></tr>);
+                })}
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+        <button onClick={guardarConfigBeneficios} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
+        </>
+        )}
+
+        {cfgSub==='bolsa' && (
+        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase">1. Bolsa de alimentos</h3>
+              <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgB.activo!==false} onChange={e=>setB({activo:e.target.checked})}/> Automático en nómina</label>
+            </div>
+            <p className="text-[10px] text-gray-400 mb-4">Descuento al trabajador = bolsas × descuento por bolsa. La diferencia con el costo es el aporte (subsidio) de la empresa: se carga como gasto/costo según el centro de costo del trabajador (ver Cuentas contables).</p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div><label className={lblCls}>Costo por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.costoBolsa} onChange={e=>setB({costoBolsa:e.target.value})} className={inpCls}/></div>
+              <div><label className={lblCls}>Descuento al trabajador por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.descuentoBolsa} onChange={e=>setB({descuentoBolsa:e.target.value})} className={inpCls}/></div>
+            </div>
+            <p className="text-[10px] font-bold text-cyan-700 bg-cyan-50 rounded-lg px-2.5 py-1.5 mb-3">Subsidio de la empresa por bolsa: ${formatNum(subsidioU)}</p>
+            <div><label className={lblCls}>Código del concepto de nómina</label><input value={cfgB.codigoConcepto} onChange={e=>setB({codigoConcepto:e.target.value})} placeholder="22000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cuentas contables</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Cada nómina acredita la cuenta por cobrar (lo descontado al trabajador y el aporte de la empresa). Al cierre del mes esa cuenta se cierra contra la cuenta de pasivo.</p>
+            <div className="space-y-3 mb-4">
+              {selectorCuenta('bolsaCuenta','Cuenta por cobrar (se acredita en cada nómina)',cfgB.codigoCuenta,cfgB.nombreCuenta,(c)=>setB({codigoCuenta:c.codigo,nombreCuenta:c.nombre}),()=>setB({codigoCuenta:'',nombreCuenta:''}))}
+              {selectorCuenta('bolsaCierre','Cuenta de pasivo (cierre de mes)',cfgB.codigoPasivoCierre,cfgB.nombrePasivoCierre,(c)=>setB({codigoPasivoCierre:c.codigo,nombrePasivoCierre:c.nombre}),()=>setB({codigoPasivoCierre:'',nombrePasivoCierre:''}))}
+            </div>
+            <p className="text-[9px] font-black text-gray-500 uppercase mb-2 pt-3 border-t border-gray-100">Gasto del aporte de la empresa, según el centro de costo del trabajador</p>
+            {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
+            <div className="space-y-3">
+              {centros.map(c=>{ const g = gastoDeB(c.id); return (
+                <div key={c.id}>{selectorCuenta('bolsaGasto:'+c.id, c.nombre+' ('+(c.naturaleza||'Gasto')+')', g?g.codigo:'', g?g.nombre:'', (cu)=>setGastoCentroB(c.id,cu), ()=>setGastoCentroB(c.id,null))}</div>
+              ); })}
+            </div>
+            {centros.length>0 && centrosSinGastoB.length>0 && (
+              <p className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5 mt-3">Falta la cuenta de: {centrosSinGastoB.map(c=>c.nombre).join(', ')}. El aporte de la empresa de esos trabajadores saldrá "sin cuenta configurada" en el asiento.</p>
+            )}
+          </div>
+
+        </div>
+        <button onClick={guardarConfigBeneficios} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
+        </>
+        )}
 
       </div>
-      )}
+        );
+      })()}
 
       {rhTab==='parafiscales' && (
       <div className="p-6">
@@ -1488,6 +1892,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="mb-4">
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (5x, automático — Bs.)</label><input value={`Bs. ${formatNum(tope)}`} disabled className="w-48 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/>
                 </div>
+                {campoNumeroFicha(cfg, set, 'N° de IVSS predeterminado en la ficha')}
                 <div className="mb-4"><BuscadorCuentaPasivo cfg={cfg} set={set}/></div>
                 <div className="bg-gray-50 rounded-xl p-3 mb-4">
                   <p className="text-[9px] text-gray-400 mb-2">Fórmula: (base × 12 ÷ 52) × % × lunes de la quincena. Si el sueldo supera el tope, se usa el tope.</p>
@@ -1510,6 +1915,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="mb-4">
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Tope (10x, automático — Bs.)</label><input value={`Bs. ${formatNum(tope)}`} disabled className="w-48 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/>
                 </div>
+                {campoNumeroFicha(cfg, set, 'N° de RPE predeterminado en la ficha')}
                 <div className="mb-4"><BuscadorCuentaPasivo cfg={cfg} set={set}/></div>
               </>
               );
@@ -1524,6 +1930,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                 </div>
+                {campoNumeroFicha(cfg, set, 'N° de FAOV predeterminado en la ficha')}
                 <BuscadorCuentaPasivo cfg={cfg} set={set}/>
               </>
               );
@@ -1548,6 +1955,49 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         </div>
       </div>
       )}
+
+      {rhTab==='beneficios' && (()=>{
+        // Resumen del mes con los trabajadores registrados en la app
+        const activosB = trabajadores.filter(t=>t.estado!=='Egresado');
+        const filasHcm = activosB.map(t=>({t, c:hcmCalcularMes(t, benMesVer, configBeneficios)})).filter(x=>x.c.personas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
+        const filasBolsa = activosB.map(t=>({t, b:bolsaCalcular(t, configBeneficios)})).filter(x=>x.b.bolsas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
+        const sumF = (arr, f)=>benR2(arr.reduce((s,x)=>s+f(x),0));
+        return (
+        <div className="p-6 space-y-4">
+          <div className="bg-white rounded-2xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-black text-gray-800">Resumen del mes con los trabajadores registrados</p>
+              <input type="month" value={benMesVer} onChange={e=>setBenMesVer(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+            </div>
+            <p className="text-[10px] text-gray-400 mb-3">La configuración de HCM y Bolsa de alimentos está en Configuración.</p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <p className="text-[10px] font-black text-gray-400 uppercase mb-2">HCM — {filasHcm.length} titular(es) · {sumF(filasHcm,x=>x.c.personas)} persona(s)</p>
+                <table className="w-full text-[11px]">
+                  <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Trabajador</th><th className="text-right font-black">Pers.</th><th className="text-right font-black">Trabajador/mes</th><th className="text-right font-black">Empresa/mes</th><th className="text-right font-black">Trab./pago</th></tr></thead>
+                  <tbody>
+                    {filasHcm.map(({t,c})=>(<tr key={t.id} className="border-t border-gray-100"><td className="py-1 font-bold">{t.nombre}</td><td className="py-1 text-right">{c.personas}</td><td className="py-1 text-right font-mono">${formatNum(c.aporteTrab)}</td><td className="py-1 text-right font-mono">${formatNum(c.aporteEmp)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(c.porPagoTrab)}</td></tr>))}
+                    {filasHcm.length===0 && <tr><td colSpan={5} className="py-4 text-center text-gray-400">Ningún trabajador con HCM vigente en ese mes. Márcalo en la ficha del trabajador.</td></tr>}
+                  </tbody>
+                  {filasHcm.length>0 && <tfoot><tr className="border-t-2 border-gray-200 font-black"><td className="py-1">Total</td><td className="py-1 text-right">{sumF(filasHcm,x=>x.c.personas)}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasHcm,x=>x.c.aporteTrab))}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasHcm,x=>x.c.aporteEmp))}</td><td className="py-1 text-right font-mono text-cyan-600">${formatNum(sumF(filasHcm,x=>x.c.porPagoTrab))}</td></tr></tfoot>}
+                </table>
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-gray-400 uppercase mb-2">Bolsas de alimentos — {filasBolsa.length} trabajador(es) · {sumF(filasBolsa,x=>x.b.bolsas)} bolsa(s)</p>
+                <table className="w-full text-[11px]">
+                  <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Trabajador</th><th className="text-right font-black">Bolsas</th><th className="text-right font-black">Costo</th><th className="text-right font-black">Descuento</th><th className="text-right font-black">Subsidio</th></tr></thead>
+                  <tbody>
+                    {filasBolsa.map(({t,b})=>(<tr key={t.id} className="border-t border-gray-100"><td className="py-1 font-bold">{t.nombre}</td><td className="py-1 text-right">{b.bolsas}</td><td className="py-1 text-right font-mono">${formatNum(b.costo)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(b.descuento)}</td><td className="py-1 text-right font-mono">${formatNum(b.subsidio)}</td></tr>))}
+                    {filasBolsa.length===0 && <tr><td colSpan={5} className="py-4 text-center text-gray-400">Ningún trabajador con bolsas. Indica la cantidad en la ficha del trabajador.</td></tr>}
+                  </tbody>
+                  {filasBolsa.length>0 && <tfoot><tr className="border-t-2 border-gray-200 font-black"><td className="py-1">Total</td><td className="py-1 text-right">{sumF(filasBolsa,x=>x.b.bolsas)}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasBolsa,x=>x.b.costo))}</td><td className="py-1 text-right font-mono text-cyan-600">${formatNum(sumF(filasBolsa,x=>x.b.descuento))}</td><td className="py-1 text-right font-mono">${formatNum(sumF(filasBolsa,x=>x.b.subsidio))}</td></tr></tfoot>}
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {rhTab==='conceptos' && (
       <div className="p-6">
@@ -1817,7 +2267,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
-                    <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Departamento</th>
+                    <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Cargo</th><th className="text-left py-2 px-3">Departamento</th>
                     <th className="text-right py-2 px-3">Asig. $</th><th className="text-right py-2 px-3">Ded. $</th>
                     <th className="text-right py-2 px-3">Neto $</th><th className="text-center py-2 px-3 w-10">PDF</th>
                   </tr></thead>
@@ -1825,6 +2275,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     {detalles.map((d,i)=>(
                       <tr key={d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
                         <td className="py-1.5 px-3 font-bold">{d.trabajadorNombre}</td>
+                        <td className="py-1.5 px-3 text-gray-500">{cargoDeDetalle(d)||'—'}</td>
                         <td className="py-1.5 px-3 text-gray-500">{nombreDepto(d.departamentoId)}</td>
                         <td className="py-1.5 px-3 text-right font-mono">${formatNum(d.totalAsignacionesUSD)}</td>
                         <td className="py-1.5 px-3 text-right font-mono text-red-500">-${formatNum(d.totalDeduccionesUSD)}</td>
@@ -1832,10 +2283,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                         <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(d,repNominaSel)} className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
                       </tr>
                     ))}
-                    {detalles.length===0 && <tr><td colSpan={6} className="py-8 text-center text-gray-400">Ningún trabajador cargado en esta nómina.</td></tr>}
+                    {detalles.length===0 && <tr><td colSpan={7} className="py-8 text-center text-gray-400">Ningún trabajador cargado en esta nómina.</td></tr>}
                   </tbody>
                   {detalles.length>0 && <tfoot><tr className="bg-gray-100 font-black">
-                    <td colSpan={2} className="py-2 px-3 uppercase text-[10px]">Totales ({detalles.length})</td>
+                    <td colSpan={3} className="py-2 px-3 uppercase text-[10px]">Totales ({detalles.length})</td>
                     <td className="py-2 px-3 text-right font-mono">${formatNum(totalAsigUSD)}</td>
                     <td className="py-2 px-3 text-right font-mono text-red-500">-${formatNum(totalDedUSD)}</td>
                     <td className="py-2 px-3 text-right font-mono text-cyan-700">${formatNum(totalNetoUSD)}</td>
@@ -1869,12 +2320,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               .filter(d=>d._nomina)
               .sort((a,b)=>(b._nomina.mes||'').localeCompare(a._nomina.mes||'')||(b._nomina.quincena||'').localeCompare(a._nomina.quincena||''));
             const totalHistNetoUSD = historial.reduce((s,d)=>s+d.netoUSD,0);
+            const repT = trabajadores.find(x=>x.id===repTrabajadorSel.id)||repTrabajadorSel; // datos actuales del trabajador
             return (
             <div className="space-y-3">
               <button onClick={()=>setRepTrabajadorSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
-                <p className="font-black text-lg text-gray-800">{repTrabajadorSel.nombre}</p>
-                <p className="text-xs text-gray-500">{repTrabajadorSel.cedula} · {repTrabajadorSel.cargo||'—'} · {nombreDepto(repTrabajadorSel.departamentoId)}</p>
+                <p className="font-black text-lg text-gray-800">{repT.nombre}</p>
+                <p className="text-xs text-gray-500">{repT.cedula} · {repT.cargo||'—'} · {nombreDepto(repT.departamentoId)}</p>
               </div>
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <table className="w-full text-xs">
@@ -1927,6 +2379,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <input type="number" step="0.01" value={nominaForm.tasa} onChange={e=>setNominaForm(f=>({...f,tasa:e.target.value}))} placeholder="Tasa de cambio a usar" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
               </div>
               <p className="text-[10px] text-gray-400 mb-3">Esta tasa la fijas tú — igual para todos los trabajadores de este pago, no se vuelve a pedir por cada uno.</p>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3">
+                <span className="text-[10px] font-black text-gray-400 uppercase">Descontar automáticamente:</span>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaHCM===true} onChange={e=>setNominaForm(f=>({...f,aplicaHCM:e.target.checked}))}/> HCM</label>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaBolsa===true} onChange={e=>setNominaForm(f=>({...f,aplicaBolsa:e.target.checked}))}/> Bolsa de alimentos</label>
+              </div>
               <button onClick={crearNomina} disabled={busyNomina} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Creando...':'Comenzar a Cargar Trabajadores →'}</button>
             </div>
 
@@ -1977,6 +2434,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
               <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · Tasa {nominaActiva.tasa}</p>
             </div>
+
+            {nominaActiva.estado==='abierta' && (
+              <div className="bg-white rounded-2xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+                <span className="text-[10px] font-black text-gray-400 uppercase">Descuentos automáticos en este pago</span>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaActiva.aplicaHCM===true} onChange={e=>cambiarFlagNomina('aplicaHCM',e.target.checked)}/> HCM</label>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaActiva.aplicaBolsa===true} onChange={e=>cambiarFlagNomina('aplicaBolsa',e.target.checked)}/> Bolsa de alimentos</label>
+                <span className="text-[10px] text-gray-400">Rige para los trabajadores que cargues desde ahora; los ya guardados no cambian (usa «Recalcular HCM/Bolsa» dentro del trabajador).</span>
+              </div>
+            )}
 
             {nominaActiva.estado==='abierta' && trabajadoresPendientes.length>0 && (()=>{
                 const coincidenciasTrab = cargarTrabBusq.trim() ? trabajadoresPendientes.filter(t=>(t.nombre||'').toUpperCase().includes(cargarTrabBusq.toUpperCase())||(t.cedula||'').includes(cargarTrabBusq)).slice(0,8) : [];
@@ -2066,12 +2532,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           const asigDisponibles = cargarTrabModal.asignaciones.map((a,i)=>({...a,_idx:i,_tipo:'asig'})).filter(a=>!a.incluida);
           const dedIncluidas = cargarTrabModal.deduccionesManual.map((d,i)=>({...d,_idx:i,_tipo:'ded'})).filter(d=>d.incluida);
           const dedDisponibles = cargarTrabModal.deduccionesManual.map((d,i)=>({...d,_idx:i,_tipo:'ded'})).filter(d=>!d.incluida);
+          const benTodos = (cargarTrabModal.deduccionesBeneficios||[]).map((d,i)=>({...d,_idx:i,_tipo:'ben'}));
+          const benIncluidas = benTodos.filter(d=>d.incluida);
+          const benDisponibles = benTodos.filter(d=>!d.incluida);
           const totalAsig = asigIncluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
           const totalDedManual = dedIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
           const totalDedLegal = legalesIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
-          const totalDed = totalDedManual+totalDedLegal;
+          const totalDedBen = benIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
+          const totalDed = totalDedManual+totalDedLegal+totalDedBen;
           const neto = totalAsig - totalDed;
-          const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length;
+          const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length + benIncluidas.length;
           // Navegación Anterior/Siguiente entre los trabajadores de esta nómina (mismo orden que la lista)
           const listaNav = trabajadores.filter(w=>w.estado!=='Egresado' && w.departamentoId).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
           const idxNav = listaNav.findIndex(w=>w.id===t.id);
@@ -2084,6 +2554,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
             const deducciones = [
               ...legalesIncluidas.map(({_idx,_tipo,incluida,...d})=>d),
+              ...benIncluidas.map(({_idx,_tipo,incluida,aviso,previosMes,montoBsTexto,...d})=>d),
               ...dedIncluidas.map(({_idx,_tipo,incluida,...d})=>({...d, montoBs:parseFloat((d.montoUSD*tasa).toFixed(2)), esLegal:false})),
             ];
             return {trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula, departamentoId:t.departamentoId, asignaciones, deducciones, nroRecibo:cargarTrabModal._nroReciboExistente};
@@ -2160,6 +2631,32 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleDeduccionLegal(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
                   ))}
+                  {benIncluidas.map(d=>(
+                    <tr key={'ben'+d._idx} className="border-t border-gray-100 bg-cyan-50/40">
+                      <td className="py-1.5 px-3 font-bold text-cyan-800">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{d.concepto}</span>
+                          <span className="text-[9px] font-normal text-cyan-600">(automático)</span>
+                          {d.tipoBeneficio==='hcm' && d.personas>0 && (
+                            <>
+                              <span className="text-[10px] text-gray-500 font-normal">{d.personas} persona(s) · cuotas en este pago:</span>
+                              <input type="number" min="1" step="1" value={d.cuotas} onChange={e=>actualizarCuotasHCM(d._idx,e.target.value)} className="w-12 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                            </>
+                          )}
+                          {d.tipoBeneficio==='bolsa' && <span className="text-[10px] text-gray-500 font-normal">{d.bolsas} bolsa(s) × ${formatNum(d.descuentoUnit)}</span>}
+                        </div>
+                        {d.tipoBeneficio==='hcm' && d.personas>0 && <div className="text-[9px] font-normal text-gray-400">Aporte del mes ${formatNum(d.aporteMesTrab)} ÷ {d.cuotasMes} cuotas · la empresa aporta ${formatNum(d.montoPatronalUSD)} en este pago · cuotas en otros pagos del mes: {d.previosMes}</div>}
+                        {d.tipoBeneficio==='bolsa' && d.montoPatronalUSD>0 && <div className="text-[9px] font-normal text-gray-400">Costo ${formatNum(d.costoUnit)} por bolsa · la empresa aporta ${formatNum(d.montoPatronalUSD)} en este pago</div>}
+                        {d.aviso && <div className="text-[9px] font-black text-amber-600">⚠ {d.aviso}</div>}
+                      </td>
+                      <td className="py-1.5 px-3"></td>
+                      <td className="py-1.5 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={d.montoBsTexto??String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoBeneficio(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></div>
+                        <div className="text-[9px] text-gray-400 font-normal">≈ ${formatNum(d.montoUSD)}</div>
+                      </td>
+                      <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleBeneficio(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
+                    </tr>
+                  ))}
                   {dedIncluidas.map(d=>(
                     <tr key={'d'+d._idx} className="border-t border-gray-100">
                       <td className="py-1.5 px-3 font-bold">
@@ -2182,12 +2679,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   {asigIncluidas.length+dedIncluidas.length===0 && <tr><td colSpan={4} className="py-8 text-center text-gray-400">Sin conceptos incluidos — agrega uno abajo.</td></tr>}
                 </tbody>
               </table>
-              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0) && (()=>{
-                const todosDisponibles = [...asigDisponibles.map(a=>({...a,_grupo:'asig'})), ...legalesDisponibles.map(d=>({...d,_grupo:'leg'})), ...dedDisponibles.map(d=>({...d,_grupo:'ded'}))];
+              {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0 || benDisponibles.length>0 || benIncluidas.length>0) && (()=>{
+                const todosDisponibles = [...asigDisponibles.map(a=>({...a,_grupo:'asig'})), ...legalesDisponibles.map(d=>({...d,_grupo:'leg'})), ...dedDisponibles.map(d=>({...d,_grupo:'ded'})), ...benDisponibles.map(d=>({...d,_grupo:'ben'}))];
                 const coincidencias = agregarConceptoBusq.trim() ? todosDisponibles.filter(c=>c.concepto.toUpperCase().includes(agregarConceptoBusq.toUpperCase())).slice(0,8) : [];
                 const agregarYLimpiar = (c) => {
                   if(c._grupo==='asig') toggleAsignacion(c._idx);
                   else if(c._grupo==='leg') toggleDeduccionLegal(c._idx);
+                  else if(c._grupo==='ben') toggleBeneficio(c._idx);
                   else toggleDeduccionManual(c._idx);
                   setAgregarConceptoBusq('');
                 };
@@ -2198,7 +2696,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400"/>
                       <input value={agregarConceptoBusq} onChange={e=>setAgregarConceptoBusq(e.target.value)} placeholder={`Buscar concepto para agregar... (${todosDisponibles.length} disponibles)`} className="w-full pl-8 pr-3 py-1.5 border-2 border-gray-200 rounded-lg text-xs font-bold outline-none focus:border-cyan-500"/>
                     </div>
-                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>
+                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>{benTodos.length>0 && <button onClick={recalcularBeneficiosAhora} title="Vuelve a calcular HCM y Bolsa de alimentos desde cero según la ficha y la configuración" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex-shrink-0"><RefreshCw size={11}/>Recalcular HCM/Bolsa</button>}
                   </div>
                   {agregarConceptoBusq.trim() && (
                     <div className="mt-1.5 border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm">
@@ -2422,16 +2920,24 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     {deptosDisponibles.map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
                   </select>
                   {tabuladorCargos.length>0 ? (
-                    <select value={f.cargo} onChange={e=>{
-                      const ct=tabuladorCargos.find(c=>c.cargo===e.target.value);
-                      set({cargo:e.target.value, salarioBase: ct ? String(ct.salarioBase) : f.salarioBase});
-                    }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                      <option value="">— Cargo —</option>
-                      {tabuladorCargos.map(c=><option key={c.id} value={c.cargo}>{c.cargo} · ${formatNum(c.salarioBase)}</option>)}
-                    </select>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-400 uppercase block mb-1 ml-1">Tabulador · escala salarial (salario para elaborar la nómina)</label>
+                      <select value={f.escalaSalarial||''} onChange={e=>{
+                        const ct=tabuladorCargos.find(c=>c.cargo===e.target.value);
+                        set({escalaSalarial:e.target.value, salarioBase: ct ? String(ct.salarioBase) : f.salarioBase});
+                      }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                        <option value="">— Tabulador —</option>
+                        {f.escalaSalarial && !tabuladorCargos.some(c=>c.cargo===f.escalaSalarial) && <option value={f.escalaSalarial}>{f.escalaSalarial} (ya no está en el tabulador)</option>}
+                        {tabuladorCargos.map(c=><option key={c.id} value={c.cargo}>{c.cargo} · ${formatNum(c.salarioBase)}</option>)}
+                      </select>
+                    </div>
                   ) : (
-                    <input value={f.cargo} onChange={e=>set({cargo:e.target.value})} placeholder="Cargo (configura el Tabulador de Sueldos en Configuración para elegir de una lista)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <p className="text-[9px] text-gray-400 ml-1">Configura el Tabulador de Sueldos y Cargos en Configuración para elegir de una lista.</p>
                   )}
+                  <div>
+                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1 ml-1">Cargo (el que sale en el recibo de pago y en los reportes)</label>
+                    <input value={f.cargo||''} onChange={e=>set({cargo:e.target.value})} placeholder="Escribe el cargo del trabajador" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <input type="date" value={f.fechaIngreso} onChange={e=>set({fechaIngreso:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
                     <select value={f.tipoContrato} onChange={e=>set({tipoContrato:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Indefinido</option><option>Determinado</option><option>Obra o labor</option></select>
@@ -2456,11 +2962,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Seguridad Social</h3>
                 <div className="grid grid-cols-2 gap-2">
-                  <input value={f.ivss} onChange={e=>set({ivss:e.target.value})} placeholder="IVSS" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  <input value={f.rpe} onChange={e=>set({rpe:e.target.value})} placeholder="RPE" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  <input value={f.faov} onChange={e=>set({faov:e.target.value})} placeholder="FAOV" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  <input value={f.rif} onChange={e=>set({rif:e.target.value})} placeholder="RIF" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">IVSS</label><input value={f.ivss} onChange={e=>set({ivss:e.target.value})} placeholder="IVSS" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">RPE</label><input value={f.rpe} onChange={e=>set({rpe:e.target.value})} placeholder="RPE" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">FAOV</label><input value={f.faov} onChange={e=>set({faov:e.target.value})} placeholder="FAOV" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">RIF</label><input value={f.rif} onChange={e=>set({rif:e.target.value})} placeholder="RIF" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
                 </div>
+                <p className="text-[9px] text-gray-400 mt-2">IVSS, RPE y FAOV vienen de Configuración → Parafiscales. Si los dejas vacíos se usa ese N° predeterminado.</p>
               </div>
 
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
@@ -2478,11 +2985,32 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">Beneficios de Ley</h3>
                 <div className="grid grid-cols-2 gap-2">
-                  <input value={f.polizaHCMAseguradora} onChange={e=>set({polizaHCMAseguradora:e.target.value})} placeholder="Aseguradora HCM" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  <input value={f.polizaHCMNumero} onChange={e=>set({polizaHCMNumero:e.target.value})} placeholder="N° póliza HCM" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  <select value={f.cestaTicketTipo} onChange={e=>set({cestaTicketTipo:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Tarjeta digital</option><option>Tarjeta física</option></select>
-                  <input value={f.cestaTicketNumero} onChange={e=>set({cestaTicketNumero:e.target.value})} placeholder="N° cesta ticket" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Póliza HCM (aseguradora)</label><input value={f.polizaHCMAseguradora} onChange={e=>set({polizaHCMAseguradora:e.target.value})} placeholder="Aseguradora HCM" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° póliza HCM</label><input value={f.polizaHCMNumero} onChange={e=>set({polizaHCMNumero:e.target.value})} placeholder="N° póliza HCM" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Cesta ticket</label><select value={f.cestaTicketTipo} onChange={e=>set({cestaTicketTipo:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Tarjeta digital</option><option>Tarjeta física</option></select></div>
+                  <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">N° cesta ticket</label><input value={f.cestaTicketNumero} onChange={e=>set({cestaTicketNumero:e.target.value})} placeholder="N° cesta ticket" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
                 </div>
+                <p className="text-[9px] text-gray-400 mt-2">La aseguradora y el N° de póliza vienen de Configuración → HCM. Si los dejas vacíos se usa esa póliza predeterminada.</p>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                <h3 className="text-[10px] font-black text-cyan-600 uppercase mb-3">HCM y Bolsa de alimentos</h3>
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input type="checkbox" checked={f.hcmActivo===true} onChange={e=>set({hcmActivo:e.target.checked})}/>
+                  <span className="text-xs font-bold text-gray-700">El trabajador (titular) está en el plan HCM</span>
+                </label>
+                {f.hcmActivo===true && (
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Ingreso al plan</label><input type="date" value={f.hcmDesde||''} onChange={e=>set({hcmDesde:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                    <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Egreso del plan (si aplica)</label><input type="date" value={f.hcmHasta||''} onChange={e=>set({hcmHasta:e.target.value})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  </div>
+                )}
+                {f.hcmActivo===true && (()=>{ const r=hcmCalcularMes(f, benMesActual(), configBeneficios); return (
+                  <p className="text-[10px] font-bold text-cyan-700 bg-cyan-50 rounded-lg px-2.5 py-1.5 mb-2">Este mes: {r.personas} persona(s) cubierta(s) · aporte del trabajador ${formatNum(r.aporteTrab)}/mes (${formatNum(r.porPagoTrab)} por pago) · aporte de la empresa ${formatNum(r.aporteEmp)}/mes. Las cargas se marcan abajo, en Cargas Familiares.</p>
+                ); })()}
+                <label className="text-[9px] font-black text-gray-500 uppercase block mb-1 mt-1">Bolsas de alimentos (cantidad)</label>
+                <input type="number" min="0" step="1" value={f.bolsasAlimentos} onChange={e=>set({bolsasAlimentos:e.target.value})} placeholder="0" className="w-32 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                {(parseInt(f.bolsasAlimentos,10)||0)>0 && <p className="text-[10px] font-bold text-cyan-700 mt-1.5">Descuento: ${formatNum(bolsaCalcular(f, configBeneficios).descuento)} por vez ({parseInt(f.bolsasAlimentos,10)} × ${formatNum(benNum(configBeneficios.bolsa.descuentoBolsa))})</p>}
               </div>
 
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
@@ -2514,10 +3042,25 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="space-y-1 mb-2">
                   {f.cargasFamiliares.map((cg,i)=>{
                     const edadCg=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);
+                    const alerta19 = cg.hcm===true && !cg.hcmHasta && /hijo/i.test(cg.parentesco||'') && edadCg!==null && edadCg>=(benNum(configBeneficios.hcm.edadMaxHijos)>0?benNum(configBeneficios.hcm.edadMaxHijos):19);
                     return (
-                    <div key={i} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
-                      <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{edadCg!==null?' · '+edadCg+' años':''}</span></span>
-                      <button onClick={()=>quitarCarga(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                    <div key={i} className="bg-gray-50 rounded-lg px-3 py-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold">{cg.nombre} <span className="text-gray-400 font-normal">· {cg.parentesco}{edadCg!==null?' · '+edadCg+' años':''}{cg.cedula?' · C.I. '+cg.cedula:''}</span></span>
+                        <button onClick={()=>quitarCarga(i)} className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <label className="flex items-center gap-1 text-[10px] font-black text-gray-600 cursor-pointer"><input type="checkbox" checked={cg.hcm===true} onChange={e=>actualizarCarga(i,{hcm:e.target.checked})}/> HCM</label>
+                        {cg.hcm===true && (
+                          <>
+                            <span className="text-[9px] text-gray-400">desde</span>
+                            <input type="date" value={cg.hcmDesde||''} onChange={e=>actualizarCarga(i,{hcmDesde:e.target.value})} className="border border-gray-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"/>
+                            <span className="text-[9px] text-gray-400">hasta</span>
+                            <input type="date" value={cg.hcmHasta||''} onChange={e=>actualizarCarga(i,{hcmHasta:e.target.value})} className="border border-gray-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"/>
+                          </>
+                        )}
+                        {alerta19 && <span className="text-[9px] font-black text-amber-600">⚠ {edadCg} años: sacar del HCM</span>}
+                      </div>
                     </div>
                   );})}
                 </div>
@@ -2529,6 +3072,14 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     {calcularEdad(nuevaCarga.fechaNacimiento)!==null&&<span className="absolute -bottom-3.5 left-1 text-[8px] font-black text-cyan-600">{calcularEdad(nuevaCarga.fechaNacimiento)} años</span>}
                   </div>
                 </div>
+                <div className="grid grid-cols-4 gap-1.5 mt-5">
+                  <input value={nuevaCarga.cedula} onChange={e=>setNuevaCarga(c=>({...c,cedula:e.target.value}))} placeholder="Cédula" className="col-span-2 border-2 border-gray-200 rounded-lg px-2 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                  <select value={nuevaCarga.sexo} onChange={e=>setNuevaCarga(c=>({...c,sexo:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-1 py-1.5 text-[10px] font-bold outline-none focus:border-cyan-500 bg-white"><option value="">Sexo</option><option value="F">F</option><option value="M">M</option></select>
+                  <label className="flex items-center gap-1 text-[10px] font-black text-gray-600 cursor-pointer"><input type="checkbox" checked={nuevaCarga.hcm===true} onChange={e=>setNuevaCarga(c=>({...c,hcm:e.target.checked}))}/> HCM</label>
+                </div>
+                {nuevaCarga.hcm===true && (
+                  <div className="flex items-center gap-2 mt-1.5"><span className="text-[9px] text-gray-400">Ingreso al plan</span><input type="date" value={nuevaCarga.hcmDesde} onChange={e=>setNuevaCarga(c=>({...c,hcmDesde:e.target.value}))} className="border-2 border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-cyan-500"/></div>
+                )}
                 <button onClick={agregarCarga} className="mt-1.5 w-full bg-gray-100 text-gray-600 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-gray-200">+ Agregar carga</button>
               </div>
 
@@ -2566,14 +3117,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
         {/* ═══ VISTA (solo lectura) ═══ */}
         {trabajadorVer && !trabajadorForm && (()=>{
-          const t=trabajadorVer;
+          // Siempre los datos ACTUALES del trabajador (no la copia que se tomó al abrir la ficha): así, al guardar se ve el cambio,
+          // "Editar" abre con lo último guardado y un guardado nuevo no pisa cambios anteriores.
+          // Los campos vacíos de IVSS / RPE / FAOV y de la Póliza HCM se completan con los predeterminados de Configuración.
+          const t=conPredeterminados(trabajadores.find(x=>x.id===trabajadorVer.id)||trabajadorVer);
           return (
           <div className="max-w-4xl mx-auto space-y-4">
             <div className="flex items-center justify-between">
               <button onClick={()=>setTrabajadorVer(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a la lista</button>
               <div className="flex gap-2">
                 <button onClick={()=>exportarFichaPDF(t)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100"><FileText size={13}/> PDF</button>
-                <button onClick={()=>setTrabajadorForm({...initTrabajador(), ...t})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit size={13}/> Editar</button>
+                <button onClick={()=>setTrabajadorForm({...initTrabajador(), ...t, escalaSalarial:escalaDe(t)})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit size={13}/> Editar</button>
                 <button onClick={()=>eliminarTrabajador(t)} className="flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-red-100"><Trash2 size={13}/> Eliminar</button>
               </div>
             </div>
@@ -2593,11 +3147,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
                   ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
-                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
+                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Cargo',t.cargo],['Tabulador',escalaDe(t)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
                   ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
-                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}`,cg.nombre];})],
+                  [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];})],
                   ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
-                  ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
+                  ['Beneficios de Ley',[['Póliza HCM',t.polizaHCMAseguradora],['N° póliza HCM',t.polizaHCMNumero],['HCM (titular)',t.hcmActivo===true?('Sí'+(t.hcmDesde?' desde '+contDd(t.hcmDesde):'')):'No'],['Bolsas de alimentos',t.bolsasAlimentos||0],['Cesta ticket',t.cestaTicketTipo],['N° cesta ticket',t.cestaTicketNumero]]],
                   ['Tallas',[['Camisa',t.tallaCamisa],['Pantalón',t.tallaPantalon],['Zapatos',t.tallaZapatos]]],
                   ...(t.vehiculoAsignado?[['Vehículo Asignado',[['Marca/Modelo',`${t.vehiculoMarca||''} ${t.vehiculoModelo||''}`],['Año',t.vehiculoAnio],['Color',t.vehiculoColor]]]]:[]),
                   ['Vacaciones',[['Acumulados',t.vacacionesAcumuladas||0],['Disfrutados',t.vacacionesDisfrutadas||0],['Pendientes',(Number(t.vacacionesAcumuladas||0)-Number(t.vacacionesDisfrutadas||0))]]],
@@ -6317,9 +6871,20 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const isIng = m.tipo==='Ingreso'||m.tipo==='Nota de Crédito';
   const montoBs = Number(m.montoBs||0), montoUSD = Number(m.montoUSD||0);
   const compId = m._docId||m.id;
+  // 0) Si este movimiento esta ligado a un pago de Cuentas por Pagar Relacionadas, su asiento ES el de
+  // Relacionadas (cuenta propia del banco/caja + cuenta CxP configurada del tercero), no el asiento
+  // generico guardado, que podia traer otra cuenta de pasivo y duplicar el registro.
+  // (Relacionadas ya NO genera comprobante propio: el asiento sale del movimiento de Banco/Caja, y si ese movimiento
+  // esta ligado a un tercero Relacionado, la contrapartida es la cuenta CxP vigente de ese tercero.)
+  const prRel = ctx.relPorMov ? (ctx.relPorMov.get(m._docId) || ctx.relPorMov.get(m.id) || null) : null;
+  const relTercId = (prRel && prRel.terceroId) ? prRel.terceroId : ((m.tipoTercero==='Relacionado' && m.terceroId) ? m.terceroId : null);
   // 1) Si ya existe un asiento formal vinculado, se usan SUS líneas reales tal cual.
   const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
-  if(asientoLigado && asientoLigado.lineas && asientoLigado.lineas.length>0){
+  // Si el asiento guardado no coincide con el monto de ESTE movimiento (ej. varios movimientos comparten id/vinculo),
+  // se ignora y se reconstruye desde el movimiento.
+  const _totAsiento = asientoLigado ? Math.max((asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.debeUSD||0),0),(asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.haberUSD||0),0)) : 0;
+  const _asientoOk = asientoLigado && !(Math.abs(montoUSD)>0.005 && _totAsiento>0.005 && Math.abs(_totAsiento-Math.abs(montoUSD))>0.02);
+  if(!prRel && _asientoOk && asientoLigado.lineas && asientoLigado.lineas.length>0){
     return (asientoLigado.lineas||[]).map((l,li)=>{
       const r = aplicarReclas(tabId, compId, li, l.codigo||'', l.cuenta||'—');
       return aplicarLadoDH(r, {codigo:r.codigo, cuenta:r.cuenta, debeBs:Number(l.debeBs||0), haberBs:Number(l.haberBs||0), debeUSD:Number(l.debeUSD||0), haberUSD:Number(l.haberUSD||0)});
@@ -6339,17 +6904,18 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
   const cuentaGenerica=(patron)=>{const c2=(planCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
   let contra;
-  if(m.cuentaContableCreditoNombre){
+  if(!relTercId && m.cuentaContableCreditoNombre){
     // Contrapartida explícita ya resuelta al crear el movimiento (ej. IGTF Percibido) — tiene
     // prioridad sobre inferir por el nombre del tercero, porque ese nombre en este caso es solo
     // informativo (a quién se le cobró el IGTF), no significa que el movimiento sea una
     // transacción normal de CxC/CxP con ese tercero.
     const [codExp,nomExp]=m.cuentaContableCreditoNombre.split('—').map(s=>s.trim());
     contra={codigo:m.cuentaContableCreditoId||codExp||'', cuenta:nomExp||m.cuentaContableCreditoNombre};
-  } else if(m.tipoTercero==='Relacionado' && m.terceroId){
-    const tercRel=(tercerosRel||[]).find(t=>t.id===m.terceroId);
-    const codRel = (tercRel?.cuentaContableCod||'').trim();
-    const nomRel = (tercRel?.cuentaContableNom||'').trim();
+  } else if(relTercId){
+    const tercRel=(tercerosRel||[]).find(t=>t.id===relTercId);
+    const _vig1 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), planCuentas);
+    const codRel = _vig1.cod;
+    const nomRel = _vig1.nom;
     const ctaPrestamo=cuentaGenerica(/(pr[ée]stamo|relacionad)/i);
     contra = {codigo:codRel||(ctaPrestamo?ctaPrestamo.codigo:''), cuenta:nomRel||(ctaPrestamo?ctaPrestamo.nombre:'Cuentas por Pagar Relacionadas')};
   } else if(tercero && (codTercero||nomTercero)){
@@ -6722,6 +7288,85 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
 // Caja) y solo si no hay ninguna cae a la propia de Relacionadas. Antes esta revisión solo la
 // hacía el motor central; Comprobantes Contables no, así que su pestaña "Relacionadas" podía
 // mostrar una cuenta de origen distinta a la que realmente terminaba en Mayor Analítico.
+// Localiza el movimiento de Banco/Caja REAL al que corresponde un registro de Relacionadas y su
+// cuenta de banco/caja. Antes solo buscaba por p.movimientoId dentro de la coleccion declarada en
+// p.origen y, si no coincidia (id distinto, movimiento en la otra coleccion, cuenta guardada con
+// otro campo), el lado del banco quedaba como "Movimiento no encontrado" y el Balance mostraba
+// una cuenta SIN-MOV inventada. Ahora prueba, en orden y SIN inventar nada: (1) id en la coleccion
+// declarada, (2) id en la otra, (3) mismo tercero + fecha + monto, (4) misma referencia + monto,
+// y para la cuenta, el campo propio del movimiento (cuentaId/cajaId) o el que traiga el registro.
+const _cuentaRelVigente = (cod, nom, planCuentas) => {
+  const plan = planCuentas || [];
+  if (!plan.length) return {cod, nom};
+  const codPlan = (c) => String(c?.codigo||c?.id||'').trim();
+  if (cod && plan.some(c=>codPlan(c)===cod)) return {cod, nom};
+  const nrm = (x) => String(x||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  const nn = nrm(nom); if (!nn) return {cod, nom};
+  const hits = plan.filter(c=>nrm(c?.nombre)===nn);
+  if (hits.length===1) return {cod: codPlan(hits[0])||cod, nom: nom||hits[0].nombre};
+  return {cod, nom};
+};
+const _esAnclaSaldos = (a) => String(a?.nroComprobante||'').trim().toUpperCase()==='SALDOS AGOSTO-2026';
+const _resolverMovRelacionada = (p, ctx) => {
+  const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
+  const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId) && (!(Math.abs(Number(p.monto||0))>0) || Math.abs(Math.abs(Number(m.montoUSD||0))-Math.abs(Number(p.monto||0)))<0.01);
+  const montoP = Math.abs(Number(p.monto||0));
+  const colecciones = p.origen==='caja'
+    ? [{movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}, {movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}]
+    : [{movs:movBanco, cuentas:cuentasBanco, campo:'cuentaId', tipo:'banco'}, {movs:movCaja, cuentas:cuentasCaja, campo:'cajaId', tipo:'caja'}];
+  let hit = null;
+  for (const col of colecciones) { const m=(col.movs||[]).find(idEq); if (m) { hit={m,col}; break; } }
+  if (!hit && montoP>0) {
+    // Mismo dia + mismo monto USD (+ mismo sentido). Si hay varios, se desempata por tercero y por
+    // parecido del concepto/referencia; solo se acepta si queda UNO (nunca se adivina entre varios).
+    const normTxt=(x)=>String(x||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+    const palabras=(x)=>normTxt(x).split(' ').filter(w=>w.length>3);
+    const ptxt=normTxt((p.concepto||'')+' '+(p.terceroNombre||'')+' '+(p.referencia||''));
+    const esIng = Number(p.monto||0)<0;
+    for (const col of colecciones) {
+      let cands=(col.movs||[]).filter(m=>(m.fecha||'')===(p.fecha||'') && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      const conSentido=cands.filter(m=>(m.tipo==='Ingreso'||m.tipo==='Nota de Cr\u00e9dito')===esIng);
+      if (conSentido.length) cands=conSentido;
+      if (cands.length>1) { const porTerc=cands.filter(m=>p.terceroId && m.terceroId===p.terceroId); if (porTerc.length) cands=porTerc; }
+      if (cands.length>1) { const pw=new Set(palabras(ptxt)); const pts=cands.map(m=>({m,n:palabras((m.concepto||'')+' '+(m.referencia||'')).filter(w=>pw.has(w)).length})); const mx=Math.max(...pts.map(x=>x.n)); const top=pts.filter(x=>x.n===mx); if (mx>0 && top.length===1) cands=[top[0].m]; }
+      if (cands.length===1) { hit={m:cands[0],col}; break; }
+    }
+  }
+  if (!hit && p.referencia && montoP>0) {
+    for (const col of colecciones) {
+      const cands=(col.movs||[]).filter(m=>m.referencia && m.referencia===p.referencia && Math.abs(Math.abs(Number(m.montoUSD||0))-montoP)<0.01);
+      if (cands.length===1) { hit={m:cands[0],col}; break; }
+    }
+  }
+  let cta = null, tipoCta = hit ? hit.col.tipo : (p.origen==='caja'?'caja':'banco');
+  if (hit) {
+    cta = (hit.col.cuentas||[]).find(c=>c.id===hit.m[hit.col.campo]) || null;
+    if (!cta) { const otros=[{cuentas:cuentasBanco,campo:'cuentaId',t:'banco'},{cuentas:cuentasCaja,campo:'cajaId',t:'caja'}]; for (const o of otros){ const c2=(o.cuentas||[]).find(c=>c.id===hit.m[o.campo]||c.id===hit.m.cuentaId||c.id===hit.m.cajaId); if(c2){cta=c2;tipoCta=o.t;break;} } }
+  }
+  if (!cta) {
+    const hint=[p.cuentaId,p.cajaId,p.cuentaBancariaId].filter(Boolean).map(x=>String(x).replace('CAJA::',''));
+    for (const h of hint) { const cb=(cuentasBanco||[]).find(c=>c.id===h); if(cb){cta=cb;tipoCta='banco';break;} const cc=(cuentasCaja||[]).find(c=>c.id===h); if(cc){cta=cc;tipoCta='caja';break;} }
+  }
+  return {mov: hit?hit.m:null, cta, tipoCta, tabOrigen: hit?hit.col.tipo:(p.origen==='caja'?'caja':'banco')};
+};
+// Banco/Caja es la fuente de verdad: un registro de Relacionadas que dice venir de Banco/Caja (origen) solo se
+// contabiliza si existe SU movimiento real, y cada movimiento respalda como maximo UN registro (los duplicados y los
+// que no tienen movimiento se ignoran, no se contabilizan). Los registros manuales (sin origen) siempre cuentan.
+const _filtrarPagosRelValidos = (pagos, ctx, esExcluido) => {
+  const validos = [], ignorados = [], cand = [];
+  (pagos||[]).forEach(p=>{
+    if (esExcluido && esExcluido(p)) return;
+    if (!p.origen) { validos.push(p); return; }
+    const r = _resolverMovRelacionada(p, ctx);
+    if (!r.mov) { ignorados.push({p, motivo:'sin movimiento de Banco/Caja'}); return; }
+    const exacto = !!p.movimientoId && (r.mov.id===p.movimientoId || r.mov._docId===p.movimientoId);
+    cand.push({p, k:(r.mov._docId||r.mov.id), exacto});
+  });
+  cand.sort((a,b)=>(a.exacto===b.exacto?0:(a.exacto?-1:1)));
+  const usados = new Set();
+  cand.forEach(c=>{ if (usados.has(c.k)) ignorados.push({p:c.p, motivo:'duplicado (ese movimiento ya tiene otro registro)'}); else { usados.add(c.k); validos.push(c.p); } });
+  return {validos, ignorados};
+};
 const construirLineasRelacionadaCompartida = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja, tercerosRel, planCuentas, settingsTasa, tabId, aplicarReclas} = ctx;
   const montoConSigno = (pp) => {
@@ -6732,34 +7377,36 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const montoSigno = montoConSigno(p);
   const esIngreso = montoSigno < 0;
   const montoUSD = Math.abs(montoSigno);
-  const movLigado = p.origen==='caja'
-    ? (movCaja||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId)
-    : p.origen==='banco' ? (movBanco||[]).find(m=>m.id===p.movimientoId||m._docId===p.movimientoId) : null;
-  const cuentasOrigen = p.origen==='caja' ? cuentasCaja : cuentasBanco;
-  const idFieldOrigen = p.origen==='caja' ? 'cajaId' : 'cuentaId';
-  const ctaOrigen = movLigado ? (cuentasOrigen||[]).find(c=>c.id===movLigado[idFieldOrigen]) : null;
+  const _res = p.origen ? _resolverMovRelacionada(p, ctx) : {mov:null,cta:null,tipoCta:'banco',tabOrigen:'banco'};
+  const movLigado = _res.mov;
+  const ctaOrigen = _res.cta;
+  const _esCajaOrigen = _res.tipoCta==='caja';
   // Si el movimiento de Banco/Caja vinculado no se encuentra (dato roto — visto en datos reales:
   // p.movimientoId sin match en movBanco), antes esto quedaba con código VACÍO — lo que hacía que
   // la línea entera desapareciera de cualquier cuenta al agregar (las líneas sin código se
   // descartan), dejando el asiento descuadrado sin que se notara. Ahora queda marcado visible, con
   // un código propio, en vez de desaparecer o simular una cuenta bancaria que no existe.
-  const nombreCtaOrigen = ctaOrigen ? (p.origen==='caja'?ctaOrigen.nombre:ctaOrigen.banco)
-    : (p.origen ? `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})` : 'Ajuste manual (sin cuenta bancaria)');
+  const nombreCtaOrigen = ctaOrigen ? (_esCajaOrigen?ctaOrigen.nombre:ctaOrigen.banco)
+    : (p.origen ? (movLigado ? `\u26a0\ufe0f Movimiento de ${_res.tabOrigen} encontrado (id: ${movLigado.id||movLigado._docId}) pero su cuenta ${movLigado.cuentaId||movLigado.cajaId||'(sin cuenta)'} no existe en ${_res.tabOrigen==='caja'?'Cajas':'Bancos'}` : `⚠️ Movimiento de ${p.origen} no encontrado (id: ${p.movimientoId||'—'})`) : 'Ajuste manual (sin cuenta bancaria)');
   // Prefijo '1.' (grupo Activo, es cuenta de banco/caja) para que ccBuildArbol la clasifique
   // como Activo — sin el prefijo numérico, el código no empataba con ningún gruposIncluir
   // ('1'/'2'/'3') y la línea desaparecía por completo de Balance General/Estado de Resultados,
   // dejando el asiento descuadrado silenciosamente (visto en datos reales: diferencia de
   // USD 148,40 / Bs.110.328,66 entre Total Activos y Total Pasivo+Patrimonio).
   const codCtaOrigen = ctaOrigen?.cuentaContableCod || (p.origen && p.movimientoId ? `1.SIN-MOV-${p.movimientoId}` : '');
-  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(settingsTasa||0)||1);
+  const tasa = movLigado ? (Number(movLigado.tasa)||1) : (Number(p.tasa||0)>1 ? Number(p.tasa) : (Number(settingsTasa||0)||1));
   // El monto en Bs. se toma DIRECTO del movimiento de Banco/Caja vinculado (que ya lo guarda
   // real, tal cual se registró) en vez de recalcularlo como USD×tasa — eso evita que, si la tasa
   // no se resuelve bien (movimiento no encontrado, ajuste manual, etc.), el Bs. termine saliendo
   // igual al USD (visto en datos reales: Bs.807,74 en vez de Bs.600.000,00).
-  const montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : montoUSD*tasa;
+  let montoBs = movLigado ? Math.abs(Number(movLigado.montoBs||0)) || (montoUSD*tasa) : (Math.abs(Number(p.montoBs||0)) || montoUSD*tasa);
+  // Sin movimiento vinculado, un Bs. guardado que no guarda relacion con USD x tasa (ej. Bs igual al USD,
+  // o el Bs de otro movimiento) se reemplaza por USD x tasa.
+  if (!movLigado && tasa>1 && montoUSD>0) { const _rz = montoBs/montoUSD; if (_rz < tasa*0.5 || _rz > tasa*2) montoBs = montoUSD*tasa; }
   const tercRel = (tercerosRel||[]).find(t=>t.id===p.terceroId);
-  const codRel = (tercRel?.cuentaContableCod||'').trim();
-  const nomRel = (tercRel?.cuentaContableNom||'').trim();
+  const _vig2 = _cuentaRelVigente((tercRel?.cuentaContableCod||'').trim(), (tercRel?.cuentaContableNom||'').trim(), ctx.planCuentas);
+  const codRel = _vig2.cod;
+  const nomRel = _vig2.nom;
   // Antes, si el tercero no tenía cuenta configurada, se adivinaba buscando en TODO el Plan de
   // Cuentas la primera cuyo nombre contenga "préstamo" o "relacionad" — eso hacía que caudales de
   // terceros SIN configurar terminaran mezclados en una cuenta genérica ajena (visto en datos
@@ -6771,7 +7418,7 @@ const construirLineasRelacionadaCompartida = (p, ctx) => {
   const codRelFinal = codRel || `2.SIN-CTA-${p.terceroId||'?'}`;
   const nomRelFinal = nomRel || `⚠️ Sin cuenta configurada — ${p.terceroNombre||tercRel?.nombre||'tercero desconocido'}`;
   const nombreTercero = p.terceroNombre||tercRel?.nombre||'—';
-  const tabOrigen = p.origen==='caja'?'caja':'banco';
+  const tabOrigen = _res.tabOrigen;
   const reclasOrigen = (li,codigo,cuenta) => (aplicarReclas && movLigado) ? aplicarReclas(tabOrigen, movLigado._docId||movLigado.id, li, codigo, cuenta) : {codigo,cuenta};
   const reclasProp = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, p.id, li, codigo, cuenta) : {codigo,cuenta};
   const origenReclas0 = reclasOrigen(0, codCtaOrigen, nombreCtaOrigen);
@@ -10773,6 +11420,17 @@ const CxPView = ({
   const [reclasAntCxpSel, setReclasAntCxpSel] = useState({});
   const [reclasAntCxpFecha, setReclasAntCxpFecha] = useState('');
   const [reclasAntCxpBusy, setReclasAntCxpBusy] = useState(false);
+  // Depuracion de aplicaciones de anticipo duplicadas (ver calcularDepuracionAnticiposCxp)
+  const [depAntDoc, setDepAntDoc] = useState(null);
+  useEffect(()=>{
+    const u=onSnapshot(getDocRef('comprobantes_ajustes','DEPURA-APLICACIONES-ANTICIPOS-CXP'),d=>setDepAntDoc(d.exists()?d.data():null));
+    return ()=>u();
+  },[]);
+  const [showDepAntModal, setShowDepAntModal] = useState(false);
+  const [depAntFecha, setDepAntFecha] = useState('');
+  const [depAntBusy, setDepAntBusy] = useState(false);
+  const [showAlinFechaModal, setShowAlinFechaModal] = useState(false);
+  const [alinFechaBusy, setAlinFechaBusy] = useState(false);
   // Limpieza retroactiva — mueve SOLO el saldo aún abierto (monto - montoAplicado) de cada
   // anticipo ya registrado desde "Cuentas por Pagar Proveedores" (donde cayó por el bug ya
   // corregido) hacia "Anticipos a Proveedores", en un solo comprobante de ajuste con la fecha
@@ -10884,6 +11542,194 @@ const CxPView = ({
       setShowReclasAntCxpModal(false);
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
     setReclasAntCxpBusy(false);
+  };
+  // ── Depuracion de "Aplicaciones de anticipo" duplicadas ─────────────────────────────────────
+  // Un anticipo que sale por Banco/Caja hacia un proveedor con cuenta CxP asignada ya debito esa cuenta
+  // al pagarse (ver construirLineasMovimientoBancoCaja). Aplicarlo luego a una factura NO necesita otro
+  // asiento, salvo que el anticipo se haya reclasificado a Anticipos (D Anticipos / H CxP): en ese caso
+  // la aplicacion revierte esa reclasificacion. Antes el asiento de aplicacion se generaba siempre y
+  // duplicaba el debito (la CxP del proveedor quedaba por debajo del Estado de Cuenta).
+  // Por proveedor y cuenta de anticipo:
+  //   correccion = abierto reclasificado - (reclasificado - aplicado + ya depurado)
+  //   > 0: sobra aplicacion -> D Anticipos / H CxP.     < 0: falta aplicacion -> D CxP / H Anticipos.
+  // Nunca toca Banco, Caja, facturas ni anticipos: solo calcula y, al confirmar, agrega UN comprobante de ajuste.
+  // Proveedores sin cuenta CxP asignada no se tocan (sus anticipos salen contra Anticipos, no contra CxP).
+  const calcularDepuracionAnticiposCxp = () => {
+    const SEP = '\u2014';
+    const r2 = n => Math.round((Number(n)||0)*100)/100;
+    const kNom = s => String(s||'').toUpperCase().replace(/\s+/g,' ').trim();
+    const partir = (n, def) => { const t=String(n||'').split(SEP).map(x=>x.trim()); return (t.length>=2 && t[0]) ? [t[0], t.slice(1).join(' '+SEP+' ')] : def; };
+    const [codAntP,nomAntP] = partir(cuentasAnticipoCfg?.anticipoProveedoresNombre, ['1.1.05.01.002','ANTICIPOS A PROVEEDORES']);
+    const [codAntImp,nomAntImp] = partir(cuentasAnticipoCfg?.anticipoImportacionNombre, ['1.1.05.01.004','ANTICIPOS POR IMPORTACION']);
+    const ctaAnt = { proveedores:{cod:codAntP, nom:nomAntP}, importacion:{cod:codAntImp, nom:nomAntImp} };
+    const claveDe = (cod) => { const c=String(cod||'').trim(); return c===String(codAntImp).trim() ? 'importacion' : (c===String(codAntP).trim() ? 'proveedores' : null); };
+    const vacio = () => ({ usd:0, bs:0, n:0, fMax:'' });
+    const prov = new Map();
+    const obt = (nombre) => {
+      const k = kNom(nombre);
+      if(!prov.has(k)) prov.set(k, { k, nombre:String(nombre||'').trim()||'(sin proveedor)', ctaCxp:null, provId:'',
+        ad:{proveedores:vacio(), importacion:vacio()}, rd:{proveedores:vacio(), importacion:vacio()},
+        dp:{proveedores:vacio(), importacion:vacio()}, o:{proveedores:0, importacion:0} });
+      return prov.get(k);
+    };
+    // Aplicaciones ya registradas: lineas H contra una cuenta de anticipo (la D anterior trae la cuenta CxP usada)
+    const lnA = antAplicadosProvDoc?.lineas || [];
+    lnA.forEach((l,i)=>{
+      if(l.tipo!=='H') return;
+      const key = claveDe(l.codigo); if(!key) return;
+      const r = obt(l.proveedor); const a = r.ad[key];
+      a.usd += pN(l.montoUSD); a.bs += pN(l.montoBs); a.n++; if((l.fecha||'')>a.fMax) a.fMax = l.fecha||'';
+      const ant = lnA[i-1];
+      if(!r.ctaCxp && ant && ant.tipo==='D' && Math.abs(pN(ant.montoUSD)-pN(l.montoUSD))<0.005) r.ctaCxp = {cod:ant.codigo, nom:ant.cuenta};
+    });
+    // Reclasificaciones: lineas D contra una cuenta de anticipo (la H siguiente trae la cuenta CxP)
+    const lnR = reclasAbiertosCxpDoc?.lineas || [];
+    lnR.forEach((l,i)=>{
+      if(l.tipo!=='D') return;
+      const key = claveDe(l.codigo); if(!key) return;
+      const r = obt(l.proveedor); const a = r.rd[key];
+      a.usd += pN(l.montoUSD); a.bs += pN(l.montoBs); a.n++;
+      const sig = lnR[i+1];
+      if(!r.ctaCxp && sig && sig.tipo==='H' && Math.abs(pN(sig.montoUSD)-pN(l.montoUSD))<0.005) r.ctaCxp = {cod:sig.codigo, nom:sig.cuenta};
+    });
+    // Correcciones ya generadas antes por esta misma herramienta (neto debitado a la cuenta de anticipo)
+    (depAntDoc?.lineas || []).forEach(l=>{
+      const key = claveDe(l.codigo); if(!key) return;
+      const r = obt(l.proveedor); const sg = l.tipo==='D' ? 1 : -1;
+      r.dp[key].usd += sg*pN(l.montoUSD); r.dp[key].bs += sg*pN(l.montoBs);
+    });
+    // Saldo abierto actual de los anticipos reclasificados, por cuenta destino
+    (pagosCxP||[]).filter(p=>p.esAnticipo && p.reclasificado).forEach(p=>{
+      const key = p.cuentaReclasificada==='importacion' ? 'importacion' : 'proveedores';
+      const nombreP = p.proveedor || (proveedores||[]).find(x=>x.id===p.proveedorId)?.nombre || '';
+      const r = obt(nombreP);
+      r.o[key] += Math.max(0, pN(p.monto||0)-pN(p.montoAplicado||0));
+      if(!r.provId && p.proveedorId) r.provId = p.proveedorId;
+    });
+    const filas = [], omitidos = [];
+    prov.forEach(r=>{
+      const pv = (proveedores||[]).find(x=>(r.provId && x.id===r.provId) || kNom(x.nombre)===r.k || kNom(x.razonSocial)===r.k);
+      ['proveedores','importacion'].forEach(key=>{
+        const o=r.o[key], rd=r.rd[key], ad=r.ad[key], dp=r.dp[key];
+        const C = r2(o - (rd.usd - ad.usd + dp.usd));
+        if(Math.abs(C)<0.01) return;
+        const ctaTxt = String(pv?.cuentaContableNombre||'').trim();
+        if(!ctaTxt){ omitidos.push({nombre:r.nombre, ctaA:ctaAnt[key], C, motivo: pv ? 'Sin cuenta de Cuentas por Pagar asignada' : 'No se encontró el proveedor'}); return; }
+        const ctaCxpPar = r.ctaCxp ? [r.ctaCxp.cod, r.ctaCxp.nom] : partir(ctaTxt, ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES']);
+        const absC = Math.abs(C);
+        let cbs;
+        if(C>0){
+          if(ad.usd>0.005 && Math.abs(absC-ad.usd)<0.01) cbs = ad.bs;
+          else { const t = ad.usd>0.005 ? ad.bs/ad.usd : (rd.usd>0.005 ? rd.bs/rd.usd : (Number(tasaBCV)||1)); cbs = absC*t; }
+        } else {
+          if(rd.usd>0.005 && Math.abs(absC-rd.usd)<0.01) cbs = rd.bs;
+          else { const t = rd.usd>0.005 ? rd.bs/rd.usd : (ad.usd>0.005 ? ad.bs/ad.usd : (Number(tasaBCV)||1)); cbs = absC*t; }
+        }
+        filas.push({k:r.k, key, nombre:r.nombre, ctaA:ctaAnt[key], ctaCxp:{cod:ctaCxpPar[0], nom:ctaCxpPar[1]}, ad, rd, dp, o, C, cbs:r2(cbs)});
+      });
+    });
+    filas.sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+    const fechaDefault = filas.filter(f=>f.C>0).reduce((m,f)=>f.ad.fMax>m?f.ad.fMax:m,'');
+    return {filas, omitidos, fechaDefault};
+  };
+  const ejecutarDepuracionAnticiposCxp = async () => {
+    if(!depAntFecha) return setDialog({title:'Falta la fecha',text:'Elige la fecha del comprobante de corrección.',type:'alert'});
+    setDepAntBusy(true);
+    try{
+      const {filas} = calcularDepuracionAnticiposCxp();
+      if(!filas.length){ setDialog({title:'Nada que depurar',text:'Las aplicaciones de anticipo ya cuadran; no hay nada que corregir.',type:'alert'}); setDepAntBusy(false); return; }
+      const nuevas = [];
+      filas.forEach(f=>{
+        const monto = Math.abs(f.C), bs = Math.abs(f.cbs);
+        const detalle = `${f.nombre} · ${f.C>0?'Reverso de aplicación de anticipo duplicada':'Aplicación de anticipo pendiente de registrar'}`;
+        nuevas.push({codigo:f.ctaA.cod, cuenta:f.ctaA.nom, tipo:f.C>0?'D':'H', montoUSD:monto, montoBs:bs, detalle, proveedor:f.nombre, fecha:depAntFecha});
+        nuevas.push({codigo:f.ctaCxp.cod, cuenta:f.ctaCxp.nom, tipo:f.C>0?'H':'D', montoUSD:monto, montoBs:bs, detalle, proveedor:f.nombre, fecha:depAntFecha});
+      });
+      const batch = writeBatch(db);
+      batch.set(getDocRef('comprobantes_ajustes','DEPURA-APLICACIONES-ANTICIPOS-CXP'), {
+        fecha:depAntFecha, nroComprobante:'DEPURA-APLICACIONES-ANTICIPOS-CXP',
+        concepto:'Depuración de Aplicaciones de Anticipos a Proveedores (anticipo ya debitado a Cuentas por Pagar al pagarse por Banco/Caja)',
+        lineas:[...(depAntDoc?.lineas||[]), ...nuevas],
+        createdAt:depAntDoc?.createdAt||Date.now(), updatedAt:Date.now(), user:appUser?.name||'Sistema', origen:'depuracion_anticipos_cxp',
+      });
+      await batch.commit();
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Depuración de aplicaciones de anticipo: ${filas.length} corrección(es) con fecha ${depAntFecha}.`);
+      setDialog({title:'✅ Depuración registrada',text:`${filas.length} corrección(es) registradas en el comprobante DEPURA-APLICACIONES-ANTICIPOS-CXP con fecha ${depAntFecha}. Revisa el Mayor Analítico de Cuentas por Pagar. Si algo no cuadra, borra ese comprobante desde Ajustes y queda como estaba.`,type:'alert'});
+      setShowDepAntModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setDepAntBusy(false);
+  };
+  // -- Fecha de la aplicacion de un anticipo ---------------------------------------------------
+  // La aplicacion de un anticipo a una factura lleva la fecha de registro del propio anticipo (no la del dia en que se
+  // aplica): asi el Estado de Cuenta por fecha de corte cruza con el Mayor, donde el anticipo ya debito la CxP del
+  // proveedor al salir por Banco/Caja. El asiento de aplicacion (solo existe si el anticipo estaba reclasificado o el
+  // proveedor no tiene cuenta CxP asignada) usa esa misma fecha, pero nunca antes de la reclasificacion: asi no queda
+  // la cuenta de Anticipos en negativo en los meses anteriores a la reclasificacion.
+  const fechaAsientoAplicacionAnticipo = (ant, hoyX) => {
+    const fAnt = ant?.fecha || hoyX;
+    const fRec = ant?.reclasificado ? (ant?.fechaReclasificacion || '') : '';
+    return (fRec && fRec > fAnt) ? fRec : fAnt;
+  };
+  // -- Alinear fechas de aplicaciones ya registradas -------------------------------------------
+  // Aplicaciones de anticipo ya hechas (pago con cuentaId 'ANTICIPO::<id>') que quedaron con la fecha del dia en que se
+  // aplicaron: se les pone la fecha de su anticipo. Solo cambia el campo fecha de ese pago (la original queda guardada en
+  // fechaAplicacionOriginal para poder restaurarla). No se tocan las de anticipos reclasificados ni las de proveedores
+  // sin cuenta CxP asignada: su asiento contable ya registrado conserva la fecha de aplicacion y deben seguir juntas.
+  const calcularAlineacionFechasAnticipos = () => {
+    const kNom = s => String(s||'').toUpperCase().replace(/\s+/g,' ').trim();
+    const antMap = new Map((pagosCxP||[]).filter(p=>p.esAnticipo).map(a=>[a.id,a]));
+    const facMap = new Map((facturasCompra||[]).map(f=>[f.id,f]));
+    const filas = [], omitidos = [], restaurables = [];
+    (pagosCxP||[]).forEach(p=>{
+      if(p.esAnticipo) return;
+      const cid = String(p.cuentaId||'');
+      if(!cid.startsWith('ANTICIPO::')) return;
+      if(p.fechaAplicacionOriginal && p.fechaAplicacionOriginal!==p.fecha) restaurables.push({id:p.id, fechaOriginal:p.fechaAplicacionOriginal});
+      const ant = antMap.get(cid.slice('ANTICIPO::'.length));
+      if(!ant || !ant.fecha || (p.fecha||'')===ant.fecha) return;
+      const nomP = kNom(p.proveedor||ant.proveedor);
+      const pv = (proveedores||[]).find(x=>(p.proveedorId && x.id===p.proveedorId) || (ant.proveedorId && x.id===ant.proveedorId))
+        || (proveedores||[]).find(x=>kNom(x.nombre)===nomP || (x.razonSocial && kNom(x.razonSocial)===nomP));
+      const sinCta = !String(pv?.cuentaContableNombre||'').trim();
+      if(ant.reclasificado || sinCta){ omitidos.push({id:p.id, motivo: ant.reclasificado ? 'anticipo reclasificado' : 'proveedor sin cuenta CxP asignada'}); return; }
+      const f = facMap.get(p.facturaId);
+      filas.push({id:p.id, proveedor:p.proveedor||ant.proveedor||'', factura:f?.nroFactura||'', refAnt:ant.referencia||ant.id, monto:pN(p.monto||0),
+        fechaActual:p.fecha||'', fechaNueva:ant.fecha, fechaOrig:p.fechaAplicacionOriginal||p.fecha||''});
+    });
+    filas.sort((a,b)=>String(a.proveedor).localeCompare(String(b.proveedor),'es') || String(a.fechaNueva).localeCompare(String(b.fechaNueva)));
+    return {filas, omitidos, restaurables};
+  };
+  const ejecutarAlineacionFechasAnticipos = async () => {
+    setAlinFechaBusy(true);
+    try{
+      const {filas} = calcularAlineacionFechasAnticipos();
+      if(!filas.length){ setDialog({title:'Nada que alinear',text:'Todas las aplicaciones de anticipo ya tienen la fecha de su anticipo.',type:'alert'}); setAlinFechaBusy(false); return; }
+      for(let i=0;i<filas.length;i+=400){
+        const batch = writeBatch(db);
+        filas.slice(i,i+400).forEach(f=>batch.update(getDocRef('procura_pagos_cxp',f.id),{fecha:f.fechaNueva, fechaAplicacionOriginal:f.fechaOrig, updatedAt:Date.now()}));
+        await batch.commit();
+      }
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Alineación de fechas de aplicaciones de anticipo: ${filas.length} pago(s) pasaron a la fecha de su anticipo.`);
+      setDialog({title:'✅ Fechas alineadas',text:`${filas.length} aplicación(es) de anticipo pasaron a la fecha de su anticipo. La fecha original quedó guardada: si algo no cuadra, abre otra vez este botón y usa "Restaurar fechas originales".`,type:'alert'});
+      setShowAlinFechaModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setAlinFechaBusy(false);
+  };
+  const restaurarFechasAplicacionAnticipos = async () => {
+    setAlinFechaBusy(true);
+    try{
+      const {restaurables} = calcularAlineacionFechasAnticipos();
+      if(!restaurables.length){ setDialog({title:'Nada que restaurar',text:'Ninguna aplicación tiene guardada una fecha original distinta a la actual.',type:'alert'}); setAlinFechaBusy(false); return; }
+      for(let i=0;i<restaurables.length;i+=400){
+        const batch = writeBatch(db);
+        restaurables.slice(i,i+400).forEach(r=>batch.update(getDocRef('procura_pagos_cxp',r.id),{fecha:r.fechaOriginal, fechaAplicacionOriginal:null, updatedAt:Date.now()}));
+        await batch.commit();
+      }
+      logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Restauración de fechas originales de aplicaciones de anticipo: ${restaurables.length} pago(s).`);
+      setDialog({title:'↩ Fechas restauradas',text:`${restaurables.length} aplicación(es) volvieron a su fecha original.`,type:'alert'});
+      setShowAlinFechaModal(false);
+    }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
+    setAlinFechaBusy(false);
   };
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
@@ -11260,6 +12106,8 @@ ${body}
               setReclasAntCxpSel(Object.fromEntries(abiertosAhora.map(p=>[p.id,'proveedores'])));
               setReclasAntCxpFecha(getTodayDate()); setShowReclasAntCxpModal(true);
             }} title="Mueve el saldo aún abierto de anticipos ya registrados desde Cuentas por Pagar hacia Anticipos a Proveedores/Importación" className="px-3 py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl text-[10px] font-black uppercase hover:bg-purple-100">🔧 Reclasificar Anticipos Abiertos</button>
+          <button onClick={()=>{ const rDep=calcularDepuracionAnticiposCxp(); setDepAntFecha(rDep.fechaDefault||getTodayDate()); setShowDepAntModal(true); }} title="Calcula y corrige las Aplicaciones de anticipo que duplican un débito que el anticipo ya hizo en Cuentas por Pagar (vista previa antes de aplicar)" className="px-3 py-2 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl text-[10px] font-black uppercase hover:bg-amber-100">🧹 Depurar Aplicaciones de Anticipos</button>
+          <button onClick={()=>setShowAlinFechaModal(true)} title="Pone en las aplicaciones de anticipo ya registradas la fecha de su anticipo (vista previa antes de aplicar; se puede restaurar)" className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">📅 Alinear Fechas de Aplicación</button>
           <button onClick={()=>setDialog({title:'¿Reparar anticipos en la raíz?',text:'Corrige directamente los movimientos de banco históricos que les faltaba la marca de anticipo (por eso caían en Cuentas por Pagar). Si ya usaste "Reclasificar Anticipos Abiertos" antes, esto lo deshace automáticamente primero para no duplicar. No crea comprobantes nuevos — corrige el dato de origen.',type:'confirm',onConfirm:repararAnticiposBancoRaiz})}
             disabled={reparandoRaiz} title="Corrige los banco_movimientos históricos que les falta esAnticipo:true — arreglo de raíz, sin comprobantes de compensación" className="px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-100 disabled:opacity-50">{reparandoRaiz?'Reparando...':'🔧 Reparar Anticipos en la Raíz'}</button>
           {(pagosCxP||[]).some(p=>p.reclasificado) && (
@@ -11328,6 +12176,129 @@ ${body}
                 <div className="flex gap-2 pt-1">
                   <button disabled={reclasAntCxpBusy} onClick={()=>setShowReclasAntCxpModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
                   <button disabled={reclasAntCxpBusy||seleccionados.length===0} onClick={ejecutarReclasAnticiposAbiertosCxp} className="flex-1 bg-purple-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-purple-700 disabled:opacity-40">{reclasAntCxpBusy?'Procesando...':`Ejecutar (${seleccionados.length})`}</button>
+                </div>
+              </div>
+            </div>
+            );
+          })()}
+          {showDepAntModal && (() => {
+            const dep = calcularDepuracionAnticiposCxp();
+            const totalPos = dep.filas.filter(f=>f.C>0).reduce((s,f)=>s+f.C,0);
+            const totalNeg = dep.filas.filter(f=>f.C<0).reduce((s,f)=>s+Math.abs(f.C),0);
+            const fechaAntes = !!depAntFecha && dep.filas.some(f=>f.C>0 && f.ad.fMax && depAntFecha<f.ad.fMax);
+            return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!depAntBusy&&setShowDepAntModal(false)}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl p-5 space-y-3 max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <h3 className="font-black text-gray-800">🧹 Depurar Aplicaciones de Anticipos (CxP)</h3>
+                <p className="text-[11px] text-gray-500">Un anticipo que sale por Banco/Caja ya debita la Cuenta por Pagar del proveedor en ese momento, así que al aplicarlo a una factura no hace falta otro asiento (solo si el anticipo se reclasificó a Anticipos). Aquí se calcula, por proveedor, cuánto de las "Aplicación de anticipo" ya registradas está duplicado y se corrige con un solo comprobante de ajuste. No toca Banco, Caja, facturas ni anticipos, y el comprobante se puede borrar desde Ajustes.</p>
+                {dep.filas.length===0 ? (
+                  <p className="text-xs font-bold text-gray-400 py-4 text-center">Nada que depurar: las aplicaciones de anticipo ya cuadran con las reclasificaciones.</p>
+                ) : (
+                  <div className="border rounded-xl overflow-hidden overflow-x-auto">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-gray-100"><tr>
+                        <th className="text-left px-2 py-1.5">Proveedor</th>
+                        <th className="text-left px-2 py-1.5">Cuenta CxP</th>
+                        <th className="text-right px-2 py-1.5">Aplicaciones registradas</th>
+                        <th className="text-right px-2 py-1.5">Reclasificado</th>
+                        <th className="text-right px-2 py-1.5">Abierto reclasif.</th>
+                        <th className="text-right px-2 py-1.5">Corrección USD</th>
+                        <th className="text-right px-2 py-1.5">Corrección Bs.</th>
+                        <th className="text-left px-2 py-1.5">Asiento</th>
+                      </tr></thead>
+                      <tbody>
+                        {dep.filas.map(f=>(
+                          <tr key={f.k+'|'+f.key} className="border-t">
+                            <td className="px-2 py-1.5 font-bold">{f.nombre}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{f.ctaCxp.cod} {f.ctaCxp.nom}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">${fN(f.ad.usd)} <span className="text-gray-400">({f.ad.n})</span></td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-500">${fN(f.rd.usd)}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-500">${fN(f.o)}</td>
+                            <td className={`px-2 py-1.5 text-right font-mono font-black ${f.C>0?'text-amber-700':'text-blue-700'}`}>{f.C<0?'-':''}${fN(Math.abs(f.C))}</td>
+                            <td className="px-2 py-1.5 text-right font-mono text-gray-600">{fN(Math.abs(f.cbs))}</td>
+                            <td className="px-2 py-1.5 text-[9px] text-gray-600">{f.C>0?`D ${f.ctaA.nom} / H CxP`:`D CxP / H ${f.ctaA.nom}`}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot><tr className="border-t-2 bg-amber-50 font-black">
+                        <td colSpan={5} className="px-2 py-1.5 text-right">Total duplicado a reversar:</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-amber-700">${fN(totalPos)}</td>
+                        <td colSpan={2} className="px-2 py-1.5 text-[9px] text-gray-500">{totalNeg>0.005?`Además, aplicaciones faltantes: $${fN(totalNeg)}`:''}</td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )}
+                {dep.omitidos.length>0 && (
+                  <div className="border border-gray-200 rounded-xl p-3 bg-gray-50">
+                    <p className="text-[10px] font-black text-gray-600 uppercase mb-1">No se tocan (revisar a mano)</p>
+                    {dep.omitidos.map((o,i)=>(
+                      <p key={i} className="text-[10px] text-gray-500">{o.nombre} · {o.ctaA.nom} · ${fN(Math.abs(o.C))} · {o.motivo}</p>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fecha del comprobante de corrección (para cierre de mes usa el último día)</label>
+                  <input type="date" value={depAntFecha} onChange={e=>setDepAntFecha(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-amber-500"/>
+                  {fechaAntes&&<p className="text-[9px] text-red-500 font-bold mt-1">Ojo: esta fecha es anterior a alguna de las aplicaciones que se reversan; en el Mayor esas quedarán desfasadas hasta esa fecha.</p>}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button disabled={depAntBusy} onClick={()=>setShowDepAntModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                  <button disabled={depAntBusy||dep.filas.length===0||!depAntFecha} onClick={ejecutarDepuracionAnticiposCxp} className="flex-1 bg-amber-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-amber-700 disabled:opacity-40">{depAntBusy?'Procesando...':`Generar comprobante de corrección (${dep.filas.length})`}</button>
+                </div>
+              </div>
+            </div>
+            );
+          })()}
+          {showAlinFechaModal && (() => {
+            const alin = calcularAlineacionFechasAnticipos();
+            const totalMontoAlin = alin.filas.reduce((s,f)=>s+f.monto,0);
+            return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>!alinFechaBusy&&setShowAlinFechaModal(false)}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl p-5 space-y-3 max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                <h3 className="font-black text-gray-800">📅 Alinear Fechas de Aplicación de Anticipos (CxP)</h3>
+                <p className="text-[11px] text-gray-500">Una aplicación de anticipo debe llevar la fecha del propio anticipo, no la del día en que se aplicó. Aquí se cambia solo la fecha de esos pagos en Cuentas por Pagar y Estado de Cuenta (queda guardada la fecha original y se puede restaurar). No toca Banco, Caja, facturas, saldos ni comprobantes contables.</p>
+                {alin.filas.length===0 ? (
+                  <p className="text-xs font-bold text-gray-400 py-4 text-center">Nada que alinear: todas las aplicaciones ya tienen la fecha de su anticipo.</p>
+                ) : (
+                  <div className="border rounded-xl overflow-hidden overflow-x-auto">
+                    <table className="w-full text-[10px]">
+                      <thead className="bg-gray-100"><tr>
+                        <th className="text-left px-2 py-1.5">Proveedor</th>
+                        <th className="text-left px-2 py-1.5">Factura</th>
+                        <th className="text-left px-2 py-1.5">Anticipo (ref.)</th>
+                        <th className="text-right px-2 py-1.5">Monto USD</th>
+                        <th className="text-left px-2 py-1.5">Fecha actual</th>
+                        <th className="text-left px-2 py-1.5">Fecha nueva</th>
+                      </tr></thead>
+                      <tbody>
+                        {alin.filas.map(f=>(
+                          <tr key={f.id} className="border-t">
+                            <td className="px-2 py-1.5 font-bold">{f.proveedor}</td>
+                            <td className="px-2 py-1.5">{f.factura||'—'}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{f.refAnt}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">${fN(f.monto)}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{f.fechaActual}</td>
+                            <td className="px-2 py-1.5 font-black text-indigo-700">{f.fechaNueva}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot><tr className="border-t-2 bg-indigo-50 font-black">
+                        <td colSpan={3} className="px-2 py-1.5 text-right">Total ({alin.filas.length}):</td>
+                        <td className="px-2 py-1.5 text-right font-mono">${fN(totalMontoAlin)}</td>
+                        <td colSpan={2}></td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                )}
+                {alin.omitidos.length>0 && (
+                  <p className="text-[10px] text-gray-500 border border-gray-200 rounded-xl p-3 bg-gray-50">No se tocan {alin.omitidos.length} aplicación(es) de anticipos reclasificados o de proveedores sin cuenta de Cuentas por Pagar asignada: su asiento contable ya registrado conserva la fecha en que se aplicó.</p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <button disabled={alinFechaBusy} onClick={()=>setShowAlinFechaModal(false)} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                  {alin.restaurables.length>0 && (
+                    <button disabled={alinFechaBusy} onClick={restaurarFechasAplicacionAnticipos} className="flex-1 bg-white text-indigo-700 border-2 border-indigo-300 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-50 disabled:opacity-40">{`↩ Restaurar fechas originales (${alin.restaurables.length})`}</button>
+                  )}
+                  <button disabled={alinFechaBusy||alin.filas.length===0} onClick={ejecutarAlineacionFechasAnticipos} className="flex-1 bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-700 disabled:opacity-40">{alinFechaBusy?'Procesando...':`Alinear fechas (${alin.filas.length})`}</button>
                 </div>
               </div>
             </div>
@@ -11737,8 +12708,17 @@ ${body}
             });
             // Asiento de reclasificación Anticipo → Cuentas por Pagar, por cada anticipo aplicado
             // en esta operación — un solo comprobante que va creciendo, cada línea con su propia
-            // fecha (la de HOY, que es cuando se aplica, no la fecha original del anticipo).
-            const aplicacionesCxpEsteLote = Object.entries(antAplicadoCxp).filter(([,ap])=>ap>0.005);
+            // fecha (la del anticipo, igual que el pago en Procura; si ya se reclasifico, nunca antes de esa reclasificacion).
+            // Solo se genera asiento de aplicacion si el anticipo fue reclasificado a una cuenta de Anticipos (el asiento
+            // revierte esa reclasificacion contra la misma cuenta). Un anticipo pagado por Banco/Caja ya debito la CxP del
+            // proveedor al pagarse, asi que aplicarlo a una factura no necesita otro asiento (generarlo duplicaba el debito).
+            // Proveedores sin cuenta CxP asignada conservan el comportamiento anterior (su anticipo salio contra Anticipos).
+            const _sinCtaCxpProv = !String(provSel?.cuentaContableNombre||'').trim();
+            const aplicacionesCxpEsteLote = Object.entries(antAplicadoCxp).filter(([antIdX,ap])=>{
+              if(!(ap>0.005)) return false;
+              const antX=(pagosCxP||[]).find(a=>a.id===antIdX);
+              return !!antX && (!!antX.reclasificado || _sinCtaCxpProv);
+            });
             if (aplicacionesCxpEsteLote.length){
               const [codAntP,nomAntP] = cuentasAnticipoCfg?.anticipoProveedoresNombre
                 ? cuentasAnticipoCfg.anticipoProveedoresNombre.split('—').map(s=>s.trim())
@@ -11746,6 +12726,9 @@ ${body}
               const [codCxpTerc,nomCxpTerc] = provSel?.cuentaContableNombre
                 ? provSel.cuentaContableNombre.split('—').map(s=>s.trim())
                 : ['2.1.01.01.001','CUENTAS POR PAGAR PROVEEDORES'];
+              const [codAntImpAp,nomAntImpAp] = cuentasAnticipoCfg?.anticipoImportacionNombre
+                ? cuentasAnticipoCfg.anticipoImportacionNombre.split('\u2014').map(s=>s.trim())
+                : ['1.1.05.01.004','ANTICIPOS POR IMPORTACION'];
               const refDoc = getDocRef('comprobantes_ajustes','ANTICIPOS-APLICADOS-PROVEEDORES');
               const lineasPrevias = antAplicadosProvDoc?.lineas || [];
               const nuevasLineas = [];
@@ -11756,8 +12739,10 @@ ${body}
                 const montoUSDAp = parseFloat(aplicado.toFixed(2));
                 const provNombre = provSel?.nombre||ant?.proveedor||'Proveedor';
                 const detalleAp = `${provNombre} · Aplicación de anticipo${ant?.referencia?' · Ref.'+ant.referencia:''}`;
-                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:hoy});
-                nuevasLineas.push({codigo:codAntP, cuenta:nomAntP, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:hoy});
+                const [codAntX,nomAntX] = (ant?.reclasificado && ant?.cuentaReclasificada==='importacion') ? [codAntImpAp,nomAntImpAp] : [codAntP,nomAntP];
+                const fechaLnAp = fechaAsientoAplicacionAnticipo(ant, hoy);
+                nuevasLineas.push({codigo:codCxpTerc, cuenta:nomCxpTerc, tipo:'D', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:fechaLnAp});
+                nuevasLineas.push({codigo:codAntX, cuenta:nomAntX, tipo:'H', montoUSD:montoUSDAp, montoBs:montoBsAp, detalle:detalleAp, proveedor:provNombre, fecha:fechaLnAp});
               });
               batch.set(refDoc, {
                 fecha:hoy, nroComprobante:'ANTICIPOS-APLICADOS-PROVEEDORES', concepto:'Aplicación de Anticipos a Proveedores (Anticipo ↔ Cuentas por Pagar)',
@@ -11879,7 +12864,7 @@ ${body}
                   {/* Anticipos disponibles */}
                   {!pm.esAnticipo&&totalAnticiposProv>0.01&&(
                     <div style={{padding:'8px 14px',borderBottom:'1px solid #dcfce7',background:'#f0fdf4'}}>
-                      <div style={{fontSize:9,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:4}}>💰 Anticipos disponibles: ${fN(totalAnticiposProv)}</div>
+                      <div style={{fontSize:9,fontWeight:900,color:'#15803d',textTransform:'uppercase',marginBottom:4}}>💰 Anticipos disponibles: ${fN(totalAnticiposProv)}<span style={{fontWeight:700,textTransform:'none',color:'#166534',marginLeft:6}}>· al usarlo, la aplicación toma la fecha del anticipo</span></div>
                       {anticiposProv.map(a=>{
                         const yaEnLineas=(pm.lineasPago||[]).some(l=>l.anticipoId===a.id);
                         return(
@@ -11888,7 +12873,7 @@ ${body}
                           <div style={{display:'flex',gap:4,flexShrink:0}}>
                             <button title="Corregir: marcar este anticipo como ya utilizado antes — no toca banco, caja ni facturas, solo su saldo disponible" onClick={()=>setDialog({title:'Marcar anticipo como ya usado', text:`Esto deja "$${fN(a._saldoAnt)} · ${a.fecha}${a.referencia?' · '+a.referencia:''}" en $0 disponible.\n\nNo toca Banco, Caja ni ninguna factura — solo corrige el saldo de este anticipo. Úsalo cuando el anticipo ya se había usado antes y volvió a aparecer disponible por error.`, type:'confirm', onConfirm: async ()=>{ try{ await updateDoc(getDocRef('procura_pagos_cxp',a.id),{montoAplicado:pN(a.monto||0)}); logAuditoria(appUser,'Cuentas por Pagar','EDICIÓN',`Anticipo ${a.id} (${a.proveedor||''}) marcado manualmente como ya usado — saldo corregido a $0, sin tocar banco/caja/facturas.`); }catch(e){ setDialog({title:'Error', text:e.message, type:'alert'}); } }})}
                               style={{fontSize:8,fontWeight:900,padding:'3px 6px',borderRadius:6,border:'1px solid #dc2626',background:'#fff',color:'#dc2626',cursor:'pointer'}}>🚫</button>
-                            <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:hoy,anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
+                            <button disabled={yaEnLineas} onClick={()=>setPM(m=>({lineasPago:[...(m.lineasPago||[]),{moneda:'USD',monto:String(a._saldoAnt.toFixed(2)),tasa:String(a.tasa||tasaBCV),metodo:'ANTICIPO',cuentaId:`ANTICIPO::${a.id}`,cuentaNombre:`Anticipo ${a.fecha}`,referencia:a.referencia||a.id,concepto:'Aplicación de anticipo',fecha:(a.fecha||hoy),anticipoId:a.id,anticipoMax:a._saldoAnt}]}))}
                               style={{fontSize:8,fontWeight:900,padding:'3px 8px',borderRadius:6,border:'none',background:yaEnLineas?'#d1d5db':'#16a34a',color:'#fff',cursor:yaEnLineas?'default':'pointer',textTransform:'uppercase'}}>{yaEnLineas?'En uso':'Usar'}</button>
                           </div>
                         </div>);
@@ -11998,6 +12983,7 @@ ${body}
                             <span>{l.cuentaNombre||'Sin cuenta'}</span>
                             {l.referencia&&<span>Ref: {l.referencia}</span>}
                             <span>{l.fecha}</span>
+                            {l.anticipoId&&<span style={{color:'#15803d',fontWeight:700}}>fecha del anticipo</span>}
                           </div>
                         </div>
                         <button onClick={()=>setPM(m=>({lineasPago:(m.lineasPago||[]).filter((_,j)=>j!==i)}))}
@@ -12516,6 +13502,19 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       const batch = writeBatch(db);
       await archivarEnPapelera('procura_pagos_cxp', p.id, p, `Pago $${fN(pN(p.monto||0))} — ${p.proveedor||''}`, appUser);
       batch.delete(getDocRef('procura_pagos_cxp', p.id));
+      // Si el pago que se reversa es la aplicacion de un anticipo (cuentaId 'ANTICIPO::<id>'), ese monto vuelve al
+      // saldo disponible del anticipo -- antes el anticipo quedaba consumido aunque la factura volviera a quedar
+      // pendiente. El asiento de aplicacion (solo existe si el anticipo estaba reclasificado) se ajusta despues
+      // con "Depurar Aplicaciones de Anticipos".
+      let antRestaurado = null;
+      if(!p.esAnticipo && String(p.cuentaId||'').startsWith('ANTICIPO::')){
+        const antIdRev = String(p.cuentaId).slice('ANTICIPO::'.length);
+        const antRev = (pagosCxP||[]).find(a=>a.id===antIdRev);
+        if(antRev){
+          batch.update(getDocRef('procura_pagos_cxp', antIdRev), {montoAplicado: Math.max(0, parseFloat((pN(antRev.montoAplicado||0)-pN(p.monto||0)).toFixed(2))), updatedAt: Date.now()});
+          antRestaurado = {ref: antRev.referencia||antIdRev, monto: pN(p.monto||0), reclas: !!antRev.reclasificado};
+        }
+      }
       const f = _factMap.get(p.facturaId);
       if(f){
         const saldoActual = pN(f.saldoPendiente||0);
@@ -12564,7 +13563,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
       }
       await batch.commit();
       logAuditoria(appUser,'Cuentas por Pagar','ELIMINACIÓN',`Pago REVERSADO: $${fN(pN(p.monto||0))} a ${p.proveedor||'—'} · Ref: ${p.referencia||'—'} · Factura: ${f?.nroFiscal||f?.documento||p.facturaId||'—'}`);
-      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. Saldo de factura y de banco/caja restaurados.`,type:'alert'});
+      setDialog({title:'↩ Reversado',text:`Pago de $${fN(pN(p.monto||0))} reversado. Saldo de factura y de banco/caja restaurados.${antRestaurado?` Se devolvieron $${fN(antRestaurado.monto)} al saldo disponible del anticipo ${antRestaurado.ref}.${antRestaurado.reclas?' Ese anticipo está reclasificado: usa "Depurar Aplicaciones de Anticipos" para ajustar su asiento.':''}`:''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
 
@@ -15635,9 +16634,10 @@ const SYSTEM_MODULES = [
     label: '13. MÓDULO RRHH',
     icon: '🧑‍💼',
     submodules: [
-      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Cuentas)' },
+      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Tabulador, HCM, Bolsa de alimentos)' },
       { id: 'rrhh_nomina',        label: 'Registro de Nómina' },
       { id: 'rrhh_parafiscales',  label: 'Parafiscales (IVSS, RPE, FAOV, INCES)' },
+      { id: 'rrhh_beneficios',    label: 'Beneficios (reportes de HCM y Bolsa de alimentos)' },
       { id: 'rrhh_conceptos',     label: 'Conceptos de Nómina' },
       { id: 'rrhh_trabajadores',  label: 'Trabajadores (Fichas)' },
     ]
@@ -16236,7 +17236,7 @@ const ccLoadExcelJS = () => {
     const s = document.createElement('script');
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
     s.onload = () => resolve(window.ExcelJS);
-    s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel (revisa tu conexión).'));
+    s.onerror = () => { _ccExcelJSPromise = null; s.remove(); reject(new Error('No se pudo cargar la librería de Excel (revisa tu conexión).')); }; // permite reintentar sin recargar la página
     document.head.appendChild(s);
   });
   return _ccExcelJSPromise;
@@ -16319,6 +17319,152 @@ const ccExportXLSX = async (titulo, subtitulo, tree, currency, totalBase, getDet
   document.body.appendChild(link); link.click(); document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
+// ===== Exporte a Excel del Historial de Entradas / Salidas de Inventario (ExcelJS) =====
+// Recibe SOLO las filas que se ven en pantalla (ya filtradas por producto, fechas y tipo), en el mismo orden:
+// lo que se ve es lo que baja. Misma linea visual del Libro de Ventas: membrete, franja naranja, encabezado con
+// el color de la pantalla (verde = entradas, rojo = salidas), filtros de Excel, panel congelado y fila de totales.
+const invExportMovimientosXLSX = async ({ rows, isEntradas, filtros, empresa, rif, direccion }) => {
+  const EJ = await ccLoadExcelJS();
+  const f = filtros || {};
+  const NCOL = 13;
+  const HR = 7; // fila del encabezado de columnas
+  const ACC = isEntradas ? 'FF15803D' : 'FFB91C1C';
+  const INK = 'FF0F172A', ORANGE = 'FFF97316', WHITE = 'FFFFFFFF', GRID = 'FFD1D5DB', SLATE = 'FFF1F5F9', ZEBRA = 'FFF8FAFC', MUTED = 'FF9CA3AF';
+  const NF_QTY = '#,##0.00##';
+  const NF_USD = '"$"#,##0.00##';
+  const NF_TOT = '"$"#,##0.00';
+  const fill = a => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: a } });
+  const thin = { style: 'thin', color: { argb: GRID } };
+  const bd = { top: thin, left: thin, bottom: thin, right: thin };
+  const n0 = v => { const n = parseNum(v); return Number.isFinite(n) ? n : 0; };
+  const fmtF = d => { const p = String(d || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(d || ''); };
+  const hoy = fmtF(getTodayDate());
+  const idCod = raw => String(raw || '').split('___')[0].split('__')[0];
+  const idAlm = raw => { const r = String(raw || ''); const p = r.includes('___') ? r.split('___')[1] : (r.includes('__') ? r.split('__')[1] : ''); return String(p || '').replace(/-/g, ' '); };
+  const fechaCell = s => { const p = String(s || '').slice(0, 10).split('-').map(Number); return (p.length === 3 && p[0] > 1900 && p[1] >= 1 && p[1] <= 12 && p[2] >= 1 && p[2] <= 31) ? new Date(Date.UTC(p[0], p[1] - 1, p[2])) : (s || null); };
+
+  const lista = rows || [];
+  if (!lista.length) throw new Error('No hay registros para exportar.');
+  const ok = lista.filter(m => m.status !== 'ANULADO');
+  const nAn = lista.length - ok.length;
+  const totQty = ok.reduce((s, m) => s + n0(m.qty), 0);
+  const totVal = ok.reduce((s, m) => s + n0(m.totalValue), 0);
+  const hayF = !!(f.producto || f.desde || f.hasta || f.tipo);
+  const tipoTxt = f.tipo ? (f.tipoLabel || f.tipo) : 'TODOS';
+  const prodTxt = f.producto ? `"${f.producto}"` : 'TODOS';
+  const periodoTxt = (f.desde && f.hasta) ? `${fmtF(f.desde)} AL ${fmtF(f.hasta)}` : f.desde ? `DESDE ${fmtF(f.desde)}` : f.hasta ? `HASTA ${fmtF(f.hasta)}` : 'TODO EL HISTORIAL';
+  const titulo = `HISTORIAL DE ${isEntradas ? 'ENTRADAS' : 'SALIDAS'} DE INVENTARIO`;
+  const nombreArchivo = `Historial_${isEntradas ? 'Entradas' : 'Salidas'}${hayF ? '_filtrado' : ''}_${getTodayDate()}.xlsx`;
+
+  const wb = new EJ.Workbook();
+  wb.creator = String(empresa || ''); wb.created = new Date();
+  const ws = wb.addWorksheet(isEntradas ? 'Entradas' : 'Salidas', {
+    properties: { tabColor: { argb: ACC } },
+    views: [{ state: 'frozen', ySplit: HR, showGridLines: false }],
+    pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true,
+      margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: `${HR}:${HR}` },
+    headerFooter: { oddFooter: `&L&8&"Arial,Regular"${isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}&C&8&"Arial,Regular"P\u00e1gina &P de &N&R&8&"Arial,Regular"Generado el ${hoy}` },
+  });
+  [12, 28, 44, 15, 22, 12, 13, 15, 13, 20, 36, 21, 11].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+  // Membrete (filas 1-4): empresa a la izquierda, resumen de filtros en el recuadro de la derecha
+  const put = (r, c1, c2, val, font, al) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = val; cell.font = font; cell.alignment = al || { vertical: 'middle', horizontal: 'left', indent: 1 }; return cell; };
+  put(1, 1, 9, String(empresa || ''), { name: 'Arial', size: 15, bold: true, color: { argb: INK } });
+  put(2, 1, 9, `RIF: ${rif || ''}`, { name: 'Arial', size: 9, color: { argb: 'FF475569' } });
+  put(3, 1, 9, String(direccion || ''), { name: 'Arial', size: 8, color: { argb: 'FF64748B' } });
+  put(4, 1, 9, titulo, { name: 'Arial', size: 17, bold: true, color: { argb: ORANGE } });
+  const boxC = { vertical: 'middle', horizontal: 'center' };
+  put(1, 10, 13, `ALMAC\u00c9N  \u00b7  ${isEntradas ? 'ENTRADAS' : 'SALIDAS'}`, { name: 'Arial', size: 9, bold: true, color: { argb: 'FFEA580C' } }, boxC).fill = fill(SLATE);
+  put(2, 10, 13, `PER\u00cdODO:  ${periodoTxt}`, { name: 'Arial', size: 10, bold: true, color: { argb: INK } }, boxC).fill = fill(SLATE);
+  put(3, 10, 13, `TIPO:  ${tipoTxt}`, { name: 'Arial', size: 10, bold: true, color: { argb: INK } }, boxC).fill = fill(SLATE);
+  put(4, 10, 13, `PRODUCTO:  ${prodTxt}`, { name: 'Arial', size: 9, color: { argb: 'FF475569' } }, boxC).fill = fill(SLATE);
+  [24, 15, 14, 28].forEach((h, i) => { ws.getRow(i + 1).height = h; });
+  // Franja naranja (fila 5) y linea de resumen (fila 6)
+  for (let c = 1; c <= NCOL; c++) ws.getCell(5, c).fill = fill(ORANGE);
+  ws.getRow(5).height = 4;
+  const infoTxt = hayF
+    ? `Mostrando ${lista.length} de ${f.total != null ? f.total : lista.length} registros (filtros aplicados)  \u00b7  Emitido el ${hoy}`
+    : `${lista.length} registros (historial completo)  \u00b7  Emitido el ${hoy}`;
+  put(6, 1, NCOL, infoTxt, { name: 'Arial', size: 9, italic: true, color: { argb: 'FF64748B' } });
+  ws.getRow(6).height = 18;
+
+  // Encabezado de columnas (fila 7)
+  const heads = ['FECHA', 'C\u00d3DIGO', 'DESCRIPCI\u00d3N', 'ALMAC\u00c9N', 'TIPO', 'CANTIDAD', 'COSTO U. ($)', 'TOTAL ($)', 'STOCK NUEVO', 'DOC. REFERENCIA', 'NOTAS', 'USUARIO', 'ESTADO'];
+  heads.forEach((t, i) => {
+    const c = ws.getCell(HR, i + 1);
+    c.value = t;
+    c.font = { name: 'Arial', size: 9, bold: true, color: { argb: WHITE } };
+    c.fill = fill(ACC);
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = { left: { style: 'thin', color: { argb: WHITE } }, right: { style: 'thin', color: { argb: WHITE } }, bottom: { style: 'medium', color: { argb: ORANGE } } };
+  });
+  ws.getRow(HR).height = 30;
+  ws.autoFilter = { from: { row: HR, column: 1 }, to: { row: HR + Math.max(lista.length, 1), column: NCOL } };
+
+  // Datos: mismas filas y mismo orden que la tabla en pantalla (los ANULADOS atenuados, como en pantalla)
+  const FIRST = HR + 1;
+  const ALIGN = { 1: 'center', 2: 'left', 3: 'left', 4: 'center', 5: 'center', 6: 'right', 7: 'right', 8: 'right', 9: 'right', 10: 'left', 11: 'left', 12: 'left', 13: 'center' };
+  lista.forEach((m, i) => {
+    const ri = FIRST + i;
+    const an = m.status === 'ANULADO';
+    const bg = an ? 'FFF3F4F6' : (i % 2 ? ZEBRA : WHITE);
+    const vals = [
+      fechaCell(m.date), idCod(m.itemId), m.itemDesc || '', m.almacen || idAlm(m.itemId), String(m.type || '').replace(/_/g, ' '),
+      n0(m.qty), n0(m.unitCost), n0(m.totalValue), n0(m.newStock),
+      m.docRef || '', m.notes || '', m.user || '', an ? 'ANULADO' : 'VIGENTE',
+    ];
+    vals.forEach((v, ci) => {
+      const col = ci + 1;
+      const c = ws.getCell(ri, col);
+      c.value = (v === '' ? null : v);
+      let color = INK, bold = false;
+      if (col === 2) { color = 'FFEA580C'; bold = true; }
+      if (col === 3 || col === 11) color = 'FF4B5563';
+      if (col === 5) { color = ACC; bold = true; }
+      if (col === 6 || col === 8) bold = true;
+      if (col === 9) { color = 'FF2563EB'; bold = true; }
+      if (col === 13) color = 'FF475569';
+      if (an && col !== 13) color = MUTED;
+      if (an && col === 13) { color = 'FF7C3AED'; bold = true; }
+      c.font = { name: 'Arial', size: 9, bold, color: { argb: color } };
+      c.fill = fill(bg);
+      c.border = bd;
+      c.alignment = { vertical: 'middle', horizontal: ALIGN[col], wrapText: col === 3 || col === 11, indent: (ALIGN[col] === 'left' || ALIGN[col] === 'right') ? 1 : 0 };
+      if (col === 1) c.numFmt = 'dd/mm/yyyy';
+      if (col === 6 || col === 9) c.numFmt = NF_QTY;
+      if (col === 7) c.numFmt = NF_USD;
+      if (col === 8) c.numFmt = NF_TOT;
+    });
+  });
+
+  // Totales (mismo criterio que el pie de la pantalla: los ANULADOS no cuentan)
+  const LAST = FIRST + lista.length - 1;
+  const T = LAST + 1;
+  ws.mergeCells(T, 1, T, 5);
+  for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(T, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'medium', color: { argb: ACC } } }; }
+  const tl = ws.getCell(T, 1);
+  tl.value = `TOTAL  \u2014  ${ok.length} registros${nAn > 0 ? `  (+${nAn} anulado(s), no cuentan)` : ''}`;
+  tl.font = { name: 'Arial', size: 10, bold: true, color: { argb: INK } };
+  tl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+  [[6, 'F', totQty, NF_QTY], [8, 'H', totVal, NF_TOT]].forEach(([c, L, res, nf]) => {
+    const cell = ws.getCell(T, c);
+    cell.value = { formula: `SUMIFS(${L}${FIRST}:${L}${LAST},M${FIRST}:M${LAST},"<>ANULADO")`, result: res };
+    cell.numFmt = nf;
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: INK } };
+    cell.alignment = { horizontal: 'right', vertical: 'middle', indent: 1 };
+  });
+  ws.getRow(T).height = 22;
+  if (nAn > 0) put(T + 2, 1, NCOL, '* Los registros ANULADOS se muestran atenuados y no se suman en los totales.', { name: 'Arial', size: 8, italic: true, color: { argb: 'FF64748B' } });
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nombreArchivo;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+
 const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
@@ -16957,6 +18103,12 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     const cuentas = esBanco ? cuentasBanco : cuentasCaja;
     const idField = esBanco ? 'cuentaId' : 'cajaId';
     const nombreCta = (c) => esBanco ? c?.banco : c?.nombre;
+    const relPorMov = new Map();
+    _filtrarPagosRelValidos(pagosRelC, {movBanco,movCaja,cuentasBanco,cuentasCaja}, p=>!!reclasificacionesC['EXCL__relacionadas__'+p.id]).validos.forEach(pr=>{
+      if(!pr.origen) return;
+      const rs=_resolverMovRelacionada(pr,{movBanco,movCaja,cuentasBanco,cuentasCaja});
+      if(rs.mov){ if(rs.mov._docId) relPorMov.set(rs.mov._docId,pr); if(rs.mov.id) relPorMov.set(rs.mov.id,pr); }
+    });
     const filtrados = movs.filter(m => {
       if (m.fecha < filtDesde || m.fecha > filtHasta) return false;
       if (filtCuenta && m[idField] !== filtCuenta) return false;
@@ -16970,6 +18122,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         cuentas, idField, nombreCta, asientos:asientosCC, provs:provsC, clientes:clientesC,
         tercerosRel:tercerosRelC, planCuentas:planCuentasC, tabId:(esBanco?'banco':'caja'),
         aplicarReclas:aplicarReclasLinea,
+        relPorMov, movBanco, movCaja, cuentasBanco, cuentasCaja, settingsTasa:settingsCC?.tasaBCV,
       });
       const lineas = lineasRaw.map(l => ({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0||l.debeUSD>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD}));
       return { id: m._docId||m.id, comprobante: nombreCta(cta)||(esBanco?'BANCO':'CAJA'), fecha: m.fecha, doc: m.referencia||'—', conc: m.concepto||'—', proveedor: m.proveedor||m.terceroNombre||m.clientName||'', tasa, lineas };
@@ -17098,7 +18251,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   // movimiento real (origen+movimientoId, monto ya con signo) y los manuales (con campo
   // tipo aparte, monto sin signo) — se normalizan ambos aquí.
   const construirLineasRelacionadas = () => {
-    const filtradas = (pagosRelC||[]).filter(p => {
+    const filtradas = _filtrarPagosRelValidos(pagosRelC, {movBanco,movCaja,cuentasBanco,cuentasCaja}, p=>!!reclasificacionesC['EXCL__relacionadas__'+p.id]).validos.filter(p => {
       if (filtDesde && p.fecha < filtDesde) return false;
       if (filtHasta && p.fecha > filtHasta) return false;
       return true;
@@ -19659,6 +20812,96 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
 
 
+  // Saldo de Agosto 2026: balance completo al 31/08/2026 que sirve de PUNTO DE PARTIDA. El Balance
+  // General (con corte desde el 31/08) y el Mayor/Balance de Comprobaci\u00f3n (con Desde posterior
+  // al 31/08) parten de este comprobante e ignoran lo anterior en cuentas de balance; los dem\u00e1s
+  // reportes lo ignoran para no duplicar (ver getAsientosAncla).
+  const importarSaldosAgosto2026 = async () => {
+    const yaExiste = (ajustesC||[]).find(a => (a.nroComprobante||'').trim().toUpperCase() === 'SALDOS AGOSTO-2026');
+    if (yaExiste) { alert('Ya existe "SALDOS AGOSTO-2026" \u2014 no se cre\u00f3 de nuevo. Si necesitas reemplazarlo, b\u00f3rralo primero desde esta pesta\u00f1a.'); return; }
+    const lineas = [
+      {codigo:'1.1.01.01.001',cuenta:'CAJA PRINCIPAL',tipo:'D',montoUSD:7895.52,montoBs:6276872.87},
+      {codigo:'1.1.01.01.002',cuenta:'CAJA Z1',tipo:'D',montoUSD:1949.84,montoBs:1550109.63},
+      {codigo:'1.1.01.02.001',cuenta:'BBVA PROVINCIAL',tipo:'D',montoUSD:26.29,montoBs:20902.04},
+      {codigo:'1.1.01.02.002',cuenta:'BANCO MERCANTIL',tipo:'D',montoUSD:31.47,montoBs:25019.42},
+      {codigo:'1.1.01.02.003',cuenta:'BANCARIBE',tipo:'D',montoUSD:13458.3,montoBs:10699236.05},
+      {codigo:'1.1.01.02.006',cuenta:'BANCO NACIONAL DE CREDITO 2958',tipo:'D',montoUSD:11.9,montoBs:9459.24},
+      {codigo:'1.1.01.02.009',cuenta:'BANCAMIGA',tipo:'D',montoUSD:1.1,montoBs:872.23},
+      {codigo:'1.1.01.02.010',cuenta:'BANCO BANPLUS',tipo:'D',montoUSD:2046.14,montoBs:1626668.16},
+      {codigo:'1.1.01.02.011',cuenta:'BANESCO',tipo:'D',montoUSD:437.9,montoBs:348126.88},
+      {codigo:'1.1.01.03.001',cuenta:'BANCO PROVINCIAL (ME)',tipo:'D',montoUSD:1037.15,montoBs:824525.64},
+      {codigo:'1.1.01.03.002',cuenta:'BANCO MERCANTIL (ME)',tipo:'D',montoUSD:75.0,montoBs:59624.38},
+      {codigo:'1.1.01.03.009',cuenta:'BANCAMIGA (ME)',tipo:'D',montoUSD:8.88,montoBs:7059.53},
+      {codigo:'1.1.01.03.010',cuenta:'BANPLUS (ME)',tipo:'D',montoUSD:3.22,montoBs:2559.87},
+      {codigo:'1.1.01.03.011',cuenta:'BANESCO (ME)',tipo:'D',montoUSD:60.0,montoBs:47699.5},
+      {codigo:'1.1.01.04.001',cuenta:'BANPLUS (ELECTRONICA)',tipo:'D',montoUSD:2200.0,montoBs:1748981.74},
+      {codigo:'1.1.01.04.002',cuenta:'BANCARIBE (ELECTRONICA)',tipo:'D',montoUSD:8021.0,montoBs:6376628.43},
+      {codigo:'1.1.01.04.003',cuenta:'BANESCO (ELECTRONICA)',tipo:'D',montoUSD:300.0,montoBs:238497.51},
+      {codigo:'1.1.01.04.005',cuenta:'PROVINCIAL (ELECTRONICA)',tipo:'D',montoUSD:6500.0,montoBs:5167446.05},
+      {codigo:'1.1.01.05.001',cuenta:'BANPLUS TDD INTERNACIONAL',tipo:'D',montoUSD:144.8,montoBs:115114.8},
+      {codigo:'1.1.01.06.001',cuenta:'AMERANT BANK, N.A.',tipo:'D',montoUSD:12079.42,montoBs:9603038.64},
+      {codigo:'1.1.02.01.001',cuenta:'CUENTAS POR COBRAR CLIENTES',tipo:'D',montoUSD:141243.45,montoBs:102528173.05},
+      {codigo:'1.1.02.01.002',cuenta:'PROVISI\u00d3N CUENTAS INCOBRABLES (-)',tipo:'H',montoUSD:8230.73,montoBs:6543362.03},
+      {codigo:'1.1.02.03.001',cuenta:'CUENTAS POR COBRAR JUAN D. BOHORQUEZ',tipo:'D',montoUSD:561.16,montoBs:446118.57},
+      {codigo:'1.1.02.05.001',cuenta:'ANTICIPO PRESTACIONES SOCIALES',tipo:'D',montoUSD:10731.47,montoBs:1616929.87},
+      {codigo:'1.1.03.01.002',cuenta:'MERCANCIA (INV-INICIAL)',tipo:'D',montoUSD:233992.87,montoBs:186022390.07},
+      {codigo:'1.1.03.01.003',cuenta:'INVENTARIO DE CONSUMIBLES',tipo:'D',montoUSD:2282.63,montoBs:1814669.37},
+      {codigo:'1.1.03.01.005',cuenta:'MATERIA PRIMA (INV-INICIAL)',tipo:'D',montoUSD:57374.41,montoBs:45612181.49},
+      {codigo:'1.1.04.01.001',cuenta:'I.V.A CREDITOS FISCALES (COMPRAS)',tipo:'D',montoUSD:24609.9,montoBs:19564670.06},
+      {codigo:'1.1.04.01.002',cuenta:'I.S.L.R. RETENIDO (CLIENTES)',tipo:'D',montoUSD:194.07,montoBs:154282.87},
+      {codigo:'1.1.04.01.003',cuenta:'I.V.A. RETENCI\u00d3N 75% - 100% (CLIENTES)',tipo:'D',montoUSD:52153.08,montoBs:41461271.1},
+      {codigo:'1.1.04.01.008',cuenta:'ANTICIPO DE I.S.L.R (1.% DE VENTAS)',tipo:'D',montoUSD:10804.49,montoBs:8589483.0},
+      {codigo:'1.1.04.01.009',cuenta:'RETENCION CLIENTES SOBRE ACTIVIDADES ECONOMICAS',tipo:'D',montoUSD:81.06,montoBs:64443.44},
+      {codigo:'1.1.05.01.002',cuenta:'ANTICIPOS A PROVEEDORES',tipo:'D',montoUSD:106247.02,montoBs:83876692.4},
+      {codigo:'1.1.05.01.005',cuenta:'ANTICIPOS A PROVEEDORES ZULIANA DE EMPAQUE',tipo:'D',montoUSD:70681.72,montoBs:56191380.74},
+      {codigo:'1.1.06.01.001',cuenta:'INMUEBLE (GALPON)',tipo:'D',montoUSD:169547.91,montoBs:134789181.2},
+      {codigo:'1.1.06.01.002',cuenta:'DEP. ACUMULADA MEJORAS AL INMUEBLE (GALPON)',tipo:'H',montoUSD:7064.5,montoBs:6776898.8},
+      {codigo:'1.1.06.02.001',cuenta:'MAQUINARIAS Y EQUIPOS',tipo:'D',montoUSD:299015.26,montoBs:237714649.9},
+      {codigo:'1.1.06.02.002',cuenta:'DEP. ACUMULADA MAQUINARIA Y EQUIPOS',tipo:'H',montoUSD:31320.77,montoBs:24899752.19},
+      {codigo:'1.1.06.03.001',cuenta:'EQUIPOS DE COMPUTACI\u00d3N',tipo:'D',montoUSD:7459.15,montoBs:5929962.34},
+      {codigo:'1.1.06.03.002',cuenta:'DEP. ACUMULADA EQUIPOS DE COMPUTACI\u00d3N',tipo:'H',montoUSD:1060.03,montoBs:842715.05},
+      {codigo:'1.1.06.04.001',cuenta:'VEH\u00cdCULOS',tipo:'D',montoUSD:56364.24,montoBs:44809102.98},
+      {codigo:'1.1.06.04.002',cuenta:'DEP. ACUMULADA VEH\u00cdCULOS',tipo:'H',montoUSD:3842.75,montoBs:4444401.1},
+      {codigo:'1.1.06.06.001',cuenta:'MOBILIARIO Y EQUIPO',tipo:'D',montoUSD:16969.07,montoBs:13490269.81},
+      {codigo:'1.1.06.06.002',cuenta:'DEP. ACUMULADA MOBILIARIO',tipo:'H',montoUSD:3338.31,montoBs:2653928.74},
+      {codigo:'1.1.06.08.001',cuenta:'PLANTA ELECTRICA',tipo:'D',montoUSD:53550.0,montoBs:42571805.54},
+      {codigo:'1.1.06.08.002',cuenta:'DEP. ACUMULADA PLANTA ELECTRICA',tipo:'H',montoUSD:4239.17,montoBs:3370104.97},
+      {codigo:'1.1.08.02.001',cuenta:'MEJORAS A LA PROPIEDAD',tipo:'D',montoUSD:140701.36,montoBs:111856411.56},
+      {codigo:'1.1.08.02.002',cuenta:'AMPLIACIONES A LA PROPIEDA',tipo:'D',montoUSD:5897.25,montoBs:4688268.34},
+      {codigo:'2.1.01.01.001',cuenta:'CUENTAS POR PAGAR PROVEEDORES',tipo:'H',montoUSD:93974.66,montoBs:16140656.29},
+      {codigo:'2.1.01.01.004',cuenta:'CUENTAS POR PAGAR SURE PACK',tipo:'H',montoUSD:107900.21,montoBs:123219706.74},
+      {codigo:'2.1.02.01.003',cuenta:'PRESTAMOS BANCARIOS',tipo:'H',montoUSD:3051.53,montoBs:2425938.59},
+      {codigo:'2.1.02.01.008',cuenta:'VEH\u00cdCULOS POR PAGAR',tipo:'H',montoUSD:29776.15,montoBs:23911466.21},
+      {codigo:'2.1.03.01.001',cuenta:'CUENTAS POR PAGAR JUAN D. BOHORQUEZ',tipo:'H',montoUSD:12174.67,montoBs:9678759.18},
+      {codigo:'2.1.03.01.002',cuenta:'CUENTAS POR PAGAR JUAN CARLOS BOHORQUEZ',tipo:'H',montoUSD:700829.09,montoBs:557153354.44},
+      {codigo:'2.1.03.01.003',cuenta:'CUENTAS POR PAGAR LUIS GUILLERMO BOHORQUEZ',tipo:'H',montoUSD:19770.64,montoBs:15717494.7},
+      {codigo:'2.1.04.01.001',cuenta:'RETENCIONES I.S.L.R. POR PAGAR',tipo:'H',montoUSD:541.12,montoBs:412255.32},
+      {codigo:'2.1.04.01.005',cuenta:'PROTECCION DE PENSIONES (I.D.P.P) POR PAGAR',tipo:'H',montoUSD:475.52,montoBs:378037.46},
+      {codigo:'2.1.04.02.002',cuenta:'RETENCI\u00d3N IVA (100-75%)',tipo:'H',montoUSD:1285.53,montoBs:1010446.14},
+      {codigo:'2.1.04.03.001',cuenta:'I.V.S.S. POR PAGAR',tipo:'H',montoUSD:4.05,montoBs:3220.5},
+      {codigo:'2.1.04.03.002',cuenta:'F.A.O.V. POR PAGAR',tipo:'H',montoUSD:213.01,montoBs:169339.02},
+      {codigo:'2.1.04.03.003',cuenta:'I.N.C.E.S. POR PAGAR',tipo:'H',montoUSD:265.07,montoBs:210727.14},
+      {codigo:'2.1.04.03.005',cuenta:'IMPUESTOS SOBRE ACTIVIDADES ECON\u00d3MICAS',tipo:'H',montoUSD:1335.77,montoBs:1286633.41},
+      {codigo:'2.1.04.03.012',cuenta:'ANTICIPO DE I.S.L.R (1% DE VENTAS) POR PAGAR',tipo:'H',montoUSD:744.41,montoBs:616176.84},
+      {codigo:'2.1.05.01.004',cuenta:'BENEFICIO ALIMENTACION COMPLEMTARIA POR PAGAR',tipo:'H',montoUSD:430.86,montoBs:342530.12},
+      {codigo:'2.1.06.01.001',cuenta:'HCM POR PAGAR',tipo:'H',montoUSD:851.57,montoBs:676991.08},
+      {codigo:'3.1.01.01.001',cuenta:'CAPITAL SOCIAL',tipo:'H',montoUSD:9434.06,montoBs:7500000.0},
+      {codigo:'3.3.01.01.001',cuenta:'UTILIDAD (P\u00c9RDIDAS)',tipo:'D',montoUSD:1901.66,montoBs:1511804.04},
+      {codigo:'3.3.01.01.002',cuenta:'UTILIDAD (P\u00c9RDIDA) ACUMULADA',tipo:'H',montoUSD:476496.99,montoBs:379667688.29},
+    ];
+    const totD = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoUSD,0);
+    const totH = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoUSD,0);
+    const totDBs = lineas.filter(l=>l.tipo==='D').reduce((s,l)=>s+l.montoBs,0);
+    const totHBs = lineas.filter(l=>l.tipo==='H').reduce((s,l)=>s+l.montoBs,0);
+    if (Math.abs(totD-totH) > 0.02 || Math.abs(totDBs-totHBs) > 0.05) { alert(`Debe $${totD.toFixed(2)} vs Haber $${totH.toFixed(2)} \u2014 no se import\u00f3, revisa el origen.`); return; }
+    try {
+      await addDoc(getColRef('comprobantes_ajustes'), {
+        fecha:'2026-08-31', nroComprobante:'SALDOS AGOSTO-2026', concepto:'SALDO AGOSTO 2026 BALANCE GENERAL',
+        tasa:781.3956, lineas, createdAt:Date.now(), user:'Importaci\u00f3n Saldos Agosto', origen:'saldos_iniciales',
+      });
+      alert(`\u2705 Se cre\u00f3 "SALDOS AGOSTO-2026" con ${lineas.length} cuentas, cuadrado en $${totD.toFixed(2)}.`);
+    } catch(e) { alert('Error: '+e.message); }
+  };
   // Importa el ajuste de saldos iniciales "SALDOS JUNIO-2026" (53 cuentas, balance completo al
   // 30/06/2026) desde el archivo que ya se validó cuadra Debe=Haber=$771.941,00. Con chequeo de
   // duplicado — si ya existe un comprobante con ese nombre, avisa en vez de crear otro.
@@ -20638,7 +21881,6 @@ ${valoresHtml}
     { id:'nomina', label:'Nómina', icon:'💰', activo:true },
     { id:'costos_produccion', label:'Costos OP', icon:'🏭', activo:true },
     { id:'consumos_internos', label:'Consumos Internos', icon:'📦', activo:true },
-    { id:'relacionadas', label:'Ctas x Pagar Relacionadas', icon:'🤝', activo:true },
     { id:'reclasificaciones', label:'Reclasificaciones', icon:'🔀', activo:true },
     { id:'cierre_iva', label:'Cierre IVA', icon:'🧮', activo:true },
   ];
@@ -20706,6 +21948,16 @@ ${valoresHtml}
             </div>
             <button onClick={repararCuentasContables} className="bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-700 flex items-center gap-2 whitespace-nowrap"><RefreshCw size={13}/> Reparar</button>
           </div>
+          {(()=>{ const elim=Object.entries(reclasificacionesC||{}).filter(([,rc])=>rc.tabId==='excl').sort((a,b)=>(b[1].timestamp||0)-(a[1].timestamp||0)); if(!elim.length) return null; return (
+            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-black text-red-800 uppercase">Asientos eliminados ({elim.length})</p>
+              {elim.map(([k,rc])=>(
+                <div key={k} className="flex items-center justify-between gap-3 bg-white border border-red-100 rounded-lg px-3 py-2">
+                  <span className="text-[10px] font-bold text-gray-700 uppercase">{rc.conceptoComprobante||k} <span className="text-gray-400 font-mono ml-2">{rc.fechaComprobante||''}</span></span>
+                  <button onClick={async()=>{ try{ await deleteDoc(getDocRef('comprobantes_reclasificaciones', k)); }catch(e){ alert('Error: '+e.message); } }} className="px-3 py-1 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700">Restaurar</button>
+                </div>
+              ))}
+            </div>); })()}
           {lista.length===0 ? (
             <div className="text-center py-16 text-gray-400"><RefreshCw size={40} className="mx-auto mb-3 opacity-30"/><p className="font-black text-xs uppercase">Sin reclasificaciones registradas</p></div>
           ) : (
@@ -21105,6 +22357,7 @@ ${valoresHtml}
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
             <button onClick={revertirAjustesSoloGastos} className="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ClipboardEdit size={14}/>Revertir a Solo-Gastos Ene-Abr</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS JUNIO-2026" (53 cuentas, balance completo al 30/06/2026, ya validado Debe=Haber=$771.941,00). No se puede deshacer con un clic — si algo sale mal hay que borrarlo a mano.\n\n¿Continuar?')) importarSaldosIniciales2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Importar Saldos Iniciales</button>
+            <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "SALDOS AGOSTO-2026" (balance completo al 31/08/2026). Desde esa fecha el Balance General parte de este saldo. Si algo sale mal hay que borrarlo desde esta pesta\u00f1a.\n\n\u00bfContinuar?')) importarSaldosAgosto2026(); }} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Saldo Agosto 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-ENERO-2026" con el detalle línea por línea de Enero 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistEnero2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Enero 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-FEBRERO-2026" con el detalle línea por línea de Febrero 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistFebrero2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Febrero 2026</button>
             <button onClick={()=>{ if(window.confirm('Esto crea el comprobante "HIST-MARZO-2026" con el detalle línea por línea de Marzo 2026, cerrando contra (UTILIDAD) PÉRDIDA ACUMULADA. No se puede deshacer con un clic.\n\n¿Continuar?')) importarHistMarzo2026(); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><ArrowDownToLine size={14}/>Hist. Marzo 2026</button>
@@ -21555,8 +22808,10 @@ ${valoresHtml}
     if (activo === 'relacionadas') {
       const lineasRel = filtrarPorBusquedaCC(conTipoCC('relacionadas', construirLineasRelacionadas()));
       const totalRelUSD = lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0);
+      const _relIgn = _filtrarPagosRelValidos(pagosRelC, {movBanco,movCaja,cuentasBanco,cuentasCaja}, p=>!!reclasificacionesC['EXCL__relacionadas__'+p.id]).ignorados;
       return (
         <div className="p-6 space-y-4">
+          {_relIgn.length>0 && <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-3 text-[10px] text-yellow-800 font-bold">{'\u26a0\ufe0f'} {_relIgn.length} registro(s) de Relacionadas NO se contabilizan porque Banco/Caja es la fuente de verdad: {_relIgn.map(x=>`${x.p.fecha||''} ${x.p.referencia||x.p.id} ($${contFmt(Math.abs(Number(x.p.monto||0)))}) \u2014 ${x.motivo}`).join(' | ')}</div>}
           <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
@@ -21575,8 +22830,8 @@ ${valoresHtml}
           ):(
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="overflow-x-auto"><table className="w-full text-left" style={{fontSize:'11px',minWidth:'900px'}}>
-                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $'].map((h,i)=>(
-                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8?'text-right':i===4?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                <thead><tr style={{background:'#0f172a'}}>{['Tercero','Fecha','Código','Cuenta','T','Referencia','Concepto','Tasa','Debe Bs.','Haber Bs.','Debe $','Haber $','Acci\u00f3n'].map((h,i)=>(
+                  <th key={i} className={`px-3 py-2 font-black uppercase text-white/90 whitespace-nowrap ${i>=8&&i<=11?'text-right':(i===4||i===12)?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
                 ))}</tr></thead>
                 <tbody>
                   {lineasRel.flatMap((r,ri)=>r.lineas.map((l,li)=>(
@@ -21592,15 +22847,22 @@ ${valoresHtml}
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
+                      <td className="px-3 py-2 text-center">{li===0 && (
+                        <button title="Eliminar este asiento" onClick={async()=>{
+                          if(!window.confirm('\u00bfEliminar el asiento de '+r.comprobante+' ('+r.doc+')? Deja de contabilizarse en Mayor, Balance y Estados. El registro en Estado de Cuenta de Relacionados no se toca. Se puede restaurar desde la pesta\u00f1a Reclasificaciones.')) return;
+                          try{ await setDoc(getDocRef('comprobantes_reclasificaciones', `EXCL__relacionadas__${r.id}`), {tabId:'excl', compId:r.id, origenTab:'relacionadas', excluido:true, conceptoComprobante:'ASIENTO ELIMINADO (Relacionadas) - '+r.comprobante+' / '+(r.doc||''), fechaComprobante:r.fecha||'', timestamp:Date.now()}); }catch(e){ alert('Error: '+e.message); }
+                        }} className="px-1.5 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-500 hover:text-white text-[9px] font-black">Eliminar</button>
+                      )}</td>
                     </tr>
                   )))}
                 </tbody>
                 <tfoot><tr style={{background:'#0f172a'}}>
-                  <td colSpan={7} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
+                  <td colSpan={8} className="px-3 py-2.5 text-[9px] font-black uppercase text-gray-400">TOTALES — {lineasRel.length} movimiento(s)</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">Bs.{contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hBs,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-emerald-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.dUSD,0),0))}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-black text-red-400">${contFmt(lineasRel.reduce((s,r)=>s+r.lineas.reduce((a,l)=>a+l.hUSD,0),0))}</td>
+                  <td></td>
                 </tr></tfoot>
               </table></div>
             </div>
@@ -22638,7 +23900,28 @@ function App() {
   // lineas:[{codigo,cuenta,debeBs,haberBs,debeUSD,haberUSD}]}. A propósito NO incluye
   // Retenciones a Proveedores: esa información ya viene completa dentro de cada asiento
   // de Procura (confirmado en generarAsientoFC), y sumarla aparte duplicaría los montos.
-  const getAsientosReales = (simulacionCostos) => {
+  // Punto de partida "SALDOS AGOSTO-2026": getAsientosReales() lo omite (para que ning\u00fan otro reporte
+  // lo duplique); este helper lo usa SOLO donde corresponde.
+  //  modo 'balance' (ref.corte): con corte >= fecha del saldo, se reemplaza TODO lo anterior por el saldo.
+  //  modo 'rango' (ref.desde): con Desde > fecha del saldo, lo anterior se ignora SOLO en cuentas de balance (1/2/3).
+  const getAsientosAncla = (modo, ref) => {
+    const todos = getAsientosReales(undefined, true);
+    const anc = todos.find(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante}));
+    if(!anc) return todos;
+    const F = anc.fecha||'';
+    const activo = modo==='balance' ? ((ref?.corte||'')>=F) : (!!ref?.desde && ref.desde>F);
+    if(!activo) return todos.filter(a=>a!==anc);
+    const esBal = (c) => /^[123]/.test(String(c||''));
+    const res = [];
+    todos.forEach(a=>{
+      if(a===anc || (a.fecha||'')>F){ res.push(a); return; }
+      if(modo==='balance') return;
+      const ls = (a.lineas||[]).filter(l=>!esBal(l.codigo));
+      if(ls.length) res.push({...a, lineas:ls});
+    });
+    return res;
+  };
+  const getAsientosReales = (simulacionCostos, conAncla) => {
     const out = [];
     // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
     // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
@@ -22815,6 +24098,12 @@ function App() {
     // (ver derivarMovsCajaDesdeCxcCxp) — antes esos cobros/pagos no llegaban nunca a Mayor
     // Analítico ni a Estado de Resultados/Balance General, aunque el cliente/proveedor ya
     // apareciera cobrado/pagado en su estado de cuenta operativo.
+    const _idsMovRelApp = new Set();
+    const _relValidosApp = _filtrarPagosRelValidos(pagosRelApp, {movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}, p=>!!reclasificacionesApp['EXCL__relacionadas__'+p.id]).validos;
+    const _relPorMovApp = new Map();
+    _relValidosApp.forEach(p=>{
+      if(p.origen){ const r=_resolverMovRelacionada(p,{movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}); if(r.mov){ if(r.mov._docId) _relPorMovApp.set(r.mov._docId,p); if(r.mov.id) _relPorMovApp.set(r.mov.id,p); } }
+    });
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
      {movs:[...movCajaApp, ...derivarMovsCajaDesdeCxcCxp(cobrosCxc, procuraPagosCxpApp, movCajaApp, settings?.tasaBCV)], cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
@@ -22825,10 +24114,9 @@ function App() {
         // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
         // con su propia cuenta puente hacia el mismo banco. Relacionadas ya genera el asiento
         // completo y balanceado para este movimiento, incluyendo el lado del banco/caja.
-        if((pagosRelApp||[]).some(p=>p.movimientoId===m.id||p.movimientoId===m._docId)) return;
         const lineasRaw = construirLineasMovimientoBancoCaja(m, {
           cuentas, idField, nombreCta, asientos:asientosApp, provs:proveedoresApp, clientes:clients,
-          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg,
+          tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, tabId, aplicarReclas:aplicarReclasLinea, cuentasAnticipoCfg, relPorMov:_relPorMovApp,
         });
         out.push({fecha:m.fecha||'', comprobante:m.referencia||m.id, modulo:mod, concepto:m.concepto||'—', proveedor:m.proveedor||m.terceroNombre||m.clientName||'',
           lineas: lineasRaw.map(l=>({codigo:l.codigo, cuenta:l.cuenta, debeBs:l.debeBs, haberBs:l.haberBs, debeUSD:l.debeUSD, haberUSD:l.haberUSD}))});
@@ -22836,19 +24124,11 @@ function App() {
     });
     // 6) Cuentas por Pagar Relacionadas (préstamos entre empresas) — evento propio, no viene de
     // ningún otro módulo.
-    (pagosRelApp||[]).forEach(p=>{
-      const res = construirLineasRelacionadaCompartida(p, {
-        movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp,
-        tercerosRel:tercerosRelApp, planCuentas:planDeCuentas, settingsTasa:settings?.tasaBCV,
-        tabId:'relacionadas', aplicarReclas:aplicarReclasLinea,
-      });
-      out.push({fecha:p.fecha||'', comprobante:p.referencia||p.id, modulo:'Relacionadas',
-        concepto:`${res.esIngreso?'Préstamo recibido':'Abono / Pago'}${p.concepto?' — '+p.concepto:''} — ${res.nombreTercero}`,
-        lineas:res.lineas});
-    });
+    // (Relacionadas ya no genera comprobante propio: ver construirLineasMovimientoBancoCaja.)
     // 7) Ajustes — comprobantes 100% manuales; sus líneas ya vienen armadas tal cual se
     // escribieron en el modal "Nuevo Ajuste Contable", así que se leen directo.
     (ajustesApp||[]).forEach(a=>{
+      if(!conAncla && _esAnclaSaldos(a)) return;
       const lineas = construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea});
       const tieneFechaPropia = lineas.some(l=>l.fecha);
       if (!tieneFechaPropia) {
@@ -23980,6 +25260,7 @@ function App() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [filterProduct, setFilterProduct] = useState('');
   const [filterTipoMov, setFilterTipoMov] = useState('TODOS');
+  const [exportandoMov, setExportandoMov] = useState(false); // descarga a Excel del historial de entradas/salidas en curso
   const [editandoMov, setEditandoMov] = useState(null);
   const [osaFilterDate, setOsaFilterDate] = useState('');
   const [osaFilterNum, setOsaFilterNum] = useState('');
@@ -27814,7 +29095,7 @@ function App() {
       return v===clientVendFilter;
     }
     return true;
-  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||'')));
+  }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''),'es',{sensitivity:'base'}));
   // Ultima fecha de facturacion por cliente: solo facturas que vienen de una Nota de Entrega (neOrigen o NE vinculada).
   const ultFactPorCliente = () => {
     const conNE=new Set((notasEntrega||[]).map(n=>n?.facturaId).filter(Boolean));
@@ -28813,6 +30094,34 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
       const tipoVals = tipos.map(t=>t.val);
       const movs = (invMovements||[]).filter(m => tipoVals.includes(m.type)).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
       const selectedInvItem = (inventory||[]).find(i=>i.id===movForm.itemId);
+      // Filas que se ven en pantalla: MISMOS 4 filtros que la tabla y su pie de totales. Es exactamente lo que baja a Excel.
+      const movsFiltrados = movs.filter(m=>{
+        if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
+        if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
+        if(filterDateTo && (m.date||'') > filterDateTo) return false;
+        if(filterTipoMov!=='TODOS' && m.type!==filterTipoMov) return false;
+        return true;
+      });
+      const hayFiltrosMov = !!(filterProduct||filterDateFrom||filterDateTo||filterTipoMov!=='TODOS');
+      const exportarMovsExcel = async () => {
+        if(exportandoMov) return;
+        if(movsFiltrados.length===0) return setDialog({title:'Aviso',text:'No hay registros para exportar con los filtros actuales.',type:'alert'});
+        setExportandoMov(true);
+        try{
+          await invExportMovimientosXLSX({
+            rows: movsFiltrados,
+            isEntradas,
+            filtros: { producto: filterProduct.trim(), desde: filterDateFrom, hasta: filterDateTo, tipo: filterTipoMov!=='TODOS'?filterTipoMov:'', tipoLabel: (tipos.find(t=>t.val===filterTipoMov)||{}).label||'', total: movs.length },
+            empresa: settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',
+            rif: settings?.empresaRif||settings?.empresaRIF||'J-412309374',
+            direccion: settings?.empresaDireccion||settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA',
+          });
+        }catch(e){
+          setDialog({title:'Error',text:'No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)),type:'alert'});
+        }finally{
+          setExportandoMov(false);
+        }
+      };
 
       // handleSaveMov defined at component level
 
@@ -29086,12 +30395,7 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
                   {isEntradas ? <ArrowDownToLine size={20} className="text-green-600"/> : <ArrowUpFromLine size={20} className="text-red-500"/>}
                   {isEntradas ? 'Historial de Entradas' : 'Historial de Salidas'}
                 </h2>
-                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movs.filter(m=>{
-                  if(filterProduct && !(m.itemDesc||'').toUpperCase().includes(filterProduct.toUpperCase()) && !(m.itemId||'').toUpperCase().includes(filterProduct.toUpperCase())) return false;
-                  if(filterDateFrom && (m.date||'') < filterDateFrom) return false;
-                  if(filterDateTo && (m.date||'') > filterDateTo) return false;
-                  return true;
-                }).length} de {movs.length} registros</p>
+                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{movsFiltrados.length} de {movs.length} registros</p>
               </div>
               <div className="flex flex-wrap gap-2 items-center no-pdf">
                 <div className="relative">
@@ -29114,6 +30418,9 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
                 </button>
                 <button onClick={()=>handleExportPDF(isEntradas?'Reporte_Entradas':'Reporte_Salidas', false)} className="bg-white border-2 border-gray-200 text-gray-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-gray-50 flex items-center gap-2">
                   <Printer size={13}/> Imprimir
+                </button>
+                <button onClick={exportarMovsExcel} disabled={exportandoMov} title={hayFiltrosMov?`Descargar en Excel los ${movsFiltrados.length} registros filtrados`:`Descargar en Excel todo el historial (${movsFiltrados.length} registros)`} className="bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-2 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-50 hover:border-emerald-400 transition-colors flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait">
+                  {exportandoMov ? <Loader2 size={13} className="animate-spin"/> : <FileSpreadsheet size={13} className="text-emerald-600"/>} {exportandoMov ? 'Generando...' : 'Excel'}
                 </button>
               </div>
             </div>
@@ -29519,18 +30826,29 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       });
                       const dedupItems = Object.values(dedupMap);
                       // Group by category
-                      const CAT_ORDER = ['Materia Prima','Semielaborados','Productos Terminados','Cintas','Stretch Film','Papel Kraft','Dispensadores','Bolsas Plásticas','Termoencogibles','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                      const CAT_ORDER = ['Materia Prima','Semielaborados','Productos Terminados','Cintas','Stretch Film','Papel Kraft','Dispensadores','Bolsas Plásticas','Termoencogibles','Fleje','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
                       const catGroups = {};
+                      // Variantes de mayúsculas/acentos de una misma categoría (p.ej. 'FLEJE' y 'Fleje') van en un solo grupo
+                      const _kc = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+                      const _etq = {};
+                      CAT_ORDER.forEach(c=>{ _etq[_kc(c)] = c; });
                       dedupItems.forEach(i=>{
                         const sub = getItemSubcategory(i);
-                        const cat = i.category==='Productos Terminados' && sub ? sub : (i.category||'Otros');
+                        let cat = i.category==='Productos Terminados' && sub ? sub : (i.category||'Otros');
+                        const kc = _kc(cat);
+                        if(!_etq[kc]) _etq[kc] = cat;
+                        cat = _etq[kc];
                         if(!catGroups[cat]) catGroups[cat]=[];
                         catGroups[cat].push(i);
                       });
                       // Also add FG from finishedGoodsInventory grouped by tipo
                       const fgBolsas = (finishedGoodsInventory||[]).filter(fg=>fg.tipoProducto!=='TERMOENCOGIBLE' && parseNum(fg.millares)>0);
                       const fgTermos = (finishedGoodsInventory||[]).filter(fg=>fg.tipoProducto==='TERMOENCOGIBLE' && parseNum(fg.kgProducidos)>0);
-                      const sortedCats = CAT_ORDER.filter(c=>catGroups[c]?.length>0);
+                      const sortedCats = [
+                        ...CAT_ORDER.filter(c=>catGroups[c]?.length>0),
+                        // Cualquier otra categoría con artículos (Empaques Flexibles, etc.) también se muestra, al final
+                        ...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c) && catGroups[c]?.length>0).sort((a,b)=>a.localeCompare(b))
+                      ];
                       return (
                         <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))}
                           className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
@@ -37742,7 +39060,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               </div>
               {(()=>{
                 const _ufScr=ultFactPorCliente();
-                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; });
+                const allCli=(clients||[]).filter(c=>{ if(clientEstadoFilter==='ACTIVOS' && !_esActivo(c)) return false; if(clientEstadoFilter==='INACTIVOS' && _esActivo(c)) return false; if(clientSearchTerm && !(String(c?.name||'').toUpperCase().includes(clientSearchTerm.toUpperCase())||String(c?.rif||'').toUpperCase().includes(clientSearchTerm.toUpperCase()))) return false; if(clientVendFilter!=='TODOS'){ const v=_vendNorm(c?.vendedor); return clientVendFilter==='__SIN__'?!v:v===clientVendFilter; } return true; }).slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''),'es',{sensitivity:'base'}));
                 const totalCli=allCli.length;
                 const pgCli=Math.max(0,Math.min(clientesPagina,Math.ceil(totalCli/PAGE_SIZE_DEFAULT)-1));
                 const pageCli=allCli.slice(pgCli*PAGE_SIZE_DEFAULT,(pgCli+1)*PAGE_SIZE_DEFAULT);
@@ -39706,6 +41024,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
           // Encontrar invoice vinculado a NE usando mapas pre-computados
           const findInvForNE=(ne)=>{
+            // ND directa (sin NE ni factura): nunca se enlaza a una factura, aunque su numero de documento
+            // coincida con el de una factura -- si no, heredaba las NC/retenciones de esa factura.
+            if(ne._esNDDirecta) return null;
             const neId=ne.id||''; const neDoc=ne.documento||'';
             return (_invsByNe.get(neId)||_invsByNe.get(neDoc)||[])[0]
               ||(ne.facturaId?findInv(ne.facturaId):null)
@@ -39728,6 +41049,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _cobradoDirectoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
           const _saldoDirectoNE=(ne,fRef)=>parseNum(ne.total||ne.totalUSD||0)-_cobradoDirectoNEAtFecha(ne,fRef)-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
           const getSaldoNEAtFecha = (ne, fRef) => {
+            // ND directa: su saldo es solo su monto menos lo cobrado contra ella (cobros con neId 'ND-<id>',
+            // incluidos los que aplican un anticipo), igual que en Estado de Cuenta. No lleva NC, retencion
+            // ni reparto por grupo de factura.
+            if(ne._esNDDirecta) return parseNum(ne.total||0)-_cobradoDirectoNEAtFecha(ne,fRef);
             const grupo=getGrupoInvoiceNEs(ne);
             if(grupo.length<=1) return _saldoDirectoNE(ne,fRef);
             // Solo se redistribuye si el GRUPO tiene alguna hermana en negativo (crédito "a favor"
@@ -54246,7 +55571,7 @@ ${resumen}
       'Retenciones a Clientes':'📋 Retenciones a Clientes', 'Banco':'🏦 Comprobante de Banco',
       'Caja':'💵 Comprobante de Caja', 'Relacionadas':'🤝 Cuentas por Pagar Relacionadas', 'Ajustes':'🛠️ Ajustes',
     };
-    const todosLosAsientos = getAsientosReales();
+    const todosLosAsientos = getAsientosAncla('rango',{desde:contFiltDesde});
     const asientosPeriodo = todosLosAsientos.filter(a=>{
       const f=a.fecha||'';
       return (!contFiltDesde||f>=contFiltDesde) && (!contFiltHasta||f<=contFiltHasta);
@@ -54540,7 +55865,7 @@ ${resumen}
   const renderBalanceComprobacionModule = () => {
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
-    const asientosPeriodo = getAsientosReales().filter(a=>{
+    const asientosPeriodo = getAsientosAncla('rango',{desde:contFiltDesde}).filter(a=>{
       const fNum = _fNum(a.fecha);
       if (fNum===null) return true;
       return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
@@ -54679,8 +56004,11 @@ ${resumen}
     // comprada para reventa (no producción propia), y Muestras Clientes es actividad comercial.
     const codCostoMercancia = (cuentasProduccionCfg?.costoVentaMercanciaNombre||'').split('—')[0].trim();
     const CODIGOS_VENTA_DESDE_5_1 = ['5.1.01.01.001','5.1.01.02.001', ...(codCostoMercancia?[codCostoMercancia]:[])];
-    const _esCostoPlanta = (codigo) => (codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo);
-    const _esCostoVenta = (codigo) => codigo.startsWith('5.3') || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
+    // Excepcion inversa (confirmada por el usuario): 5.3.04.01.010 Agenciamiento y Asesoria Aduanal es
+    // resultado de PLANTA aunque empiece con 5.3.
+    const CODIGOS_PLANTA_DESDE_5_3 = ['5.3.04.01.010'];
+    const _esCostoPlanta = (codigo) => ((codigo.startsWith('5.1')||codigo.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(codigo)) || CODIGOS_PLANTA_DESDE_5_3.includes(codigo);
+    const _esCostoVenta = (codigo) => (codigo.startsWith('5.3') && !CODIGOS_PLANTA_DESDE_5_3.includes(codigo)) || CODIGOS_VENTA_DESDE_5_1.includes(codigo);
     // 5.4.x (Costos de Nacionalización — aduana, fletes de contenedor) queda fuera de ambas
     // vistas a propósito, por decisión explícita del usuario.
 
@@ -55035,7 +56363,22 @@ ${resumen}
   // ============================================================================
   const renderBalanceGeneralModule = () => {
     const corte = contFiltHasta || getTodayDate();
-    const asientosHastaCorte = getAsientosReales().filter(a=>(a.fecha||'')<=corte);
+    // Punto de partida SALDOS AGOSTO-2026: solo si no hay "Desde" anterior o igual a esa fecha (con ese
+    // Desde se necesita el detalle de resultados previo, y se usa el c\u00e1lculo normal).
+    let asientosHastaCorte = (()=>{
+      const _t = getAsientosReales(undefined, true);
+      const _anc = _t.find(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante}));
+      const _usa = _anc && corte>=(_anc.fecha||'') && !(contFiltDesde && contFiltDesde<=(_anc.fecha||''));
+      let base = _usa ? getAsientosAncla('balance',{corte}) : getAsientosAncla('rango',{desde:''});
+      base = base.filter(a=>(a.fecha||'')<=corte);
+      const _ini = contFiltDesde || `${corte.slice(0,7)}-01`;
+      if(_usa && _ini>(_anc.fecha||'') && cuentaResultadoCfg.codigo && cuentaUtilAcumCfg.codigo){
+        // Pasado agosto, la utilidad que trae el saldo pasa a Utilidad Acumulada.
+        base = base.map(a=>a.modulo==='Ajustes' && _esAnclaSaldos({nroComprobante:a.comprobante})
+          ? {...a, lineas:(a.lineas||[]).map(l=>l.codigo===cuentaResultadoCfg.codigo?{...l,codigo:cuentaUtilAcumCfg.codigo,cuenta:cuentaUtilAcumCfg.nombre||l.cuenta}:l)} : a);
+      }
+      return base;
+    })();
     const porCuenta = {};
     asientosHastaCorte.forEach(a=>{
       (a.lineas||[]).forEach(l=>{
