@@ -952,9 +952,94 @@ const rfPlanConversion = (conceptos, deps) => {
   });
 };
 
+// == RRHH - Asiento contable de la nómina (cuentas) ==
+// Arma las líneas Debe/Haber de una nómina, por departamento. Función pura: todo lo que necesita llega en `ctx`, para poder probarla sin pantalla.
+//   IVSS / RPE / FAOV por Pagar → la cuenta de «Parafiscales → Cuenta Contable (Pasivo)»; si ahí no hay, la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.
+//   Nómina por Pagar (Banco)    → «Configuración → Cuentas del asiento de nómina».
+//   Cargas Sociales Patronales  → esa misma pestaña: la cuenta del centro de costo del trabajador o, si no tiene, la general; si tampoco, la antigua del departamento (rrhh_cuentas_nomina).
+// Las líneas sin cuenta siguen saliendo (con su monto) marcadas «sin cuenta configurada»: ningún monto cambia.
+const RH_ASIENTO_NOMBRES = { ivss:'IVSS por Pagar', rpe:'RPE por Pagar', faov:'FAOV por Pagar', banco:'Nómina por Pagar (Banco)', patronal:'Cargas Sociales Patronales' };
+const RH_ASIENTO_DONDE = { ivss:'Parafiscales → Seguro Social → Cuenta Contable (Pasivo)', rpe:'Parafiscales → Paro Forzoso → Cuenta Contable (Pasivo)', faov:'Parafiscales → FAOV → Cuenta Contable (Pasivo)', banco:'Configuración → Cuentas del asiento de nómina', patronal:'Configuración → Cuentas del asiento de nómina' };
+const RH_ASIENTO_SIN = ' (⚠️ sin cuenta configurada)';
+const rhAsientoCuenta = (x) => { const cod = (x && x.codigo) ? String(x.codigo).trim() : ''; return cod ? { codigo:cod, nombre:String(x.nombre==null?'':x.nombre) } : { codigo:'', nombre:'' }; };
+// Configuración guardada (rrhh_config/asiento): siempre completa y sin undefined (Firestore los rechaza)
+const rhAsientoCfgMerge = (d) => {
+  const porCentro = {};
+  Object.entries((d && d.patronalPorCentro) || {}).forEach(([k, v]) => { const c = rhAsientoCuenta(v); if (c.codigo) porCentro[k] = c; });
+  return { nominaPorPagar:rhAsientoCuenta(d && d.nominaPorPagar), patronalGeneral:rhAsientoCuenta(d && d.patronalGeneral), patronalPorCentro:porCentro };
+};
+const rhAsientoPorDepartamento = (detalles, ctx) => {
+  ctx = ctx || {};
+  const cfgP = ctx.configParafiscal || {};
+  const cfgA = rhAsientoCfgMerge(ctx.configAsiento);
+  const nombreDepto = ctx.nombreDepto || ((id) => String(id == null ? '' : id));
+  const claveLegal = (concepto) => /^ivss/i.test(concepto) ? 'ivss' : (/rpe|paro forzoso/i.test(concepto) ? 'rpe' : (/faov/i.test(concepto) ? 'faov' : null));
+  // IVSS / RPE / FAOV por pagar: la misma cuenta recibe lo del trabajador y lo de la empresa
+  const cuentaLegal = (ded, clave, centroId) => {
+    const p = cfgP[clave] || {};
+    if (p.codigoPasivo) return { codigo:String(p.codigoPasivo), nombre:p.nombrePasivo || RH_ASIENTO_NOMBRES[clave] };
+    const delConcepto = ctx.cuentaConceptoLegal ? ctx.cuentaConceptoLegal(clave, centroId) : null;
+    if (delConcepto && delConcepto.codigo) return { codigo:String(delConcepto.codigo), nombre:delConcepto.nombre || RH_ASIENTO_NOMBRES[clave] };
+    if (ded.codigoCuenta) return { codigo:String(ded.codigoCuenta), nombre:ded.nombreCuenta || RH_ASIENTO_NOMBRES[clave] };
+    return { codigo:'', nombre:(p.nombrePasivo || RH_ASIENTO_NOMBRES[clave]) + RH_ASIENTO_SIN };
+  };
+  const cuentaBanco = () => cfgA.nominaPorPagar.codigo
+    ? { codigo:cfgA.nominaPorPagar.codigo, nombre:cfgA.nominaPorPagar.nombre || RH_ASIENTO_NOMBRES.banco }
+    : { codigo:'', nombre:RH_ASIENTO_NOMBRES.banco + RH_ASIENTO_SIN };
+  // Cargas Sociales Patronales: cuenta del centro de costo del trabajador > cuenta general > cuenta antigua del departamento > sin cuenta
+  const cuentaPatronal = (d) => {
+    const propia = cfgA.patronalPorCentro[d.centroCostoId];
+    const cfg = (propia && propia.codigo) ? propia : (cfgA.patronalGeneral.codigo ? cfgA.patronalGeneral : null);
+    if (cfg) return { codigo:cfg.codigo, nombre:cfg.nombre || RH_ASIENTO_NOMBRES.patronal };
+    const antigua = (ctx.cuentasNomina || []).find(c => c.departamentoId === d.departamentoId && c.tipo === 'patronal');
+    if (antigua && antigua.codigoCuenta) return { codigo:antigua.codigoCuenta, nombre:antigua.nombreCuenta || RH_ASIENTO_NOMBRES.patronal };
+    return { codigo:'', nombre:RH_ASIENTO_NOMBRES.patronal + RH_ASIENTO_SIN };
+  };
+  const porDepto = {};
+  (detalles || []).forEach(d => {
+    const key = d.departamentoId;
+    if (!porDepto[key]) porDepto[key] = { departamentoId:key, nombreDepto:nombreDepto(key), trabajadores:0, cuentas:{} };
+    porDepto[key].trabajadores++;
+    const addCuenta = (codigo, nombre, tipo, monto, clave) => {
+      if (monto <= 0) return;
+      const ck = codigo || nombre;
+      if (!porDepto[key].cuentas[ck]) porDepto[key].cuentas[ck] = { codigo, nombre, debe:0, haber:0 };
+      const linea = porDepto[key].cuentas[ck];
+      if (clave && !linea.clave) linea.clave = clave;
+      if (tipo === 'debe') linea.debe += monto; else linea.haber += monto;
+    };
+    (d.asignaciones || []).forEach(a => addCuenta(a.codigoCuenta, a.nombreCuenta || a.concepto, 'debe', a.montoUSD));
+    let totalPatronalDepto = 0;
+    (d.deducciones || []).forEach(ded => {
+      const clave = ded.esLegal ? claveLegal(ded.concepto) : null;
+      const legal = clave ? cuentaLegal(ded, clave, d.centroCostoId) : null;
+      const codigo = legal ? legal.codigo : (ded.esLegal ? '' : ded.codigoCuenta);
+      const nombre = legal ? legal.nombre : (ded.nombreCuenta || ded.concepto);
+      addCuenta(codigo, nombre, 'haber', ded.montoUSD, clave);
+      if (ded.montoPatronalUSD > 0) {
+        addCuenta(codigo, nombre, 'haber', ded.montoPatronalUSD, clave);
+        if (ded.esBeneficio) {
+          // El aporte de la empresa en HCM y en la Bolsa de alimentos va a su cuenta de gasto según el centro de costo (Configuración → HCM / Bolsa de alimentos), no a Cargas Sociales
+          addCuenta(ded.codigoCuentaPatronal || '', ded.nombreCuentaPatronal || ('Gasto ' + ded.concepto + ' (empresa)' + RH_ASIENTO_SIN), 'debe', ded.montoPatronalUSD);
+        } else { totalPatronalDepto += ded.montoPatronalUSD; }
+      }
+    });
+    const banco = cuentaBanco();
+    addCuenta(banco.codigo, banco.nombre, 'haber', d.netoUSD, 'banco');
+    if (totalPatronalDepto > 0) { const pat = cuentaPatronal(d); addCuenta(pat.codigo, pat.nombre, 'debe', totalPatronalDepto, 'patronal'); }
+  });
+  return Object.values(porDepto);
+};
+// Líneas del asiento que quedaron sin cuenta y se configuran en Parafiscales o en «Cuentas del asiento de nómina», con el lugar donde se configura cada una
+const rhAsientoFaltantes = (asiento) => {
+  const vistas = {};
+  (asiento || []).forEach(dep => Object.values(dep.cuentas || {}).forEach(c => { if (c.clave && !c.codigo) vistas[c.clave] = true; }));
+  return ['ivss', 'rpe', 'faov', 'banco', 'patronal'].filter(k => vistas[k]).map(k => ({ clave:k, nombre:RH_ASIENTO_NOMBRES[k], donde:RH_ASIENTO_DONDE[k] }));
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
-  const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa'
+  const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa' | 'asiento'
   useEffect(()=>{
     const perms=appUser?.permissions||{};
     const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
@@ -1002,6 +1087,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     faov:{pctTrabajador:1, pctPatronal:2, codigoPasivo:'', nombrePasivo:'', numeroPredeterminado:'03054262'},
     inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, codigoPasivo:'', nombrePasivo:''},
   });
+  // Cuentas del asiento de la nómina (Nómina por Pagar y Cargas Sociales Patronales): se guardan en rrhh_config/asiento
+  const [configAsiento,setConfigAsiento]=useState(rhAsientoCfgMerge(null));
+  const guardarConfigAsiento = async () => {
+    const limpio = rhAsientoCfgMerge(configAsiento);
+    try{ await setDoc(getDocRef('rrhh_config','asiento'),limpio); setConfigAsiento(limpio); alert('Cuentas del asiento de nómina guardadas.'); }
+    catch(e){ alert('Error: '+e.message); }
+  };
   // Beneficios (HCM y Bolsa de alimentos): se guardan en rrhh_config/beneficios
   const [configBeneficios,setConfigBeneficios]=useState(benMerge(null));
   const [busqCuentaBen,setBusqCuentaBen]=useState({});
@@ -1084,6 +1176,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s10=onSnapshot(getColRef('rrhh_parametros_formula'),s=>setParametrosFormula(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s11=onSnapshot(getColRef('rrhh_tabulador_cargos'),s=>setTabuladorCargos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s12=onSnapshot(getDocRef('rrhh_config','beneficios'),d=>{ if(!d.exists()) return; setConfigBeneficios(benMerge(d.data())); });
+    const s13=onSnapshot(getDocRef('rrhh_config','asiento'),d=>{ if(!d.exists()) return; setConfigAsiento(rhAsientoCfgMerge(d.data())); });
     const s6=onSnapshot(getDocRef('rrhh_config','parafiscal'),d=>{
       if(!d.exists()) return;
       const cargado = d.data();
@@ -1097,7 +1190,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();};
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();s13();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -2272,48 +2365,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [showIncesModal,setShowIncesModal]=useState(false);
   const [incesTrimestreSel,setIncesTrimestreSel]=useState({anio:new Date().getFullYear(), trimestre:Math.ceil((new Date().getMonth()+1)/3)});
 
-  const calcularAsientoPorDepartamento = (nominaId) => {
-    const detalles = nominaDetalles.filter(d=>d.nominaId===nominaId);
-    const porDepto = {};
-    const nombrePasivoLegal = (concepto) => {
-      if(/^ivss/i.test(concepto)) return configParafiscal.ivss.nombrePasivo||'IVSS por Pagar';
-      if(/rpe|paro forzoso/i.test(concepto)) return configParafiscal.rpe.nombrePasivo||'RPE por Pagar';
-      if(/faov/i.test(concepto)) return configParafiscal.faov.nombrePasivo||'FAOV por Pagar';
-      return null;
-    };
-    detalles.forEach(d=>{
-      const key = d.departamentoId;
-      if(!porDepto[key]) porDepto[key]={departamentoId:key, nombreDepto:nombreDepto(key), trabajadores:0, cuentas:{}};
-      porDepto[key].trabajadores++;
-      const addCuenta = (codigo, nombre, tipo, monto) => {
-        if(monto<=0) return;
-        const ck = codigo||nombre;
-        if(!porDepto[key].cuentas[ck]) porDepto[key].cuentas[ck]={codigo, nombre, debe:0, haber:0};
-        if(tipo==='debe') porDepto[key].cuentas[ck].debe += monto; else porDepto[key].cuentas[ck].haber += monto;
-      };
-      d.asignaciones.forEach(a=>addCuenta(a.codigoCuenta, a.nombreCuenta||a.concepto, 'debe', a.montoUSD));
-      let totalPatronalDepto = 0;
-      d.deducciones.forEach(ded=>{
-        const nombrePasivoCompartido = ded.esLegal ? nombrePasivoLegal(ded.concepto) : null;
-        addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoUSD);
-        if(ded.montoPatronalUSD>0){
-          addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoPatronalUSD);
-          if(ded.esBeneficio){
-            // El aporte de la empresa en HCM y en la Bolsa de alimentos va a su cuenta de gasto según el centro de costo (Configuración → HCM / Bolsa de alimentos), no a Cargas Sociales
-            addCuenta(ded.codigoCuentaPatronal||'', ded.nombreCuentaPatronal||('Gasto '+ded.concepto+' (empresa) (⚠️ sin cuenta configurada)'), 'debe', ded.montoPatronalUSD);
-          } else {
-            totalPatronalDepto += ded.montoPatronalUSD;
-          }
-        }
-      });
-      addCuenta('', 'Nómina por Pagar (Banco)', 'haber', d.netoUSD);
-      if(totalPatronalDepto>0){
-        const cPatronal = cuentasNomina.find(c=>c.departamentoId===key && c.tipo==='patronal');
-        addCuenta(cPatronal?.codigoCuenta||'', cPatronal?.nombreCuenta||'Cargas Sociales Patronales (⚠️ sin cuenta configurada)', 'debe', totalPatronalDepto);
-      }
-    });
-    return Object.values(porDepto);
+  // Cuenta del concepto de ley (IVSS, RPE o FAOV) para el centro de costo del trabajador: se usa si en Parafiscales no se eligió una cuenta de pasivo
+  const cuentaConceptoLegalDe = (clave, centroCostoId) => {
+    const esDeLey = clave==='ivss' ? conceptoEsIVSS : (clave==='rpe' ? conceptoEsRPE : conceptoEsFAOV);
+    const c = conceptos.filter(x=>x.activo!==false && x.tipo==='D').find(esDeLey);
+    const cu = c ? cuentaDeConcepto(c, centroCostoId) : null;
+    return (cu && cu.codigo) ? {codigo:cu.codigo, nombre:cu.nombre||''} : null;
   };
+  const calcularAsientoPorDepartamento = (nominaId) => rhAsientoPorDepartamento(
+    nominaDetalles.filter(d=>d.nominaId===nominaId),
+    {configParafiscal, configAsiento, cuentasNomina, nombreDepto, cuentaConceptoLegal:cuentaConceptoLegalDe}
+  );
 
   const [detalleVerModal,setDetalleVerModal]=useState(null);
 
@@ -2989,7 +3051,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           setB({gastoPorCentro:nuevo});
         };
         const centrosSinGastoB = centros.filter(c=>!(gastoDeB(c.id)&&gastoDeB(c.id).codigo));
-        const subTabsCfg = [['estructura','Centro de Costo y Departamento'],['tabulador','Tabulador de Sueldos y Cargos'],['hcm','HCM'],['bolsa','Bolsa de alimentos']];
+        const subTabsCfg = [['estructura','Centro de Costo y Departamento'],['tabulador','Tabulador de Sueldos y Cargos'],['hcm','HCM'],['bolsa','Bolsa de alimentos'],['asiento','Cuentas del asiento de nómina']];
         return (
       <div className="p-6">
         <div className="flex flex-wrap gap-2 mb-4">
@@ -3182,6 +3244,70 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         <button onClick={guardarConfigBeneficios} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
         </>
         )}
+
+        {cfgSub==='asiento' && (()=>{
+          const patronalDe = (centroId) => (configAsiento.patronalPorCentro||{})[centroId] || null;
+          const setPatronalCentro = (centroId, cuenta) => setConfigAsiento(a=>{
+            const nuevo = {...(a.patronalPorCentro||{})};
+            if(cuenta) nuevo[centroId] = {codigo:cuenta.codigo, nombre:cuenta.nombre}; else delete nuevo[centroId];
+            return {...a, patronalPorCentro:nuevo};
+          });
+          const centrosSinPatronal = centros.filter(c=>!(patronalDe(c.id)&&patronalDe(c.id).codigo));
+          const antiguas = cuentasNomina.filter(c=>c.tipo==='patronal' && c.codigoCuenta);
+          const _pm = appUser?.permissions||{};
+          const puedeParafiscales = !appUser || appUser.role==='Master' || !Object.keys(_pm).some(k=>k.startsWith('rrhh_')&&_pm[k]) || !!_pm.rrhh_parafiscales;
+          const filasLegales = [['ivss','IVSS por Pagar','Seguro Social'],['rpe','RPE por Pagar','Paro Forzoso'],['faov','FAOV por Pagar','FAOV']];
+          return (
+        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">1. Nómina por pagar (Banco)</h3>
+            <p className="text-[10px] text-gray-400 mb-3">En el asiento de cada pago, esta línea es el neto que se le paga a los trabajadores. Elige la cuenta que se acredita por ese monto.</p>
+            {selectorCuenta('asNomina','Cuenta de Nómina por Pagar (Banco)',configAsiento.nominaPorPagar.codigo,configAsiento.nominaPorPagar.nombre,(c)=>setConfigAsiento(a=>({...a,nominaPorPagar:{codigo:c.codigo,nombre:c.nombre}})),()=>setConfigAsiento(a=>({...a,nominaPorPagar:{codigo:'',nombre:''}})))}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cargas Sociales Patronales</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Gasto del aporte de la empresa a IVSS, RPE y FAOV. Se usa la cuenta del centro de costo del trabajador; si el centro no tiene, la cuenta general.</p>
+            {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
+            <div className="space-y-3">
+              {centros.map(c=>{ const g = patronalDe(c.id); return (
+                <div key={c.id}>{selectorCuenta('asPat:'+c.id, c.nombre+' ('+(c.naturaleza||'Gasto')+')', g?g.codigo:'', g?g.nombre:'', (cu)=>setPatronalCentro(c.id,cu), ()=>setPatronalCentro(c.id,null))}</div>
+              ); })}
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              {selectorCuenta('asPatGeneral','Cuenta general: para los centros que no tengan una propia',configAsiento.patronalGeneral.codigo,configAsiento.patronalGeneral.nombre,(c)=>setConfigAsiento(a=>({...a,patronalGeneral:{codigo:c.codigo,nombre:c.nombre}})),()=>setConfigAsiento(a=>({...a,patronalGeneral:{codigo:'',nombre:''}})))}
+            </div>
+            {centros.length>0 && !configAsiento.patronalGeneral.codigo && centrosSinPatronal.length>0 && (
+              <p className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5 mt-3">Falta la cuenta de: {centrosSinPatronal.map(c=>c.nombre).join(', ')}. Las cargas patronales de esos trabajadores saldrán "sin cuenta configurada" en el asiento.</p>
+            )}
+            {antiguas.length>0 && (
+              <p className="text-[9px] text-gray-400 mt-3">Hay cuentas antiguas guardadas por departamento ({antiguas.map(c=>nombreDepto(c.departamentoId)+' → '+c.codigoCuenta).join(', ')}). Solo se usan cuando el centro del trabajador no tiene cuenta propia ni hay cuenta general.</p>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4 lg:col-span-2">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. IVSS, RPE y FAOV por pagar</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Estas cuentas no se eligen aquí: salen de Parafiscales → (Seguro Social, Paro Forzoso o FAOV) → "Cuenta Contable (Pasivo)". Si ahí no hay cuenta, el asiento usa la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.</p>
+            <div className="space-y-2">
+              {filasLegales.map(([id,etiqueta,seccion])=>{ const cf = configParafiscal[id]||{}; return (
+                <div key={id} className="flex flex-wrap items-center justify-between gap-2 border-2 border-gray-100 rounded-xl px-3 py-2">
+                  <span className="text-xs font-bold text-gray-700">{etiqueta}</span>
+                  {cf.codigoPasivo
+                    ? <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{cf.codigoPasivo}</span>{cf.nombrePasivo}</span>
+                    : <span className="text-[10px] font-black uppercase text-amber-600">Sin cuenta en Parafiscales</span>}
+                  {puedeParafiscales && <button onClick={()=>{setParafiscalSel(id);setRhTab('parafiscales');}} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Configurar en Parafiscales → {seccion}</button>}
+                </div>
+              ); })}
+            </div>
+          </div>
+
+        </div>
+        <button onClick={guardarConfigAsiento} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar cuentas del asiento</button>
+        </>
+          );
+        })()}
 
         {cfgSub==='bolsa' && (
         <>
@@ -4112,6 +4238,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     </div>
                   ))}
                 </div>
+                {(()=>{ const faltan = rhAsientoFaltantes(asientoPorDepto); return faltan.length>0 ? (
+                  <div className="mt-4 text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-3 py-2 space-y-0.5">
+                    <p className="font-black">Estas líneas del asiento no tienen cuenta contable. Así se configuran:</p>
+                    {faltan.map(f=>(<p key={f.clave}>{f.nombre} → {f.donde}</p>))}
+                  </div>
+                ) : null; })()}
               </div>
             )}
           </div>
@@ -18231,7 +18363,7 @@ const SYSTEM_MODULES = [
     label: '13. MÓDULO RRHH',
     icon: '🧑‍💼',
     submodules: [
-      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Tabulador, HCM, Bolsa de alimentos)' },
+      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Tabulador, HCM, Bolsa de alimentos, Cuentas del asiento de nómina)' },
       { id: 'rrhh_nomina',        label: 'Registro de Nómina' },
       { id: 'rrhh_parafiscales',  label: 'Parafiscales (IVSS, RPE, FAOV, INCES)' },
       { id: 'rrhh_beneficios',    label: 'Beneficios (reportes de HCM y Bolsa de alimentos)' },
