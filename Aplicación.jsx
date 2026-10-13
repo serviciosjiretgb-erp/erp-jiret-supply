@@ -90,9 +90,15 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 // HCM: aporte mensual del trabajador = pctTrabajador % de (primaPersona x personas cubiertas);
 //      el resto lo paga la empresa. Se descuenta en 'cuotasPorMes' pagos (por defecto 4).
 // Bolsa: bolsas x descuentoBolsa (la parte de la empresa = costo - descuento es solo informativa).
+// Cuentas (todas opcionales; se configuran en Configuracion > HCM / Bolsa de alimentos):
+//  hcm.codigoPasivo/nombrePasivo   = cuenta por cobrar que se acredita en cada nomina (descuento del trabajador + aporte de la empresa)
+//  hcm.codigoPasivoCierre/...      = cuenta de pasivo contra la que se cierra esa cuenta por cobrar al cierre de mes
+//  hcm.gastoPorCentro[centroId]    = {codigo,nombre} cuenta de gasto/costo del aporte de la empresa segun el centro de costo del trabajador
+//  hcm.codigoGasto/nombreGasto     = cuenta de gasto unica del esquema anterior (solo se usa si el centro no tiene una propia)
+//  bolsa.codigoCuenta/nombreCuenta = cuenta por cobrar del descuento de la bolsa; bolsa.codigoPasivoCierre/... = pasivo del cierre de mes
 const BENEFICIOS_DEF = {
-  hcm:   { activo:true, primaPersona:18, pctTrabajador:50, cuotasPorMes:4, edadMaxHijos:19, codigoConcepto:'24000', codigoPasivo:'', nombrePasivo:'', codigoGasto:'', nombreGasto:'' },
-  bolsa: { activo:true, costoBolsa:15.04, descuentoBolsa:5, codigoConcepto:'22000', codigoCuenta:'', nombreCuenta:'' },
+  hcm:   { activo:true, primaPersona:18, pctTrabajador:50, cuotasPorMes:4, edadMaxHijos:19, codigoConcepto:'24000', codigoPasivo:'', nombrePasivo:'', codigoGasto:'', nombreGasto:'', codigoPasivoCierre:'', nombrePasivoCierre:'', gastoPorCentro:{} },
+  bolsa: { activo:true, costoBolsa:15.04, descuentoBolsa:5, codigoConcepto:'22000', codigoCuenta:'', nombreCuenta:'', codigoPasivoCierre:'', nombrePasivoCierre:'' },
 };
 const benR2 = (n) => parseFloat((Number(n)||0).toFixed(2));
 // Firestore rechaza los campos con valor undefined: se quitan antes de guardar una linea del recibo.
@@ -192,6 +198,9 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
     if (auto || g) {
       const calc = hcmCalcularMes(t, mes, conf);
       const cuentaPas = conf.hcm.codigoPasivo ? { codigo: conf.hcm.codigoPasivo, nombre: conf.hcm.nombrePasivo || '' } : cuentaDe(cod);
+      // Cuenta de gasto/costo del aporte de la empresa: la del centro de costo del trabajador; si ese centro no tiene, la unica del esquema anterior
+      const gc = (conf.hcm.gastoPorCentro && t.centroCostoId) ? conf.hcm.gastoPorCentro[t.centroCostoId] : null;
+      const ctaGasto = (gc && gc.codigo) ? { codigo: gc.codigo, nombre: gc.nombre || '' } : { codigo: conf.hcm.codigoGasto || '', nombre: conf.hcm.nombreGasto || '' };
       const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'hcm' || !auto);
       const cuotas = (g && Number(g.cuotas) > 0) ? Math.round(Number(g.cuotas)) : 1;
       let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual;
@@ -212,7 +221,7 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
       const pasados = hcmHijosPasadosEdad(t, mes, conf.hcm.edadMaxHijos);
       let aviso = '';
       if (t.hcmActivo === true && calc.personas === 0) aviso = 'El titular no tiene HCM vigente en el mes del pago (revisa las fechas de ingreso/egreso al plan)';
-      else if (t.hcmActivo === true && calc.aporteTrab <= 0) aviso = 'Aporte en 0: revisa la prima y el % del trabajador en Beneficios';
+      else if (t.hcmActivo === true && calc.aporteTrab <= 0) aviso = 'Aporte en 0: revisa la prima y el % del trabajador en Configuración → HCM';
       else if (pasados.length > 0) aviso = 'Hijo(a) con ' + (benNum(conf.hcm.edadMaxHijos) > 0 ? benNum(conf.hcm.edadMaxHijos) : 19) + ' años o más sigue en el HCM: ' + pasados.join(', ');
       else if (cuotasPrevias + cuotas > calc.cuotasMes) aviso = 'Con este pago el mes lleva ' + (cuotasPrevias + cuotas) + ' de ' + calc.cuotasMes + ' cuotas de HCM';
       lineas.push({
@@ -220,7 +229,7 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
         concepto: nombreDe(cod, 'POLIZA HCM'), codigo: cod,
         montoUSD, montoBs, montoPatronalUSD, montoPatronalBs,
         codigoCuenta: cuentaPas.codigo, nombreCuenta: cuentaPas.nombre,
-        codigoCuentaPatronal: conf.hcm.codigoGasto || '', nombreCuentaPatronal: conf.hcm.nombreGasto || '',
+        codigoCuentaPatronal: ctaGasto.codigo, nombreCuentaPatronal: ctaGasto.nombre,
         personas: calc.personas, primaMes: calc.prima, aporteMesTrab: calc.aporteTrab, aporteMesEmp: calc.aporteEmp,
         cuotasMes: calc.cuotasMes, cuotas, previosMes: cuotasPrevias, editadoManual, aviso,
       });
@@ -279,6 +288,7 @@ const benEditarMontoBs = (l, textoBs, tasa) => {
 
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
+  const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa'
   useEffect(()=>{
     const perms=appUser?.permissions||{};
     const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
@@ -327,14 +337,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const guardarConfigBeneficios = async () => {
     const h = configBeneficios.hcm, b = configBeneficios.bolsa;
     const pct = benNum(h.pctTrabajador);
-    if(pct<0 || pct>100) return alert('El % que paga el trabajador debe estar entre 0 y 100.');
+    if(pct<0 || pct>100) return alert('HCM: el % que paga el trabajador debe estar entre 0 y 100.');
     if(!(parseInt(h.cuotasPorMes,10)>0)) return alert('Las cuotas (pagos) por mes del HCM deben ser 1 o más.');
     if(benNum(h.primaPersona)<0 || benNum(b.costoBolsa)<0 || benNum(b.descuentoBolsa)<0) return alert('Los montos no pueden ser negativos.');
+    // Cuenta de gasto del aporte de la empresa por centro de costo: solo las que tienen cuenta, con texto (Firestore rechaza undefined)
+    const gastoPorCentro = {};
+    Object.entries(h.gastoPorCentro||{}).forEach(([k,v])=>{ if(v && v.codigo) gastoPorCentro[k] = { codigo:String(v.codigo), nombre:String(v.nombre||'') }; });
     const limpio = {
-      hcm:{...h, primaPersona:benNum(h.primaPersona), pctTrabajador:pct, cuotasPorMes:parseInt(h.cuotasPorMes,10), edadMaxHijos:benNum(h.edadMaxHijos)>0?benNum(h.edadMaxHijos):19, codigoConcepto:String(h.codigoConcepto||'').trim()},
+      hcm:{...h, primaPersona:benNum(h.primaPersona), pctTrabajador:pct, cuotasPorMes:parseInt(h.cuotasPorMes,10), edadMaxHijos:benNum(h.edadMaxHijos)>0?benNum(h.edadMaxHijos):19, codigoConcepto:String(h.codigoConcepto||'').trim(), gastoPorCentro},
       bolsa:{...b, costoBolsa:benNum(b.costoBolsa), descuentoBolsa:benNum(b.descuentoBolsa), codigoConcepto:String(b.codigoConcepto||'').trim()},
     };
-    try{ await setDoc(getDocRef('rrhh_config','beneficios'),limpio); setConfigBeneficios(benMerge(limpio)); alert('Configuración de Beneficios guardada.'); }
+    try{ await setDoc(getDocRef('rrhh_config','beneficios'),limpio); setConfigBeneficios(benMerge(limpio)); alert('Configuración de HCM y Bolsa de alimentos guardada.'); }
     catch(e){ alert('Error: '+e.message); }
   };
   const RIESGO_PCT = {minimo:9, medio:10, maximo:11};
@@ -402,14 +415,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [nuevoCentro,setNuevoCentro]=useState('');
   const [nuevaNaturalezaCentro,setNuevaNaturalezaCentro]=useState('Gasto');
   const [nuevoDepto,setNuevoDepto]=useState('');
-  const [busqCuenta,setBusqCuenta]=useState('');
-  const [nuevaLinea,setNuevaLinea]=useState({tipo:'asignacion',concepto:'',conceptoOtro:'',codigo:'',nombre:''});
   const [busy,setBusy]=useState(false);
-  const CONCEPTOS_NOMINA = {
-    asignacion: ['Sueldo Básico','Bono Nocturno','Horas Extra Diurnas','Horas Extra Nocturnas','Comisiones','Bono de Producción','Bono Vacacional','Utilidades','Días Feriados Trabajados','Otro (escribir)'],
-    deduccion: ['IVSS (Seguro Social)','RPE / Paro Forzoso','FAOV (Ley de Vivienda)','ISLR','INCES','Préstamo / Anticipo','Otro (escribir)'],
-    patronal: ['Cargas Sociales Patronales (IVSS+RPE+FAOV)'],
-  };
 
   const TIPOS_CONCEPTO = {
     A:{label:'Asignación', badge:'bg-emerald-100 text-emerald-700'},
@@ -422,9 +428,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const CATALOGO_CONCEPTOS_ESTANDAR = [{"codigo":"00001","nombre":"SALARIO Diario","tipo":"A","formula":"","formato":"{ CE00003 } DIAS TRABAJADOS x { CE00001/30 }","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00004","nombre":"DIAS PENDIENTES","tipo":"A","formula":"","formato":"{ CE00016 } DIAS PENDIENTES x { CE00001/30 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00005","nombre":"HORAS EXTRAS DIURNAS","tipo":"A","formula":"","formato":"{( RF03 * CE00004 )} HORA(S) EXTRAS DIURNAS x { (((CE00001/30) /8)*1,5)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00006","nombre":"HORAS EXTRAS NOCTURNAS","tipo":"A","formula":"","formato":"{( RF03 * CE00005 )} HORA(S) EXTRAS NOCTURNAS x { (((CE00001/30)/8)*1,8)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00007","nombre":"BONO NOCTURNO","tipo":"A","formula":"","formato":"{ CE00012 } HORAS DE BONO NOCTURNO x { ((((CE00001 /30)/8)*30)/100)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00008","nombre":"DESCANSO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00013 } DIA DESCANSO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00009","nombre":"DIA FERIADO NO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00014 } DIA FERIADO NO TRABAJADO x { CE00001/30 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00010","nombre":"DIA FERIADO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00015 }  DIA FERIADO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00011","nombre":"CESTA TICKET SOCIALISTA PARA LOS TRABAJADORES/(DORAS)","tipo":"A","formula":"","formato":"?{ (CE00033-CE00055-CE00056) } CESTA TICKET SOCIALISTA PARA LOS TRABAJADORES/(DORAS) x {","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00012","nombre":"PERMISO REMUNERADO","tipo":"A","formula":"","formato":"{CE00071} DIAS DE PERMISO REMUNERADO x {(CE00001/30)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00013","nombre":"SUSPENSION REMUNERADA","tipo":"A","formula":"","formato":"{ CE00089} SUSPENSION REMUNERADA","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00015","nombre":"DIAS DE REPOSO POST-NATAL","tipo":"A","formula":"","formato":"{ CE00064 } DIAS DE REPOSO POST- NATAL  x { ((CE00001 /30)*(33,33/100))}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00016","nombre":"SUSPENSION IVSS 33.33%","tipo":"A","formula":"","formato":"{CE00017}¨DIAS DE SUSPENSION IVSS 33.33% x {((CE00001 /30)*33,33/100)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00017","nombre":"COMPENSATORIO DISFRUTADO","tipo":"A","formula":"","formato":"{ CE00038 } DIAS DE COMPENSATORIO x { (CE00001 /30)}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00018","nombre":"PERMISO POR PATERNIDAD","tipo":"A","formula":"","formato":"{ CE00050 } DIAS DE PERMISO POR PATERNIDAD x { (CE00001 /30)}","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00020","nombre":"DIA DE DESCANSO","tipo":"A","formula":"","formato":"{ CE00009 } DIAS DE DESCANSO x { (CE00001 /30)}","afVac":true,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00022","nombre":"BONIFICACION POR VIAJE","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00024","nombre":"DOMINGO TRABAJADO","tipo":"A","formula":"","formato":"{ CE00065 } DOMINGOS TRABAJADOS x {CE00001/30*0,5}","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"00026","nombre":"CESTA TICKET","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01000","nombre":"REINTEGRO HCM","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01001","nombre":"DIFERENCIA DE SUELDO","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"01VAT","nombre":"TOTAL VACACIONES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"02SUB","nombre":"SUBSIDIO OTORGADO POR EL EJECUTIVO NACIONAL","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20000","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20010","nombre":"REGIMEN PRESTACIONAL DE EMPLEO (PARO FORZOSO)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20030","nombre":"REGIMEN PRESTACIONAL VIVIENDA Y HABITAD (BANAVIH)","tipo":"D","formula":"","formato":"","afVac":true,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20031","nombre":"RETENCION DE I.S.L.R","tipo":"D","formula":"","formato":"IMPUESTO SOBRE LA RENTA x {CE00026} %","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20033","nombre":"DIAS DE AUSENCIA INJUSTIFICADAS","tipo":"D","formula":"","formato":"{ CE00056 } DIAS DE AUSENCIA INJUSTIFICADAS x { (CE00001/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"20042","nombre":"CARTON DE HUEVOS","tipo":"D","formula":"","formato":"{ CE00040 } CARTONES DE HUEVOS x { CE00039 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"22000","nombre":"BOLSA ALIMENTOS","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"22001","nombre":"?Otras Deducciones","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24000","nombre":"POLIZA HCM","tipo":"D","formula":"","formato":"{ CE00086 } POLIZA HCM x { CE00088 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24001","nombre":"POLIZA HCM","tipo":"V","formula":"","formato":"{ CE00093 } POLIZA HCM x { CE00088 }","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24002","nombre":"DIFERENCIAL DE HCM","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24003","nombre":"DESCUENTO POLIZA HCM 9","tipo":"D","formula":"","formato":"{ CE00115 } POLIZA HCM x { CE00088 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"24004","nombre":"DESCUENTO POLIZA HCM","tipo":"D","formula":"","formato":"{ CE00116 } POLIZA HCM x { CE00088 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"26587","nombre":"DIFERENCIA DE IVSS","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30000","nombre":"VACACIONES ART. 190","tipo":"V","formula":"","formato":"{ CE00002 } VACACIONES ART. 190 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30001","nombre":"DIAS ADICIONALES POR VACACIONES ART. 190","tipo":"V","formula":"","formato":"{ N00001 } DIAS ADICIONALES POR VACACIONES ART. 190 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"30002","nombre":"RETENCION DE I.S.L.R","tipo":"V","formula":"","formato":"IMPUESTO SOBRE LA RENTA x {CE00026} %","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31000","nombre":"BONO VACACIONAL ART.192","tipo":"V","formula":"","formato":"{ CE00002 } DIAS DE BONO VACACIONAL ART.192 x {  ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31001","nombre":"DIAS ADICIONALES POR BONO VACACIONAL ART. 192","tipo":"V","formula":"","formato":"{N00021 }DIAS ADICIONALES POR BONO VACACIONAL ART. 192 x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"31002","nombre":"BONO POR DISFRUTE DE VACACIONES","tipo":"V","formula":"","formato":"BONO POR DISFRUTE DE VACACIONES","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32000","nombre":"DIAS DE DESCANSO EN VACACIONES","tipo":"V","formula":"","formato":"{ CE00043 } DIAS DE DESCANSO EN VACACIONE x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32001","nombre":"DOMINGOS EN VACACIONES","tipo":"V","formula":"","formato":"{ DFSERIE0003 } FERIADOS EN VACACIONES x { (CE00001 /30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32002","nombre":"FERIADOS EN VACACIONES","tipo":"V","formula":"","formato":"{ DFSERIE0003 } FERIADOS EN VACACIONES x { ((CN30000*2)/30) }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"32111","nombre":"DIFERENCIA DE PARO FORZOZO","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33001","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33002","nombre":"REGIMEN PRESTACIONAL DE EMPLEO (PARO FORZOSO)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33003","nombre":"REGIMEN PRESTACIONAL VIVIENDA Y HABITAD (BANAVIH)","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33005","nombre":"CARTON DE HUEVOS","tipo":"V","formula":"","formato":"{ CE00062 } CARTONES DE HUEVOS x { CE00063 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33006","nombre":"?OTRAS ASIGNACIONES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33007","nombre":"OTRAS ASIGNACIONES NO BONIFICABLES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"33009","nombre":"DIAS TRABAJADOS","tipo":"L","formula":"","formato":"{ CE00103 } DIAS TRABAJADOS PENDIENTES x { (CE00001 /30)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40000","nombre":"PRESTACION DE ANTIGUEDAD ART. 142 LITERAL \"A\"","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40001","nombre":"INTERESES SOBRE LAS PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40003","nombre":"VACACIONES FRACCIONADAS","tipo":"R","formula":"","formato":"{ N00008 } DIAS DE VACACIONES FRACCIONADAS ART. 196 x { (CE00001/30) }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40004","nombre":"BONO VACACIONAL FRACCIONADO","tipo":"R","formula":"","formato":"{ N00009 } DIAS DE BONO VACACIONAL FRACCIONADO ART. 196 x { CNR0007 }","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40006","nombre":"VACACIONES ACUMULADAS","tipo":"L","formula":"","formato":"{ CE00046 } DIAS DE VACACIONES ACUMULADAS ART. 199 x { CNR0007 }","afVac":false,"afLiq":false,"general":false,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40007","nombre":"BONO VACACIONAL ACUMULADO","tipo":"L","formula":"","formato":"{ CE00047 } DIAS DE BONO VACACIONAL ACUMULADO ART. 199 x { CNR0007 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40008","nombre":"DESCANSO TRABAJADO","tipo":"A","formula":"","formato":"{REF00013 } DIA DESCANSO TRABAJADO x { ((CE00001/30) *1,5)}","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40009","nombre":"DIAS PENTIENTES","tipo":"V","formula":"","formato":"?{ CE00096 } DIAS PENDIENTES x { CE00001/30 }","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40010","nombre":"ANTICIPO DE PRESTACIONES SOCIALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40011","nombre":"PRESTACION DE ANTIGUEDAD ART. 142 LITERAL \"C\"","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40012","nombre":"VACACIONES EVENTUALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"40402","nombre":"UTILIDADES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"48000","nombre":"IDEMNIZACION POR DESPIDO ART. 92 LOTT","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"48001","nombre":"DOMINGO TRABAJADOS","tipo":"A","formula":"","formato":"{ REF00065 } DOMINGOS TRABAJADOS x {CE00001/30*1,5}","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"49001","nombre":"ADELANTO DE PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"49005","nombre":"TOTAL PRESTACIONES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50000","nombre":"ALICUOTA DE UTILIDAD","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50001","nombre":"ALICUOTA BONO VACACIONAL","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50002","nombre":"TOTAL DEVENGADO DE SUELDO MENSUAL","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50009","nombre":"REGIMEN PRESTACIONAL VIVEINDA Y HABITAD (BANAVIH)","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50014","nombre":"INCES","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50015","nombre":"SALARIO INTEGRAL PARA PRESTACIONES","tipo":"L","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50016","nombre":"TOTAL A DEVENGAR PRESTACIONES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50020","nombre":"INTERESES SOBRE PRESTACIONES SOCIALES","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"50022","nombre":"?Otras Deducciones","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"68929","nombre":"OTRAS DEDUCIONES","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"70934","nombre":"?OTRAS DEDUCCIONES","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"77360","nombre":"REGIMEN PRESTACIONAL DE SEG. Y SALUD EN EL TRABAJO (IVSS)","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"95082","nombre":"OTRAS ASIGNACIONES","tipo":"V","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"E0007","nombre":"BONO NOCTURNO","tipo":"A","formula":"","formato":"{ REFCE00012} HORAS DE BONO NOCTURNO x { ((((CE00001 /30)/8)*30)/100)}","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"F0002","nombre":"PRESTACION COMPLEMENTARIA","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"F0003","nombre":"SALARIO DIARIO INTEGRAL","tipo":"R","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0001","nombre":"APORTE PATRONAL (IVSS)","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0002","nombre":"APORTE PATRONAL SPF","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0003","nombre":"APORTE PATRONAL BANAVIH","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0004","nombre":"APORTE PATRONAL INCES","tipo":"P","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0007","nombre":"SALARIO NORMAL","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0010","nombre":"VACACIONES FRACCIONADAS REP. PROVI","tipo":"L","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0011","nombre":"BONO VACACIONAL FRACCIONADO REP. PROVI","tipo":"L","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0014","nombre":"TOTAL DEVENGADO UTILIDADES","tipo":"R","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0016","nombre":"TOTAL DEVENGADO MENSUAL","tipo":"R","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0018","nombre":"BONIFICACION ALIMENTACION","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":false,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0019","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R001V","nombre":"APORTE PATRONAL (IVSS)","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0020","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0021","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0022","nombre":"?ASIGNACION POR DEFINIR","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0023","nombre":"BONIFICACION UNICA E IRREPETIBLE","tipo":"A","formula":"","formato":"BONIFICACION UNICA E IRREPETIBLE","afVac":false,"afLiq":true,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0024","nombre":"DEDUCCION EVENTUAL","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0025","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0026","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0027","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R0028","nombre":"?DEDUCCION POR DEFINIR","tipo":"D","formula":"","formato":"","afVac":false,"afLiq":true,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R002V","nombre":"APORTE PATRONAL SPF","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R003V","nombre":"APORTE PATRONAL BANAVIH","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"R004V","nombre":"APORTE PATRONAL INCES","tipo":"P","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RET01","nombre":"BONIFICACION RUTA TRANSPORTE","tipo":"A","formula":"","formato":"","afVac":true,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RET02","nombre":"BONIFICACION POR REPARTO","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":true,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true},{"codigo":"RETR0","nombre":"BONO PRESENCIAL DE PRODUCTIVIDAD","tipo":"A","formula":"","formato":"","afVac":false,"afLiq":false,"general":true,"bonif":false,"historico":true,"mStatus":false,"arC":false,"minPer":0.0,"maxPer":0.0,"maxAcum":0.0,"activo":true}];
 
   const deptosDelCentro = departamentos.filter(d=>d.centroCostoId===centroSel?.id);
-  const cuentasDelDepto = cuentasNomina.filter(c=>c.departamentoId===deptoSel?.id);
-  const asignaciones = cuentasDelDepto.filter(c=>c.tipo==='asignacion');
-  const deducciones = cuentasDelDepto.filter(c=>c.tipo==='deduccion');
 
   const crearCentro = async () => {
     if(!nuevoCentro.trim()) return;
@@ -439,7 +442,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const eliminarCentro = async (c) => {
     const deps = departamentos.filter(d=>d.centroCostoId===c.id);
-    if(!window.confirm(`¿Eliminar "${c.nombre}"?${deps.length?`\n\nTiene ${deps.length} departamento(s) asociado(s) — también se eliminarán, junto con sus cuentas de nómina.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    if(!window.confirm(`¿Eliminar "${c.nombre}"?${deps.length?`\n\nTiene ${deps.length} departamento(s) asociado(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
     try{
       const batch=writeBatch(db);
       deps.forEach(d=>{
@@ -460,7 +463,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const eliminarDepto = async (d) => {
     const cuentas = cuentasNomina.filter(c=>c.departamentoId===d.id);
-    if(!window.confirm(`¿Eliminar "${d.nombre}"?${cuentas.length?`\n\nTiene ${cuentas.length} cuenta(s) de nómina asociada(s) — también se eliminarán.`:''}\n\nEsta acción no se puede deshacer.`)) return;
+    if(!window.confirm(`¿Eliminar "${d.nombre}"?\n\nEsta acción no se puede deshacer.`)) return;
     try{
       const batch=writeBatch(db);
       cuentas.forEach(c=>batch.delete(getDocRef('rrhh_cuentas_nomina',c.id)));
@@ -468,24 +471,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       await batch.commit();
       if(deptoSel?.id===d.id) setDeptoSel(null);
     } catch(e){ alert('Error al eliminar: '+e.message); }
-  };
-  const asociarCuenta = async (cuentaContable) => {
-    const conceptoFinal = nuevaLinea.concepto==='Otro (escribir)' ? nuevaLinea.conceptoOtro.trim() : nuevaLinea.concepto;
-    if(!conceptoFinal||!deptoSel) return alert('Elige o escribe un concepto primero');
-    setBusy(true);
-    try{
-      await addDoc(getColRef('rrhh_cuentas_nomina'),{
-        departamentoId:deptoSel.id, tipo:nuevaLinea.tipo, concepto:conceptoFinal,
-        codigoCuenta:cuentaContable.codigo, nombreCuenta:cuentaContable.nombre, createdAt:Date.now()
-      });
-      setNuevaLinea({tipo:nuevaLinea.tipo,concepto:'',conceptoOtro:'',codigo:'',nombre:''}); setBusqCuenta('');
-    } catch(e){ alert('Error al asociar la cuenta: '+e.message); }
-    finally { setBusy(false); }
-  };
-  const eliminarLinea = async (c) => {
-    if(!window.confirm(`¿Quitar "${c.concepto}" de este departamento?`)) return;
-    try{ await deleteDoc(getDocRef('rrhh_cuentas_nomina',c.id)); }
-    catch(e){ alert('Error al eliminar: '+e.message); }
   };
 
   // ── Conceptos de Nómina (catálogo con fórmula + cuenta por centro de costo) ─
@@ -691,7 +676,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     nombre:'', cedula:'', sexo:'Masculino', fechaNacimiento:'', estadoCivil:'Soltero', nivelEducativo:'Bachiller',
     nacionalidad:'Venezolano', tipoSangre:'', fotoUrl:'',
     telefono:'', correo:'', direccion:'', contactoEmergenciaNombre:'', contactoEmergenciaTelefono:'',
-    centroCostoId:'', departamentoId:'', cargo:'', fechaIngreso:'', tipoContrato:'Indefinido', fechaFinContrato:'', turno:'Diurno',
+    centroCostoId:'', departamentoId:'', cargo:'', escalaSalarial:'', fechaIngreso:'', tipoContrato:'Indefinido', fechaFinContrato:'', turno:'Diurno',
     salarioBase:'', formaPago:'Quincenal', cuentaBancaria:'', supervisor:'',
     ivss:'', rpe:'', faov:'', rif:'',
     alergias:'', certificadoMedicoFecha:'', eppAsignado:'', eppFechaEntrega:'',
@@ -704,6 +689,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     cargasFamiliares:[], evaluaciones:[], amonestaciones:[], historialAumentos:[],
     estado:'Activo', fechaEgreso:'', motivoEgreso:'',
   });
+  // "cargo" = cargo real del trabajador (es el que sale en el recibo y en el reporte de nomina).
+  // "escalaSalarial" = escala del Tabulador de Sueldos (solo fija el salario base).
+  // Las fichas anteriores no tenian la escala guardada: el campo "cargo" llevaba el nombre de la escala
+  // elegida, asi que se toma de ahi mientras siga coincidiendo con una escala del tabulador.
+  const escalaDe = (t) => {
+    if(!t) return '';
+    if(t.escalaSalarial!==undefined && t.escalaSalarial!==null) return String(t.escalaSalarial);
+    return tabuladorCargos.some(c=>c.cargo===t.cargo) ? t.cargo : '';
+  };
   const [trabajadorForm,setTrabajadorForm]=useState(null); // ficha en edición/creación, o null
   const [trabajadorVer,setTrabajadorVer]=useState(null); // ficha en modo solo lectura
   const [busyTrab,setBusyTrab]=useState(false);
@@ -1005,7 +999,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // pagan al trabajador). Patronal y Resultado quedan fuera — son costo de la empresa o totales
     // calculados, no líneas que se agreguen sueltas a un recibo.
     const asignacionesCfg = conceptosActivos.filter(c=>['A','V','L'].includes(c.tipo));
-    // HCM y Bolsa de alimentos se calculan solos (pestaña Beneficios) para quien los tiene marcados en la ficha:
+    // HCM y Bolsa de alimentos se calculan solos (se configuran en Configuración → HCM / Bolsa de alimentos) para quien los tiene marcados en la ficha:
     // su concepto no sale como fila manual para no duplicarlo. Lo guardado a mano antes se conserva (benConstruirLineas).
     // Tampoco sale como fila manual el concepto de una línea automática que ya está guardada en este pago.
     const _confBen = benMerge(configBeneficios);
@@ -1233,7 +1227,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         if(ded.montoPatronalUSD>0){
           addCuenta(ded.esLegal?'':ded.codigoCuenta, nombrePasivoCompartido||ded.nombreCuenta||ded.concepto, 'haber', ded.montoPatronalUSD);
           if(ded.esBeneficio){
-            // El aporte de la empresa en HCM va a su propia cuenta de gasto (pestaña Beneficios), no a Cargas Sociales
+            // El aporte de la empresa en HCM va a su cuenta de gasto según el centro de costo (Configuración → HCM), no a Cargas Sociales
             addCuenta(ded.codigoCuentaPatronal||'', ded.nombreCuentaPatronal||('Gasto '+ded.concepto+' (empresa) (⚠️ sin cuenta configurada)'), 'debe', ded.montoPatronalUSD);
           } else {
             totalPatronalDepto += ded.montoPatronalUSD;
@@ -1257,6 +1251,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     dir: settings?.empresaDireccion || 'Av. Circunvalación Nro 02, C.C. El Dividivi, Local G-9, Nivel PB, Sector El Trébol, Maracaibo - Zulia',
   });
   const _escRH = (s) => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Cargo que se imprime en el reporte de nomina: el mismo de la ficha del trabajador que sale en el recibo
+  const cargoDeDetalle = (d) => { const tr = trabajadores.find(x=>x.id===d.trabajadorId); return (tr && tr.cargo) ? tr.cargo : ''; };
   const _reciboCss = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:520px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:14px;text-transform:uppercase;}.membrete p{font-size:9px;opacity:.9;margin-top:1px;}.membrete .tit{font-size:11px;font-weight:900;text-transform:uppercase;text-align:right;}.btn-print{display:block;margin:14px 16px;padding:10px 0;background:#0891b2;color:#fff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:1.5px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 32px);}.contenido{padding:0 16px 16px;}.fila-top{display:flex;justify-content:space-between;margin-bottom:10px;}.fila-top p{font-size:10px;color:#6b7280;margin:1px 0 0;}.fila-top .nom{font-size:13px;font-weight:900;}table{width:100%;font-size:11px;border-collapse:collapse;}td{padding:3px 0;}.lbl{color:#6b7280;}.neg{color:#dc2626;}tr.tot td{border-top:1px solid #e5e7eb;padding-top:6px;font-weight:900;}.firma{font-size:9px;color:#9ca3af;margin-top:14px;padding-top:8px;border-top:1px solid #e5e7eb;}@media print{@page{margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
 
   const exportarReciboPDF = (d, nomina) => {
@@ -1279,7 +1275,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     ].join('');
     const stub = `<div class="stub">
       <div class="hdr">
-        <div class="box logo-box">Supply<br/><span>G&amp;B</span></div>
         <div class="box empresa-box">
           <b>${_escRH(empresa)}</b><br/>
           R.I.F.: ${_escRH(rif)}<br/>
@@ -1291,8 +1286,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       <table class="box datos-table">
         <tr><td class="lbl">CÉDULA:</td><td>${_escRH(t.cedula||d.trabajadorCedula||'—')}</td><td class="lbl">FECHA DE<br/>INGRESO:</td><td>${contDd(t.fechaIngreso)}</td></tr>
         <tr><td class="lbl">NOMBRE:</td><td>${_escRH((t.nombre||d.trabajadorNombre||'').toUpperCase())}</td><td class="lbl">DEPARTAMENTO:</td><td>${_escRH(nombreDepto(d.departamentoId).toUpperCase())}</td></tr>
-        <tr><td class="lbl">CARGO:</td><td>${_escRH((t.cargo||'—').toUpperCase())}</td><td class="lbl">SALARIO<br/>PERÍODO:</td><td>BS. ${formatNum(salarioPeriodoBs)}</td></tr>
+        <tr><td class="lbl">CARGO:</td><td colspan="3" class="ancho">${_escRH((t.cargo||'—').toUpperCase())}</td></tr>
+        <tr><td class="lbl">SALARIO<br/>PERÍODO:</td><td colspan="3" class="ancho">BS. ${formatNum(salarioPeriodoBs)}</td></tr>
         <tr><td class="lbl">FECHA DE<br/>PAGO:</td><td>${contDd(nomina.fechaPago)}</td><td class="lbl">PERÍODO DE<br/>PAGO:</td><td>DEL ${contDd(d.periodoDesde)} AL ${contDd(d.periodoHasta)}</td></tr>
+        <tr><td class="lbl">CUENTA<br/>BANCARIA:</td><td colspan="3" class="ancho">${_escRH(t.cuentaBancaria||'—')}</td></tr>
       </table>
       <table class="box conceptos-table">
         <thead><tr><th>CONCEPTO</th><th>DESCRIPCIÓN</th><th>ASIGNACIÓN</th><th>DEDUC/RETEN</th></tr></thead>
@@ -1314,17 +1311,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       .cut{width:0.7in;display:flex;justify-content:center;align-self:stretch;}
       .cut::before{content:'';border-left:2px dashed #999;}
       .box{border:1.5px solid #111;border-radius:11px;overflow:hidden;margin-bottom:0.09in;}
-      .hdr{display:grid;grid-template-columns:1.05in 1fr 1.15in;gap:0.08in;margin-bottom:0.09in;}
-      .logo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:13pt;color:#0891b2;text-align:center;line-height:1.15;}
-      .logo-box span{color:#111;}
+      .hdr{display:grid;grid-template-columns:1fr auto;gap:0.08in;margin-bottom:0.09in;}
       .empresa-box{padding:0.08in 0.1in;font-size:8.3pt;line-height:1.42;font-weight:700;}
-      .recibo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:9.5pt;text-align:center;line-height:1.3;}
+      .recibo-box{display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:8.4pt;text-align:center;line-height:1.35;padding:0.06in 0.12in;white-space:nowrap;}
       .datos-table{width:100%;border-collapse:collapse;font-size:8.3pt;}
       .datos-table td{border-top:1px solid #111;padding:0.04in 0.08in;vertical-align:middle;}
       .datos-table tr:first-child td{border-top:none;}
       .datos-table .lbl{font-weight:900;width:1.1in;font-size:7.6pt;line-height:1.15;}
       .datos-table td:nth-child(2){font-weight:700;width:1.35in;}
       .datos-table td:nth-child(3){font-weight:900;width:1.05in;font-size:7.6pt;line-height:1.15;}
+      .datos-table td.ancho{width:auto;}
       .conceptos-table{width:100%;border-collapse:collapse;font-size:8pt;}
       .conceptos-table th{background:#111;color:#fff;text-align:left;padding:0.05in 0.08in;font-size:7.6pt;}
       .conceptos-table th.num,.conceptos-table td.num{text-align:right;}
@@ -1356,7 +1352,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const totDedUSD = detalles.reduce((s,d)=>s+d.totalDeduccionesUSD,0);
     const totNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
     const totNetoBs = detalles.reduce((s,d)=>s+d.netoBs,0);
-    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}th:first-child,th:nth-child(2){text-align:left;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}td:first-child,td:nth-child(2){text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}th:first-child,th:nth-child(2),th:nth-child(3){text-align:left;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}tbody td:first-child,tbody td:nth-child(2),tbody td:nth-child(3){text-align:left;}tfoot td:first-child{text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Reporte Nómina - ${_escRH(nomina.concepto)}</title><style>${css}</style></head><body><div class="wrap">
       <div class="membrete"><div><h1>${_escRH(empresa)}</h1><p>RIF: ${_escRH(rif)} · ${_escRH(dir)}</p></div></div>
       <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
@@ -1364,9 +1360,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         <h2 style="font-size:14px;margin-bottom:4px">Reporte de Nómina — ${_escRH(nomina.concepto)}</h2>
         <p style="font-size:10px;color:#6b7280;margin-bottom:12px">${_escRH(nomina.mes)} · ${_escRH(nomina.quincena)} · Fecha de pago ${_escRH(contDd(nomina.fechaPago))} · Tasa ${_escRH(nomina.tasa)}</p>
         <table>
-          <thead><tr><th>Trabajador</th><th>Departamento</th><th>Asignaciones $</th><th>Deducciones $</th><th>Neto $</th><th>Neto Bs.</th></tr></thead>
-          <tbody>${detalles.map(d=>`<tr><td>${_escRH(d.trabajadorNombre)}</td><td>${_escRH(nombreDepto(d.departamentoId))}</td><td>$${formatNum(d.totalAsignacionesUSD)}</td><td>-$${formatNum(d.totalDeduccionesUSD)}</td><td>$${formatNum(d.netoUSD)}</td><td>${formatNum(d.netoBs)}</td></tr>`).join('')}</tbody>
-          <tfoot><tr><td colspan="2">TOTALES · ${detalles.length} trabajador(es)</td><td>$${formatNum(totAsigUSD)}</td><td>-$${formatNum(totDedUSD)}</td><td>$${formatNum(totNetoUSD)}</td><td>${formatNum(totNetoBs)}</td></tr></tfoot>
+          <thead><tr><th>Trabajador</th><th>Cargo</th><th>Departamento</th><th>Asignaciones $</th><th>Deducciones $</th><th>Neto $</th><th>Neto Bs.</th></tr></thead>
+          <tbody>${detalles.map(d=>`<tr><td>${_escRH(d.trabajadorNombre)}</td><td>${_escRH(cargoDeDetalle(d)||'—')}</td><td>${_escRH(nombreDepto(d.departamentoId))}</td><td>$${formatNum(d.totalAsignacionesUSD)}</td><td>-$${formatNum(d.totalDeduccionesUSD)}</td><td>$${formatNum(d.netoUSD)}</td><td>${formatNum(d.netoBs)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td colspan="3">TOTALES · ${detalles.length} trabajador(es)</td><td>$${formatNum(totAsigUSD)}</td><td>-$${formatNum(totDedUSD)}</td><td>$${formatNum(totNetoUSD)}</td><td>${formatNum(totNetoBs)}</td></tr></tfoot>
         </table>
       </div>
     </div></body></html>`;
@@ -1435,7 +1431,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         </div>
         <div class="grid">
           ${box('Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']])}
-          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
+          ${box('Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Cargo',t.cargo],['Tabulador',escalaDe(t)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]])}
           ${box('Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]])}
           ${box(`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];}))}
           ${box('Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]])}
@@ -1519,9 +1515,63 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       </div>
       <div className="flex-1 overflow-y-auto bg-gray-50">
 
-      {rhTab==='config' && (
+      {rhTab==='config' && (()=>{
+        const cfgH = configBeneficios.hcm, cfgB = configBeneficios.bolsa;
+        const setH = (p)=>setConfigBeneficios(c=>({...c,hcm:{...c.hcm,...p}}));
+        const setB = (p)=>setConfigBeneficios(c=>({...c,bolsa:{...c.bolsa,...p}}));
+        const inpCls = "w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right";
+        const lblCls = "text-[9px] font-black text-gray-500 uppercase block mb-1";
+        const pctEmp = Math.max(0, benR2(100 - benNum(cfgH.pctTrabajador)));
+        const subsidioU = benR2(benNum(cfgB.costoBolsa) - benNum(cfgB.descuentoBolsa));
+        // Selector de cuenta del Plan de Cuentas (se llama como función, no como componente, para no perder el foco al escribir)
+        const selectorCuenta = (clave, etiqueta, codigo, nombre, alElegir, alQuitar) => {
+          const q = busqCuentaBen[clave]||'';
+          const coincidencias = q ? planCuentasRH.filter(c=>(c.codigo||'').includes(q)||(c.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,15) : [];
+          return (
+            <div>
+              <label className={lblCls}>{etiqueta}</label>
+              {codigo ? (
+                <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-2">
+                  <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{codigo}</span>{nombre}</span>
+                  <button onClick={alQuitar} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+                </div>
+              ) : (
+                <>
+                  <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  {q && (
+                    <div className="border-2 border-gray-100 rounded-xl max-h-36 overflow-y-auto mt-1.5">
+                      {coincidencias.map(c=>(
+                        <div key={c.id} onClick={()=>{alElegir(c);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
+                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
+                        </div>
+                      ))}
+                      {coincidencias.length===0 && <div className="px-3 py-3 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        };
+        // Cuenta de gasto/costo del aporte de la empresa (HCM) según el centro de costo del trabajador
+        const gastoDe = (centroId) => (cfgH.gastoPorCentro||{})[centroId] || null;
+        const setGastoCentro = (centroId, cuenta) => {
+          const nuevo = {...(cfgH.gastoPorCentro||{})};
+          if(cuenta) nuevo[centroId] = {codigo:cuenta.codigo, nombre:cuenta.nombre}; else delete nuevo[centroId];
+          setH({gastoPorCentro:nuevo});
+        };
+        const centrosSinGasto = centros.filter(c=>!(gastoDe(c.id)&&gastoDe(c.id).codigo));
+        const subTabsCfg = [['estructura','Centro de Costo y Departamento'],['tabulador','Tabulador de Sueldos y Cargos'],['hcm','HCM'],['bolsa','Bolsa de alimentos']];
+        return (
       <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="flex flex-wrap gap-2 mb-4">
+          {subTabsCfg.map(([id,label])=>(
+            <button key={id} onClick={()=>setCfgSub(id)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${cfgSub===id?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>{label}</button>
+          ))}
+        </div>
+
+        {cfgSub==='estructura' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
             <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">1. Centro de Costo</h3>
@@ -1571,82 +1621,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             )}
           </div>
 
-          <div className="bg-white rounded-2xl border border-gray-200 p-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. Cuentas de Nómina {deptoSel?`(${deptoSel.nombre})`:''}</h3>
-            {!deptoSel ? <p className="text-xs text-gray-400 text-center py-10">Selecciona un departamento</p> : (
-              <>
-                <p className="text-[9px] font-black text-emerald-600 uppercase mt-2 mb-1">Asignaciones</p>
-                <div className="space-y-1 mb-3">
-                  {asignaciones.length===0 && <p className="text-[10px] text-gray-400 py-2">Ninguna todavía</p>}
-                  {asignaciones.map(c=>(
-                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
-                      <span className="text-gray-700 font-bold">{c.concepto}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-emerald-600 font-black">{c.codigoCuenta}</span>
-                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[9px] font-black text-red-500 uppercase mb-1">Deducciones</p>
-                <div className="space-y-1 mb-3">
-                  {deducciones.length===0 && <p className="text-[10px] text-gray-400 py-2">Ninguna todavía</p>}
-                  {deducciones.map(c=>(
-                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
-                      <span className="text-gray-700 font-bold">{c.concepto}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-red-500 font-black">{c.codigoCuenta}</span>
-                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-[9px] font-black text-amber-600 uppercase mb-1">Cargas Patronales ({centroSel?.naturaleza||'Gasto'})</p>
-                <div className="space-y-1 mb-3">
-                  {cuentasDelDepto.filter(c=>c.tipo==='patronal').length===0 && <p className="text-[10px] text-gray-400 py-2">Sin configurar — el aporte patronal no se contabilizará</p>}
-                  {cuentasDelDepto.filter(c=>c.tipo==='patronal').map(c=>(
-                    <div key={c.id} className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-50 group text-[11px]">
-                      <span className="text-gray-700 font-bold">{c.concepto}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-amber-600 font-black">{c.codigoCuenta}</span>
-                        <button onClick={()=>eliminarLinea(c)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="border-t border-gray-100 pt-3 space-y-2">
-                  <div className="flex gap-1">
-                    {['asignacion','deduccion','patronal'].map(t=>(
-                      <button key={t} onClick={()=>setNuevaLinea(l=>({...l,tipo:t,concepto:'',conceptoOtro:''}))} className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase border ${nuevaLinea.tipo===t?'bg-gray-900 text-white border-gray-900':'text-gray-500 border-gray-200'}`}>{t==='asignacion'?'Asignación':t==='deduccion'?'Deducción':'Patronal'}</button>
-                    ))}
-                  </div>
-                  <select value={nuevaLinea.concepto} onChange={e=>setNuevaLinea(l=>({...l,concepto:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                    <option value="">— Elige un concepto —</option>
-                    {CONCEPTOS_NOMINA[nuevaLinea.tipo].map(c=><option key={c} value={c}>{c}</option>)}
-                  </select>
-                  {nuevaLinea.concepto==='Otro (escribir)' && (
-                    <input value={nuevaLinea.conceptoOtro} onChange={e=>setNuevaLinea(l=>({...l,conceptoOtro:e.target.value}))} placeholder="Escribe el concepto..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  )}
-                  <input value={busqCuenta} onChange={e=>setBusqCuenta(e.target.value)} placeholder="Buscar cuenta contable a asociar..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  {busqCuenta && (
-                    <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto">
-                      {planCuentasRH.filter(c=>(c.codigo||'').includes(busqCuenta)||(c.nombre||'').toUpperCase().includes(busqCuenta.toUpperCase())).slice(0,15).map(c=>(
-                        <div key={c.id} onClick={()=>asociarCuenta(c)} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
-                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-
         </div>
+        )}
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-4 mt-4">
+        {cfgSub==='tabulador' && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase">4. Tabulador de Sueldos y Cargos</h3>
+            <h3 className="text-[10px] font-black text-gray-400 uppercase">Tabulador de Sueldos y Cargos</h3>
             <button onClick={()=>{
               const filas=tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||''));
               const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
@@ -1672,7 +1653,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               const w=window.open('','_blank','width=700,height=800'); if(w){w.document.write(html);w.document.close();}
             }} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
           </div>
-          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Cargo sale de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto.</p>
+          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Tabulador se elige de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto. El Cargo que sale en el recibo de pago y en los reportes se escribe aparte, en la ficha del trabajador.</p>
           <div className="border border-gray-200 rounded-xl overflow-hidden mb-3">
             <div className="grid grid-cols-[1fr_140px_56px] bg-gray-900 text-cyan-400 text-[9px] font-black uppercase">
               <div className="px-3 py-2">Cargo</div>
@@ -1701,9 +1682,106 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <button onClick={agregarCargoTab} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
           </div>
         </div>
+        )}
+
+        {cfgSub==='hcm' && (
+        <>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase">1. HCM — Medicina prepagada</h3>
+              <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgH.activo!==false} onChange={e=>setH({activo:e.target.checked})}/> Automático en nómina</label>
+            </div>
+            <p className="text-[10px] text-gray-400 mb-4">Aporte mensual = % del trabajador × (prima por persona × personas cubiertas: titular + cargas con HCM). Se descuenta en las cuotas (pagos) del mes.</p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div><label className={lblCls}>Prima mensual por persona ($)</label><input type="number" step="0.01" min="0" value={cfgH.primaPersona} onChange={e=>setH({primaPersona:e.target.value})} className={inpCls}/></div>
+              <div><label className={lblCls}>% que paga el trabajador</label><input type="number" step="0.1" min="0" max="100" value={cfgH.pctTrabajador} onChange={e=>setH({pctTrabajador:e.target.value})} className={inpCls}/><p className="text-[9px] text-gray-400 mt-1 text-right">Empresa: {formatNum(pctEmp)} %</p></div>
+              <div><label className={lblCls}>Cuotas (pagos) por mes</label><input type="number" step="1" min="1" value={cfgH.cuotasPorMes} onChange={e=>setH({cuotasPorMes:e.target.value})} className={inpCls}/></div>
+              <div><label className={lblCls}>Edad máxima de hijos (años)</label><input type="number" step="1" min="1" value={cfgH.edadMaxHijos} onChange={e=>setH({edadMaxHijos:e.target.value})} className={inpCls}/></div>
+            </div>
+            <div><label className={lblCls}>Código del concepto de nómina</label><input value={cfgH.codigoConcepto} onChange={e=>setH({codigoConcepto:e.target.value})} placeholder="24000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cuentas contables</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Cada nómina acredita la cuenta por cobrar (lo descontado al trabajador y el aporte de la empresa). Al cierre del mes esa cuenta se cierra contra la cuenta de pasivo.</p>
+            <div className="space-y-3 mb-4">
+              {selectorCuenta('hcmPasivo','Cuenta por cobrar (se acredita en cada nómina)',cfgH.codigoPasivo,cfgH.nombrePasivo,(c)=>setH({codigoPasivo:c.codigo,nombrePasivo:c.nombre}),()=>setH({codigoPasivo:'',nombrePasivo:''}))}
+              {selectorCuenta('hcmCierre','Cuenta de pasivo (cierre de mes)',cfgH.codigoPasivoCierre,cfgH.nombrePasivoCierre,(c)=>setH({codigoPasivoCierre:c.codigo,nombrePasivoCierre:c.nombre}),()=>setH({codigoPasivoCierre:'',nombrePasivoCierre:''}))}
+            </div>
+            <p className="text-[9px] font-black text-gray-500 uppercase mb-2 pt-3 border-t border-gray-100">Gasto del aporte de la empresa, según el centro de costo del trabajador</p>
+            {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
+            <div className="space-y-3">
+              {centros.map(c=>{ const g = gastoDe(c.id); return (
+                <div key={c.id}>{selectorCuenta('hcmGasto:'+c.id, c.nombre+' ('+(c.naturaleza||'Gasto')+')', g?g.codigo:'', g?g.nombre:'', (cu)=>setGastoCentro(c.id,cu), ()=>setGastoCentro(c.id,null))}</div>
+              ); })}
+            </div>
+            {centros.length>0 && !cfgH.codigoGasto && centrosSinGasto.length>0 && (
+              <p className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5 mt-3">Falta la cuenta de: {centrosSinGasto.map(c=>c.nombre).join(', ')}. El aporte de la empresa de esos trabajadores saldrá "sin cuenta configurada" en el asiento.</p>
+            )}
+            {cfgH.codigoGasto && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                {selectorCuenta('hcmGasto','Cuenta de gasto general (anterior): solo para centros sin cuenta propia',cfgH.codigoGasto,cfgH.nombreGasto,(c)=>setH({codigoGasto:c.codigo,nombreGasto:c.nombre}),()=>setH({codigoGasto:'',nombreGasto:''}))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. Así queda con esta configuración</h3>
+            <table className="w-full text-[11px]">
+              <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Personas</th><th className="text-right font-black">Prima/mes</th><th className="text-right font-black">Trabajador/mes</th><th className="text-right font-black">Empresa/mes</th><th className="text-right font-black">Trabajador/pago</th></tr></thead>
+              <tbody>
+                {[1,2,3,4,5,6,7].map(n=>{
+                  const prima = benR2(n*benNum(cfgH.primaPersona));
+                  const tr = benR2(prima*Math.min(100,Math.max(0,benNum(cfgH.pctTrabajador)))/100);
+                  const cm = parseInt(cfgH.cuotasPorMes,10)>0 ? parseInt(cfgH.cuotasPorMes,10) : 4;
+                  return (<tr key={n} className="border-t border-gray-100"><td className="py-1 font-bold">{n}</td><td className="py-1 text-right font-mono">${formatNum(prima)}</td><td className="py-1 text-right font-mono">${formatNum(tr)}</td><td className="py-1 text-right font-mono">${formatNum(prima-tr)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(tr/cm)}</td></tr>);
+                })}
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+        <button onClick={guardarConfigBeneficios} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
+        </>
+        )}
+
+        {cfgSub==='bolsa' && (
+        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-black text-gray-400 uppercase">1. Bolsa de alimentos</h3>
+              <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgB.activo!==false} onChange={e=>setB({activo:e.target.checked})}/> Automático en nómina</label>
+            </div>
+            <p className="text-[10px] text-gray-400 mb-4">Descuento al trabajador = bolsas × descuento por bolsa. La diferencia con el costo es el subsidio de la empresa (informativo).</p>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div><label className={lblCls}>Costo por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.costoBolsa} onChange={e=>setB({costoBolsa:e.target.value})} className={inpCls}/></div>
+              <div><label className={lblCls}>Descuento al trabajador por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.descuentoBolsa} onChange={e=>setB({descuentoBolsa:e.target.value})} className={inpCls}/></div>
+            </div>
+            <p className="text-[10px] font-bold text-cyan-700 bg-cyan-50 rounded-lg px-2.5 py-1.5 mb-3">Subsidio de la empresa por bolsa: ${formatNum(subsidioU)}</p>
+            <div><label className={lblCls}>Código del concepto de nómina</label><input value={cfgB.codigoConcepto} onChange={e=>setB({codigoConcepto:e.target.value})} placeholder="22000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cuentas contables</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Cada nómina acredita la cuenta por cobrar con el descuento al trabajador. Al cierre del mes esa cuenta se cierra contra la cuenta de pasivo.</p>
+            <div className="space-y-3">
+              {selectorCuenta('bolsaCuenta','Cuenta por cobrar (se acredita en cada nómina)',cfgB.codigoCuenta,cfgB.nombreCuenta,(c)=>setB({codigoCuenta:c.codigo,nombreCuenta:c.nombre}),()=>setB({codigoCuenta:'',nombreCuenta:''}))}
+              {selectorCuenta('bolsaCierre','Cuenta de pasivo (cierre de mes)',cfgB.codigoPasivoCierre,cfgB.nombrePasivoCierre,(c)=>setB({codigoPasivoCierre:c.codigo,nombrePasivoCierre:c.nombre}),()=>setB({codigoPasivoCierre:'',nombrePasivoCierre:''}))}
+            </div>
+          </div>
+
+        </div>
+        <button onClick={guardarConfigBeneficios} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
+        </>
+        )}
 
       </div>
-      )}
+        );
+      })()}
 
       {rhTab==='parafiscales' && (
       <div className="p-6">
@@ -1809,43 +1887,6 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       )}
 
       {rhTab==='beneficios' && (()=>{
-        const cfgH = configBeneficios.hcm, cfgB = configBeneficios.bolsa;
-        const setH = (p)=>setConfigBeneficios(c=>({...c,hcm:{...c.hcm,...p}}));
-        const setB = (p)=>setConfigBeneficios(c=>({...c,bolsa:{...c.bolsa,...p}}));
-        const inpCls = "w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right";
-        const lblCls = "text-[9px] font-black text-gray-500 uppercase block mb-1";
-        const pctEmp = Math.max(0, benR2(100 - benNum(cfgH.pctTrabajador)));
-        const subsidioU = benR2(benNum(cfgB.costoBolsa) - benNum(cfgB.descuentoBolsa));
-        // Selector de cuenta del Plan de Cuentas (se llama como función, no como componente, para no perder el foco al escribir)
-        const selectorCuenta = (clave, etiqueta, codigo, nombre, alElegir, alQuitar) => {
-          const q = busqCuentaBen[clave]||'';
-          const coincidencias = q ? planCuentasRH.filter(c=>(c.codigo||'').includes(q)||(c.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,15) : [];
-          return (
-            <div>
-              <label className={lblCls}>{etiqueta}</label>
-              {codigo ? (
-                <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-2">
-                  <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{codigo}</span>{nombre}</span>
-                  <button onClick={alQuitar} className="text-red-400 hover:text-red-600"><X size={14}/></button>
-                </div>
-              ) : (
-                <>
-                  <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                  {q && (
-                    <div className="border-2 border-gray-100 rounded-xl max-h-36 overflow-y-auto mt-1.5">
-                      {coincidencias.map(c=>(
-                        <div key={c.id} onClick={()=>{alElegir(c);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-2 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px]">
-                          <span className="font-mono font-black text-cyan-700">{c.codigo}</span> <span className="text-gray-700 uppercase">{c.nombre}</span>
-                        </div>
-                      ))}
-                      {coincidencias.length===0 && <div className="px-3 py-3 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          );
-        };
         // Resumen del mes con los trabajadores registrados en la app
         const activosB = trabajadores.filter(t=>t.estado!=='Egresado');
         const filasHcm = activosB.map(t=>({t, c:hcmCalcularMes(t, benMesVer, configBeneficios)})).filter(x=>x.c.personas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
@@ -1853,63 +1894,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         const sumF = (arr, f)=>benR2(arr.reduce((s,x)=>s+f(x),0));
         return (
         <div className="p-6 space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="flex items-center justify-between mb-1">
-                <p className="font-black text-gray-800">HCM — Medicina prepagada</p>
-                <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgH.activo!==false} onChange={e=>setH({activo:e.target.checked})}/> Automático en nómina</label>
-              </div>
-              <p className="text-[10px] text-gray-400 mb-4">Aporte mensual = % del trabajador × (prima por persona × personas cubiertas: titular + cargas con HCM). Se descuenta en las cuotas (pagos) del mes.</p>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div><label className={lblCls}>Prima mensual por persona ($)</label><input type="number" step="0.01" min="0" value={cfgH.primaPersona} onChange={e=>setH({primaPersona:e.target.value})} className={inpCls}/></div>
-                <div><label className={lblCls}>% que paga el trabajador</label><input type="number" step="0.1" min="0" max="100" value={cfgH.pctTrabajador} onChange={e=>setH({pctTrabajador:e.target.value})} className={inpCls}/><p className="text-[9px] text-gray-400 mt-1 text-right">Empresa: {formatNum(pctEmp)} %</p></div>
-                <div><label className={lblCls}>Cuotas (pagos) por mes</label><input type="number" step="1" min="1" value={cfgH.cuotasPorMes} onChange={e=>setH({cuotasPorMes:e.target.value})} className={inpCls}/></div>
-                <div><label className={lblCls}>Edad máxima de hijos (años)</label><input type="number" step="1" min="1" value={cfgH.edadMaxHijos} onChange={e=>setH({edadMaxHijos:e.target.value})} className={inpCls}/></div>
-              </div>
-              <div className="mb-3"><label className={lblCls}>Código del concepto de nómina</label><input value={cfgH.codigoConcepto} onChange={e=>setH({codigoConcepto:e.target.value})} placeholder="24000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
-              <div className="space-y-3 mb-4">
-                {selectorCuenta('hcmPasivo','Cuenta de pasivo (HCM por pagar: lo descontado + aporte de la empresa)',cfgH.codigoPasivo,cfgH.nombrePasivo,(c)=>setH({codigoPasivo:c.codigo,nombrePasivo:c.nombre}),()=>setH({codigoPasivo:'',nombrePasivo:''}))}
-                {selectorCuenta('hcmGasto','Cuenta de gasto (aporte de la empresa)',cfgH.codigoGasto,cfgH.nombreGasto,(c)=>setH({codigoGasto:c.codigo,nombreGasto:c.nombre}),()=>setH({codigoGasto:'',nombreGasto:''}))}
-              </div>
-              <div className="bg-gray-50 rounded-xl p-3">
-                <p className="text-[9px] font-black text-gray-400 uppercase mb-2">Así queda con esta configuración</p>
-                <table className="w-full text-[11px]">
-                  <thead><tr className="text-gray-400 text-[9px] uppercase"><th className="text-left font-black">Personas</th><th className="text-right font-black">Prima/mes</th><th className="text-right font-black">Trabajador/mes</th><th className="text-right font-black">Empresa/mes</th><th className="text-right font-black">Trabajador/pago</th></tr></thead>
-                  <tbody>
-                    {[1,2,3,4,5,6,7].map(n=>{
-                      const prima = benR2(n*benNum(cfgH.primaPersona));
-                      const tr = benR2(prima*Math.min(100,Math.max(0,benNum(cfgH.pctTrabajador)))/100);
-                      const cm = parseInt(cfgH.cuotasPorMes,10)>0 ? parseInt(cfgH.cuotasPorMes,10) : 4;
-                      return (<tr key={n} className="border-t border-gray-100"><td className="py-1 font-bold">{n}</td><td className="py-1 text-right font-mono">${formatNum(prima)}</td><td className="py-1 text-right font-mono">${formatNum(tr)}</td><td className="py-1 text-right font-mono">${formatNum(prima-tr)}</td><td className="py-1 text-right font-mono font-black text-cyan-600">${formatNum(tr/cm)}</td></tr>);
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="flex items-center justify-between mb-1">
-                <p className="font-black text-gray-800">Bolsa de alimentos</p>
-                <label className="flex items-center gap-1.5 text-[10px] font-black text-gray-500 uppercase cursor-pointer"><input type="checkbox" checked={cfgB.activo!==false} onChange={e=>setB({activo:e.target.checked})}/> Automático en nómina</label>
-              </div>
-              <p className="text-[10px] text-gray-400 mb-4">Descuento al trabajador = bolsas × descuento por bolsa. La diferencia con el costo es el subsidio de la empresa (informativo).</p>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div><label className={lblCls}>Costo por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.costoBolsa} onChange={e=>setB({costoBolsa:e.target.value})} className={inpCls}/></div>
-                <div><label className={lblCls}>Descuento al trabajador por bolsa ($)</label><input type="number" step="0.01" min="0" value={cfgB.descuentoBolsa} onChange={e=>setB({descuentoBolsa:e.target.value})} className={inpCls}/></div>
-              </div>
-              <p className="text-[10px] font-bold text-cyan-700 bg-cyan-50 rounded-lg px-2.5 py-1.5 mb-3">Subsidio de la empresa por bolsa: ${formatNum(subsidioU)}</p>
-              <div className="mb-3"><label className={lblCls}>Código del concepto de nómina</label><input value={cfgB.codigoConcepto} onChange={e=>setB({codigoConcepto:e.target.value})} placeholder="22000" className="w-40 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/></div>
-              {selectorCuenta('bolsaCuenta','Cuenta contable del descuento (crédito)',cfgB.codigoCuenta,cfgB.nombreCuenta,(c)=>setB({codigoCuenta:c.codigo,nombreCuenta:c.nombre}),()=>setB({codigoCuenta:'',nombreCuenta:''}))}
-            </div>
-          </div>
-
-          <button onClick={guardarConfigBeneficios} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
-
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <div className="flex items-center justify-between mb-3">
               <p className="font-black text-gray-800">Resumen del mes con los trabajadores registrados</p>
               <input type="month" value={benMesVer} onChange={e=>setBenMesVer(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/>
             </div>
+            <p className="text-[10px] text-gray-400 mb-3">La configuración de HCM y Bolsa de alimentos está en Configuración.</p>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div>
                 <p className="text-[10px] font-black text-gray-400 uppercase mb-2">HCM — {filasHcm.length} titular(es) · {sumF(filasHcm,x=>x.c.personas)} persona(s)</p>
@@ -2207,7 +2197,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
-                    <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Departamento</th>
+                    <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Cargo</th><th className="text-left py-2 px-3">Departamento</th>
                     <th className="text-right py-2 px-3">Asig. $</th><th className="text-right py-2 px-3">Ded. $</th>
                     <th className="text-right py-2 px-3">Neto $</th><th className="text-center py-2 px-3 w-10">PDF</th>
                   </tr></thead>
@@ -2215,6 +2205,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     {detalles.map((d,i)=>(
                       <tr key={d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
                         <td className="py-1.5 px-3 font-bold">{d.trabajadorNombre}</td>
+                        <td className="py-1.5 px-3 text-gray-500">{cargoDeDetalle(d)||'—'}</td>
                         <td className="py-1.5 px-3 text-gray-500">{nombreDepto(d.departamentoId)}</td>
                         <td className="py-1.5 px-3 text-right font-mono">${formatNum(d.totalAsignacionesUSD)}</td>
                         <td className="py-1.5 px-3 text-right font-mono text-red-500">-${formatNum(d.totalDeduccionesUSD)}</td>
@@ -2222,10 +2213,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                         <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(d,repNominaSel)} className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
                       </tr>
                     ))}
-                    {detalles.length===0 && <tr><td colSpan={6} className="py-8 text-center text-gray-400">Ningún trabajador cargado en esta nómina.</td></tr>}
+                    {detalles.length===0 && <tr><td colSpan={7} className="py-8 text-center text-gray-400">Ningún trabajador cargado en esta nómina.</td></tr>}
                   </tbody>
                   {detalles.length>0 && <tfoot><tr className="bg-gray-100 font-black">
-                    <td colSpan={2} className="py-2 px-3 uppercase text-[10px]">Totales ({detalles.length})</td>
+                    <td colSpan={3} className="py-2 px-3 uppercase text-[10px]">Totales ({detalles.length})</td>
                     <td className="py-2 px-3 text-right font-mono">${formatNum(totalAsigUSD)}</td>
                     <td className="py-2 px-3 text-right font-mono text-red-500">-${formatNum(totalDedUSD)}</td>
                     <td className="py-2 px-3 text-right font-mono text-cyan-700">${formatNum(totalNetoUSD)}</td>
@@ -2857,16 +2848,24 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     {deptosDisponibles.map(d=><option key={d.id} value={d.id}>{d.nombre}</option>)}
                   </select>
                   {tabuladorCargos.length>0 ? (
-                    <select value={f.cargo} onChange={e=>{
-                      const ct=tabuladorCargos.find(c=>c.cargo===e.target.value);
-                      set({cargo:e.target.value, salarioBase: ct ? String(ct.salarioBase) : f.salarioBase});
-                    }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                      <option value="">— Cargo —</option>
-                      {tabuladorCargos.map(c=><option key={c.id} value={c.cargo}>{c.cargo} · ${formatNum(c.salarioBase)}</option>)}
-                    </select>
+                    <div>
+                      <label className="text-[9px] font-black text-gray-400 uppercase block mb-1 ml-1">Tabulador · escala salarial (salario para elaborar la nómina)</label>
+                      <select value={f.escalaSalarial||''} onChange={e=>{
+                        const ct=tabuladorCargos.find(c=>c.cargo===e.target.value);
+                        set({escalaSalarial:e.target.value, salarioBase: ct ? String(ct.salarioBase) : f.salarioBase});
+                      }} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                        <option value="">— Tabulador —</option>
+                        {f.escalaSalarial && !tabuladorCargos.some(c=>c.cargo===f.escalaSalarial) && <option value={f.escalaSalarial}>{f.escalaSalarial} (ya no está en el tabulador)</option>}
+                        {tabuladorCargos.map(c=><option key={c.id} value={c.cargo}>{c.cargo} · ${formatNum(c.salarioBase)}</option>)}
+                      </select>
+                    </div>
                   ) : (
-                    <input value={f.cargo} onChange={e=>set({cargo:e.target.value})} placeholder="Cargo (configura el Tabulador de Sueldos en Configuración para elegir de una lista)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                    <p className="text-[9px] text-gray-400 ml-1">Configura el Tabulador de Sueldos y Cargos en Configuración para elegir de una lista.</p>
                   )}
+                  <div>
+                    <label className="text-[9px] font-black text-gray-400 uppercase block mb-1 ml-1">Cargo (el que sale en el recibo de pago y en los reportes)</label>
+                    <input value={f.cargo||''} onChange={e=>set({cargo:e.target.value})} placeholder="Escribe el cargo del trabajador" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <input type="date" value={f.fechaIngreso} onChange={e=>set({fechaIngreso:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
                     <select value={f.tipoContrato} onChange={e=>set({tipoContrato:e.target.value})} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Indefinido</option><option>Determinado</option><option>Obra o labor</option></select>
@@ -3051,7 +3050,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <button onClick={()=>setTrabajadorVer(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a la lista</button>
               <div className="flex gap-2">
                 <button onClick={()=>exportarFichaPDF(t)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100"><FileText size={13}/> PDF</button>
-                <button onClick={()=>setTrabajadorForm({...initTrabajador(), ...t})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit size={13}/> Editar</button>
+                <button onClick={()=>setTrabajadorForm({...initTrabajador(), ...t, escalaSalarial:escalaDe(t)})} className="flex items-center gap-1.5 bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-blue-100"><Edit size={13}/> Editar</button>
                 <button onClick={()=>eliminarTrabajador(t)} className="flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-red-100"><Trash2 size={13}/> Eliminar</button>
               </div>
             </div>
@@ -3071,7 +3070,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
                   ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
-                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
+                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Cargo',t.cargo],['Tabulador',escalaDe(t)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
                   ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
                   [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];})],
                   ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
@@ -16558,10 +16557,10 @@ const SYSTEM_MODULES = [
     label: '13. MÓDULO RRHH',
     icon: '🧑‍💼',
     submodules: [
-      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Cuentas)' },
+      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Tabulador, HCM, Bolsa de alimentos)' },
       { id: 'rrhh_nomina',        label: 'Registro de Nómina' },
       { id: 'rrhh_parafiscales',  label: 'Parafiscales (IVSS, RPE, FAOV, INCES)' },
-      { id: 'rrhh_beneficios',    label: 'Beneficios (HCM, Bolsa de alimentos)' },
+      { id: 'rrhh_beneficios',    label: 'Beneficios (reportes de HCM y Bolsa de alimentos)' },
       { id: 'rrhh_conceptos',     label: 'Conceptos de Nómina' },
       { id: 'rrhh_trabajadores',  label: 'Trabajadores (Fichas)' },
     ]
@@ -30750,18 +30749,29 @@ thead tr{background:#1f2937;color:#fff}th,td{border:1px solid #000;padding:6px 8
                       });
                       const dedupItems = Object.values(dedupMap);
                       // Group by category
-                      const CAT_ORDER = ['Materia Prima','Semielaborados','Productos Terminados','Cintas','Stretch Film','Papel Kraft','Dispensadores','Bolsas Plásticas','Termoencogibles','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                      const CAT_ORDER = ['Materia Prima','Semielaborados','Productos Terminados','Cintas','Stretch Film','Papel Kraft','Dispensadores','Bolsas Plásticas','Termoencogibles','Fleje','Pigmentos','Tintas','Químicos','Consumibles','Herramientas','Seguridad Industrial','Otros'];
                       const catGroups = {};
+                      // Variantes de mayúsculas/acentos de una misma categoría (p.ej. 'FLEJE' y 'Fleje') van en un solo grupo
+                      const _kc = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+                      const _etq = {};
+                      CAT_ORDER.forEach(c=>{ _etq[_kc(c)] = c; });
                       dedupItems.forEach(i=>{
                         const sub = getItemSubcategory(i);
-                        const cat = i.category==='Productos Terminados' && sub ? sub : (i.category||'Otros');
+                        let cat = i.category==='Productos Terminados' && sub ? sub : (i.category||'Otros');
+                        const kc = _kc(cat);
+                        if(!_etq[kc]) _etq[kc] = cat;
+                        cat = _etq[kc];
                         if(!catGroups[cat]) catGroups[cat]=[];
                         catGroups[cat].push(i);
                       });
                       // Also add FG from finishedGoodsInventory grouped by tipo
                       const fgBolsas = (finishedGoodsInventory||[]).filter(fg=>fg.tipoProducto!=='TERMOENCOGIBLE' && parseNum(fg.millares)>0);
                       const fgTermos = (finishedGoodsInventory||[]).filter(fg=>fg.tipoProducto==='TERMOENCOGIBLE' && parseNum(fg.kgProducidos)>0);
-                      const sortedCats = CAT_ORDER.filter(c=>catGroups[c]?.length>0);
+                      const sortedCats = [
+                        ...CAT_ORDER.filter(c=>catGroups[c]?.length>0),
+                        // Cualquier otra categoría con artículos (Empaques Flexibles, etc.) también se muestra, al final
+                        ...Object.keys(catGroups).filter(c=>!CAT_ORDER.includes(c) && catGroups[c]?.length>0).sort((a,b)=>a.localeCompare(b))
+                      ];
                       return (
                         <select value={osaItemForm.itemId} onChange={e=>setOsaItemForm(f=>({...f,itemId:e.target.value}))}
                           className="w-full border-2 border-gray-200 rounded-xl p-2.5 text-xs font-bold uppercase outline-none focus:border-orange-400 bg-white">
