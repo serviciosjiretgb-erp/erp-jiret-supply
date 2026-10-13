@@ -302,7 +302,8 @@ const benEditarMontoBs = (l, textoBs, tasa) => {
 // Al importar se lee ESE mismo formato: el codigo de cada cuenta debe existir de verdad en el Plan de Cuentas (se guarda con el nombre real del plan,
 // no con el texto del Excel) y, si hay cualquier error, no se importa nada. Son funciones puras (sin React) para poder probarlas aparte.
 const rhNorm = (s) => String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
-const rhTxt = (v) => (v==null || v instanceof Date) ? '' : String(v);
+const rhEsErrorCelda = (v) => v!=null && typeof v==='object' && !(v instanceof Date) && 'errorExcel' in v; // celda con error de Excel (#NAME?, #N/A...)
+const rhTxt = (v) => (v==null || v instanceof Date || rhEsErrorCelda(v)) ? '' : String(v);
 const rhCodigoCuenta = (v) => rhTxt(v).replace(/\s+/g,'');
 // Valor "plano" de una celda de ExcelJS (texto con formato, formula, hipervinculo...)
 const rhCeldaValor = (v) => {
@@ -405,10 +406,12 @@ const rhConceptosAnalizar = (filas, ctx) => {
   resto.forEach(f=>{
     const c = (f && f.c) || [];
     if(idxDatos.every(i=>vacia(c[i]))) return; // fila en blanco
-    const g = (campo) => (cols[campo]!=null ? c[cols[campo]] : undefined);
+    const g = (campo) => { const v = cols[campo]!=null ? c[cols[campo]] : undefined; return rhEsErrorCelda(v) ? undefined : v; };
     const fila = { n:f.n, codigo:'', nombre:'', estado:'igual', errores:[], avisos:[], cambios:[], ex:null, patch:null, nuevo:null, st:{ verif:0, nuevas:0, camb:0, quit:0, nom:0 } };
     // una fecha en una celda de texto (código, nombre, tipo, fórmula, formato o cuenta) casi seguro es un error de Excel: no se adivina, se avisa
     idxTexto.forEach(i=>{ if(c[i] instanceof Date) fila.errores.push(`La celda de «${titulo(i)}» tiene una fecha en vez de un texto; revísala.`); });
+    // una celda con error de Excel (por ejemplo «#NAME?» al escribir una fórmula que empieza con «=») se leería como vacía y borraría el dato: no se adivina, se avisa
+    idxDatos.forEach(i=>{ if(rhEsErrorCelda(c[i])) fila.errores.push(`La celda de «${titulo(i)}» tiene un error de Excel (${c[i].errorExcel}). Si escribiste una fórmula que empieza con «=», escríbela como texto, sin el signo =.`); });
     // codigo
     const rawCod = g('codigo');
     let codigo = rhTxt(rawCod).trim().toUpperCase();
@@ -458,6 +461,15 @@ const rhConceptosAnalizar = (filas, ctx) => {
       else if(v!==undefined) vals[k] = v;
     });
     ['formula','formato'].forEach(k=>{ if(cols[k]!=null) vals[k] = rhTxt(g(k)); });
+    // Fórmula real: si en el Excel se escribió o se cambió, tiene que estar bien escrita (el texto viejo con llaves { } se acepta como siempre)
+    if(vals.formula!==undefined){
+      const ft = String(vals.formula).trim();
+      if(ft && !rfTieneLlaves(ft) && ft!==rhTxt(ex&&ex.formula).trim()){
+        const inf = rfInfoFormula(ft, { parametros:(ctx&&ctx.parametros)||{}, conceptos, codigoActual:codigo });
+        if(!inf.ok) fila.errores.push(`Fórmula «${ft}»: ${inf.error || inf.errores[0]}`);
+        else inf.avisos.forEach(t=>fila.avisos.push(`Fórmula: ${t}`));
+      }
+    }
     // cuentas contables por centro de costo: tienen que existir de verdad en el Plan de Cuentas
     const deseadas = {}; // idCentro -> {codigo,nombre} | null (celda vacia = quitar la cuenta)
     cuentas.forEach(cc=>{
@@ -552,6 +564,367 @@ const rhConceptosAnalizar = (filas, ctx) => {
   return res;
 };
 
+// == RRHH - Fórmulas reales de Conceptos ==
+// La «Fórmula (cálculo)» de un concepto se escribe con paréntesis ( ) y las operaciones + - * /  (la «x» y la «×» también multiplican, «%» divide entre 100 y los
+// decimales van con coma o con punto). Las variables son las de siempre (CE00016, N00001, RF03, CN30000, REF00013...) y su valor lo sigue dando resolverVariableFormula.
+// El texto viejo con llaves { } (Formato en el recibo) sigue calculando igual que antes mientras la Fórmula esté vacía. Son funciones puras (sin React) para poder probarlas aparte.
+const RF_PREFIJOS_PARAM = ['RF','CNR','DFSERIE'];
+const rfTieneLlaves = (s) => /[{}]/.test(String(s==null?'':s));
+// Texto -> lista de piezas. Devuelve {ok, tokens} o {ok:false, error, pos}
+const rfTokenizar = (texto) => {
+  const s = String(texto==null?'':texto);
+  const tokens = [];
+  const reNum = /\d+(?:[.,]\d+)?|[.,]\d+/y, reVar = /[A-Za-z]+\d+/y, reLet = /[A-Za-z]+/y, reRacha = /[\d.,]+/y;
+  const OPS = { '+':'+', '-':'-', '−':'-', '–':'-', '*':'*', '×':'*', '/':'/', '÷':'/' };
+  const fallo = (error, pos) => ({ ok:false, error, pos, tokens });
+  let i = 0;
+  while(i < s.length){
+    const ch = s[i];
+    if(/[\s ​﻿]/.test(ch)){ i++; continue; }
+    reNum.lastIndex = i;
+    let m = reNum.exec(s);
+    if(m){
+      const txt = m[0], fin = i + txt.length;
+      if((s[fin]==='.' || s[fin]===',') && /\d/.test(s[fin+1]||'')){
+        reRacha.lastIndex = i;
+        const racha = reRacha.exec(s)[0].replace(/[.,]+$/,'');
+        return fallo(`El número «${racha}» no es válido: usa una sola coma para los decimales (1,5) y escribe los miles sin separador (1500).`, i);
+      }
+      if(/^[1-9]\d{0,2}[.,]\d{3}$/.test(txt)){
+        const miles = txt.replace(/[.,]/,''), dec = String(parseFloat(txt.replace(',','.'))).replace('.',',');
+        return fallo(`El número «${txt}» es ambiguo (¿${miles} o ${dec}?). Escríbelo como ${miles} o como ${dec}.`, i);
+      }
+      tokens.push({ t:'num', n:parseFloat(txt.replace(',','.')), txt, txtNum:(/^[.,]/.test(txt)?'0':'')+txt.replace('.',','), pos:i });
+      i = fin; continue;
+    }
+    reVar.lastIndex = i;
+    m = reVar.exec(s);
+    if(m){ tokens.push({ t:'var', v:m[0].toUpperCase(), txt:m[0], pos:i }); i += m[0].length; continue; }
+    reLet.lastIndex = i;
+    m = reLet.exec(s);
+    if(m){
+      if(m[0]==='x' || m[0]==='X'){ tokens.push({ t:'op', v:'*', txt:m[0], pos:i }); i += 1; continue; }
+      return fallo(`«${m[0]}» no se entiende en una fórmula: las variables llevan letras y números juntos (por ejemplo CE00016 o RF03) y para multiplicar se usa * (también vale la x).`, i);
+    }
+    if(OPS[ch]){ tokens.push({ t:'op', v:OPS[ch], txt:ch, pos:i }); i++; continue; }
+    if(ch==='%'){ tokens.push({ t:'pct', v:'%', txt:ch, pos:i }); i++; continue; }
+    if(ch==='(' || ch===')'){ tokens.push({ t:'par', v:ch, txt:ch, pos:i }); i++; continue; }
+    if(ch==='{' || ch==='}') return fallo('En la fórmula real se usan paréntesis ( ), no llaves { }. (Las llaves son del texto viejo del «Formato en el recibo».)', i);
+    if(ch==='[' || ch===']') return fallo('Usa paréntesis ( ) en vez de corchetes.', i);
+    if(ch==='=') return fallo('Escribe la fórmula sin el signo = (solo el cálculo, por ejemplo CE00016 * (CE00001 / 30)).', i);
+    if(ch==='^') return fallo('Las potencias (^) no están disponibles; usa multiplicaciones.', i);
+    if(ch===';') return fallo('El punto y coma (;) no se usa en las fórmulas.', i);
+    if(ch===',' || ch==='.') return fallo(`Hay un «${ch}» suelto: los decimales se escriben pegados a los números (1,5).`, i);
+    return fallo(`El carácter «${ch}» no es válido en una fórmula.`, i);
+  }
+  return { ok:true, tokens };
+};
+// Texto -> arbol de la fórmula. Precedencia normal: primero ( ), luego % y signo, luego * y /, al final + y -; de izquierda a derecha.
+// Devuelve {ok:true, ast} o {ok:false, error, pos}
+const rfParsear = (texto) => {
+  const tk = rfTokenizar(texto);
+  if(!tk.ok) return { ok:false, error:tk.error, pos:tk.pos };
+  const T = tk.tokens;
+  if(T.length===0) return { ok:false, error:'', vacio:true, pos:0 };
+  let p = 0;
+  const parar = (error, pos) => { const e = new Error(error); e.rfError = true; e.rfPos = pos; throw e; };
+  const esOp = (t, a, b) => !!t && t.t==='op' && (t.v===a || t.v===b);
+  const parseExpr = () => {
+    let a = parseTermino();
+    while(esOp(T[p], '+', '-')){ const op = T[p++].v; const b = parseTermino(); a = { k:'bin', op, a, b }; }
+    return a;
+  };
+  const parseTermino = () => {
+    let a = parseUnario();
+    while(esOp(T[p], '*', '/')){ const op = T[p++].v; const b = parseUnario(); a = { k:'bin', op, a, b }; }
+    return a;
+  };
+  const parseUnario = () => {
+    const t = T[p];
+    if(esOp(t, '+', '-')){
+      p++;
+      if(esOp(T[p], '+', '-')) parar(`Hay dos signos seguidos («${t.txt}» y «${T[p].txt}»).`, T[p].pos);
+      return { k:(t.v==='-' ? 'neg' : 'pos'), a:parsePostfijo() };
+    }
+    return parsePostfijo();
+  };
+  const parsePostfijo = () => {
+    let a = parsePrimario();
+    while(T[p] && T[p].t==='pct'){ p++; a = { k:'pct', a }; }
+    return a;
+  };
+  const parsePrimario = () => {
+    const t = T[p];
+    if(!t) parar(p>0 ? `La fórmula está incompleta: falta un valor después de «${T[p-1].txt}».` : 'Escribe la fórmula.', p>0 ? T[p-1].pos+1 : 0);
+    if(t.t==='num'){ p++; return { k:'num', n:t.n, txt:t.txtNum }; }
+    if(t.t==='var'){ p++; return { k:'var', v:t.v }; }
+    if(t.t==='par' && t.v==='('){
+      p++;
+      if(T[p] && T[p].t==='par' && T[p].v===')') parar('Hay unos paréntesis vacíos «( )»: falta lo que va dentro.', t.pos);
+      const e = parseExpr();
+      if(!(T[p] && T[p].t==='par' && T[p].v===')')) parar(`Falta cerrar el paréntesis que se abre en la posición ${t.pos+1}.`, t.pos);
+      p++;
+      return { ...e, paren:true };
+    }
+    if(t.t==='op') parar(p===0 ? `La fórmula no puede empezar con «${t.txt}».` : `Hay dos operadores seguidos («${T[p-1].txt}» y «${t.txt}»).`, t.pos);
+    parar(`Falta un valor antes de «${t.txt}».`, t.pos);
+  };
+  try{
+    const ast = parseExpr();
+    if(p < T.length){
+      const t = T[p];
+      if(t.t==='par' && t.v===')') parar('Sobra un paréntesis de cierre «)»: no hay ninguno abierto que cerrar.', t.pos);
+      parar(`Falta un operador (+ - * /) entre «${T[p-1].txt}» y «${t.txt}».`, t.pos);
+    }
+    return { ok:true, ast };
+  }catch(e){
+    if(e && e.rfError) return { ok:false, error:e.message, pos:e.rfPos };
+    return { ok:false, error:'La fórmula es demasiado compleja para revisarla.', pos:0 };
+  }
+};
+// Arbol -> texto (conserva los paréntesis tal como se escribieron, decimales con coma)
+const rfImprimir = (n) => {
+  let s;
+  if(n.k==='num') s = n.txt;
+  else if(n.k==='var') s = n.v;
+  else if(n.k==='neg') s = '-' + rfImprimir(n.a);
+  else if(n.k==='pos') s = '+' + rfImprimir(n.a);
+  else if(n.k==='pct') s = rfImprimir(n.a) + '%';
+  else s = rfImprimir(n.a) + ' ' + n.op + ' ' + rfImprimir(n.b);
+  return n.paren ? '(' + s + ')' : s;
+};
+// Mismo arbol (mismas operaciones, en el mismo orden y con los mismos paréntesis)
+const rfMismaForma = (a, b) => {
+  if(!a || !b || a.k!==b.k || !!a.paren!==!!b.paren) return false;
+  if(a.k==='num') return a.n===b.n;
+  if(a.k==='var') return a.v===b.v;
+  if(a.k==='bin') return a.op===b.op && rfMismaForma(a.a, b.a) && rfMismaForma(a.b, b.b);
+  return rfMismaForma(a.a, b.a);
+};
+// Calcula el arbol; resolver(token) da el valor de cada variable. Aritmética normal de JavaScript (igual que el motor viejo).
+const rfValor = (n, resolver) => {
+  if(n.k==='num') return n.n;
+  if(n.k==='var') return resolver(n.v);
+  if(n.k==='neg') return -rfValor(n.a, resolver);
+  if(n.k==='pos') return +rfValor(n.a, resolver);
+  if(n.k==='pct') return rfValor(n.a, resolver) / 100;
+  const a = rfValor(n.a, resolver), b = rfValor(n.b, resolver);
+  return n.op==='+' ? a + b : n.op==='-' ? a - b : n.op==='*' ? a * b : a / b;
+};
+const rfVariables = (ast) => {
+  const orden = [], veces = {};
+  const rec = (n) => {
+    if(!n) return;
+    if(n.k==='var'){ if(!veces[n.v]){ veces[n.v] = 0; orden.push(n.v); } veces[n.v]++; }
+    else if(n.k==='bin'){ rec(n.a); rec(n.b); }
+    else if(n.a) rec(n.a);
+  };
+  rec(ast);
+  return orden.map(token=>({ token, veces:veces[token] }));
+};
+// Revisión de forma de un texto: {ok, vacio, llaves, error, pos, ast, texto, vars}. Se guarda en memoria para no repetir el análisis.
+const RF_CACHE = new Map();
+const rfAnalizar = (texto) => {
+  const s = String(texto==null?'':texto);
+  if(RF_CACHE.has(s)) return RF_CACHE.get(s);
+  let r;
+  if(s.trim()==='') r = { ok:false, vacio:true, llaves:false, error:'', pos:0, ast:null, texto:'', vars:[] };
+  else if(s.length>1000) r = { ok:false, vacio:false, llaves:rfTieneLlaves(s), error:'La fórmula es demasiado larga.', pos:0, ast:null, texto:'', vars:[] };
+  else {
+    const pr = rfParsear(s);
+    r = pr.ok ? { ok:true, vacio:false, llaves:false, error:'', pos:0, ast:pr.ast, texto:rfImprimir(pr.ast), vars:rfVariables(pr.ast) }
+              : { ok:false, vacio:false, llaves:rfTieneLlaves(s), error:pr.error, pos:pr.pos||0, ast:null, texto:'', vars:[] };
+  }
+  if(RF_CACHE.size>500) RF_CACHE.clear();
+  RF_CACHE.set(s, r);
+  return r;
+};
+// ¿Es una fórmula real (sin llaves) y bien escrita?
+const rfEsFormulaReal = (texto) => { const s = String(texto==null?'':texto).trim(); return s!=='' && !rfTieneLlaves(s) && rfAnalizar(s).ok; };
+// Valor de la fórmula real (null si está mal escrita o no se puede calcular)
+const rfEvaluarTexto = (texto, resolver) => {
+  const a = rfAnalizar(texto);
+  if(!a.ok) return null;
+  const v = rfValor(a.ast, resolver);
+  return isFinite(v) ? v : null;
+};
+// El dato que se escribe en la nómina: la primera variable CE/N que no sea el sueldo (CE00001)
+const rfTokenPrincipal = (texto) => {
+  const m = String(texto==null?'':texto).match(/[A-Za-z]+\d+/g) || [];
+  return m.map(t=>t.toUpperCase()).find(t=>/^(CE|N)\d+/.test(t) && t!=='CE00001') || null;
+};
+// Qué es cada variable de la fórmula (el «diccionario» sale de lo que ya existe: parámetros, conceptos y reglas del motor)
+// ctx: {parametros:{CODIGO:{valor,nota}}, conceptos:[...], codigoActual, principal}
+const rfClasificarVariable = (token, ctx) => {
+  const t = String(token).toUpperCase();
+  const c = ctx || {};
+  const params = c.parametros || {};
+  const pref = (t.match(/^[A-Z]+/) || [''])[0];
+  const resto = t.slice(pref.length);
+  const prm = params[t] || null;
+  const v = { token:t, tipo:'', etiqueta:'', aviso:'', error:'', valorDef:10, param:null };
+  if(t==='CE00001'){ v.tipo = 'sueldo'; v.etiqueta = 'Sueldo mensual del trabajador (automático)'; v.valorDef = 300; return v; }
+  if(pref==='CE' && /^0*1$/.test(resto)) v.aviso = `«${t}» se parece al sueldo (CE00001); si quieres el sueldo, escríbelo CE00001.`;
+  if(pref==='CE' || pref==='N'){
+    if(c.principal===t){ v.tipo = 'captura'; v.etiqueta = 'Cantidad que se escribe en la nómina (días, horas, unidades…)'; }
+    else {
+      v.tipo = 'extra';
+      const otro = (c.conceptos || []).find(x=>x && x.codigo!==c.codigoActual && rfTokenPrincipal(x.formula || x.formato)===t);
+      v.etiqueta = otro ? `Dato de «${otro.nombre}»` : 'Dato adicional por trabajador';
+      v.aviso = (v.aviso ? v.aviso + ' ' : '') + `En la nómina solo se escribe ${c.principal ? '«' + c.principal + '»' : 'un dato'}: «${t}» valdrá 0 allí (en la Calculadora sí se puede probar). Si es un valor fijo, créalo como parámetro en «Parámetros de fórmula».`;
+    }
+    return v;
+  }
+  if(pref==='REF' || pref==='REFCE'){ v.tipo = 'ref'; v.etiqueta = `Mismo dato que CE${resto}`; return v; }
+  if(pref==='CN'){
+    const cc = (c.conceptos || []).find(x=>x && String(x.codigo)===resto);
+    v.tipo = 'resultado'; v.param = prm; v.valorDef = prm ? (Number(prm.valor) || 0) : 0;
+    v.etiqueta = cc ? `Resultado del concepto ${resto} «${cc.nombre}» (si aún no se calculó, vale el parámetro ${t})` : `Parámetro ${t}`;
+    if(!prm) v.aviso = `«${t}» no está en «Parámetros de fórmula»: valdrá 0 mientras ese concepto no se haya calculado.`;
+    return v;
+  }
+  v.tipo = 'parametro'; v.param = prm; v.valorDef = prm ? (Number(prm.valor) || 0) : 0;
+  if(prm) v.etiqueta = 'Parámetro fijo' + (prm.nota ? ' — ' + prm.nota : '');
+  else if(RF_PREFIJOS_PARAM.includes(pref)){ v.etiqueta = 'Parámetro fijo'; v.aviso = `«${t}» no existe en «Parámetros de fórmula»: valdrá 0 hasta que lo crees.`; }
+  else { v.etiqueta = 'Variable desconocida'; v.error = `La variable «${t}» no existe: usa datos como CE00016 o N00001, parámetros como RF03, o crea «${t}» en «Parámetros de fórmula».`; }
+  return v;
+};
+// Revisión completa de una fórmula para el formulario: sintaxis + qué es cada variable + avisos
+const rfInfoFormula = (texto, ctx) => {
+  const a = rfAnalizar(texto);
+  const info = { ok:a.ok, vacio:a.vacio, llaves:a.llaves, error:a.error, pos:a.pos, texto:a.texto, ast:a.ast, vars:[], avisos:[], errores:[], principal:null };
+  if(!a.ok) return info;
+  info.principal = rfTokenPrincipal(a.texto);
+  const c2 = { ...(ctx || {}), principal:info.principal };
+  info.vars = a.vars.map(v=>({ ...rfClasificarVariable(v.token, c2), veces:v.veces }));
+  info.vars.forEach(v=>{ if(v.error) info.errores.push(v.error); if(v.aviso) info.avisos.push(v.aviso); });
+  if(!info.principal) info.avisos.push('Esta fórmula no usa ningún dato que se escriba en la nómina (CE… o N…): en la nómina el monto se seguirá escribiendo a mano; la fórmula se puede ver en la Calculadora.');
+  if(info.errores.length) info.ok = false;
+  return info;
+};
+// Dónde va el valor de cada variable (mismas reglas que resolverVariableFormula)
+const rfAplicarEntrada = (ctx, token, valor) => {
+  const t = String(token).toUpperCase();
+  if(t==='CE00001') ctx.salarioBase = valor;
+  else if(/^REFCE\d+/.test(t)) ctx.valores['CE' + t.replace(/^REFCE/,'')] = valor;
+  else if(/^REF\d+/.test(t)) ctx.valores['CE' + t.replace(/^REF/,'')] = valor;
+  else if(/^(CE|N)\d+/.test(t)) ctx.valores[t] = valor;
+  else ctx.parametros[t] = valor;
+};
+// Contexto para probar una fórmula a mano en el formulario: entradas = {TOKEN: texto escrito}; lo no escrito toma su valor de ejemplo
+const rfContextoPrueba = (vars, entradas, parametros) => {
+  const ctx = { salarioBase:300, valores:{}, parametros:{}, resultados:{} };
+  Object.keys(parametros || {}).forEach(k=>{ const p = parametros[k]; ctx.parametros[k] = (p && typeof p==='object') ? p.valor : p; });
+  (vars || []).forEach(v=>{
+    const raw = entradas ? entradas[v.token] : undefined;
+    let n = (raw===undefined || raw===null) ? v.valorDef : parseFloat(String(raw).replace(',','.'));
+    if(!isFinite(n)) n = 0;
+    rfAplicarEntrada(ctx, v.token, n);
+  });
+  return ctx;
+};
+// Convierte el texto viejo «{cantidad} TEXTO x {tarifa}» en una fórmula real «cantidad * (tarifa)».
+// El motor viejo multiplicaba el primer bloque por el último; aquí se hace igual, conservando los paréntesis de cada bloque.
+//   estado: 'sin' (no tiene llaves) | 'monto' (un solo bloque) | 'lista' (convertida) | 'revisar' (hay algo que corregir; puede traer una propuesta en formula)
+const rfConvertirLegacy = (texto) => {
+  const s = String(texto==null?'':texto);
+  const r = { estado:'sin', formula:'', motivos:[], bloques:[] };
+  const abre = (s.match(/\{/g) || []).length, cierra = (s.match(/\}/g) || []).length;
+  if(abre===0 && cierra===0) return r;
+  r.bloques = [...s.matchAll(/\{([^}]*)\}/g)].map(m=>m[1]);
+  if(abre!==cierra) r.motivos.push(`Las llaves no cuadran: hay ${abre} «{» y ${cierra} «}» (puede que el texto esté cortado).`);
+  if(r.bloques.length===0){ r.estado = 'revisar'; r.motivos.push('No hay ningún bloque { } completo.'); return r; }
+  if(r.bloques.length===1){
+    if(r.motivos.length){ r.estado = 'revisar'; return r; }
+    r.estado = 'monto';
+    r.motivos.push('Solo tiene un bloque { }: es un monto directo o le falta la otra parte (cantidad × tarifa). Se deja como está.');
+    return r;
+  }
+  if(r.bloques.length>2) r.motivos.push(`Tiene ${r.bloques.length} bloques { }; el cálculo viejo solo usaba el primero y el último.`);
+  const nombres = ['primer bloque', 'último bloque'];
+  const asts = [];
+  [r.bloques[0], r.bloques[r.bloques.length-1]].forEach((b, i)=>{
+    let pr = rfParsear(b);
+    if(!pr.ok && !pr.vacio && /^Falta cerrar el paréntesis/.test(pr.error)){
+      // propuesta: cerrar al final los paréntesis que faltan (el usuario la revisa antes de guardarla)
+      const faltan = (b.match(/\(/g) || []).length - (b.match(/\)/g) || []).length;
+      const rep = rfParsear(b.replace(/\s+$/,'') + ')'.repeat(Math.max(faltan, 0)));
+      if(rep.ok){ r.motivos.push(`El ${nombres[i]} «${b.trim()}» tiene ${faltan} paréntesis sin cerrar: se propone cerrarlo al final; revisa el resultado de prueba.`); pr = rep; }
+      else r.motivos.push(`El ${nombres[i]} «${b.trim()}»: ${pr.error}`);
+    } else if(!pr.ok) r.motivos.push(`El ${nombres[i]} «${b.trim()}»: ${pr.vacio ? 'está vacío.' : pr.error}`);
+    asts.push(pr.ok ? pr.ast : null);
+  });
+  if(asts[0] && asts[1]){
+    const envolver = (n) => (n.k==='num' || n.k==='var' || n.paren) ? n : { ...n, paren:true };
+    const ast = { k:'bin', op:'*', a:envolver(asts[0]), b:envolver(asts[1]) };
+    r.formula = rfImprimir(ast);
+    const re = rfParsear(r.formula);
+    if(!re.ok || !rfMismaForma(re.ast, ast)){ r.motivos.push('No se pudo generar la fórmula con seguridad.'); r.formula = ''; }
+  }
+  r.estado = (r.motivos.length || !r.formula) ? 'revisar' : 'lista';
+  return r;
+};
+// Pruebas de equivalencia: el cálculo viejo (evalViejo(texto, ctx)) y la fórmula nueva deben dar lo mismo con varios sueldos y valores de ejemplo
+const RF_MUESTRA_VALORES = [7, 12.5, 30, 0.75, 1234.56, 3, 15, 100, 2.25, 8, 22, 1.5];
+const RF_MUESTRA_SUELDOS = [300, 1234.56, 99.99, 450.5, 1000, 75.25, 130];
+const rfMuestraCtx = (tokens, k) => {
+  const ctx = { salarioBase:RF_MUESTRA_SUELDOS[k % RF_MUESTRA_SUELDOS.length], valores:{}, parametros:{}, resultados:{} };
+  tokens.forEach((t, j)=>{ if(t!=='CE00001') rfAplicarEntrada(ctx, t, RF_MUESTRA_VALORES[(k*5 + j*3 + 1) % RF_MUESTRA_VALORES.length]); });
+  return ctx;
+};
+const rfVerificarEquivalencia = (viejo, formulaReal, evalViejo, resolver, nPruebas) => {
+  const a = rfAnalizar(formulaReal);
+  if(!a.ok) return { ok:false, pruebas:0, error:'La fórmula generada no es válida: ' + a.error };
+  const set = new Set(a.vars.map(v=>v.token));
+  (String(viejo==null?'':viejo).match(/[A-Za-z]+\d+/g) || []).forEach(t=>set.add(t.toUpperCase()));
+  const tokens = [...set], N = nPruebas || 6;
+  for(let k=0; k<N; k++){
+    const ctx = rfMuestraCtx(tokens, k);
+    const antes = evalViejo(viejo, ctx);
+    let despues = rfValor(a.ast, t=>resolver(t, ctx));
+    if(!isFinite(despues)) despues = null;
+    const igual = (antes==null && despues==null) || (antes!=null && despues!=null && Math.abs(antes - despues) <= 1e-9 * Math.max(1, Math.abs(antes)));
+    if(!igual) return { ok:false, pruebas:k+1, error:`No da lo mismo que el cálculo anterior (con sueldo ${ctx.salarioBase}: antes ${antes==null ? 'sin resultado' : antes}, ahora ${despues==null ? 'sin resultado' : despues}).` };
+  }
+  return { ok:true, pruebas:N };
+};
+// Plan de conversión masiva: una fila por concepto. deps: {evalLegacy(texto,ctx), resolver(token,ctx), parametros:{CODIGO:{valor,nota}}}
+//   estado: 'lista' (convertible y verificada) | 'revisar' | 'monto' | 'ya' (ya tiene fórmula real) | 'sin' (sin llaves: nada que convertir)
+const rfPlanConversion = (conceptos, deps) => {
+  const d = deps || {};
+  const lista = (conceptos || []).filter(Boolean).slice().sort((a, b)=>String(a.codigo||'').localeCompare(String(b.codigo||'')));
+  return lista.map(c=>{
+    const f = String(c.formula==null ? '' : c.formula).trim(), fm = String(c.formato==null ? '' : c.formato).trim();
+    const fila = { codigo:c.codigo, nombre:c.nombre, tipo:c.tipo, activo:c.activo!==false, estado:'sin', origen:'', textoViejo:'', formula:'', motivos:[], avisos:[], pruebas:0, patch:null };
+    if(f && !rfTieneLlaves(f)){
+      const a = rfAnalizar(f);
+      if(a.ok){ fila.estado = 'ya'; fila.formula = a.texto; fila.textoViejo = fm; }
+      else { fila.estado = 'revisar'; fila.textoViejo = f; fila.motivos.push('Ya tiene una fórmula escrita, pero no es válida: ' + a.error); }
+      return fila;
+    }
+    const origen = f ? 'formula' : 'formato';
+    const viejo = f || fm;
+    fila.origen = origen; fila.textoViejo = viejo;
+    if(f && fm && fm!==f && rfTieneLlaves(fm)){ fila.estado = 'revisar'; fila.motivos.push('El campo «Fórmula» y el «Formato en el recibo» tienen textos con llaves distintos; decide cuál conservar.'); return fila; }
+    const conv = rfConvertirLegacy(viejo);
+    if(conv.estado==='sin') return fila;
+    fila.formula = conv.formula; fila.motivos.push(...conv.motivos);
+    if(conv.estado==='lista'){
+      const info = rfInfoFormula(conv.formula, { parametros:d.parametros, conceptos:lista, codigoActual:c.codigo });
+      const eq = (d.evalLegacy && d.resolver) ? rfVerificarEquivalencia(viejo, conv.formula, d.evalLegacy, d.resolver) : { ok:false, pruebas:0, error:'No se pudo comparar con el cálculo anterior.' };
+      fila.pruebas = eq.pruebas;
+      if(!eq.ok){ fila.estado = 'revisar'; fila.motivos.push(eq.error); }
+      else if(info.errores.length){ fila.estado = 'revisar'; fila.motivos.push(...info.errores); }
+      else {
+        fila.estado = 'lista'; fila.avisos = info.avisos;
+        fila.patch = { formula:conv.formula };
+        if(origen==='formula' && !fm) fila.patch.formato = viejo; // el texto con llaves no se pierde: pasa al Formato en el recibo
+      }
+    } else fila.estado = conv.estado;
+    return fila;
+  });
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
   const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa'
@@ -577,6 +950,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [impConceptos,setImpConceptos]=useState(null); // vista previa de la importacion de conceptos desde Excel
   const [exportandoConceptos,setExportandoConceptos]=useState(false);
   const refImportConceptos=useRef(null);
+  const [fxPrueba,setFxPrueba]=useState({}); // valores de ejemplo para probar la fórmula del concepto abierto
+  const [fxAviso,setFxAviso]=useState(null); // mensaje de «Generar desde el formato» ({tipo:'ok'|'revisar'|'info', texto})
+  const [fxModal,setFxModal]=useState(null); // ventana «Generar fórmulas reales» ({tab, sel, estado})
   const [busqConcepto,setBusqConcepto]=useState('');
   const [filtroTipoConcepto,setFiltroTipoConcepto]=useState('');
   const [busqCuentaConcepto,setBusqCuentaConcepto]=useState({});
@@ -770,13 +1146,23 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     (!filtroTipoConcepto || c.tipo===filtroTipoConcepto) &&
     ((c.nombre||'').toUpperCase().includes(busqConcepto.toUpperCase()) || (c.codigo||'').toUpperCase().includes(busqConcepto.toUpperCase()))
   ).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
-  const abrirConcepto = (c) => { setConceptoSelCod(c.codigo); setEsNuevoConcepto(false); setConceptoForm({...initConceptoForm(), ...c}); };
-  const nuevoConceptoForm = () => { setConceptoSelCod(null); setEsNuevoConcepto(true); setConceptoForm(initConceptoForm()); };
+  const abrirConcepto = (c) => { setConceptoSelCod(c.codigo); setEsNuevoConcepto(false); setFxPrueba({}); setFxAviso(null); setConceptoForm({...initConceptoForm(), ...c}); };
+  const nuevoConceptoForm = () => { setConceptoSelCod(null); setEsNuevoConcepto(true); setFxPrueba({}); setFxAviso(null); setConceptoForm(initConceptoForm()); };
+  // Fórmulas reales: parámetros por código y revisión de la fórmula del concepto abierto (se recalcula al escribir)
+  const paramMapFx = {}; parametrosFormula.forEach(p=>{ paramMapFx[String(p.codigo||'').toUpperCase()] = p; });
+  const fxInfo = (rhTab==='conceptos' && conceptoForm) ? rfInfoFormula(conceptoForm.formula, {parametros:paramMapFx, conceptos, codigoActual:String(conceptoForm.codigo||'').trim().toUpperCase()}) : null;
+  const fxFilas = () => rfPlanConversion(conceptos, {evalLegacy:evaluarFormulaConcepto, resolver:resolverVariableFormula, parametros:paramMapFx});
   const guardarConcepto = async () => {
     const f = conceptoForm;
     const codigoFinal = (f.codigo||'').trim().toUpperCase();
     if(!codigoFinal||!f.nombre.trim()) return alert('Código y nombre son obligatorios');
     if(esNuevoConcepto && conceptos.some(c=>c.codigo===codigoFinal)) return alert('Ya existe un concepto con ese código');
+    // Fórmula real nueva o cambiada: tiene que estar bien escrita (el texto viejo con llaves { } se guarda como siempre)
+    const fTxt = String(f.formula||'').trim();
+    if(fTxt && !rfTieneLlaves(fTxt) && fTxt!==String((conceptos.find(c=>c.codigo===codigoFinal)||{}).formula||'').trim()){
+      const inf = rfInfoFormula(fTxt, {parametros:paramMapFx, conceptos, codigoActual:codigoFinal});
+      if(!inf.ok) return alert('La fórmula no se puede guardar todavía:\n\n'+(inf.error||inf.errores[0])+'\n\nCorrígela (o déjala vacía) y vuelve a guardar.');
+    }
     setBusy(true);
     try{
       await setDoc(getDocRef('rrhh_conceptos', codigoFinal), {...f, codigo:codigoFinal, updatedAt:Date.now()});
@@ -836,12 +1222,18 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if (cantidad==null || tarifa==null) return null;
     return cantidad * tarifa;
   };
+  // Fórmula real (con paréntesis, sin llaves): la calcula el motor nuevo. Texto viejo con llaves { }: el motor de siempre, sin ningún cambio.
+  const evaluarConcepto = (c, ctx) => {
+    const f = String(c&&c.formula!=null ? c.formula : '').trim();
+    if (f && !rfTieneLlaves(f)) return rfEvaluarTexto(f, (tok)=>resolverVariableFormula(tok, ctx));
+    return evaluarFormulaConcepto(c.formula||c.formato, ctx);
+  };
   const calcularTodosLosConceptos = (trabajador, valoresCapturados, parametrosMap) => {
     const ctx = {salarioBase: trabajador?.salarioBase||0, valores: valoresCapturados||{}, parametros: parametrosMap||{}, resultados: {}};
     const activos = conceptos.filter(c=>c.activo!==false).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''));
     const out = [];
     activos.forEach(c=>{
-      const valor = evaluarFormulaConcepto(c.formula||c.formato, ctx);
+      const valor = evaluarConcepto(c, ctx);
       if (valor!=null) ctx.resultados[c.codigo] = valor; // queda disponible para que otro concepto lo referencie como CN#####
       out.push({...c, valorCalculado: valor});
     });
@@ -1096,7 +1488,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         ['NOMBRE', 'Nombre del concepto.'],
         ['TIPO', `${Object.values(TIPOS_CONCEPTO).map(t=>t.label).join(', ')}.`],
         ['ACTIVO', 'Si / No.'],
-        ['FÓRMULA y FORMATO EN EL RECIBO', 'Texto tal como está en la ficha del concepto.'],
+        ['FÓRMULA (CÁLCULO)', 'Fórmula real con paréntesis y las operaciones + - * /, por ejemplo CE00016 * (CE00001 / 30). Al importar se revisa: si está mal escrita, la fila marca error. Escríbela como texto, sin el signo = al inicio (Excel lo tomaría como una fórmula suya).'],
+        ['FORMATO EN EL RECIBO', 'Texto informativo tal como está en la ficha del concepto (puede llevar las llaves { } del formato viejo).'],
         ['AF. VACACIONES … AR-C', 'Si / No (los mismos indicadores de la ficha del concepto).'],
         ['MÍN. PERÍODO, MÁX. PERÍODO, MÁX. ACUMULADO', 'Números.'],
         ['CUENTA · centro de costo', 'Código de la cuenta contable (del Plan de Cuentas) que usa el concepto para ese centro de costo. Vacío = sin cuenta.'],
@@ -1131,10 +1524,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const filas = [];
       ws.eachRow({includeEmpty:false}, (row, n)=>{
         const c = [];
-        for(let i=1;i<=nCols;i++){ const cell = row.getCell(i); c.push(rhCeldaValor(cell.type===6 ? (cell.result===undefined ? null : cell.result) : cell.value)); }
+        for(let i=1;i<=nCols;i++){
+          const cell = row.getCell(i);
+          const r = cell.type===6 ? (cell.result===undefined ? null : cell.result) : cell.value;
+          // una celda con error de Excel (por ejemplo, una fórmula que empieza con «=») no se lee como vacía: se marca para que la fila salga con error y no borre datos
+          if(r && typeof r==='object' && !(r instanceof Date) && 'error' in r) c.push({ errorExcel:String(r.error||'#ERROR') });
+          else c.push(rhCeldaValor(r));
+        }
         filas.push({ n, c });
       });
-      const res = rhConceptosAnalizar(filas, { conceptos, centros, plan:planCuentasRH, tipos:TIPOS_CONCEPTO });
+      const res = rhConceptosAnalizar(filas, { conceptos, centros, plan:planCuentasRH, tipos:TIPOS_CONCEPTO, parametros:paramMapFx });
       setImpConceptos({ archivo:file.name, estado:'listo', filas, res });
     }catch(e){
       setImpConceptos({ archivo:file.name, estado:'error', errorLectura:'No se pudo leer el archivo: '+(e&&e.message?e.message:String(e))+'. Usa el Excel (.xlsx) que se exporta desde esta pantalla.' });
@@ -1144,7 +1543,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const confirmarImportConceptos = async () => {
     const im = impConceptos;
     if(!im || im.estado!=='listo' || !im.filas) return;
-    const res = rhConceptosAnalizar(im.filas, { conceptos, centros, plan:planCuentasRH, tipos:TIPOS_CONCEPTO });
+    const res = rhConceptosAnalizar(im.filas, { conceptos, centros, plan:planCuentasRH, tipos:TIPOS_CONCEPTO, parametros:paramMapFx });
     const lote = res.filas.filter(f=>f.estado==='nuevo'||f.estado==='cambia');
     if(res.bloqueado || lote.length===0){
       setImpConceptos({ ...im, res });
@@ -1170,6 +1569,61 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     }catch(e){
       setImpConceptos({ ...im, res, estado:'listo' });
       alert('No se pudo importar: '+(e&&e.message?e.message:String(e))+'\n\nPuedes volver a intentarlo: importar el mismo archivo otra vez es seguro.');
+    }
+  };
+  // Pasa el texto viejo con llaves { } (Formato en el recibo, o la Fórmula si estaba ahí) a una fórmula real y comprueba que dé lo mismo que el cálculo de hoy
+  const fxGenerarDesdeFormato = () => {
+    const f = conceptoForm; if(!f) return;
+    const fTxt = String(f.formula||'').trim(), fmTxt = String(f.formato||'').trim();
+    if(fTxt && !rfTieneLlaves(fTxt)) return setFxAviso({tipo:'info', texto:'La fórmula ya está escrita con paréntesis. Para generarla otra vez desde el formato, bórrala primero.'});
+    const viejo = fTxt || fmTxt;
+    if(!viejo) return setFxAviso({tipo:'info', texto:'El «Formato en el recibo» está vacío: no hay de dónde generar la fórmula. Escríbela a mano.'});
+    const conv = rfConvertirLegacy(viejo);
+    if(conv.estado==='sin') return setFxAviso({tipo:'info', texto:'El formato no tiene bloques { }: es texto fijo y no hay un cálculo que generar. Escribe la fórmula a mano.'});
+    if(conv.estado==='monto') return setFxAviso({tipo:'info', texto:conv.motivos.join(' ')+' Escribe la fórmula completa a mano.'});
+    const motivos = [...conv.motivos];
+    let estado = conv.estado;
+    if(estado==='lista'){
+      const eq = rfVerificarEquivalencia(viejo, conv.formula, evaluarFormulaConcepto, resolverVariableFormula);
+      const inf = rfInfoFormula(conv.formula, {parametros:paramMapFx, conceptos, codigoActual:String(f.codigo||'').trim().toUpperCase()});
+      if(!eq.ok){ estado = 'revisar'; motivos.push(eq.error); }
+      else if(inf.errores.length){ estado = 'revisar'; motivos.push(...inf.errores); }
+      else setFxAviso({tipo:'ok', texto:`Fórmula generada y comprobada: da exactamente lo mismo que el cálculo de antes en ${eq.pruebas} pruebas. Revísala y pulsa «Guardar concepto».`});
+    }
+    if(estado==='revisar') setFxAviso({tipo:'revisar', texto:motivos.join(' ')});
+    if(conv.formula) setConceptoForm(x=>({...x, formula:conv.formula, ...((fTxt && !fmTxt) ? {formato:fTxt} : {})}));
+  };
+  const fxAbrirModal = () => setFxModal({tab:null, sel:{}, estado:'listo'});
+  // Abre el concepto en el formulario con la propuesta (si la hay) para que se corrija y se pruebe antes de guardar
+  const fxCorregir = (f) => {
+    const c = conceptos.find(x=>x.codigo===f.codigo); if(!c) return;
+    setFxModal(null); setMostrarCalculadora(false);
+    setConceptoSelCod(c.codigo); setEsNuevoConcepto(false); setFxPrueba({});
+    setConceptoForm({...initConceptoForm(), ...c, ...(f.formula ? {formula:f.formula} : {})});
+    setFxAviso({tipo:'revisar', texto:f.motivos.join(' ')});
+  };
+  // Guarda las fórmulas marcadas: se vuelve a calcular el plan con los datos de este momento y solo se guardan las que siguen listas
+  const fxAplicar = async () => {
+    const m = fxModal;
+    if(!m || m.estado==='guardando') return;
+    const elegidas = fxFilas().filter(f=>f.estado==='lista' && f.patch && m.sel[f.codigo]!==false);
+    if(elegidas.length===0) return;
+    setFxModal({...m, estado:'guardando'});
+    try{
+      const ahora = Date.now();
+      for(let i=0;i<elegidas.length;i+=400){
+        const batch = writeBatch(db);
+        elegidas.slice(i,i+400).forEach(f=>{ batch.update(getDocRef('rrhh_conceptos', f.codigo), {...f.patch, updatedAt:ahora}); });
+        await batch.commit();
+      }
+      setFxModal(null);
+      // si la ficha abierta es de un concepto que se acaba de actualizar, se cierra: así no queda con datos viejos ni los guarda encima de lo nuevo
+      const tocados = new Set(elegidas.map(f=>f.codigo));
+      if(!esNuevoConcepto && conceptoSelCod && tocados.has(conceptoSelCod)){ setConceptoForm(null); setConceptoSelCod(null); }
+      alert(`Listo: ${elegidas.length} fórmula(s) real(es) guardada(s). Los montos de la nómina no cambian: dan lo mismo que antes.`);
+    }catch(e){
+      setFxModal({...m, estado:'listo'});
+      alert('No se pudieron guardar las fórmulas: '+(e&&e.message?e.message:String(e))+'\n\nPuedes volver a intentarlo.');
     }
   };
   const agregarParametro = async () => {
@@ -1556,7 +2010,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // capturan y calculan desde el panel de Novedades, no se agregan sueltos a mano.
   // "Tiene fórmula" (va por Novedades, no por +Agregar) solo aplica a tipo A/D — los de Vacaciones/
   // Prestaciones (V/L) siguen disponibles para agregar a mano hasta que se arme su Fase 2.
-  const esConceptoCalculable = (c) => (c.tipo==='A'||c.tipo==='D') && [...((c.formula||c.formato||'').matchAll(/\{([^}]*)\}/g))].length>=2;
+  const esConceptoCalculable = (c) => (c.tipo==='A'||c.tipo==='D') && (rfEsFormulaReal(c.formula) || [...((c.formula||c.formato||'').matchAll(/\{([^}]*)\}/g))].length>=2);
   // El token CE/N principal de un concepto (el que se captura a mano) — el primero que aparece en
   // su fórmula. Ej: "{ CE00013 } DIA DESCANSO TRABAJADO x {...}" → 'CE00013'.
   const tokenPrincipalDe = (c) => {
@@ -1570,7 +2024,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(!token) return 0;
     const paramMap = {}; parametrosFormula.forEach(p=>{paramMap[p.codigo]=p.valor;});
     const ctx = {salarioBase:trabajador?.salarioBase||0, valores:{[token]:cantidad}, parametros:paramMap, resultados:{}};
-    const v = evaluarFormulaConcepto(c.formula||c.formato, ctx);
+    const v = evaluarConcepto(c, ctx);
     return v==null?0:v;
   };
   const cuentaDeConcepto = (c, centroCostoId) => c.cuentasPorCentro?.[centroCostoId] || null;
@@ -2968,6 +3422,82 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </div>
           );
         })()}
+        {fxModal && (()=>{
+          const m = fxModal;
+          const filas = fxFilas();
+          const por = (e) => filas.filter(f=>f.estado===e);
+          const nL = por('lista').length, nR = por('revisar').length, nM = por('monto').length, nY = por('ya').length;
+          const tab = m.tab || (nL>0 ? 'lista' : nR>0 ? 'revisar' : nM>0 ? 'monto' : 'ya');
+          const visibles = por(tab);
+          const elegidas = por('lista').filter(f=>m.sel[f.codigo]!==false);
+          const ocupado = m.estado==='guardando';
+          const corto = (s,n)=>{ const t=String(s==null?'':s); return t.length>n ? t.slice(0,n-1)+'…' : t; };
+          return (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-100">
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-gray-800">Generar fórmulas reales</p>
+                  <p className="text-[10px] text-gray-500">Convierte el texto viejo con llaves {'{ }'} en una fórmula real con paréntesis. Cada una se comprueba con 6 pruebas (sueldos y valores distintos): tiene que dar exactamente lo mismo que el cálculo de hoy. Lo que no se pueda comprobar queda en «Para revisar» y no se toca. El «Formato en el recibo» no cambia.</p>
+                </div>
+                <button onClick={()=>setFxModal(null)} disabled={ocupado} className="text-gray-400 hover:text-gray-600 disabled:opacity-40 flex-shrink-0"><X size={18}/></button>
+              </div>
+              <div className="px-5 pt-3 flex flex-wrap gap-2">
+                {[['lista','Listas',nL],['revisar','Para revisar',nR],['monto','Monto directo',nM],['ya','Ya tienen fórmula',nY]].map(([k,l,n])=>(
+                  <button key={k} onClick={()=>setFxModal({...m,tab:k})} className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border-2 ${tab===k?'bg-violet-600 text-white border-violet-600':'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>{l} ({n})</button>
+                ))}
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                {tab==='lista' && nL>0 && (
+                  <div className="flex flex-wrap items-center gap-3 text-[10px]">
+                    <span className="font-bold text-gray-600">{elegidas.length} de {nL} marcada(s) para guardar.</span>
+                    <button onClick={()=>setFxModal({...m,tab,sel:{}})} disabled={ocupado} className="font-black uppercase text-cyan-700 hover:underline disabled:opacity-40">Marcar todas</button>
+                    <button onClick={()=>setFxModal({...m,tab,sel:Object.fromEntries(por('lista').map(f=>[f.codigo,false]))})} disabled={ocupado} className="font-black uppercase text-gray-500 hover:underline disabled:opacity-40">Quitar todas</button>
+                  </div>
+                )}
+                {tab==='monto' && nM>0 && <p className="text-[10px] text-gray-500">Estos conceptos tienen un solo bloque {'{ }'} (un monto directo o un texto al que le falta la otra parte). No se convierten solos: si quieres una fórmula, escríbela en la ficha del concepto.</p>}
+                {tab==='revisar' && nR>0 && <p className="text-[10px] text-gray-500">Aquí hay algo que corregir antes de convertir (llaves o paréntesis sin cerrar, texto cortado…). «Corregir» abre el concepto con una propuesta, para que la pruebes y la guardes tú.</p>}
+                {visibles.length===0 && <p className="text-xs text-gray-400 text-center py-10">No hay conceptos en esta lista.</p>}
+                {visibles.length>0 && (
+                  <div className="border border-gray-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-[11px]">
+                      <thead><tr className="bg-gray-50 text-gray-400 text-[9px] uppercase">
+                        {tab==='lista' && <th className="px-3 py-2 w-8"></th>}
+                        <th className="text-left font-black px-3 py-2 w-20">Código</th><th className="text-left font-black px-3 py-2">Nombre</th><th className="text-left font-black px-3 py-2">Texto actual</th><th className="text-left font-black px-3 py-2">Fórmula real</th><th className="text-left font-black px-3 py-2">Detalle</th>
+                      </tr></thead>
+                      <tbody>
+                        {visibles.map(f=>(
+                          <tr key={f.codigo} className="border-t border-gray-100 align-top">
+                            {tab==='lista' && <td className="px-3 py-2"><input type="checkbox" checked={m.sel[f.codigo]!==false} disabled={ocupado} onChange={e=>setFxModal({...m,tab,sel:{...m.sel,[f.codigo]:e.target.checked}})}/></td>}
+                            <td className="px-3 py-2 font-mono font-bold text-cyan-700 whitespace-nowrap">{f.codigo}</td>
+                            <td className="px-3 py-2 font-bold text-gray-700">{f.nombre}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-gray-500 break-words" title={f.textoViejo}>{corto(f.textoViejo,80)||'—'}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] font-bold text-gray-800 break-words min-w-[210px]">{f.formula||'—'}</td>
+                            <td className="px-3 py-2 space-y-0.5">
+                              {f.estado==='lista' && <p className="font-bold text-emerald-600">✔ Comprobada: {f.pruebas} de {f.pruebas} pruebas iguales</p>}
+                              {f.estado==='ya' && <p className="font-bold text-emerald-600">Ya tiene su fórmula real.</p>}
+                              {f.estado!=='lista' && f.estado!=='ya' && f.motivos.map((t,i)=><p key={'m'+i} className={f.estado==='revisar'?'font-bold text-red-600':'text-gray-500'}>{f.estado==='revisar'?'✖ ':''}{t}</p>)}
+                              {f.avisos.map((t,i)=><p key={'a'+i} className="text-amber-600">⚠ {t}</p>)}
+                              {f.estado==='revisar' && <button onClick={()=>fxCorregir(f)} disabled={ocupado} className="mt-1 px-2.5 py-1 rounded-lg border-2 border-violet-200 text-violet-700 text-[9px] font-black uppercase hover:bg-violet-50 disabled:opacity-40">Corregir</button>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <p className="text-[10px] text-gray-500">{nL} lista(s) · {nR} para revisar · {nM} monto(s) directo(s) · {nY} ya con fórmula</p>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=>setFxModal(null)} disabled={ocupado} className="px-4 py-2 rounded-xl border-2 border-gray-200 text-[10px] font-black uppercase text-gray-500 hover:bg-white disabled:opacity-50">Cerrar</button>
+                  <button onClick={fxAplicar} disabled={ocupado || elegidas.length===0} className="px-5 py-2 rounded-xl bg-violet-600 text-white text-[10px] font-black uppercase hover:bg-violet-700 disabled:opacity-40">{ocupado?'Guardando...':`Guardar ${elegidas.length} fórmula(s)`}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
 
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
@@ -2980,6 +3510,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <button onClick={()=>refImportConceptos.current&&refImportConceptos.current.click()} disabled={!!impConceptos} title="Importa el mismo Excel (valida que las cuentas existan en el Plan de Cuentas)" className="flex-1 bg-green-50 text-green-700 border-2 border-green-200 rounded-xl py-2 text-[10px] font-black uppercase hover:bg-green-100 disabled:opacity-50 flex items-center justify-center gap-1"><Upload size={12}/> Importar Excel</button>
               <input ref={refImportConceptos} type="file" accept=".xlsx" className="hidden" onChange={e=>{ const f = e.target.files && e.target.files[0]; e.target.value=''; if(f) leerExcelConceptos(f); }}/>
             </div>
+            <button onClick={fxAbrirModal} title="Convierte el texto viejo con llaves {} en fórmulas reales con paréntesis y comprueba que den el mismo resultado" className="w-full bg-violet-50 text-violet-700 border-2 border-violet-200 rounded-xl py-2 text-[10px] font-black uppercase hover:bg-violet-100 flex items-center justify-center gap-1 mb-3"><Calculator size={13}/> Generar fórmulas reales</button>
             <button onClick={()=>setMostrarParametros(v=>!v)} className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50 border-2 border-gray-100 mb-3">
               <span>Parámetros de fórmula {parametrosFormula.length>0?`(${parametrosFormula.length})`:''}</span>
               <ChevronDown size={13} className={`transition-transform ${mostrarParametros?'rotate-180':''}`}/>
@@ -3105,14 +3636,54 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 </div>
 
                 <div className="mb-3">
-                  <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Fórmula (cálculo)</label>
-                  <input value={conceptoForm.formula} onChange={e=>setConceptoForm(f=>({...f,formula:e.target.value}))} placeholder="Pendiente — falta el diccionario de variables (CE, RF, N...)" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 font-mono"/>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <label className="text-[9px] font-black text-gray-500 uppercase">Fórmula (cálculo)</label>
+                    <button type="button" onClick={fxGenerarDesdeFormato} title="Pasa el texto con llaves {} del «Formato en el recibo» a una fórmula real con paréntesis y comprueba que dé el mismo resultado" className="text-[9px] font-black uppercase text-violet-600 hover:text-violet-800 flex items-center gap-1"><Calculator size={11}/> Generar desde el formato</button>
+                  </div>
+                  <input value={conceptoForm.formula} onChange={e=>{ setFxAviso(null); setConceptoForm(f=>({...f,formula:e.target.value})); }} placeholder="Ej.: CE00016 * (CE00001 / 30)" spellCheck={false} className={`w-full border-2 rounded-xl px-3 py-2 text-xs font-bold outline-none font-mono ${(fxInfo && !fxInfo.vacio && !fxInfo.llaves && !fxInfo.ok)?'border-red-300 focus:border-red-500':'border-gray-200 focus:border-cyan-500'}`}/>
+                  {fxAviso && <div className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold border ${fxAviso.tipo==='ok'?'bg-emerald-50 text-emerald-700 border-emerald-200':fxAviso.tipo==='revisar'?'bg-amber-50 text-amber-700 border-amber-200':'bg-sky-50 text-sky-700 border-sky-200'}`}>{fxAviso.texto}</div>}
+                  {fxInfo && !fxInfo.vacio && (fxInfo.llaves ? (
+                    <p className="mt-1.5 text-[10px] font-bold text-amber-600">Esta fórmula está escrita en el formato viejo con llaves {'{ }'} y sigue calculando como antes. Para pasarla a fórmula real usa «Generar desde el formato».</p>
+                  ) : !fxInfo.ok ? (
+                    <div className="mt-1.5 space-y-0.5">
+                      {fxInfo.error && <p className="text-[10px] font-bold text-red-600">✖ {fxInfo.error}</p>}
+                      {fxInfo.errores.map((t,i)=><p key={i} className="text-[10px] font-bold text-red-600">✖ {t}</p>)}
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 space-y-0.5">
+                      <p className="text-[10px] font-bold text-emerald-600">✔ Fórmula válida{fxInfo.texto!==String(conceptoForm.formula||'').trim() ? <> — se leerá así: <span className="font-mono">{fxInfo.texto}</span></> : null}</p>
+                      {fxInfo.avisos.map((t,i)=><p key={i} className="text-[10px] font-bold text-amber-600">⚠ {t}</p>)}
+                    </div>
+                  ))}
+                  {fxInfo && fxInfo.ok && (()=>{
+                    const ctxP = rfContextoPrueba(fxInfo.vars, fxPrueba, paramMapFx);
+                    const vP = rfEvaluarTexto(fxInfo.texto, (tok)=>resolverVariableFormula(tok, ctxP));
+                    return (
+                      <div className="mt-2 bg-gray-50 border border-gray-200 rounded-xl p-3">
+                        <p className="text-[9px] font-black text-gray-500 uppercase mb-2">Probar la fórmula (valores de ejemplo, no se guardan)</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {fxInfo.vars.map(x=>(
+                            <div key={x.token} title={x.etiqueta}>
+                              <label className="text-[8px] font-black text-cyan-700 font-mono block mb-0.5">{x.token}</label>
+                              <input type="text" inputMode="decimal" value={fxPrueba[x.token]!==undefined ? fxPrueba[x.token] : String(x.valorDef).replace('.',',')} onChange={e=>setFxPrueba(p=>({...p,[x.token]:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none focus:border-cyan-500 text-right bg-white"/>
+                              <p className="text-[8px] text-gray-400 leading-tight">{x.etiqueta}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-[10px] font-black text-gray-500 uppercase">Resultado</span>
+                          <span className="font-mono font-black text-sm text-gray-800">{vP==null ? 'No se puede calcular' : '$'+formatNum(vP)}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <p className="mt-1.5 text-[10px] text-gray-400">Se escribe con paréntesis ( ) y las operaciones + − * / (la x también multiplica, % divide entre 100 y los decimales van con coma). CE00001 es el sueldo del trabajador; las demás CE… y N… son datos que se escriben en la nómina; RF… son parámetros fijos (se crean en «Parámetros de fórmula»).</p>
                 </div>
                 <div className="mb-1">
                   <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Formato en el recibo</label>
                   <input value={conceptoForm.formato} onChange={e=>setConceptoForm(f=>({...f,formato:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 font-mono"/>
                 </div>
-                <p className="text-[10px] text-gray-400 mb-4">Por ahora son texto libre — todavía no se calculan solos (ver dudas pendientes).</p>
+                <p className="text-[10px] text-gray-400 mb-4">Texto informativo del recibo. Si la Fórmula está vacía, el sistema calcula con este texto (el de las llaves {'{ }'}) como antes; si hay una Fórmula, esa es la que calcula.</p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
                   {[['afVac','Af. Vacaciones'],['afLiq','Af. Liquidación'],['general','General'],['bonif','Bonificable'],['historico','Histórico'],['mStatus','M. Status'],['arC','AR-C']].map(([k,l])=>(
