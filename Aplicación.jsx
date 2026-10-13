@@ -297,6 +297,261 @@ const benEditarMontoBs = (l, textoBs, tasa) => {
   return { ...l, montoUSD: tasa > 0 ? benR2(bs / tasa) : 0, montoBs: benR2(bs), montoBsTexto: textoBs, editadoManual: true };
 };
 
+// == RRHH - Conceptos: exportar / importar con Excel ==
+// El archivo exportado trae todos los campos del concepto y, por cada centro de costo, la cuenta contable (codigo + nombre del Plan de Cuentas).
+// Al importar se lee ESE mismo formato: el codigo de cada cuenta debe existir de verdad en el Plan de Cuentas (se guarda con el nombre real del plan,
+// no con el texto del Excel) y, si hay cualquier error, no se importa nada. Son funciones puras (sin React) para poder probarlas aparte.
+const rhNorm = (s) => String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+const rhTxt = (v) => (v==null || v instanceof Date) ? '' : String(v);
+const rhCodigoCuenta = (v) => rhTxt(v).replace(/\s+/g,'');
+// Valor "plano" de una celda de ExcelJS (texto con formato, formula, hipervinculo...)
+const rhCeldaValor = (v) => {
+  if(v==null) return null;
+  if(typeof v==='object' && !(v instanceof Date)){
+    if(Array.isArray(v.richText)) return v.richText.map(x=>(x&&x.text)?x.text:'').join('');
+    if('result' in v) return rhCeldaValor(v.result);
+    if(v.text!=null && v.hyperlink!=null) return String(v.text);
+    return null;
+  }
+  return v;
+};
+// Si/No: true, false, undefined (vacio) o null (valor no valido)
+const rhSiNo = (v) => {
+  const s = rhNorm(v);
+  if(s==='') return undefined;
+  if(['SI','S','YES','Y','TRUE','VERDADERO','1','X'].includes(s)) return true;
+  if(['NO','N','FALSE','FALSO','0'].includes(s)) return false;
+  return null;
+};
+// Numero: valor, undefined (vacio) o null (no valido). Acepta 12,5 / 12.5 / 1.234,56 / 1,234.56
+const rhNumero = (v) => {
+  if(v==null) return undefined;
+  if(typeof v==='number') return isFinite(v) ? v : null;
+  const t = String(v).trim().replace(/\s/g,'');
+  if(t==='') return undefined;
+  let n;
+  if(/^-?\d+$/.test(t)) n = parseInt(t,10);
+  else if(/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) n = parseFloat(t.replace(/\./g,'').replace(',','.'));
+  else if(/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) n = parseFloat(t.replace(/,/g,''));
+  else if(/^-?\d*[.,]\d+$/.test(t)) n = parseFloat(t.replace(',','.'));
+  else return null;
+  return isFinite(n) ? n : null;
+};
+// Codigos del plan que tienen cuentas hijas (por ejemplo 5.3 si existe 5.3.02.01.001): son cuentas de grupo, no de detalle
+const rhCuentasConHijas = (plan) => {
+  const s = new Set();
+  (plan||[]).forEach(p=>{ const partes = rhCodigoCuenta(p.codigo).split('.'); for(let i=1;i<partes.length;i++) s.add(partes.slice(0,i).join('.')); });
+  return s;
+};
+const RH_CAMPOS_CONCEPTO = { 'CODIGO':'codigo', 'NOMBRE':'nombre', 'TIPO':'tipo', 'ACTIVO':'activo', 'FORMULA':'formula', 'FORMULA CALCULO':'formula', 'FORMATO EN EL RECIBO':'formato', 'FORMATO':'formato',
+  'AF VACACIONES':'afVac', 'AF LIQUIDACION':'afLiq', 'GENERAL':'general', 'BONIFICABLE':'bonif', 'HISTORICO':'historico', 'M STATUS':'mStatus', 'AR C':'arC',
+  'MIN PERIODO':'minPer', 'MAX PERIODO':'maxPer', 'MAX ACUMULADO':'maxAcum' };
+const RH_BOOLS_CONCEPTO = [['activo','Activo'],['afVac','Af. Vacaciones'],['afLiq','Af. Liquidación'],['general','General'],['bonif','Bonificable'],['historico','Histórico'],['mStatus','M. Status'],['arC','AR-C']];
+const RH_NUMS_CONCEPTO = [['minPer','Mín. período'],['maxPer','Máx. período'],['maxAcum','Máx. acumulado']];
+const RH_DEF_CONCEPTO = { activo:true, afVac:false, afLiq:false, general:true, bonif:false, historico:true, mStatus:false, arC:false, minPer:0, maxPer:0, maxAcum:0, formula:'', formato:'' };
+// filas: [{n:<numero de fila del Excel>, c:[valor de cada columna, empezando por la A]}]
+// ctx: {conceptos, centros:[{id,nombre}], plan:[{codigo,nombre}], tipos:{A:{label},...}}
+// Devuelve el analisis completo (sin escribir nada): filas con estado nuevo/cambia/igual/error, errores, avisos, cambios y el documento a guardar.
+const rhConceptosAnalizar = (filas, ctx) => {
+  const conceptos = (ctx && ctx.conceptos) || [], centros = (ctx && ctx.centros) || [], plan = (ctx && ctx.plan) || [], tipos = (ctx && ctx.tipos) || {};
+  const res = { error:null, errorGlobal:[], avisosGlobal:[], filas:[], ignoradas:[], bloqueado:false,
+    resumen:{ leidas:0, nuevos:0, cambian:0, iguales:0, conError:0, cuentasVerificadas:0, cuentasNuevas:0, cuentasCambiadas:0, cuentasQuitadas:0, nombresActualizados:0, avisos:0 } };
+  const rs = res.resumen;
+  // 1) fila de titulos: la primera que tenga CODIGO y NOMBRE
+  let hi = -1;
+  for(let i=0;i<Math.min(filas.length,40);i++){
+    const ns = ((filas[i]&&filas[i].c)||[]).map(rhNorm);
+    if(ns.includes('CODIGO') && ns.includes('NOMBRE')){ hi = i; break; }
+  }
+  if(hi<0){ res.error = 'No se encontró la fila de títulos (CÓDIGO, NOMBRE, TIPO…). Usa el archivo que se exporta desde esta pantalla, sin cambiar los títulos de las columnas.'; res.bloqueado = true; return res; }
+  // 2) columnas conocidas, columnas de cuenta por centro de costo y columnas que no se reconocen
+  const cols = {};
+  const cuentas = [];
+  (filas[hi].c||[]).forEach((h, idx)=>{
+    const raw = rhTxt(h).trim();
+    if(!raw) return;
+    const mc = raw.match(/^CUENTA\s*[·•:|\-–—]\s*(.+)$/i);
+    if(mc){ cuentas.push({ idx, centroTxt:mc[1].trim(), centro:null, problema:null }); return; }
+    const campo = RH_CAMPOS_CONCEPTO[rhNorm(raw)];
+    if(campo){ if(cols[campo]!=null) res.errorGlobal.push(`La columna «${raw}» está repetida en el archivo.`); else cols[campo] = idx; return; }
+    if(rhNorm(raw).startsWith('NOMBRE DE LA CUENTA')) return; // informativa: el nombre de la cuenta sale siempre del Plan de Cuentas
+    res.ignoradas.push({ idx, nombre:raw });
+  });
+  const porNombreC = {};
+  centros.forEach(c=>{ const k = rhNorm(c.nombre); (porNombreC[k] = porNombreC[k]||[]).push(c); });
+  cuentas.forEach(cc=>{
+    const l = porNombreC[rhNorm(cc.centroTxt)] || [];
+    if(l.length===1) cc.centro = l[0];
+    else cc.problema = l.length===0 ? `no existe un centro de costo llamado «${cc.centroTxt}» en la app` : `hay ${l.length} centros de costo llamados «${cc.centroTxt}»`;
+  });
+  const usados = {};
+  cuentas.forEach(cc=>{ if(cc.centro){ if(usados[cc.centro.id]) cc.problema = `el centro de costo «${cc.centro.nombre}» aparece en dos columnas`; else usados[cc.centro.id] = true; } });
+  // 3) filas de datos
+  const existentes = {};
+  conceptos.forEach(c=>{ existentes[rhTxt(c.codigo).trim().toUpperCase()] = c; });
+  const planPor = {};
+  plan.forEach(p=>{ const k = rhCodigoCuenta(p.codigo); if(k && !planPor[k]) planPor[k] = p; });
+  const conHijas = rhCuentasConHijas(plan);
+  const mapaTipos = {};
+  Object.entries(tipos).forEach(([k,t])=>{ mapaTipos[rhNorm(k)] = k; mapaTipos[rhNorm(t.label)] = k; });
+  const etiquetasTipos = Object.values(tipos).map(t=>t.label).join(', ');
+  const vacia = (v) => v==null || (typeof v==='string' && v.trim()==='');
+  const idxDatos = [...Object.values(cols), ...cuentas.map(x=>x.idx)];
+  const idxTexto = [cols.codigo, cols.nombre, cols.tipo, cols.formula, cols.formato, ...cuentas.map(x=>x.idx)].filter(i=>i!=null);
+  const titulo = (i) => rhTxt((filas[hi].c||[])[i]).trim();
+  const resto = filas.slice(hi+1);
+  const vistos = {};
+  const fmtCuenta = (cu) => (cu && cu.codigo) ? `${rhTxt(cu.codigo).trim()} ${rhTxt(cu.nombre).trim()}`.trim() : '(sin cuenta)';
+  resto.forEach(f=>{
+    const c = (f && f.c) || [];
+    if(idxDatos.every(i=>vacia(c[i]))) return; // fila en blanco
+    const g = (campo) => (cols[campo]!=null ? c[cols[campo]] : undefined);
+    const fila = { n:f.n, codigo:'', nombre:'', estado:'igual', errores:[], avisos:[], cambios:[], ex:null, patch:null, nuevo:null, st:{ verif:0, nuevas:0, camb:0, quit:0, nom:0 } };
+    // una fecha en una celda de texto (código, nombre, tipo, fórmula, formato o cuenta) casi seguro es un error de Excel: no se adivina, se avisa
+    idxTexto.forEach(i=>{ if(c[i] instanceof Date) fila.errores.push(`La celda de «${titulo(i)}» tiene una fecha en vez de un texto; revísala.`); });
+    // codigo
+    const rawCod = g('codigo');
+    let codigo = rhTxt(rawCod).trim().toUpperCase();
+    if(!codigo) fila.errores.push('Falta el código del concepto.');
+    else if(/\s/.test(codigo)) fila.errores.push(`El código «${codigo}» no puede tener espacios.`);
+    else if(codigo.includes('/')) fila.errores.push(`El código «${codigo}» no puede llevar «/».`);
+    else if(codigo.length>40) fila.errores.push(`El código «${codigo}» es demasiado largo.`);
+    if(typeof rawCod==='number' && codigo && !existentes[codigo]){
+      const rell = codigo.padStart(5,'0');
+      if(Number.isInteger(rawCod) && existentes[rell]){ fila.avisos.push(`El código venía como número (${codigo}); se tomó como ${rell}. Formatea la columna como Texto.`); codigo = rell; }
+      else fila.avisos.push(`El código ${codigo} está como número en el Excel; si debía llevar ceros a la izquierda, formatea la columna como Texto.`);
+    }
+    fila.codigo = codigo;
+    const ex = codigo ? (existentes[codigo] || null) : null;
+    fila.ex = ex;
+    if(codigo){
+      if(vistos[codigo]){
+        const p = vistos[codigo];
+        fila.errores.push(`El código ${codigo} está repetido (también en la fila ${p.n}).`);
+        if(!p.repetido){ p.repetido = true; p.errores.push(`El código ${codigo} está repetido (también en la fila ${f.n}).`); }
+      } else vistos[codigo] = fila;
+    }
+    // nombre
+    const nombre = rhTxt(g('nombre')).trim();
+    fila.nombre = nombre;
+    if(!nombre) fila.errores.push('Falta el nombre del concepto.');
+    // tipo
+    let tipo;
+    let tipoMal = false;
+    if(cols.tipo!=null){
+      const tt = rhTxt(g('tipo')).trim();
+      if(tt){ tipo = mapaTipos[rhNorm(tt)]; if(!tipo){ tipoMal = true; fila.errores.push(`Tipo «${tt}» no válido (usa ${etiquetasTipos}).`); } }
+    }
+    if(!ex && !tipo && !tipoMal) fila.errores.push('Falta el tipo del concepto (se necesita para crear uno nuevo).');
+    // Si/No, numeros y textos
+    const vals = {};
+    RH_BOOLS_CONCEPTO.forEach(([k,lbl])=>{
+      if(cols[k]==null) return;
+      const v = rhSiNo(g(k));
+      if(v===null) fila.errores.push(`${lbl}: «${rhTxt(g(k)).trim()}» no es Si/No.`);
+      else if(v!==undefined) vals[k] = v;
+    });
+    RH_NUMS_CONCEPTO.forEach(([k,lbl])=>{
+      if(cols[k]==null) return;
+      const v = rhNumero(g(k));
+      if(v===null) fila.errores.push(`${lbl}: «${rhTxt(g(k)).trim()}» no es un número.`);
+      else if(v!==undefined) vals[k] = v;
+    });
+    ['formula','formato'].forEach(k=>{ if(cols[k]!=null) vals[k] = rhTxt(g(k)); });
+    // cuentas contables por centro de costo: tienen que existir de verdad en el Plan de Cuentas
+    const deseadas = {}; // idCentro -> {codigo,nombre} | null (celda vacia = quitar la cuenta)
+    cuentas.forEach(cc=>{
+      if(!cc.centro) return;
+      const cod = rhCodigoCuenta(c[cc.idx]);
+      let deseada = null;
+      if(cod){
+        const p = planPor[cod];
+        if(!p){ fila.errores.push(`La cuenta «${cod}» (${cc.centro.nombre}) no existe en el Plan de Cuentas.`); return; }
+        deseada = { codigo:p.codigo, nombre:rhTxt(p.nombre) };
+        fila.st.verif++;
+        if(conHijas.has(cod)) fila.avisos.push(`La cuenta ${cod} (${cc.centro.nombre}) es de grupo (tiene subcuentas); normalmente se usa una cuenta de detalle.`);
+      }
+      deseadas[cc.centro.id] = deseada;
+    });
+    if(fila.errores.length){ fila.estado = 'error'; res.filas.push(fila); return; }
+    if(!ex){
+      // concepto nuevo
+      const cp = {};
+      Object.entries(deseadas).forEach(([id,cu])=>{ if(cu) cp[id] = cu; });
+      fila.nuevo = { ...RH_DEF_CONCEPTO, ...vals, codigo, nombre, tipo, cuentasPorCentro:cp };
+      if(fila.nuevo.formula!==undefined) fila.nuevo.formula = String(fila.nuevo.formula).trim();
+      if(fila.nuevo.formato!==undefined) fila.nuevo.formato = String(fila.nuevo.formato).trim();
+      cuentas.forEach(cc=>{ if(cc.centro && deseadas[cc.centro.id]){ fila.cambios.push({ campo:`Cuenta · ${cc.centro.nombre}`, antes:'(sin cuenta)', despues:fmtCuenta(deseadas[cc.centro.id]) }); fila.st.nuevas++; } });
+      fila.estado = 'nuevo';
+      res.filas.push(fila);
+      return;
+    }
+    // concepto existente: solo se anotan los campos que de verdad cambian
+    const patch = {};
+    const cambia = (campo, etiqueta, antes, despues) => { patch[campo] = despues; fila.cambios.push({ campo:etiqueta, antes:String(antes), despues:String(despues) }); };
+    if(nombre !== rhTxt(ex.nombre).trim()) cambia('nombre', 'Nombre', rhTxt(ex.nombre).trim(), nombre);
+    if(tipo && tipo !== ex.tipo){ patch.tipo = tipo; fila.cambios.push({ campo:'Tipo', antes:(tipos[ex.tipo]&&tipos[ex.tipo].label)||ex.tipo||'(vacío)', despues:tipos[tipo].label }); }
+    RH_BOOLS_CONCEPTO.forEach(([k,lbl])=>{
+      if(vals[k]===undefined) return;
+      const antes = k==='activo' ? ex.activo!==false : !!ex[k];
+      if(antes!==vals[k]) { patch[k] = vals[k]; fila.cambios.push({ campo:lbl, antes:antes?'Si':'No', despues:vals[k]?'Si':'No' }); }
+    });
+    RH_NUMS_CONCEPTO.forEach(([k,lbl])=>{
+      if(vals[k]===undefined) return;
+      const antes = Number(ex[k])||0;
+      if(antes!==vals[k]) cambia(k, lbl, antes, vals[k]);
+    });
+    [['formula','Fórmula'],['formato','Formato en el recibo']].forEach(([k,lbl])=>{
+      if(vals[k]===undefined) return;
+      const antes = rhTxt(ex[k]).trim(), despues = String(vals[k]).trim();
+      if(antes!==despues) cambia(k, lbl, antes||'(vacío)', despues||'(vacío)');
+    });
+    const mapa = { ...(ex.cuentasPorCentro||{}) };
+    let cambioCuentas = false;
+    cuentas.forEach(cc=>{
+      if(!cc.centro || !Object.prototype.hasOwnProperty.call(deseadas, cc.centro.id)) return;
+      const id = cc.centro.id, des = deseadas[id], act = mapa[id];
+      const actCod = (act && act.codigo) ? rhTxt(act.codigo).trim() : '';
+      const campo = `Cuenta · ${cc.centro.nombre}`;
+      if(!des && !actCod) return;
+      if(!des){ mapa[id] = null; cambioCuentas = true; fila.st.quit++; fila.cambios.push({ campo, antes:fmtCuenta(act), despues:'(sin cuenta)' }); }
+      else if(!actCod){ mapa[id] = des; cambioCuentas = true; fila.st.nuevas++; fila.cambios.push({ campo, antes:'(sin cuenta)', despues:fmtCuenta(des) }); }
+      else if(actCod!==rhTxt(des.codigo).trim()){ mapa[id] = des; cambioCuentas = true; fila.st.camb++; fila.cambios.push({ campo, antes:fmtCuenta(act), despues:fmtCuenta(des) }); }
+      else if(rhTxt(act.nombre).trim()!==rhTxt(des.nombre).trim()){ mapa[id] = des; cambioCuentas = true; fila.st.nom++; fila.cambios.push({ campo, antes:`${actCod} «${rhTxt(act.nombre).trim()}»`, despues:`${actCod} «${rhTxt(des.nombre).trim()}» (nombre real del plan)` }); }
+    });
+    if(cambioCuentas) patch.cuentasPorCentro = mapa;
+    fila.patch = patch;
+    fila.estado = fila.cambios.length ? 'cambia' : 'igual';
+    res.filas.push(fila);
+  });
+  // 4) columnas con problemas / columnas que no se reconocen
+  const hayDatoEn = (idx) => resto.some(f=>!vacia(((f&&f.c)||[])[idx]));
+  cuentas.forEach(cc=>{
+    if(!cc.problema) return;
+    if(hayDatoEn(cc.idx)) res.errorGlobal.push(`Columna «CUENTA · ${cc.centroTxt}»: ${cc.problema}. Vuelve a exportar el Excel desde esta pantalla.`);
+    else res.avisosGlobal.push(`La columna «CUENTA · ${cc.centroTxt}» se ignoró (${cc.problema}); estaba vacía.`);
+  });
+  res.ignoradas.forEach(x=>{
+    if(/^CUENTA/.test(rhNorm(x.nombre)) && hayDatoEn(x.idx)) res.errorGlobal.push(`La columna «${x.nombre}» no se reconoce: para asignar cuentas debe llamarse «CUENTA · NOMBRE DEL CENTRO DE COSTO».`);
+    else res.avisosGlobal.push(`La columna «${x.nombre}» no forma parte del formato y se ignoró.`);
+  });
+  if(centros.length>0 && !cuentas.some(cc=>cc.centro)) res.avisosGlobal.push('El archivo no trae columnas «CUENTA · centro de costo»: solo se actualizan los datos de los conceptos, no las cuentas.');
+  // 5) resumen (un código repetido marca error también en la fila que ya se había analizado antes)
+  res.filas.forEach(f=>{ if(f.errores.length){ f.estado = 'error'; f.nuevo = null; f.patch = null; } });
+  res.filas.forEach(f=>{
+    rs.avisos += f.avisos.length;
+    if(f.estado==='error') return;
+    rs.cuentasVerificadas += f.st.verif; rs.cuentasNuevas += f.st.nuevas; rs.cuentasCambiadas += f.st.camb; rs.cuentasQuitadas += f.st.quit; rs.nombresActualizados += f.st.nom;
+  });
+  rs.leidas = res.filas.length;
+  rs.nuevos = res.filas.filter(f=>f.estado==='nuevo').length;
+  rs.cambian = res.filas.filter(f=>f.estado==='cambia').length;
+  rs.iguales = res.filas.filter(f=>f.estado==='igual').length;
+  rs.conError = res.filas.filter(f=>f.estado==='error').length;
+  res.bloqueado = res.errorGlobal.length>0 || rs.conError>0;
+  return res;
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
   const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa'
@@ -319,6 +574,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [conceptoSelCod,setConceptoSelCod]=useState(null);
   const [conceptoForm,setConceptoForm]=useState(null);
   const [esNuevoConcepto,setEsNuevoConcepto]=useState(false);
+  const [impConceptos,setImpConceptos]=useState(null); // vista previa de la importacion de conceptos desde Excel
+  const [exportandoConceptos,setExportandoConceptos]=useState(false);
+  const refImportConceptos=useRef(null);
   const [busqConcepto,setBusqConcepto]=useState('');
   const [filtroTipoConcepto,setFiltroTipoConcepto]=useState('');
   const [busqCuentaConcepto,setBusqCuentaConcepto]=useState({});
@@ -345,6 +603,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [configBeneficios,setConfigBeneficios]=useState(benMerge(null));
   const [busqCuentaBen,setBusqCuentaBen]=useState({});
   const [benMesVer,setBenMesVer]=useState(benMesActual());
+  const [exportandoResumenBen,setExportandoResumenBen]=useState(false);
   const guardarConfigBeneficios = async () => {
     const h = configBeneficios.hcm, b = configBeneficios.bolsa;
     const pct = benNum(h.pctTrabajador);
@@ -627,6 +886,291 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       alert(`Se cargaron ${faltantes.length} concepto(s).`);
     } catch(e){ alert('Error al cargar el catálogo: '+e.message); }
     finally{ setBusySeed(false); }
+  };
+  // ── Conceptos: exportar a Excel (toda la información + cuentas por centro de costo) e importar ese mismo formato ──
+  const exportarConceptosExcel = async () => {
+    if(exportandoConceptos) return;
+    setExportandoConceptos(true);
+    try{
+      const EJ = await ccLoadExcelJS();
+      const {empresa, rif, dir} = _empresaDatos();
+      const hoy = contDd(getTodayDate());
+      const INK='FF0F172A', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB', SLATE='FFF1F5F9', ZEBRA='FFF8FAFC', MUTED='FF64748B', TEAL='FF0E7490', GRAY7='FF475569';
+      const fill = a=>({type:'pattern', pattern:'solid', fgColor:{argb:a}});
+      const thin = {style:'thin', color:{argb:GRID}};
+      const bd = {top:thin, left:thin, bottom:thin, right:thin};
+      const lista = [...conceptos].sort((a,b)=>String(a.codigo||'').localeCompare(String(b.codigo||'')));
+      const centrosL = [...centros].sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+      const planL = planCuentasRH.filter(p=>p.codigo).map(p=>({ codigo:String(p.codigo).trim(), nombre:String(p.nombre||''), grupo:String(p.grupo||''), subGrupo:String(p.subGrupo||'') }))
+        .sort((a,b)=>a.codigo.localeCompare(b.codigo, undefined, {numeric:true}));
+      const planMapa = new Map(); planL.forEach(p=>{ const k = rhCodigoCuenta(p.codigo); if(!planMapa.has(k)) planMapa.set(k, p); });
+      const conHijas = rhCuentasConHijas(planL);
+      const NO_EXISTE = 'NO EXISTE EN EL PLAN DE CUENTAS';
+      const wb = new EJ.Workbook();
+      wb.creator = String(empresa||''); wb.created = new Date();
+      const pageSetup = (orient) => ({ paperSize:1, orientation:orient, fitToPage:true, fitToWidth:1, fitToHeight:0, horizontalCentered:true, margins:{left:0.3, right:0.3, top:0.4, bottom:0.55, header:0.2, footer:0.25} });
+      const pie = (txt) => ({ oddFooter:`&L&8&"Arial,Regular"${txt}&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ${hoy}` });
+
+      // Estructura de la hoja "Conceptos": 16 columnas fijas + 2 por cada centro de costo (CUENTA y NOMBRE DE LA CUENTA)
+      const HR = 8, FIRST = HR + 1;
+      const NBASE = 16;
+      const NCOL = NBASE + centrosL.length*2;
+      const PLAN_HR = 7, PLAN_FIRST = PLAN_HR + 1, PLAN_LAST = PLAN_HR + Math.max(planL.length, 1);
+      const VAL_HASTA = HR + lista.length + 200; // las validaciones llegan 200 filas más abajo, por si agregas conceptos nuevos
+      const wsC = wb.addWorksheet('Conceptos', { properties:{tabColor:{argb:ORANGE}}, views:[{state:'frozen', xSplit:2, ySplit:HR, showGridLines:false}], pageSetup:pageSetup('landscape'), headerFooter:pie('Catálogo de conceptos de nómina') });
+      const wsP = wb.addWorksheet('Plan de cuentas', { properties:{tabColor:{argb:GRAY7}}, views:[{state:'frozen', ySplit:PLAN_HR, showGridLines:false}], pageSetup:{...pageSetup('landscape'), printTitlesRow:`${PLAN_HR}:${PLAN_HR}`}, headerFooter:pie('Plan de cuentas (consulta)') });
+      const wsI = wb.addWorksheet('Instrucciones', { properties:{tabColor:{argb:TEAL}}, views:[{showGridLines:false}], pageSetup:pageSetup('portrait'), headerFooter:pie('Instrucciones') });
+      const maxLen = (fn) => lista.reduce((m,c)=>Math.max(m, String(fn(c)||'').length), 0);
+      const clampW = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.ceil(v)));
+      [11, clampW(maxLen(c=>c.nombre)*1.05+3, 30, 58), 14, 9, clampW(maxLen(c=>c.formula)*0.95+2, 26, 50), clampW(maxLen(c=>c.formato)*0.95+2, 30, 60), 14, 15, 10, 14, 12, 10, 8, 12, 12, 13].forEach((w,i)=>{ wsC.getColumn(i+1).width = w; });
+      const colsCentro = centrosL.map((c,i)=>({ centro:c, cCod:NBASE+1+i*2, cNom:NBASE+2+i*2 }));
+      colsCentro.forEach(cc=>{ wsC.getColumn(cc.cCod).width = 19; wsC.getColumn(cc.cNom).width = 38; });
+      const L = (n) => wsC.getColumn(n).letter;
+      const put = (ws, r, c1, c2, val, font, al) => { if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle', horizontal:'left', indent:1}; return cell; };
+
+      // ── Hoja Conceptos: membrete (el texto se desborda a la derecha) ──
+      const lineaC = (r, txt, font) => { const c = wsC.getCell(r,1); c.value = txt; c.font = font; c.alignment = {vertical:'middle', horizontal:'left', indent:1}; };
+      lineaC(1, String(empresa||''), {name:'Arial', size:15, bold:true, color:{argb:INK}});
+      lineaC(2, `RIF: ${rif||''}`, {name:'Arial', size:9, color:{argb:GRAY7}});
+      lineaC(3, String(dir||''), {name:'Arial', size:8, color:{argb:MUTED}});
+      lineaC(4, 'CATÁLOGO DE CONCEPTOS DE NÓMINA', {name:'Arial', size:17, bold:true, color:{argb:ORANGE}});
+      [24,15,14,28].forEach((h,i)=>{ wsC.getRow(i+1).height = h; });
+      for(let c=1;c<=NCOL;c++) wsC.getCell(5,c).fill = fill(ORANGE);
+      wsC.getRow(5).height = 4;
+      const invalidas = lista.reduce((s,c)=>s + colsCentro.filter(cc=>{ const cu = c.cuentasPorCentro && c.cuentasPorCentro[cc.centro.id]; return cu && cu.codigo && !planMapa.has(rhCodigoCuenta(cu.codigo)); }).length, 0);
+      lineaC(6, `${lista.length} concepto(s)  ·  ${centrosL.length} centro(s) de costo  ·  Emitido el ${hoy}${invalidas>0 ? `  ·  ATENCIÓN: ${invalidas} cuenta(s) asignada(s) NO existen en el Plan de Cuentas (en rojo): corrígelas o bórralas` : ''}`, {name:'Arial', size:9, italic:true, bold:invalidas>0, color:{argb:invalidas>0?'FFB91C1C':MUTED}});
+      lineaC(7, 'Completa las columnas «CUENTA · centro de costo» con códigos del Plan de Cuentas (hoja «Plan de cuentas») y luego importa ESTE MISMO archivo en RRHH → Conceptos → Importar Excel. No cambies los títulos de las columnas.', {name:'Arial', size:9, italic:true, color:{argb:MUTED}});
+      wsC.getRow(6).height = 18; wsC.getRow(7).height = 18;
+
+      // ── Encabezados de columnas ──
+      const heads = ['CÓDIGO','NOMBRE','TIPO','ACTIVO','FÓRMULA (CÁLCULO)','FORMATO EN EL RECIBO','AF. VACACIONES','AF. LIQUIDACIÓN','GENERAL','BONIFICABLE','HISTÓRICO','M. STATUS','AR-C','MÍN. PERÍODO','MÁX. PERÍODO','MÁX. ACUMULADO'];
+      colsCentro.forEach(cc=>{ heads[cc.cCod-1] = `CUENTA · ${cc.centro.nombre||''}`; heads[cc.cNom-1] = `NOMBRE DE LA CUENTA · ${cc.centro.nombre||''}`; });
+      heads.forEach((t,i)=>{
+        const c = wsC.getCell(HR,i+1);
+        const esCta = i>=NBASE && ((i-NBASE)%2===0), esNom = i>=NBASE && !esCta;
+        c.value = t;
+        c.font = {name:'Arial', size:9, bold:true, color:{argb:WHITE}};
+        c.fill = fill(esCta ? TEAL : (esNom ? GRAY7 : INK));
+        c.alignment = {vertical:'middle', horizontal:'center', wrapText:true};
+        c.border = {left:{style:'thin',color:{argb:WHITE}}, right:{style:'thin',color:{argb:WHITE}}, bottom:{style:'medium',color:{argb:ORANGE}}};
+      });
+      wsC.getRow(HR).height = 42;
+      wsC.autoFilter = {from:{row:HR, column:1}, to:{row:HR+Math.max(lista.length,1), column:NCOL}};
+
+      // ── Datos ──
+      const TIPO_COLOR = { A:'FF047857', D:'FFB91C1C', P:'FFB45309', L:'FF6D28D9', V:'FF1D4ED8', R:'FF374151' };
+      const SN = (v) => v ? 'Si' : 'No';
+      const ALIGN = ['left','left','center','center','left','left','center','center','center','center','center','center','center','right','right','right'];
+      lista.forEach((c,i)=>{
+        const r = FIRST + i;
+        const bg = i%2 ? ZEBRA : WHITE;
+        const ti = TIPOS_CONCEPTO[c.tipo];
+        const vals = [String(c.codigo||''), String(c.nombre||''), ti?ti.label:'', c.activo===false?'No':'Si', String(c.formula||''), String(c.formato||''), SN(c.afVac), SN(c.afLiq), SN(c.general), SN(c.bonif), SN(c.historico), SN(c.mStatus), SN(c.arC), Number(c.minPer)||0, Number(c.maxPer)||0, Number(c.maxAcum)||0];
+        vals.forEach((v,ci)=>{
+          const cell = wsC.getCell(r,ci+1);
+          cell.value = (v===''||v==null) ? null : v;
+          let color = INK, bold = false;
+          if(ci===0){ color = 'FFEA580C'; bold = true; cell.numFmt = '@'; }
+          if(ci===1) bold = true;
+          if(ci===2 && c.tipo && TIPO_COLOR[c.tipo]){ color = TIPO_COLOR[c.tipo]; bold = true; }
+          if(ci===4 || ci===5) color = 'FF4B5563';
+          if(ci>=13) cell.numFmt = '#,##0.00';
+          cell.font = {name:'Arial', size:9, bold, color:{argb:color}};
+          cell.fill = fill(bg);
+          cell.border = bd;
+          cell.alignment = {vertical:'middle', horizontal:ALIGN[ci], indent:(ALIGN[ci]==='left'||ALIGN[ci]==='right')?1:0};
+        });
+        colsCentro.forEach(cc=>{
+          const cu = c.cuentasPorCentro && c.cuentasPorCentro[cc.centro.id];
+          const cod = (cu && cu.codigo) ? String(cu.codigo).trim() : '';
+          const a = wsC.getCell(r,cc.cCod), n = wsC.getCell(r,cc.cNom);
+          a.value = cod || null; a.numFmt = '@';
+          a.font = {name:'Arial', size:9, bold:true, color:{argb:'FF0E7490'}};
+          a.fill = fill('FFF0F9FF'); a.border = bd; a.alignment = {vertical:'middle', horizontal:'left', indent:1};
+          const real = cod ? planMapa.get(rhCodigoCuenta(cod)) : null;
+          const cl = L(cc.cCod);
+          n.value = { formula:`IF(TRIM(${cl}${r}&"")="","",IFERROR(VLOOKUP(TRIM(${cl}${r}&""),'Plan de cuentas'!$A$${PLAN_FIRST}:$B$${PLAN_LAST},2,FALSE),"${NO_EXISTE}"))`, result: cod ? (real ? real.nombre : NO_EXISTE) : '' };
+          n.font = {name:'Arial', size:9, color:{argb:'FF374151'}};
+          n.fill = fill(bg); n.border = bd; n.alignment = {vertical:'middle', horizontal:'left', indent:1};
+        });
+        wsC.getRow(r).height = 18;
+      });
+      if(lista.length===0) put(wsC, FIRST, 1, 6, 'Todavía no hay conceptos. Puedes escribir aquí los conceptos nuevos (código, nombre y tipo son obligatorios) e importarlos.', {name:'Arial', size:10, italic:true, color:{argb:MUTED}});
+
+      // ── Validaciones: listas desplegables y aviso en rojo si la cuenta no existe ──
+      const tiposLista = Object.values(TIPOS_CONCEPTO).map(t=>t.label).join(',');
+      const SINO = { type:'list', allowBlank:true, formulae:['"Si,No"'], showErrorMessage:true, errorStyle:'stop', errorTitle:'Valor no válido', error:'Elige Si o No.' };
+      wsC.dataValidations.add(`C${FIRST}:C${VAL_HASTA}`, { type:'list', allowBlank:true, formulae:[`"${tiposLista}"`], showErrorMessage:true, errorStyle:'stop', errorTitle:'Tipo no válido', error:`Elige uno de: ${tiposLista.replace(/,/g, ', ')}.` });
+      wsC.dataValidations.add(`D${FIRST}:D${VAL_HASTA}`, SINO);
+      wsC.dataValidations.add(`G${FIRST}:M${VAL_HASTA}`, SINO);
+      if(planL.length>0){
+        colsCentro.forEach(cc=>{
+          const cl = L(cc.cCod), nl = L(cc.cNom);
+          wsC.dataValidations.add(`${cl}${FIRST}:${cl}${VAL_HASTA}`, { type:'list', allowBlank:true, formulae:[`'Plan de cuentas'!$A$${PLAN_FIRST}:$A$${PLAN_LAST}`], showErrorMessage:true, errorStyle:'stop', errorTitle:'Cuenta no válida', error:'Elige un código que exista en el Plan de Cuentas (hoja «Plan de cuentas»).', showInputMessage:true, promptTitle:'Cuenta contable', prompt:'Elige o escribe un código del Plan de Cuentas.' });
+          wsC.addConditionalFormatting({ ref:`${cl}${FIRST}:${nl}${VAL_HASTA}`, rules:[{ type:'expression', priority:1, formulae:[`LEFT($${nl}${FIRST},9)="NO EXISTE"`], style:{ font:{bold:true, color:{argb:'FF991B1B'}}, fill:{type:'pattern', pattern:'solid', bgColor:{argb:'FFFECACA'}} } }] });
+        });
+      }
+
+      // ── Hoja Plan de cuentas (solo consulta; alimenta las listas y el nombre de la cuenta) ──
+      [18,56,16,24,28].forEach((w,i)=>{ wsP.getColumn(i+1).width = w; });
+      put(wsP,1,1,2,String(empresa||''),{name:'Arial', size:15, bold:true, color:{argb:INK}});
+      put(wsP,2,1,2,`RIF: ${rif||''}`,{name:'Arial', size:9, color:{argb:GRAY7}});
+      put(wsP,3,1,2,String(dir||''),{name:'Arial', size:8, color:{argb:MUTED}});
+      put(wsP,4,1,2,'PLAN DE CUENTAS',{name:'Arial', size:17, bold:true, color:{argb:ORANGE}});
+      [['CONSULTA', 9, true, 'FFEA580C'], [`${planL.length} CUENTA(S)`, 10, true, INK], [`EMITIDO EL  ${hoy}`, 9, false, GRAY7], ['NO SE IMPORTA', 9, false, GRAY7]].forEach(([t,sz,bold,col],i)=>{
+        put(wsP,1+i,3,5,t,{name:'Arial', size:sz, bold, color:{argb:col}},{vertical:'middle', horizontal:'center'}).fill = fill(SLATE);
+      });
+      [24,15,14,28].forEach((h,i)=>{ wsP.getRow(i+1).height = h; });
+      for(let c=1;c<=5;c++) wsP.getCell(5,c).fill = fill(ORANGE);
+      wsP.getRow(5).height = 4;
+      put(wsP,6,1,5,'Hoja de consulta: de aquí salen las listas desplegables y el nombre de cada cuenta. No se importa.',{name:'Arial', size:9, italic:true, color:{argb:MUTED}});
+      wsP.getRow(6).height = 18;
+      ['CÓDIGO','NOMBRE','TIPO DE CUENTA','GRUPO','SUBGRUPO'].forEach((t,i)=>{
+        const c = wsP.getCell(PLAN_HR,i+1);
+        c.value = t; c.font = {name:'Arial', size:9, bold:true, color:{argb:WHITE}}; c.fill = fill(GRAY7);
+        c.alignment = {vertical:'middle', horizontal:'center', wrapText:true};
+        c.border = {left:{style:'thin',color:{argb:WHITE}}, right:{style:'thin',color:{argb:WHITE}}, bottom:{style:'medium',color:{argb:ORANGE}}};
+      });
+      wsP.getRow(PLAN_HR).height = 26;
+      planL.forEach((p,i)=>{
+        const r = PLAN_FIRST + i;
+        const bg = i%2 ? ZEBRA : WHITE;
+        [p.codigo, p.nombre, conHijas.has(rhCodigoCuenta(p.codigo)) ? 'Agrupadora' : 'Detalle', p.grupo, p.subGrupo].forEach((v,ci)=>{
+          const cell = wsP.getCell(r,ci+1);
+          cell.value = v===''?null:v;
+          if(ci===0) cell.numFmt = '@';
+          cell.font = {name:'Arial', size:9, bold:ci===0, color:{argb: ci===0 ? 'FF0E7490' : INK}};
+          cell.fill = fill(bg); cell.border = bd;
+          cell.alignment = {vertical:'middle', horizontal: ci===2 ? 'center' : 'left', indent: ci===2 ? 0 : 1};
+        });
+      });
+      if(planL.length>0) wsP.autoFilter = {from:{row:PLAN_HR, column:1}, to:{row:PLAN_HR+planL.length, column:5}};
+      else put(wsP, PLAN_FIRST, 1, 5, 'El Plan de Cuentas está vacío: crea las cuentas primero (Contabilidad → Plan de Cuentas).', {name:'Arial', size:10, italic:true, color:{argb:'FFB91C1C'}});
+
+      // ── Hoja Instrucciones ──
+      wsI.getColumn(1).width = 3; wsI.getColumn(2).width = 40; wsI.getColumn(3).width = 100;
+      let ri = 1;
+      const parrafo = (txt, opts) => {
+        const o = opts || {};
+        wsI.mergeCells(ri,2,ri,3);
+        const c = wsI.getCell(ri,2);
+        c.value = txt;
+        c.font = {name:'Arial', size:o.size||10, bold:!!o.bold, italic:!!o.italic, color:{argb:o.color||INK}};
+        c.alignment = {vertical:'top', horizontal:'left', wrapText:true};
+        wsI.getRow(ri).height = Math.max(o.alto||16, Math.ceil(String(txt).length/(o.size && o.size>12 ? 80 : 140))*14 + 4);
+        ri++;
+      };
+      const seccion = (txt) => { ri++; wsI.mergeCells(ri,2,ri,3); const c = wsI.getCell(ri,2); c.value = txt; c.font = {name:'Arial', size:10, bold:true, color:{argb:WHITE}}; c.fill = fill(INK); c.alignment = {vertical:'middle', horizontal:'left', indent:1}; wsI.getRow(ri).height = 20; ri++; };
+      const fila2 = (a, b2, i) => {
+        const c1 = wsI.getCell(ri,2), c2 = wsI.getCell(ri,3);
+        c1.value = a; c2.value = b2;
+        c1.font = {name:'Arial', size:9, bold:true, color:{argb:'FF0E7490'}}; c2.font = {name:'Arial', size:9, color:{argb:INK}};
+        [c1,c2].forEach(c=>{ c.fill = fill(i%2 ? ZEBRA : WHITE); c.border = bd; c.alignment = {vertical:'middle', horizontal:'left', wrapText:true, indent:1}; });
+        wsI.getRow(ri).height = Math.max(18, Math.max(Math.ceil(String(b2).length/110), Math.ceil(String(a).length/34))*13 + 5);
+        ri++;
+      };
+      parrafo('CATÁLOGO DE CONCEPTOS — CÓMO USAR ESTE ARCHIVO', {size:16, bold:true, color:ORANGE, alto:26});
+      parrafo(`${empresa}  ·  RIF ${rif}  ·  Emitido el ${hoy}`, {size:9, italic:true, color:MUTED});
+      wsI.mergeCells(ri,2,ri,3); for(let c=2;c<=3;c++) wsI.getCell(ri,c).fill = fill(ORANGE); wsI.getRow(ri).height = 4; ri++;
+      seccion('1. ¿Qué es este archivo?');
+      parrafo('Contiene todos los conceptos de nómina de la app con todos sus datos y, por cada centro de costo, la cuenta contable asignada (código + nombre real del Plan de Cuentas).');
+      parrafo('El mismo archivo y el mismo formato sirven para importar: lo completas aquí y lo cargas de vuelta en la app.');
+      seccion('2. Cómo asignar las cuentas contables');
+      parrafo('1) En la hoja «Conceptos» ubica el concepto y, en la columna «CUENTA · centro de costo», escribe o elige de la lista el código de la cuenta.');
+      parrafo('2) La hoja «Plan de cuentas» tiene todas tus cuentas. El nombre de la cuenta aparece solo en la columna de al lado, a partir del código.');
+      parrafo('3) Si el código no existe en el Plan de Cuentas, las celdas se marcan en rojo y dicen «NO EXISTE EN EL PLAN DE CUENTAS».');
+      parrafo('4) Guarda el archivo como Excel (.xlsx). En la app ve a RRHH → Conceptos → «Importar Excel» y elige el archivo.');
+      parrafo('5) La app muestra una vista previa con todos los cambios. No se guarda nada hasta que confirmas.');
+      seccion('3. Reglas de la importación');
+      parrafo('• Una cuenta contable debe existir de verdad en el Plan de Cuentas. Se guarda con el nombre real del plan (lo que se vea en la columna «NOMBRE DE LA CUENTA» no se usa).');
+      parrafo('• Si cualquier fila tiene un error (cuenta inexistente, tipo no válido, código repetido…), NO se importa nada: corrige el Excel y vuelve a importarlo.');
+      parrafo('• El código identifica al concepto: si ya existe se actualiza; si no existe se crea uno nuevo (para crearlo son obligatorios código, nombre y tipo).');
+      parrafo('• Una celda de cuenta vacía quita la cuenta de ese centro de costo.');
+      parrafo('• Los conceptos que no estén en el archivo no se tocan ni se eliminan.');
+      parrafo('• Antes de importar cambios grandes, exporta un archivo nuevo: te sirve de respaldo de lo que hay hoy en la app.');
+      parrafo('• No cambies los títulos de las columnas ni el nombre de la hoja «Conceptos». La hoja «Plan de cuentas» es solo de consulta.');
+      parrafo('• Si agregas un centro de costo o le cambias el nombre en la app, vuelve a exportar el archivo.');
+      seccion('4. Significado de las columnas');
+      [
+        ['CÓDIGO', 'Identifica el concepto (texto, por ejemplo 00001). No lo cambies en los conceptos que ya existen.'],
+        ['NOMBRE', 'Nombre del concepto.'],
+        ['TIPO', `${Object.values(TIPOS_CONCEPTO).map(t=>t.label).join(', ')}.`],
+        ['ACTIVO', 'Si / No.'],
+        ['FÓRMULA y FORMATO EN EL RECIBO', 'Texto tal como está en la ficha del concepto.'],
+        ['AF. VACACIONES … AR-C', 'Si / No (los mismos indicadores de la ficha del concepto).'],
+        ['MÍN. PERÍODO, MÁX. PERÍODO, MÁX. ACUMULADO', 'Números.'],
+        ['CUENTA · centro de costo', 'Código de la cuenta contable (del Plan de Cuentas) que usa el concepto para ese centro de costo. Vacío = sin cuenta.'],
+        ['NOMBRE DE LA CUENTA · centro', 'Solo informativo: sale solo a partir del código. No se importa.'],
+      ].forEach(([a,b2],i)=>fila2(a,b2,i));
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Conceptos_Nomina_${getTodayDate()}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }catch(e){
+      alert('No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)));
+    }finally{
+      setExportandoConceptos(false);
+    }
+  };
+  // Lee el Excel, lo valida contra el Plan de Cuentas y deja la vista previa (todavía no guarda nada)
+  const leerExcelConceptos = async (file) => {
+    if(!file) return;
+    setImpConceptos({ archivo:file.name, estado:'leyendo' });
+    try{
+      if(!/\.xlsx$/i.test(file.name)) throw new Error('El archivo debe ser un Excel .xlsx (el mismo que se exporta desde esta pantalla).');
+      const EJ = await ccLoadExcelJS();
+      const wb = new EJ.Workbook();
+      await wb.xlsx.load(await file.arrayBuffer());
+      const ws = wb.worksheets.find(w=>rhNorm(w.name)==='CONCEPTOS') || wb.worksheets[0];
+      if(!ws) throw new Error('El archivo no tiene hojas.');
+      const nCols = ws.columnCount || 0;
+      const filas = [];
+      ws.eachRow({includeEmpty:false}, (row, n)=>{
+        const c = [];
+        for(let i=1;i<=nCols;i++){ const cell = row.getCell(i); c.push(rhCeldaValor(cell.type===6 ? (cell.result===undefined ? null : cell.result) : cell.value)); }
+        filas.push({ n, c });
+      });
+      const res = rhConceptosAnalizar(filas, { conceptos, centros, plan:planCuentasRH, tipos:TIPOS_CONCEPTO });
+      setImpConceptos({ archivo:file.name, estado:'listo', filas, res });
+    }catch(e){
+      setImpConceptos({ archivo:file.name, estado:'error', errorLectura:'No se pudo leer el archivo: '+(e&&e.message?e.message:String(e))+'. Usa el Excel (.xlsx) que se exporta desde esta pantalla.' });
+    }
+  };
+  // Confirma: vuelve a validar con los datos actuales de la app y recién entonces guarda (todo o nada)
+  const confirmarImportConceptos = async () => {
+    const im = impConceptos;
+    if(!im || im.estado!=='listo' || !im.filas) return;
+    const res = rhConceptosAnalizar(im.filas, { conceptos, centros, plan:planCuentasRH, tipos:TIPOS_CONCEPTO });
+    const lote = res.filas.filter(f=>f.estado==='nuevo'||f.estado==='cambia');
+    if(res.bloqueado || lote.length===0){
+      setImpConceptos({ ...im, res });
+      return alert(res.bloqueado ? 'Mientras revisabas el archivo cambiaron datos en la app y ahora hay errores. Revisa la vista previa.' : 'No hay nada para importar.');
+    }
+    setImpConceptos({ ...im, res, estado:'guardando' });
+    try{
+      const ahora = Date.now();
+      // concepto nuevo -> se crea completo; concepto existente -> solo se actualizan los campos que cambian (no se toca nada más)
+      const ops = lote.map(f=> f.estado==='nuevo' ? { nuevo:true, cod:f.codigo, data:{ ...f.nuevo, createdAt:ahora, updatedAt:ahora } } : { nuevo:false, cod:f.ex.codigo, data:{ ...f.patch, updatedAt:ahora } });
+      for(let i=0;i<ops.length;i+=400){
+        const batch = writeBatch(db);
+        ops.slice(i,i+400).forEach(o=>{ const ref = getDocRef('rrhh_conceptos', o.cod); if(o.nuevo) batch.set(ref, o.data); else batch.update(ref, o.data); });
+        await batch.commit();
+      }
+      const nuevos = lote.filter(f=>f.estado==='nuevo').length;
+      setImpConceptos(null);
+      // si la ficha abierta es de un concepto que se acaba de importar, se cierra: así no queda con datos viejos ni los guarda encima de lo importado
+      const tocados = new Set(lote.map(f=> f.estado==='nuevo' ? f.codigo : f.ex.codigo));
+      const abierto = esNuevoConcepto ? String((conceptoForm&&conceptoForm.codigo)||'').trim().toUpperCase() : conceptoSelCod;
+      if(abierto && tocados.has(abierto)){ setConceptoForm(null); setConceptoSelCod(null); setEsNuevoConcepto(false); }
+      alert(`Importación lista: ${nuevos} concepto(s) nuevo(s) y ${lote.length-nuevos} actualizado(s).`);
+    }catch(e){
+      setImpConceptos({ ...im, res, estado:'listo' });
+      alert('No se pudo importar: '+(e&&e.message?e.message:String(e))+'\n\nPuedes volver a intentarlo: importar el mismo archivo otra vez es seguro.');
+    }
   };
   const agregarParametro = async () => {
     const codigo = nuevoParametro.codigo.trim().toUpperCase();
@@ -1451,6 +1995,354 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const url = URL.createObjectURL(blob); const a = document.createElement('a');
     a.href = url; a.download = `trabajadores_por_centro_${getTodayDate()}.xls`; a.click(); URL.revokeObjectURL(url);
   };
+  // ── Resumen del mes (pestaña Beneficios): una sola fuente de datos para la pantalla, el PDF y el Excel ──
+  const MESES_ES_RH = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const etiquetaMesRH = (mes) => benMesOk(mes) ? `${MESES_ES_RH[parseInt(String(mes).slice(5,7),10)-1]} ${String(mes).slice(0,4)}` : String(mes||'');
+  const resumenBeneficiosMes = (mes) => {
+    const activosB = trabajadores.filter(t=>t.estado!=='Egresado');
+    const porNombre = (a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||'');
+    const filasHcm = activosB.map(t=>({t, c:hcmCalcularMes(t, mes, configBeneficios)})).filter(x=>x.c.personas>0).sort(porNombre);
+    const filasBolsa = activosB.map(t=>({t, b:bolsaCalcular(t, configBeneficios)})).filter(x=>x.b.bolsas>0).sort(porNombre);
+    const sumF = (arr, f)=>benR2(arr.reduce((s,x)=>s+f(x),0));
+    return { activos:activosB.length, filasHcm, filasBolsa, sumF };
+  };
+  // Datos completos para PDF/Excel: filas, totales y aporte de la empresa por centro de costo (con la cuenta de gasto configurada)
+  const datosResumenBeneficios = (mes) => {
+    const { activos, filasHcm, filasBolsa, sumF } = resumenBeneficiosMes(mes);
+    const cfg = benMerge(configBeneficios);
+    const SIN_CENTRO = '— Sin centro de costo —';
+    const idCentroDe = (t) => (t.centroCostoId && centros.some(c=>c.id===t.centroCostoId)) ? t.centroCostoId : '';
+    const centroDeT = (t) => { const id = idCentroDe(t); return id ? nombreCentro(id) : SIN_CENTRO; };
+    const deptoDeT = (t) => (t.departamentoId && departamentos.some(d=>d.id===t.departamentoId)) ? nombreDepto(t.departamentoId) : '—';
+    const totHcm = { titulares:filasHcm.length, personas:sumF(filasHcm,x=>x.c.personas), prima:sumF(filasHcm,x=>x.c.prima), aporteTrab:sumF(filasHcm,x=>x.c.aporteTrab), aporteEmp:sumF(filasHcm,x=>x.c.aporteEmp), porPagoTrab:sumF(filasHcm,x=>x.c.porPagoTrab), porPagoEmp:sumF(filasHcm,x=>x.c.porPagoEmp) };
+    const totBolsa = { trabajadores:filasBolsa.length, bolsas:sumF(filasBolsa,x=>x.b.bolsas), costo:sumF(filasBolsa,x=>x.b.costo), descuento:sumF(filasBolsa,x=>x.b.descuento), subsidio:sumF(filasBolsa,x=>x.b.subsidio) };
+    // Aporte de la empresa por centro de costo del trabajador (lo mismo que reparte el asiento de la nómina)
+    const mapa = new Map();
+    const filaC = (t) => { const id = idCentroDe(t); if(!mapa.has(id)) mapa.set(id, { id, nombre: id ? nombreCentro(id) : SIN_CENTRO, hcmTit:0, hcmEmp:0, bolsas:0, bolsaEmp:0 }); return mapa.get(id); };
+    filasHcm.forEach(({t,c})=>{ const f = filaC(t); f.hcmTit += 1; f.hcmEmp = benR2(f.hcmEmp + c.aporteEmp); });
+    filasBolsa.forEach(({t,b})=>{ const f = filaC(t); f.bolsas += b.bolsas; f.bolsaEmp = benR2(f.bolsaEmp + b.subsidio); });
+    const cuentaH = (id) => { const g = id ? (cfg.hcm.gastoPorCentro||{})[id] : null; if(g && g.codigo) return { codigo:g.codigo, nombre:g.nombre||'' }; return cfg.hcm.codigoGasto ? { codigo:cfg.hcm.codigoGasto, nombre:cfg.hcm.nombreGasto||'' } : null; };
+    const cuentaB = (id) => { const g = id ? (cfg.bolsa.gastoPorCentro||{})[id] : null; return (g && g.codigo) ? { codigo:g.codigo, nombre:g.nombre||'' } : null; };
+    const porCentro = [...mapa.values()].map(f=>({ ...f, ctaHcm:cuentaH(f.id), ctaBolsa:cuentaB(f.id), total:benR2(f.hcmEmp + f.bolsaEmp) }))
+      .sort((a,b)=>((a.id===''?1:0)-(b.id===''?1:0)) || a.nombre.localeCompare(b.nombre));
+    const totalEmpresa = benR2(totHcm.aporteEmp + totBolsa.subsidio);
+    const totalTrabajadores = benR2(totHcm.aporteTrab + totBolsa.descuento);
+    return { mes, etiqueta:etiquetaMesRH(mes), activos, filasHcm, filasBolsa, totHcm, totBolsa, porCentro, totalEmpresa, totalTrabajadores, cfg, centroDeT, deptoDeT, SIN_CENTRO };
+  };
+  const exportarResumenBeneficiosPDF = () => {
+    if(!benMesOk(benMesVer)) return alert('Elige un mes válido para generar el resumen.');
+    const d = datosResumenBeneficios(benMesVer);
+    const {empresa, rif, dir} = _empresaDatos();
+    const esc = _escRH;
+    const m = (n)=>'$'+formatNum(n);
+    const emitido = contDd(getTodayDate()) + ' ' + new Date().toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'});
+    const cH = d.cfg.hcm, cB = d.cfg.bolsa;
+    const pctT = Math.min(100, Math.max(0, benNum(cH.pctTrabajador)));
+    const cuotas = parseInt(cH.cuotasPorMes,10) > 0 ? parseInt(cH.cuotasPorMes,10) : 4;
+    const cuentaTxt = (c, monto) => c ? `<span class="cod">${esc(c.codigo)}</span> ${esc(c.nombre)}` : (monto>0 ? '<span class="aviso">⚠ Sin cuenta configurada</span>' : '<span class="nd">—</span>');
+    const kpi = (cls, l, v, s) => `<div class="kpi ${cls}"><div class="l">${l}</div><div class="v">${v}</div>${s?`<div class="s">${s}</div>`:''}</div>`;
+    const filasH = d.filasHcm.length ? d.filasHcm.map(({t,c},i)=>`<tr><td class="n">${i+1}</td><td class="l"><b>${esc(t.nombre)}</b></td><td class="l">${esc(t.cedula||'—')}</td><td class="l">${esc(d.centroDeT(t))}</td><td>${c.personas}</td><td>${m(c.prima)}</td><td>${m(c.aporteTrab)}</td><td>${m(c.aporteEmp)}</td><td>${c.cuotasMes}</td><td><b>${m(c.porPagoTrab)}</b></td></tr>`).join('') : '<tr class="vacio"><td colspan="10">Ningún trabajador con HCM vigente en ese mes.</td></tr>';
+    const pieH = d.filasHcm.length ? `<tfoot><tr><td class="l" colspan="4">TOTAL · ${d.totHcm.titulares} titular(es)</td><td>${d.totHcm.personas}</td><td>${m(d.totHcm.prima)}</td><td>${m(d.totHcm.aporteTrab)}</td><td>${m(d.totHcm.aporteEmp)}</td><td></td><td>${m(d.totHcm.porPagoTrab)}</td></tr></tfoot>` : '';
+    const filasB = d.filasBolsa.length ? d.filasBolsa.map(({t,b},i)=>`<tr><td class="n">${i+1}</td><td class="l"><b>${esc(t.nombre)}</b></td><td class="l">${esc(t.cedula||'—')}</td><td class="l">${esc(d.centroDeT(t))}</td><td>${b.bolsas}</td><td>${m(b.costoUnit)}</td><td>${m(b.costo)}</td><td>${m(b.descuento)}</td><td><b>${m(b.subsidio)}</b></td></tr>`).join('') : '<tr class="vacio"><td colspan="9">Ningún trabajador con bolsas de alimentos.</td></tr>';
+    const pieB = d.filasBolsa.length ? `<tfoot><tr><td class="l" colspan="4">TOTAL · ${d.totBolsa.trabajadores} trabajador(es)</td><td>${d.totBolsa.bolsas}</td><td></td><td>${m(d.totBolsa.costo)}</td><td>${m(d.totBolsa.descuento)}</td><td>${m(d.totBolsa.subsidio)}</td></tr></tfoot>` : '';
+    const filasC = d.porCentro.length ? d.porCentro.map(f=>`<tr><td class="l nw"><b>${esc(f.nombre)}</b></td><td>${f.hcmTit}</td><td>${m(f.hcmEmp)}</td><td class="l">${cuentaTxt(f.ctaHcm, f.hcmEmp)}</td><td>${f.bolsas}</td><td>${m(f.bolsaEmp)}</td><td class="l">${cuentaTxt(f.ctaBolsa, f.bolsaEmp)}</td><td><b>${m(f.total)}</b></td></tr>`).join('') : '<tr class="vacio"><td colspan="8">Sin aportes de la empresa en este mes.</td></tr>';
+    const pieC = d.porCentro.length ? `<tfoot><tr><td class="l">TOTAL</td><td>${d.totHcm.titulares}</td><td>${m(d.totHcm.aporteEmp)}</td><td></td><td>${d.totBolsa.bolsas}</td><td>${m(d.totBolsa.subsidio)}</td><td></td><td>${m(d.totalEmpresa)}</td></tr></tfoot>` : '';
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:16px;color:#0f172a;}.wrap{max-width:1120px;margin:0 auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.12);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;}.membrete h1{font-size:17px;text-transform:uppercase;letter-spacing:.3px;}.membrete p{font-size:9.5px;opacity:.92;margin-top:3px;}.membrete .tit{text-align:right;font-size:13px;font-weight:900;text-transform:uppercase;line-height:1.35;}.membrete .tit span{display:block;font-size:10px;font-weight:400;opacity:.95;text-transform:none;}.franja{height:4px;background:#0f172a;}.btn-print{display:block;margin:14px 24px;padding:11px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 22px;}.meta{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#475569;padding:4px 0 10px;border-bottom:1px solid #e2e8f0;margin-bottom:12px;}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px;}.kpi{border:1px solid #e2e8f0;border-left:4px solid #0891b2;border-radius:6px;padding:7px 10px;background:#f8fafc;}.kpi.g{border-left-color:#16a34a;}.kpi.t{border-left-color:#ea580c;background:#fff7ed;}.kpi .l{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;letter-spacing:.4px;}.kpi .v{font-size:16px;font-weight:900;margin-top:2px;}.kpi .s{font-size:8.5px;color:#64748b;margin-top:1px;}h2{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:#fff;background:#0f172a;padding:6px 10px;margin:16px 0 0;}h2.h{background:#0e7490;}h2.b{background:#15803d;}h2,.param{break-after:avoid;page-break-after:avoid;}.sec{break-inside:avoid;page-break-inside:avoid;}td.nw{white-space:nowrap;}.param{font-size:9px;color:#64748b;margin:5px 0 6px;}table{width:100%;border-collapse:collapse;font-size:9.5px;}thead{display:table-header-group;}th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:8px;padding:6px 7px;text-align:right;border-bottom:2px solid #cbd5e1;}th.l,td.l{text-align:left;}td{padding:5px 7px;text-align:right;border-bottom:1px solid #e5e7eb;font-variant-numeric:tabular-nums;}tbody tr:nth-child(even) td{background:#fafafa;}tr{page-break-inside:avoid;}tfoot td{background:#f1f5f9;font-weight:900;border-top:2px solid #0f172a;border-bottom:none;}td.n,th.n{color:#94a3b8;width:26px;text-align:center;}.cod{font-family:'Courier New',monospace;font-weight:700;color:#0e7490;}.aviso{color:#b45309;font-weight:700;}.nd{color:#94a3b8;}tr.vacio td{text-align:center;color:#94a3b8;padding:14px;}.firmas{display:flex;gap:40px;margin-top:40px;page-break-inside:avoid;}.firmas div{flex:1;text-align:center;font-size:9px;color:#475569;border-top:1px solid #0f172a;padding-top:5px;}.nota{font-size:8.5px;color:#64748b;margin-top:14px;line-height:1.5;}@media print{@page{size:letter landscape;margin:9mm 9mm 13mm;@bottom-right{content:"Página " counter(page) " de " counter(pages);font-size:8px;color:#64748b;}}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete,.franja,h2,.kpi,th,tfoot td,tbody tr:nth-child(even) td{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Resumen de Beneficios - ${esc(d.mes)}</title><style>${css}</style></head><body><div class="wrap">
+      <div class="membrete"><div><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)} · ${esc(dir)}</p></div><div class="tit">Resumen mensual de beneficios<span>HCM y Bolsa de alimentos · ${esc(d.etiqueta)}</span></div></div>
+      <div class="franja"></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        <div class="meta"><span>Período: <b>${esc(d.etiqueta)}</b> · Trabajadores activos considerados: <b>${d.activos}</b> · Montos en USD</span><span>Emitido el ${esc(emitido)}</span></div>
+        <div class="kpis">
+          ${kpi('', 'HCM · Titulares', d.totHcm.titulares, `${d.totHcm.personas} persona(s) cubierta(s)`)}
+          ${kpi('', 'HCM · Aporte del trabajador (mes)', m(d.totHcm.aporteTrab), `${m(d.totHcm.porPagoTrab)} por pago`)}
+          ${kpi('', 'HCM · Aporte de la empresa (mes)', m(d.totHcm.aporteEmp), `Prima total ${m(d.totHcm.prima)}`)}
+          ${kpi('g', 'Bolsas de alimentos', d.totBolsa.bolsas, `${d.totBolsa.trabajadores} trabajador(es)`)}
+          ${kpi('g', 'Bolsas · Descuento a trabajadores', m(d.totBolsa.descuento), `Costo total ${m(d.totBolsa.costo)}`)}
+          ${kpi('g', 'Bolsas · Aporte de la empresa', m(d.totBolsa.subsidio), '')}
+          ${kpi('t', 'Total aporte de la empresa', m(d.totalEmpresa), 'HCM + Bolsas')}
+          ${kpi('t', 'Total descontado a trabajadores', m(d.totalTrabajadores), 'HCM (mes) + Bolsas')}
+        </div>
+
+        <h2 class="h">1. Póliza HCM — Medicina prepagada</h2>
+        <p class="param">Prima por persona ${m(benNum(cH.primaPersona))} · Trabajador ${pctT}% · Empresa ${100-pctT}% · ${cuotas} cuota(s) por mes${cH.polizaAseguradora?` · Póliza ${esc(cH.polizaAseguradora)}${cH.polizaNumero?' N° '+esc(cH.polizaNumero):''}`:''}</p>
+        <table>
+          <thead><tr><th class="n">N°</th><th class="l">Trabajador</th><th class="l">Cédula</th><th class="l">Centro de costo</th><th>Pers.</th><th>Prima total</th><th>Trabajador/mes</th><th>Empresa/mes</th><th>Cuotas</th><th>Trab./pago</th></tr></thead>
+          <tbody>${filasH}</tbody>${pieH}
+        </table>
+
+        <h2 class="b">2. Bolsas de alimentos</h2>
+        <p class="param">Costo por bolsa ${m(benNum(cB.costoBolsa))} · Descuento al trabajador ${m(benNum(cB.descuentoBolsa))} · Aporte de la empresa ${m(benR2(benNum(cB.costoBolsa)-benNum(cB.descuentoBolsa)))} por bolsa</p>
+        <table>
+          <thead><tr><th class="n">N°</th><th class="l">Trabajador</th><th class="l">Cédula</th><th class="l">Centro de costo</th><th>Bolsas</th><th>Costo unit.</th><th>Costo total</th><th>Descuento</th><th>Aporte empresa</th></tr></thead>
+          <tbody>${filasB}</tbody>${pieB}
+        </table>
+
+        <div class="sec">
+          <h2>3. Aporte de la empresa por centro de costo (imputación contable)</h2>
+          <p class="param">La parte de la empresa se registra como gasto/costo en la cuenta configurada para el centro de costo de cada trabajador (Configuración → HCM / Bolsa de alimentos).</p>
+          <table>
+            <thead><tr><th class="l">Centro de costo</th><th>HCM titulares</th><th>HCM aporte empresa</th><th class="l">HCM cuenta de gasto</th><th>Bolsas</th><th>Bolsas aporte empresa</th><th class="l">Bolsas cuenta de gasto</th><th>Total empresa</th></tr></thead>
+            <tbody>${filasC}</tbody>${pieC}
+          </table>
+        </div>
+
+        <div class="firmas"><div>Elaborado por</div><div>Revisado por</div><div>Aprobado por</div></div>
+        <p class="nota">HCM: las personas cubiertas salen de la vigencia (desde/hasta) de cada persona en ${esc(d.etiqueta)}. Bolsas de alimentos: cantidad registrada actualmente en la ficha de cada trabajador. Solo trabajadores activos (no egresados).</p>
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+    else alert('El navegador bloqueó la ventana del PDF. Permite las ventanas emergentes para este sitio e inténtalo de nuevo.');
+  };
+  const exportarResumenBeneficiosExcel = async () => {
+    if(exportandoResumenBen) return;
+    if(!benMesOk(benMesVer)) return alert('Elige un mes válido para generar el resumen.');
+    setExportandoResumenBen(true);
+    try{
+      const EJ = await ccLoadExcelJS();
+      const d = datosResumenBeneficios(benMesVer);
+      const {empresa, rif, dir} = _empresaDatos();
+      const INK='FF0F172A', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB', SLATE='FFF1F5F9', ZEBRA='FFF8FAFC', MUTED='FF64748B';
+      const ACC_H='FF0E7490', ACC_B='FF15803D';
+      const NF_USD='"$"#,##0.00', NF_INT='#,##0';
+      const fill = a=>({type:'pattern', pattern:'solid', fgColor:{argb:a}});
+      const thin = {style:'thin', color:{argb:GRID}};
+      const bd = {top:thin, left:thin, bottom:thin, right:thin};
+      const hoy = contDd(getTodayDate());
+      const cH = d.cfg.hcm, cB = d.cfg.bolsa;
+      const pctT = Math.min(100, Math.max(0, benNum(cH.pctTrabajador)));
+      const cuotas = parseInt(cH.cuotasPorMes,10) > 0 ? parseInt(cH.cuotasPorMes,10) : 4;
+      const wb = new EJ.Workbook();
+      wb.creator = String(empresa||''); wb.created = new Date();
+
+      const mkHoja = (nombre, tab, widths, HR, pie, conCongelado) => {
+        const ws = wb.addWorksheet(nombre, {
+          properties:{tabColor:{argb:tab}},
+          views:[conCongelado ? {state:'frozen', ySplit:HR, showGridLines:false} : {showGridLines:false}],
+          pageSetup:{paperSize:1, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0, horizontalCentered:true,
+            margins:{left:0.3, right:0.3, top:0.4, bottom:0.55, header:0.2, footer:0.25}, ...(conCongelado ? {printTitlesRow:`${HR}:${HR}`} : {})},
+          headerFooter:{oddFooter:`&L&8&"Arial,Regular"${pie}&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
+        });
+        widths.forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+        return ws;
+      };
+      const put = (ws, r, c1, c2, val, font, al) => { if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle', horizontal:'left', indent:1}; return cell; };
+      const encabezado = (ws, ncol, titulo, caja, info) => {
+        const corte = ncol-3;
+        put(ws,1,1,corte,String(empresa||''),{name:'Arial', size:15, bold:true, color:{argb:INK}});
+        put(ws,2,1,corte,`RIF: ${rif||''}`,{name:'Arial', size:9, color:{argb:'FF475569'}});
+        put(ws,3,1,corte,String(dir||''),{name:'Arial', size:8, color:{argb:MUTED}});
+        put(ws,4,1,corte,titulo,{name:'Arial', size:17, bold:true, color:{argb:ORANGE}});
+        const boxC = {vertical:'middle', horizontal:'center'};
+        caja.forEach((t,i)=>{ put(ws,1+i,corte+1,ncol,t.txt,{name:'Arial', size:t.size||10, bold:!!t.bold, color:{argb:t.color||INK}},boxC).fill = fill(SLATE); });
+        [24,15,14,28].forEach((h,i)=>{ ws.getRow(i+1).height = h; });
+        for(let c=1;c<=ncol;c++) ws.getCell(5,c).fill = fill(ORANGE);
+        ws.getRow(5).height = 4;
+        put(ws,6,1,ncol,info,{name:'Arial', size:9, italic:true, color:{argb:MUTED}});
+        ws.getRow(6).height = 18;
+      };
+      const cabecera = (ws, HR, heads, accent) => {
+        heads.forEach((t,i)=>{
+          const c = ws.getCell(HR,i+1);
+          c.value = t;
+          c.font = {name:'Arial', size:9, bold:true, color:{argb:WHITE}};
+          c.fill = fill(accent);
+          c.alignment = {vertical:'middle', horizontal:'center', wrapText:true};
+          c.border = {left:{style:'thin',color:{argb:WHITE}}, right:{style:'thin',color:{argb:WHITE}}, bottom:{style:'medium',color:{argb:ORANGE}}};
+        });
+        ws.getRow(HR).height = 40;
+      };
+      // Escribe una fila de datos con el mismo estilo (zebra, bordes, alineación y formato por columna)
+      const filaDatos = (ws, r, i, vals, aligns, fmts, negritas) => {
+        const bg = i%2 ? ZEBRA : WHITE;
+        vals.forEach((v,ci)=>{
+          const cell = ws.getCell(r,ci+1);
+          cell.value = (v===''||v==null) ? null : v;
+          cell.font = {name:'Arial', size:9, bold:!!(negritas&&negritas[ci]), color:{argb: (negritas&&negritas[ci]) ? INK : 'FF1F2937'}};
+          cell.fill = fill(bg);
+          cell.border = bd;
+          cell.alignment = {vertical:'middle', horizontal:aligns[ci], indent:(aligns[ci]==='left'||aligns[ci]==='right')?1:0};
+          if(fmts[ci]) cell.numFmt = fmts[ci];
+        });
+        ws.getRow(r).height = 18;
+      };
+      const filaVacia = (ws, r, ncol, txt) => { put(ws,r,1,ncol,txt,{name:'Arial', size:10, italic:true, color:{argb:MUTED}},{vertical:'middle', horizontal:'center'}); ws.getRow(r).height = 26; };
+      // Fila de totales: etiqueta combinada + celdas con formula (SUM) y su resultado calculado
+      const filaTotal = (ws, r, ncol, c2Etiqueta, etiqueta, accent, sumas) => {
+        ws.mergeCells(r,1,r,c2Etiqueta);
+        for(let c=1;c<=ncol;c++){ const cell=ws.getCell(r,c); cell.fill = fill(SLATE); cell.border = {top:{style:'medium',color:{argb:accent}}}; }
+        const tl = ws.getCell(r,1);
+        tl.value = etiqueta;
+        tl.font = {name:'Arial', size:10, bold:true, color:{argb:INK}};
+        tl.alignment = {horizontal:'left', vertical:'middle', indent:1};
+        sumas.forEach(([col, letra, desde, hasta, res, nf])=>{
+          const cell = ws.getCell(r,col);
+          cell.value = {formula:`SUM(${letra}${desde}:${letra}${hasta})`, result:res};
+          cell.numFmt = nf;
+          cell.font = {name:'Arial', size:10, bold:true, color:{argb:INK}};
+          cell.alignment = {horizontal:'right', vertical:'middle', indent:1};
+        });
+        ws.getRow(r).height = 22;
+      };
+      const notas = [
+        `HCM: las personas cubiertas salen de la vigencia (desde/hasta) de cada persona en ${d.etiqueta}. Bolsas de alimentos: cantidad registrada actualmente en la ficha de cada trabajador.`,
+        'Solo trabajadores activos (no egresados). Montos en USD. La parte de la empresa se imputa al centro de costo de cada trabajador.',
+      ];
+
+      // Las hojas se crean en el orden en que se ven en el libro: Resumen, HCM, Bolsa de alimentos
+      const NC_R = 10, NC_H = 12, NC_B = 10;
+      const wsR = mkHoja('Resumen', ORANGE, [42,11,17,15,30,11,17,15,30,17], 7, 'Resumen mensual de beneficios', false);
+      const wsH = mkHoja('HCM', ACC_H, [6,34,15,26,24,11,14,16,16,9,16,16], 7, 'Resumen de beneficios - HCM', true);
+      const wsB = mkHoja('Bolsa de alimentos', ACC_B, [6,34,15,26,24,11,15,15,19,19], 7, 'Resumen de beneficios - Bolsa de alimentos', true);
+
+      // ─────────── Hoja HCM ───────────
+      const HR_H = 7, FH = HR_H+1, nH = d.filasHcm.length, LH = FH + Math.max(nH,1) - 1;
+      encabezado(wsH, NC_H, 'PÓLIZA HCM — MEDICINA PREPAGADA', [
+        {txt:'BENEFICIOS  ·  HCM', size:9, bold:true, color:'FF0E7490'},
+        {txt:`PERÍODO:  ${d.etiqueta.toUpperCase()}`, bold:true},
+        {txt:`PRIMA POR PERSONA:  $${formatNum(benNum(cH.primaPersona))}`, size:9},
+        {txt:`TRABAJADOR ${pctT}%  ·  EMPRESA ${100-pctT}%  ·  ${cuotas} CUOTA(S)`, size:9, color:'FF475569'},
+      ], `${nH} titular(es) con HCM vigente  ·  ${d.totHcm.personas} persona(s) cubierta(s)  ·  Emitido el ${hoy}`);
+      cabecera(wsH, HR_H, ['N°','TRABAJADOR','CÉDULA','CENTRO DE COSTO','DEPARTAMENTO','PERSONAS CUBIERTAS','PRIMA TOTAL ($)','APORTE TRABAJADOR / MES ($)','APORTE EMPRESA / MES ($)','CUOTAS / MES','TRABAJADOR POR PAGO ($)','EMPRESA POR PAGO ($)'], ACC_H);
+      if(nH===0) filaVacia(wsH, FH, NC_H, 'Ningún trabajador con HCM vigente en ese mes. Márcalo en la ficha del trabajador.');
+      d.filasHcm.forEach(({t,c},i)=>{
+        filaDatos(wsH, FH+i, i,
+          [i+1, t.nombre||'', t.cedula||'', d.centroDeT(t), d.deptoDeT(t), c.personas, c.prima, c.aporteTrab, c.aporteEmp, c.cuotasMes, c.porPagoTrab, c.porPagoEmp],
+          ['center','left','left','left','left','center','right','right','right','center','right','right'],
+          [null,null,null,null,null,NF_INT,NF_USD,NF_USD,NF_USD,NF_INT,NF_USD,NF_USD],
+          [false,true,false,false,false,false,false,false,false,false,true,false]);
+      });
+      const TH = LH + 1;
+      filaTotal(wsH, TH, NC_H, 5, `TOTAL  —  ${nH} titular(es)`, ACC_H, [
+        [6,'F',FH,LH,d.totHcm.personas,NF_INT], [7,'G',FH,LH,d.totHcm.prima,NF_USD], [8,'H',FH,LH,d.totHcm.aporteTrab,NF_USD],
+        [9,'I',FH,LH,d.totHcm.aporteEmp,NF_USD], [11,'K',FH,LH,d.totHcm.porPagoTrab,NF_USD], [12,'L',FH,LH,d.totHcm.porPagoEmp,NF_USD],
+      ]);
+      if(nH>0) wsH.autoFilter = {from:{row:HR_H, column:1}, to:{row:LH, column:NC_H}};
+      put(wsH, TH+2, 1, NC_H, notas[0], {name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+      put(wsH, TH+3, 1, NC_H, notas[1], {name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+
+      // ─────────── Hoja Bolsa de alimentos ───────────
+      const HR_B = 7, FB = HR_B+1, nB = d.filasBolsa.length, LB = FB + Math.max(nB,1) - 1;
+      const costoU = benNum(cB.costoBolsa), descU = benNum(cB.descuentoBolsa);
+      encabezado(wsB, NC_B, 'BOLSAS DE ALIMENTOS', [
+        {txt:'BENEFICIOS  ·  BOLSA DE ALIMENTOS', size:9, bold:true, color:ACC_B},
+        {txt:`PERÍODO:  ${d.etiqueta.toUpperCase()}`, bold:true},
+        {txt:`COSTO POR BOLSA:  $${formatNum(costoU)}`, size:9},
+        {txt:`DESCUENTO:  $${formatNum(descU)}  ·  EMPRESA:  $${formatNum(benR2(costoU-descU))}`, size:9, color:'FF475569'},
+      ], `${nB} trabajador(es) con bolsas  ·  ${d.totBolsa.bolsas} bolsa(s)  ·  Emitido el ${hoy}`);
+      cabecera(wsB, HR_B, ['N°','TRABAJADOR','CÉDULA','CENTRO DE COSTO','DEPARTAMENTO','N° DE BOLSAS','COSTO UNITARIO ($)','COSTO TOTAL ($)','DESCUENTO AL TRABAJADOR ($)','APORTE DE LA EMPRESA ($)'], ACC_B);
+      if(nB===0) filaVacia(wsB, FB, NC_B, 'Ningún trabajador con bolsas de alimentos. Indica la cantidad en la ficha del trabajador.');
+      d.filasBolsa.forEach(({t,b},i)=>{
+        filaDatos(wsB, FB+i, i,
+          [i+1, t.nombre||'', t.cedula||'', d.centroDeT(t), d.deptoDeT(t), b.bolsas, b.costoUnit, b.costo, b.descuento, b.subsidio],
+          ['center','left','left','left','left','center','right','right','right','right'],
+          [null,null,null,null,null,NF_INT,NF_USD,NF_USD,NF_USD,NF_USD],
+          [false,true,false,false,false,false,false,false,false,true]);
+      });
+      const TB = LB + 1;
+      filaTotal(wsB, TB, NC_B, 5, `TOTAL  —  ${nB} trabajador(es)`, ACC_B, [
+        [6,'F',FB,LB,d.totBolsa.bolsas,NF_INT], [8,'H',FB,LB,d.totBolsa.costo,NF_USD], [9,'I',FB,LB,d.totBolsa.descuento,NF_USD], [10,'J',FB,LB,d.totBolsa.subsidio,NF_USD],
+      ]);
+      if(nB>0) wsB.autoFilter = {from:{row:HR_B, column:1}, to:{row:LB, column:NC_B}};
+      put(wsB, TB+2, 1, NC_B, notas[0], {name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+      put(wsB, TB+3, 1, NC_B, notas[1], {name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+
+      // ─────────── Hoja Resumen (primera) ───────────
+      encabezado(wsR, NC_R, 'RESUMEN MENSUAL DE BENEFICIOS', [
+        {txt:'HCM  Y  BOLSA DE ALIMENTOS', size:9, bold:true, color:'FFEA580C'},
+        {txt:`PERÍODO:  ${d.etiqueta.toUpperCase()}`, bold:true},
+        {txt:`TRABAJADORES ACTIVOS:  ${d.activos}`, size:9},
+        {txt:`EMITIDO EL  ${hoy}`, size:9, color:'FF475569'},
+      ], `Resumen del mes con los trabajadores registrados  ·  Montos en USD`);
+      const barra = (r, c2, txt, color) => { put(wsR,r,1,c2,txt,{name:'Arial', size:10, bold:true, color:{argb:WHITE}}).fill = fill(color); wsR.getRow(r).height = 20; };
+      const qH = (letra, fila) => `'HCM'!${letra}${fila}`;
+      const qB = (letra, fila) => `'Bolsa de alimentos'!${letra}${fila}`;
+      // Indicadores del mes (formulas enlazadas a los totales de las hojas HCM y Bolsa)
+      barra(8, 3, 'INDICADORES DEL MES', INK);
+      ['CONCEPTO','CANTIDAD','MONTO (USD)'].forEach((t,i)=>{
+        const c = wsR.getCell(9,i+1); c.value = t; c.font = {name:'Arial', size:9, bold:true, color:{argb:INK}}; c.fill = fill(SLATE);
+        c.alignment = {vertical:'middle', horizontal:i===0?'left':'center', indent:i===0?1:0}; c.border = {bottom:{style:'medium',color:{argb:ORANGE}}};
+      });
+      wsR.getRow(9).height = 20;
+      const IND = [
+        ['HCM · Titulares con póliza vigente', {formula:`COUNT('HCM'!$F$${FH}:$F$${LH})`, result:d.totHcm.titulares}, null, false],
+        ['HCM · Personas cubiertas (titular + cargas)', {formula:qH('F',TH), result:d.totHcm.personas}, null, false],
+        ['HCM · Prima total del mes', null, {formula:qH('G',TH), result:d.totHcm.prima}, false],
+        ['HCM · Aporte del trabajador (mes)', null, {formula:qH('H',TH), result:d.totHcm.aporteTrab}, false],
+        ['HCM · Aporte de la empresa (mes)', null, {formula:qH('I',TH), result:d.totHcm.aporteEmp}, false],
+        ['Bolsas · Trabajadores con bolsas', {formula:`COUNT('Bolsa de alimentos'!$F$${FB}:$F$${LB})`, result:d.totBolsa.trabajadores}, null, false],
+        ['Bolsas · N° de bolsas', {formula:qB('F',TB), result:d.totBolsa.bolsas}, null, false],
+        ['Bolsas · Costo total', null, {formula:qB('H',TB), result:d.totBolsa.costo}, false],
+        ['Bolsas · Descuento a trabajadores', null, {formula:qB('I',TB), result:d.totBolsa.descuento}, false],
+        ['Bolsas · Aporte de la empresa', null, {formula:qB('J',TB), result:d.totBolsa.subsidio}, false],
+      ];
+      const I0 = 10;
+      IND.forEach(([lbl,cant,monto],i)=>{
+        const r = I0+i;
+        filaDatos(wsR, r, i, [lbl, null, null], ['left','center','right'], [null,NF_INT,NF_USD], [false,false,false]);
+        if(cant){ const c = wsR.getCell(r,2); c.value = cant; }
+        if(monto){ const c = wsR.getCell(r,3); c.value = monto; c.font = {name:'Arial', size:9, bold:true, color:{argb:INK}}; }
+      });
+      const rEmp = I0 + IND.length, rTrab = rEmp + 1;
+      const filaGrande = (r, lbl, formula, res) => {
+        for(let c=1;c<=3;c++){ const cell=wsR.getCell(r,c); cell.fill = fill(SLATE); cell.border = {top:{style:'medium',color:{argb:ORANGE}}, bottom:{style:'thin',color:{argb:GRID}}}; }
+        const a = wsR.getCell(r,1); a.value = lbl; a.font = {name:'Arial', size:10, bold:true, color:{argb:INK}}; a.alignment = {vertical:'middle', horizontal:'left', indent:1};
+        const c3 = wsR.getCell(r,3); c3.value = {formula, result:res}; c3.numFmt = NF_USD; c3.font = {name:'Arial', size:11, bold:true, color:{argb:'FFEA580C'}}; c3.alignment = {vertical:'middle', horizontal:'right', indent:1};
+        wsR.getRow(r).height = 22;
+      };
+      filaGrande(rEmp, 'TOTAL APORTE DE LA EMPRESA', `C${I0+4}+C${I0+9}`, d.totalEmpresa);
+      filaGrande(rTrab, 'TOTAL DESCONTADO A TRABAJADORES', `C${I0+3}+C${I0+8}`, d.totalTrabajadores);
+
+      // Aporte de la empresa por centro de costo (valores del sistema; el total se concilia con los totales de las hojas)
+      const rBar = rTrab + 2;
+      barra(rBar, NC_R, 'APORTE DE LA EMPRESA POR CENTRO DE COSTO  —  IMPUTACIÓN CONTABLE', INK);
+      const rHead = rBar + 1;
+      cabecera(wsR, rHead, ['CENTRO DE COSTO','HCM TITULARES','HCM APORTE EMPRESA ($)','HCM CUENTA DE GASTO','HCM NOMBRE DE LA CUENTA','BOLSAS (N°)','BOLSAS APORTE EMPRESA ($)','BOLSAS CUENTA DE GASTO','BOLSAS NOMBRE DE LA CUENTA','TOTAL EMPRESA ($)'], INK);
+      const rC0 = rHead + 1, nC = d.porCentro.length, rC1 = rC0 + Math.max(nC,1) - 1;
+      if(nC===0) filaVacia(wsR, rC0, NC_R, 'Sin aportes de la empresa en este mes.');
+      d.porCentro.forEach((f,i)=>{
+        const sinH = !f.ctaHcm && f.hcmEmp>0, sinB = !f.ctaBolsa && f.bolsaEmp>0;
+        filaDatos(wsR, rC0+i, i,
+          [f.nombre, f.hcmTit, f.hcmEmp, f.ctaHcm?f.ctaHcm.codigo:(sinH?'SIN CUENTA':''), f.ctaHcm?f.ctaHcm.nombre:(sinH?'Configurar en Configuración':''), f.bolsas, f.bolsaEmp, f.ctaBolsa?f.ctaBolsa.codigo:(sinB?'SIN CUENTA':''), f.ctaBolsa?f.ctaBolsa.nombre:(sinB?'Configurar en Configuración':''), f.total],
+          ['left','center','right','left','left','center','right','left','left','right'],
+          [null,NF_INT,NF_USD,'@',null,NF_INT,NF_USD,'@',null,NF_USD],
+          [true,false,false,false,false,false,false,false,false,true]);
+        if(sinH){ [4,5].forEach(c=>{ wsR.getCell(rC0+i,c).font = {name:'Arial', size:9, bold:true, color:{argb:'FFB45309'}}; }); }
+        if(sinB){ [8,9].forEach(c=>{ wsR.getCell(rC0+i,c).font = {name:'Arial', size:9, bold:true, color:{argb:'FFB45309'}}; }); }
+        [4,8].forEach(c=>{ const cc = wsR.getCell(rC0+i,c); if(cc.value && cc.value!=='SIN CUENTA') cc.font = {name:'Arial', size:9, bold:true, color:{argb:'FF0E7490'}}; });
+      });
+      const rCT = rC1 + 1;
+      for(let c=1;c<=NC_R;c++){ const cell=wsR.getCell(rCT,c); cell.fill = fill(SLATE); cell.border = {top:{style:'medium',color:{argb:ORANGE}}}; }
+      const lbT = wsR.getCell(rCT,1); lbT.value = 'TOTAL'; lbT.font = {name:'Arial', size:10, bold:true, color:{argb:INK}}; lbT.alignment = {horizontal:'left', vertical:'middle', indent:1};
+      [[2,'B',d.totHcm.titulares,NF_INT],[3,'C',d.totHcm.aporteEmp,NF_USD],[6,'F',d.totBolsa.bolsas,NF_INT],[7,'G',d.totBolsa.subsidio,NF_USD],[10,'J',d.totalEmpresa,NF_USD]].forEach(([col,letra,res,nf])=>{
+        const cell = wsR.getCell(rCT,col);
+        cell.value = {formula:`SUM(${letra}${rC0}:${letra}${rC1})`, result:res};
+        cell.numFmt = nf; cell.font = {name:'Arial', size:10, bold:true, color:{argb:INK}}; cell.alignment = {horizontal:'right', vertical:'middle', indent:1};
+      });
+      wsR.getRow(rCT).height = 22;
+      const suma = benR2(d.porCentro.reduce((s,f)=>s+f.total,0));
+      const concilia = suma === d.totalEmpresa;
+      const rChk = rCT + 1;
+      put(wsR, rChk, 1, NC_R, {formula:`IF(ROUND(J${rCT}-C${rEmp},2)=0,"CONCILIADO: el total por centro de costo coincide con los totales de HCM y Bolsas.","NO CONCILIA: revisa los centros de costo de los trabajadores.")`, result: concilia ? 'CONCILIADO: el total por centro de costo coincide con los totales de HCM y Bolsas.' : 'NO CONCILIA: revisa los centros de costo de los trabajadores.'}, {name:'Arial', size:9, bold:true, color:{argb:'FF15803D'}});
+      wsR.getRow(rChk).height = 18;
+      put(wsR, rChk+2, 1, NC_R, notas[0], {name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+      put(wsR, rChk+3, 1, NC_R, notas[1], {name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Resumen_Beneficios_${benMesVer}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }catch(e){
+      alert('No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)));
+    }finally{
+      setExportandoResumenBen(false);
+    }
+  };
   const exportarFichaPDF = (t) => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -1958,16 +2850,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
       {rhTab==='beneficios' && (()=>{
         // Resumen del mes con los trabajadores registrados en la app
-        const activosB = trabajadores.filter(t=>t.estado!=='Egresado');
-        const filasHcm = activosB.map(t=>({t, c:hcmCalcularMes(t, benMesVer, configBeneficios)})).filter(x=>x.c.personas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
-        const filasBolsa = activosB.map(t=>({t, b:bolsaCalcular(t, configBeneficios)})).filter(x=>x.b.bolsas>0).sort((a,b)=>(a.t.nombre||'').localeCompare(b.t.nombre||''));
-        const sumF = (arr, f)=>benR2(arr.reduce((s,x)=>s+f(x),0));
+        const { filasHcm, filasBolsa, sumF } = resumenBeneficiosMes(benMesVer);
         return (
         <div className="p-6 space-y-4">
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <p className="font-black text-gray-800">Resumen del mes con los trabajadores registrados</p>
-              <input type="month" value={benMesVer} onChange={e=>setBenMesVer(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="month" value={benMesVer} onChange={e=>setBenMesVer(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/>
+                <button onClick={exportarResumenBeneficiosPDF} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-100"><FileText size={13}/> PDF</button>
+                <button onClick={exportarResumenBeneficiosExcel} disabled={exportandoResumenBen} className="flex items-center gap-1.5 bg-green-50 text-green-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-green-100 disabled:opacity-50"><FileSpreadsheet size={13}/> {exportandoResumenBen?'Generando...':'Excel'}</button>
+              </div>
             </div>
             <p className="text-[10px] text-gray-400 mb-3">La configuración de HCM y Bolsa de alimentos está en Configuración.</p>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2001,12 +2894,91 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
       {rhTab==='conceptos' && (
       <div className="p-6">
+        {impConceptos && (()=>{
+          const im = impConceptos, res = im.res;
+          const filas = res ? res.filas : [];
+          const rs = res ? res.resumen : null;
+          const hayError = !!res && (!!res.error || res.errorGlobal.length>0 || filas.some(f=>f.estado==='error'));
+          const aImportar = filas.filter(f=>f.estado==='nuevo'||f.estado==='cambia');
+          const visibles = filas.filter(f=>f.estado!=='igual');
+          const ocupado = im.estado==='leyendo' || im.estado==='guardando';
+          const BADGE = { nuevo:['Nuevo','bg-emerald-100 text-emerald-700'], cambia:['Cambia','bg-amber-100 text-amber-700'], error:['Error','bg-red-100 text-red-700'] };
+          const corto = (s,n)=>{ const t=String(s==null?'':s); return t.length>n ? t.slice(0,n-1)+'…' : t; };
+          return (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-gray-800">Importar conceptos desde Excel</p>
+                  <p className="text-[10px] text-gray-400 truncate">{im.archivo}</p>
+                </div>
+                <button onClick={()=>setImpConceptos(null)} disabled={im.estado==='guardando'} className="text-gray-400 hover:text-gray-600 disabled:opacity-40"><X size={18}/></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                {im.estado==='leyendo' && <p className="text-xs font-bold text-gray-500 py-8 text-center">Leyendo y validando el archivo…</p>}
+                {im.estado==='error' && <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 text-xs font-bold text-red-700">{im.errorLectura}</div>}
+                {res && res.error && <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 text-xs font-bold text-red-700">{res.error}</div>}
+                {res && !res.error && (<>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    {[['Filas leídas',rs.leidas,'text-gray-800'],['Nuevos',rs.nuevos,'text-emerald-600'],['Con cambios',rs.cambian,'text-amber-600'],['Sin cambios',rs.iguales,'text-gray-500'],['Con errores',rs.conError,rs.conError?'text-red-600':'text-gray-400']].map(([l,v,c])=>(
+                      <div key={l} className="border border-gray-200 rounded-xl px-3 py-2"><p className="text-[9px] font-black uppercase text-gray-400">{l}</p><p className={`text-lg font-black ${c}`}>{v}</p></div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-gray-600">Cuentas contables: <b>{rs.cuentasVerificadas}</b> verificada(s) en el Plan de Cuentas · {rs.cuentasNuevas} nueva(s) · {rs.cuentasCambiadas} cambiada(s) · {rs.cuentasQuitadas} quitada(s){rs.nombresActualizados>0?` · ${rs.nombresActualizados} con el nombre actualizado al del plan`:''}</p>
+                  {res.errorGlobal.length>0 && <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 space-y-1">{res.errorGlobal.map((t,i)=><p key={i} className="text-[11px] font-bold text-red-700">• {t}</p>)}</div>}
+                  {hayError && <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3 text-xs font-black text-red-700">No se importará nada hasta corregir los errores marcados. Corrige el Excel y vuelve a importarlo (puedes elegir el mismo archivo otra vez).</div>}
+                  {!hayError && aImportar.length>0 && <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 text-xs font-bold text-emerald-700">Todo en orden: {rs.cuentasVerificadas>0?'todas las cuentas existen en tu Plan de Cuentas y se guardarán con su nombre real. ':''}Revisa los cambios y confirma.</div>}
+                  {!hayError && aImportar.length===0 && rs.leidas>0 && <div className="bg-sky-50 border-2 border-sky-200 rounded-xl p-3 text-xs font-bold text-sky-700">El archivo no trae cambios: todo coincide con lo que ya tienes.</div>}
+                  {rs.leidas===0 && <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-xs font-bold text-amber-700">No se encontraron filas con conceptos debajo de los títulos.</div>}
+                  {res.avisosGlobal.length>0 && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1">{res.avisosGlobal.map((t,i)=><p key={i} className="text-[10px] font-bold text-amber-700">⚠ {t}</p>)}</div>}
+                  {visibles.length>0 && (
+                    <div className="border border-gray-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-[11px]">
+                        <thead><tr className="bg-gray-50 text-gray-400 text-[9px] uppercase"><th className="text-left font-black px-3 py-2 w-12">Fila</th><th className="text-left font-black px-3 py-2 w-24">Código</th><th className="text-left font-black px-3 py-2">Nombre</th><th className="text-left font-black px-3 py-2 w-20">Estado</th><th className="text-left font-black px-3 py-2">Detalle</th></tr></thead>
+                        <tbody>
+                          {visibles.map(f=>(
+                            <tr key={f.n+'-'+f.codigo} className="border-t border-gray-100 align-top">
+                              <td className="px-3 py-2 text-gray-400">{f.n}</td>
+                              <td className="px-3 py-2 font-mono font-bold text-cyan-700">{f.codigo||'—'}</td>
+                              <td className="px-3 py-2 font-bold text-gray-700">{f.nombre||'—'}</td>
+                              <td className="px-3 py-2"><span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full ${BADGE[f.estado][1]}`}>{BADGE[f.estado][0]}</span></td>
+                              <td className="px-3 py-2 space-y-0.5">
+                                {f.errores.map((t,i)=><p key={'e'+i} className="font-bold text-red-600">✖ {t}</p>)}
+                                {f.estado==='nuevo' && f.cambios.length===0 && <p className="text-gray-500">Concepto nuevo (tipo {(TIPOS_CONCEPTO[f.nuevo.tipo]||{}).label||f.nuevo.tipo}).</p>}
+                                {f.estado!=='error' && f.estado==='nuevo' && f.cambios.length>0 && <p className="text-gray-500">Concepto nuevo (tipo {(TIPOS_CONCEPTO[f.nuevo.tipo]||{}).label||f.nuevo.tipo}) con cuentas:</p>}
+                                {f.estado!=='error' && f.cambios.map((x,i)=><p key={'c'+i} className="text-gray-600"><b>{x.campo}:</b> <span className="text-gray-400">{corto(x.antes,60)}</span> → <span className="font-bold text-gray-800">{corto(x.despues,70)}</span></p>)}
+                                {f.avisos.map((t,i)=><p key={'a'+i} className="text-amber-600">⚠ {t}</p>)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>)}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50">
+                <button onClick={()=>refImportConceptos.current&&refImportConceptos.current.click()} disabled={ocupado} className="px-3 py-2 rounded-xl border-2 border-gray-200 text-[10px] font-black uppercase text-gray-500 hover:bg-white disabled:opacity-50">Elegir otro archivo</button>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=>setImpConceptos(null)} disabled={im.estado==='guardando'} className="px-4 py-2 rounded-xl border-2 border-gray-200 text-[10px] font-black uppercase text-gray-500 hover:bg-white disabled:opacity-50">Cancelar</button>
+                  <button onClick={confirmarImportConceptos} disabled={ocupado || im.estado==='error' || hayError || aImportar.length===0} className="px-5 py-2 rounded-xl bg-cyan-600 text-white text-[10px] font-black uppercase hover:bg-cyan-700 disabled:opacity-40">{im.estado==='guardando'?'Importando...':`Importar ${aImportar.length} concepto(s)`}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
 
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
             <div className="flex gap-2 mb-3">
               <button onClick={nuevoConceptoForm} className="flex-1 bg-cyan-600 text-white rounded-xl py-2 text-[10px] font-black uppercase hover:bg-cyan-700 flex items-center justify-center gap-1"><Plus size={13}/> Nuevo</button>
               <button onClick={cargarCatalogoEstandar} disabled={busySeed} className="flex-1 border-2 border-gray-200 rounded-xl py-2 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50 disabled:opacity-50 flex items-center justify-center gap-1"><Upload size={12}/> {busySeed?'Cargando...':'Catálogo'}</button>
+            </div>
+            <div className="flex gap-2 mb-3">
+              <button onClick={exportarConceptosExcel} disabled={exportandoConceptos} title="Exporta todos los conceptos con sus cuentas contables por centro de costo" className="flex-1 bg-green-50 text-green-700 border-2 border-green-200 rounded-xl py-2 text-[10px] font-black uppercase hover:bg-green-100 disabled:opacity-50 flex items-center justify-center gap-1"><FileSpreadsheet size={12}/> {exportandoConceptos?'Generando...':'Exportar Excel'}</button>
+              <button onClick={()=>refImportConceptos.current&&refImportConceptos.current.click()} disabled={!!impConceptos} title="Importa el mismo Excel (valida que las cuentas existan en el Plan de Cuentas)" className="flex-1 bg-green-50 text-green-700 border-2 border-green-200 rounded-xl py-2 text-[10px] font-black uppercase hover:bg-green-100 disabled:opacity-50 flex items-center justify-center gap-1"><Upload size={12}/> Importar Excel</button>
+              <input ref={refImportConceptos} type="file" accept=".xlsx" className="hidden" onChange={e=>{ const f = e.target.files && e.target.files[0]; e.target.value=''; if(f) leerExcelConceptos(f); }}/>
             </div>
             <button onClick={()=>setMostrarParametros(v=>!v)} className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50 border-2 border-gray-100 mb-3">
               <span>Parámetros de fórmula {parametrosFormula.length>0?`(${parametrosFormula.length})`:''}</span>
