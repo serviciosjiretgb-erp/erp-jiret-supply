@@ -1214,6 +1214,179 @@ const rhCantidadFila = (f) => {
 // 4 → «4»; 7,5 → «7,5»; null → «» (sin ceros de más)
 const rhCantidadTexto = (n) => (n == null || !Number.isFinite(Number(n))) ? '' : (Number.isInteger(Number(n)) ? String(Number(n)) : String(parseFloat(Number(n).toFixed(2))).replace('.', ','));
 
+// ═════ Informes de nómina: Nómina General de Pago · Resumen de Conceptos · Resumen por Centro de Costo (los del ERP, mejorados) ═════
+// Todo sale de lo ya guardado en cada pago (rrhh_nominas + rrhh_nomina_detalles): las mismas cifras del recibo, del reporte y del asiento.
+// Se omiten las filas en 0 (sin monto en $ ni en Bs.). Las deducciones salen en positivo, en su propia columna: Neto = Asignaciones − Deducciones.
+const RH_INFORMES = [
+  ['general', 'Nómina General de Pago', 'Cada trabajador con sus conceptos, cantidades y totales, por centro de costo'],
+  ['conceptos', 'Resumen de Conceptos', 'El total de cada concepto de la nómina y el personal que lo cobra'],
+  ['centros', 'Resumen por Centro de Costo', 'El resumen de conceptos de cada centro de costo y el total general'],
+];
+const RH_SIN_CENTRO = '— Sin centro de costo —';
+const RH_MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const rhEtiquetaMes = (mes) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(mes || '')) ? `${RH_MESES[parseInt(String(mes).slice(5, 7), 10) - 1]} ${String(mes).slice(0, 4)}` : String(mes || '');
+const rhFechaCorta = (s) => { if (!s) return ''; const [y, m, d] = String(s).split('-'); return (y && m && d) ? `${d}/${m}/${y}` : String(s); };
+// Desde / hasta de un pago: la quincena 1 (1 al 15), la quincena 2 (16 al último día) o el mes completo si es «Mensual» (la misma regla del recibo)
+const rhRangoPago = (nomina) => {
+  const [a, m] = String((nomina && nomina.mes) || '').split('-');
+  if (!a || !m) return { desde: '', hasta: '' };
+  const ultimo = new Date(parseInt(a, 10), parseInt(m, 10), 0).getDate();
+  const mensual = nomina.quincena === 'Mensual';
+  const q2 = !mensual && /2/.test(nomina.quincena || '');
+  return { desde: `${a}-${m}-${q2 ? '16' : '01'}`, hasta: `${a}-${m}-${(q2 || mensual) ? String(ultimo).padStart(2, '0') : '15'}` };
+};
+// Qué pagos cubre un informe: «Nómina · Octubre 2026 · Quincena 1 · del 01/10/2026 al 15/10/2026» (un pago) o «3 pagos · Octubre 2026» (varios)
+const rhTextoAlcance = (nominas) => {
+  const l = (nominas || []).filter(Boolean);
+  if (l.length === 0) return '';
+  if (l.length === 1) { const n = l[0], r = rhRangoPago(n); return `${n.concepto || 'Pago'} · ${rhEtiquetaMes(n.mes)} · ${n.quincena || ''}${r.desde ? ` · del ${rhFechaCorta(r.desde)} al ${rhFechaCorta(r.hasta)}` : ''}`; }
+  const meses = [...new Set(l.map(n => n.mes).filter(Boolean))].sort();
+  return `${l.length} pagos · ` + (meses.length <= 1 ? rhEtiquetaMes(meses[0]) : `${rhEtiquetaMes(meses[0])} a ${rhEtiquetaMes(meses[meses.length - 1])}`);
+};
+// Parte del nombre del archivo: «2026-10_Q1» (un pago), «2026-10» (varios pagos del mismo mes) o «2026-09_a_2026-10»
+const rhEtiquetaArchivo = (nominas) => {
+  const l = (nominas || []).filter(Boolean);
+  if (l.length === 0) return 'sin_pagos';
+  if (l.length === 1) { const n = l[0]; return `${n.mes || 'sin_mes'}_${n.quincena === 'Mensual' ? 'Mensual' : 'Q' + (/2/.test(n.quincena || '') ? '2' : '1')}`; }
+  const meses = [...new Set(l.map(n => n.mes).filter(Boolean))].sort();
+  return meses.length <= 1 ? (meses[0] || 'varios') : `${meses[0]}_a_${meses[meses.length - 1]}`;
+};
+const rhEsLeyIVSS = (s) => /ivss|seg(uridad)?\.?\s*y\s*salud/i.test(s || '');
+const rhEsLeyRPE = (s) => /rpe|paro forzoso|prestacional de empleo/i.test(s || '');
+const rhEsLeyFAOV = (s) => /faov|banavih|vivienda y h[aá]bita/i.test(s || '');
+// Código del concepto de una fila guardada: el que trae; IVSS, RPE y FAOV se guardan sin código → el del concepto de ley del catálogo (20000, 20010, 20030)
+const rhCodigoFila = (f, conceptos) => {
+  const c = String((f && f.codigo) || '').trim();
+  if (c) return c;
+  const nombre = String((f && f.concepto) || '');
+  const ley = rhEsLeyIVSS(nombre) ? '20000' : (rhEsLeyRPE(nombre) ? '20010' : (rhEsLeyFAOV(nombre) ? '20030' : ''));
+  if (!ley || !(f && (f.esLegal === true || /^\s*(ivss|rpe|faov)\b/i.test(nombre)))) return '';
+  const lista = (conceptos || []).filter(x => x && x.activo !== false && x.tipo === 'D');
+  const es = ley === '20000' ? rhEsLeyIVSS : (ley === '20010' ? rhEsLeyRPE : rhEsLeyFAOV);
+  const c0 = lista.find(x => String(x.codigo) === ley) || lista.find(x => es(x.nombre));
+  return c0 ? String(c0.codigo) : '';
+};
+// Líneas de un trabajador en un pago: asignaciones y luego deducciones, con su cantidad (días/horas) y sus montos en $ y en Bs. (los Bs. de la fila, como el recibo); sin las filas en 0
+const rhLineasInforme = (d, tasaPago, conceptos) => {
+  const tasa = benNum(d && d.tasa) > 0 ? benNum(d.tasa) : benNum(tasaPago);
+  const mk = (tipo) => (f) => {
+    const codigo = rhCodigoFila(f, conceptos);
+    const concepto = String((f && f.concepto) || '').trim().toUpperCase();
+    return { tipo, codigo, concepto, clave: codigo ? 'C:' + codigo : 'N:' + concepto, cant: rhCantidadFila(f), usd: benR2(benNum(f && f.montoUSD)), bs: benR2(rhBsFila(f, 'montoBs', 'montoUSD', tasa)) };
+  };
+  return [...((d && d.asignaciones) || []).map(mk('A')), ...((d && d.deducciones) || []).map(mk('D'))].filter(l => l.usd !== 0 || l.bs !== 0);
+};
+// Suma de totales ({asigUSD, dedUSD, asigBs, dedBs}) → con el neto; redondea al final
+const rhSumaTotales = (arr) => {
+  const t = { asigUSD: 0, dedUSD: 0, asigBs: 0, dedBs: 0 };
+  (arr || []).forEach(x => { t.asigUSD += x.asigUSD; t.dedUSD += x.dedUSD; t.asigBs += x.asigBs; t.dedBs += x.dedBs; });
+  return { asigUSD: benR2(t.asigUSD), dedUSD: benR2(t.dedUSD), netoUSD: benR2(t.asigUSD - t.dedUSD), asigBs: benR2(t.asigBs), dedBs: benR2(t.dedBs), netoBs: benR2(t.asigBs - t.dedBs) };
+};
+const rhTotalesLineas = (lineas) => rhSumaTotales((lineas || []).map(l => (l.tipo === 'A' ? { asigUSD: l.usd, asigBs: l.bs, dedUSD: 0, dedBs: 0 } : { asigUSD: 0, asigBs: 0, dedUSD: l.usd, dedBs: l.bs })));
+// Asignaciones primero, luego deducciones; dentro de cada grupo por código (los sin código al final) y por nombre
+const rhOrdenConcepto = (a, b) => (a.tipo === b.tipo ? 0 : (a.tipo === 'A' ? -1 : 1))
+  || ((a.codigo ? 0 : 1) - (b.codigo ? 0 : 1))
+  || String(a.codigo).localeCompare(String(b.codigo), 'es', { numeric: true })
+  || String(a.concepto).localeCompare(String(b.concepto), 'es');
+// Centros por nombre; «sin centro de costo» al final
+const rhOrdenCentro = (a, b) => ((a.id === '' ? 1 : 0) - (b.id === '' ? 1 : 0)) || String(a.nombre).localeCompare(String(b.nombre), 'es');
+// Total de cada concepto (con el personal distinto que lo cobra) a partir de líneas planas [{tipo, clave, codigo, concepto, usd, bs, trab}]
+const rhResumenConceptos = (planas) => {
+  const mapa = new Map();
+  (planas || []).forEach(l => {
+    const k = l.tipo + '|' + l.clave;
+    if (!mapa.has(k)) mapa.set(k, { tipo: l.tipo, clave: l.clave, codigo: l.codigo, concepto: l.concepto, usd: 0, bs: 0, trabs: new Set() });
+    const m = mapa.get(k); m.usd += l.usd; m.bs += l.bs; m.trabs.add(l.trab);
+  });
+  return [...mapa.values()].map(m => ({ tipo: m.tipo, clave: m.clave, codigo: m.codigo, concepto: m.concepto, usd: benR2(m.usd), bs: benR2(m.bs), personal: m.trabs.size })).sort(rhOrdenConcepto);
+};
+// Datos de los tres informes. pagos = [{nomina, detalles}] · ctx = {conceptos, centroDe(d) → {id, nombre}, deptoNombre(id), cargoDe(d)}
+//   · pagos[]: cada pago → centros[] → trabajadores[] → lineas[] (para la Nómina General de Pago)
+//   · conceptos[]: total de cada concepto en todos los pagos (Resumen de Conceptos)
+//   · centros[]: el resumen de conceptos de cada centro de costo, sumando todos los pagos (Resumen por Centro de Costo)
+const rhInformeDatos = (pagos, ctx) => {
+  const c = ctx || {};
+  const idTrab = (d) => String((d && (d.trabajadorId || d.trabajadorCedula || d.id)) || '');
+  const pagosOk = (pagos || []).filter(p => p && p.nomina && (p.detalles || []).length > 0);
+  const salida = pagosOk.map(p => {
+    const mapa = new Map();
+    p.detalles.forEach(d => {
+      const lineas = rhLineasInforme(d, p.nomina.tasa, c.conceptos);
+      const ce = (c.centroDe && c.centroDe(d)) || { id: '', nombre: RH_SIN_CENTRO };
+      const k = ce.id || '';
+      if (!mapa.has(k)) mapa.set(k, { id: k, nombre: k ? ce.nombre : RH_SIN_CENTRO, trabajadores: [] });
+      mapa.get(k).trabajadores.push({ d, trab: idTrab(d), cedula: String((d && d.trabajadorCedula) || ''), nombre: String((d && d.trabajadorNombre) || ''), cargo: c.cargoDe ? (c.cargoDe(d) || '') : '', depto: c.deptoNombre ? (c.deptoNombre(d.departamentoId) || '') : '', nroRecibo: String((d && d.nroRecibo) || ''), lineas, tot: rhTotalesLineas(lineas) });
+    });
+    const centros = [...mapa.values()].map(ce => {
+      const trabajadores = ce.trabajadores.slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
+      return { id: ce.id, nombre: ce.nombre, trabajadores, nTrab: trabajadores.length, tot: rhSumaTotales(trabajadores.map(t => t.tot)) };
+    }).sort(rhOrdenCentro);
+    return { nomina: p.nomina, centros, nTrab: centros.reduce((s, ce) => s + ce.nTrab, 0), tot: rhSumaTotales(centros.map(ce => ce.tot)) };
+  });
+  const planas = [], porCentro = new Map(), todos = new Set();
+  salida.forEach(p => p.centros.forEach(ce => {
+    if (!porCentro.has(ce.id)) porCentro.set(ce.id, { id: ce.id, nombre: ce.nombre, lineas: [], trabs: new Set() });
+    const m = porCentro.get(ce.id);
+    ce.trabajadores.forEach(t => { m.trabs.add(t.trab); todos.add(t.trab); t.lineas.forEach(l => { const x = { ...l, trab: t.trab }; planas.push(x); m.lineas.push(x); }); });
+  }));
+  const centros = [...porCentro.values()].map(m => ({ id: m.id, nombre: m.nombre, conceptos: rhResumenConceptos(m.lineas), tot: rhTotalesLineas(m.lineas), personas: m.trabs.size })).sort(rhOrdenCentro);
+  return { pagos: salida, conceptos: rhResumenConceptos(planas), centros, tot: rhSumaTotales(salida.map(p => p.tot)), personas: todos.size, nRecibos: salida.reduce((s, p) => s + p.nTrab, 0) };
+};
+
+// Filas neutras de un informe (las mismas para la pantalla, el PDF y el Excel):
+//   barra {n:1|2, texto, der} · grupo {texto} · cab {texto, sub, der} · linea/fila {cod, desc, cant, tipo:'A'|'D', usd, bs} · res {cod, desc, cant, t} · tot {n:'trab'|'centro'|'pago'|'general', suma, texto, t}
+// `t` = {asigUSD, dedUSD, netoUSD, asigBs, dedBs, netoBs}. `suma` dice qué filas suma el total (para las fórmulas del Excel): 'lineas' | 'trab' | 'centro' | 'pago' | 'res'.
+// Tercera columna: «Cant.» (días u horas) en la Nómina General de Pago, «Personal» en los dos resúmenes.
+const rhInformeFilas = (tipo, D, tasasTexto) => {
+  const tt = tasasTexto || ((n) => 'Tasa ' + (n && n.tasa != null ? n.tasa : ''));
+  const f = [];
+  const nTxt = (n) => `${n} trabajador(es)`;
+  const filasConceptos = (lista) => {
+    ['A', 'D'].forEach(tp => {
+      const fs = lista.filter(x => x.tipo === tp);
+      if (fs.length === 0) return;
+      f.push({ k: 'grupo', texto: tp === 'A' ? 'ASIGNACIONES' : 'DEDUCCIONES' });
+      fs.forEach(c => f.push({ k: 'fila', cod: c.codigo, desc: c.concepto, cant: c.personal, tipo: tp, usd: c.usd, bs: c.bs }));
+    });
+  };
+  const pagosIncluidos = () => {
+    if (D.pagos.length < 2) return;
+    f.push({ k: 'barra', n: 1, texto: 'PAGOS INCLUIDOS', der: `${D.pagos.length} pagos` });
+    D.pagos.forEach((p, i) => f.push({ k: 'res', cod: String(i + 1), desc: `${rhTextoAlcance([p.nomina])} · Pago ${rhFechaCorta(p.nomina.fechaPago)} · ${tt(p.nomina)}`, cant: p.nTrab, t: p.tot }));
+  };
+  if (tipo === 'general') {
+    D.pagos.forEach(p => {
+      f.push({ k: 'barra', n: 1, texto: `PAGO · ${rhTextoAlcance([p.nomina])}`, der: `Fecha de pago ${rhFechaCorta(p.nomina.fechaPago)} · ${tt(p.nomina)}` });
+      p.centros.forEach(ce => {
+        f.push({ k: 'barra', n: 2, texto: `CENTRO DE COSTO · ${ce.nombre}`, der: nTxt(ce.nTrab) });
+        ce.trabajadores.forEach(t => {
+          f.push({ k: 'cab', texto: [t.cedula, t.nombre].filter(Boolean).join(' · '), sub: [t.cargo, t.depto].filter(x => x && x !== '—').join(' · '), der: t.nroRecibo ? `Recibo ${t.nroRecibo}` : '' });
+          t.lineas.forEach(l => f.push({ k: 'linea', cod: l.codigo, desc: l.concepto, cant: l.cant, tipo: l.tipo, usd: l.usd, bs: l.bs }));
+          f.push({ k: 'tot', n: 'trab', suma: 'lineas', texto: `Total ${t.nombre}`, t: t.tot });
+        });
+        f.push({ k: 'tot', n: 'centro', suma: 'trab', texto: `TOTAL INTEGRANTES: ${ce.nTrab}`, t: ce.tot });
+      });
+      f.push({ k: 'tot', n: 'pago', suma: 'centro', texto: `TOTALES DE NÓMINA · ${nTxt(p.nTrab)}`, t: p.tot });
+    });
+    if (D.pagos.length > 1) { pagosIncluidos(); f.push({ k: 'tot', n: 'general', suma: 'pago', texto: `TOTAL GENERAL · ${D.pagos.length} pagos · ${nTxt(D.nRecibos)}`, t: D.tot }); }
+  } else if (tipo === 'conceptos') {
+    filasConceptos(D.conceptos);
+    f.push({ k: 'tot', n: 'general', suma: 'lineas', texto: `TOTAL · ${D.conceptos.length} concepto(s) · ${D.personas} integrante(s)`, t: D.tot });
+    pagosIncluidos();
+  } else {
+    D.centros.forEach(ce => {
+      f.push({ k: 'barra', n: 2, texto: `CENTRO DE COSTO · ${ce.nombre}`, der: nTxt(ce.personas) });
+      filasConceptos(ce.conceptos);
+      f.push({ k: 'tot', n: 'centro', suma: 'lineas', texto: `TOTAL · ${ce.conceptos.length} concepto(s) · ${ce.personas} integrante(s)`, t: ce.tot });
+    });
+    f.push({ k: 'barra', n: 1, texto: 'TOTALES POR CENTRO DE COSTO', der: `${D.centros.length} centro(s)` });
+    D.centros.forEach((ce, i) => f.push({ k: 'res', cod: String(i + 1), desc: ce.nombre, cant: ce.personas, t: ce.tot }));
+    f.push({ k: 'tot', n: 'general', suma: 'res', texto: `TOTAL GENERAL · ${D.centros.length} centro(s) · ${D.personas} integrante(s)`, t: D.tot });
+    pagosIncluidos();
+  }
+  return f;
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
   const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa' | 'asiento'
@@ -2146,7 +2319,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const puedeConfigurar = !appUser || appUser.role==='Master' || !Object.keys(_pmCfg).some(k=>k.startsWith('rrhh_')&&_pmCfg[k]) || !!_pmCfg.rrhh_configuracion;
   const [tasaBenKey,setTasaBenKey]=useState(0); // repinta los campos de tasa HCM/Bolsa del pago abierto cuando lo escrito no es valido
   const [nominaActiva,setNominaActiva]=useState(null);
-  const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador'
+  const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador' | 'informes'
   const [repAnio,setRepAnio]=useState(String(new Date().getFullYear()));
   const [repMes,setRepMes]=useState('TODOS');
   const [repQ,setRepQ]=useState('AMBAS');
@@ -2155,6 +2328,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [repNominaId,setRepNominaId]=useState('TODAS'); // «Por trabajador»: un pago o todos los que pasan los filtros
   const [repTrabId,setRepTrabId]=useState('TODOS'); // «Por trabajador»: un trabajador o todos
   const [repMoneda,setRepMoneda]=useState('AMBAS'); // moneda del asiento y de los reportes de nómina: 'USD' | 'BS' | 'AMBAS'
+  const [repInforme,setRepInforme]=useState('general'); // «Informes»: 'general' | 'conceptos' | 'centros'
+  const [exportandoInforme,setExportandoInforme]=useState(false);
   // Selector USD / Bs. / Ambas (se llama como función, no como componente, para no perder el foco)
   const selMoneda = () => (
     <div className="flex items-center gap-1.5" data-testid="sel-moneda">
@@ -2821,6 +2996,238 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     sub:`${nomina.mes} · ${nomina.quincena} · Fecha de pago ${contDd(nomina.fechaPago)} · ${benTasasTexto(nomina)}`,
     filas:nominaDetalles.filter(d=>d.nominaId===nomina.id).map(d=>({d, nomina})), moneda:moneda||'USD', porTrabajador:false,
   });
+  // ── Informes de nómina (Reporte de Nómina → Informes): Nómina General de Pago, Resumen de Conceptos y Resumen por Centro de Costo ──
+  // La pantalla, el PDF y el Excel salen de las MISMAS filas (rhInformeFilas), así que siempre dicen lo mismo.
+  // Centro de costo de un recibo guardado: el del propio recibo; si ya no existe, el de su departamento o el de la ficha del trabajador; si nada, «sin centro de costo»
+  const centroDeDetalleInf = (d) => {
+    const dep = departamentos.find(x=>x.id===d.departamentoId);
+    const tr = trabajadores.find(x=>x.id===d.trabajadorId);
+    const id = [d.centroCostoId, dep&&dep.centroCostoId, tr&&tr.centroCostoId].find(x=>x && centros.some(c=>c.id===x)) || '';
+    return id ? {id, nombre:nombreCentro(id)} : {id:'', nombre:RH_SIN_CENTRO};
+  };
+  const datosInforme = (nominasSel) => rhInformeDatos(
+    (nominasSel||[]).map(n=>({nomina:n, detalles:nominaDetalles.filter(d=>d.nominaId===n.id)})),
+    {conceptos, centroDe:centroDeDetalleInf, deptoNombre:nombreDepto, cargoDe:cargoDeDetalle}
+  );
+  const nombreMonedaInf = (m) => m==='USD' ? 'Dólares (USD)' : (m==='BS' ? 'Bolívares (Bs.)' : 'Dólares y bolívares');
+  // Las 5 tarjetas del informe: [rótulo, número | null, 'asig'|'ded'|'neto' | null, subtítulo]
+  const kpisInforme = (tipo, D) => [
+    tipo==='general' ? ['Pagos incluidos', D.pagos.length, null, `${D.nRecibos} recibo(s)`] : (tipo==='conceptos' ? ['Conceptos', D.conceptos.length, null, 'distintos en el pago'] : ['Centros de costo', D.centros.length, null, 'con personal pagado']),
+    ['Trabajadores', D.personas, null, 'distintos en el informe'],
+    ['Asignaciones', null, 'asig', ''],
+    ['Deducciones', null, 'ded', ''],
+    ['Neto a pagar', null, 'neto', 'asignaciones − deducciones'],
+  ];
+  const exportarInformePDF = (tipo, D, moneda) => {
+    if(!D || D.pagos.length===0) return alert('No hay trabajadores cargados en los pagos elegidos.');
+    const {empresa, rif, dir} = _empresaDatos();
+    const esc = _escRH;
+    const usd = rhVeUSD(moneda), bs = rhVeBS(moneda), nm = (usd?1:0)+(bs?1:0);
+    const def = RH_INFORMES.find(x=>x[0]===tipo) || RH_INFORMES[0];
+    const rows = rhInformeFilas(tipo, D, benTasasTexto);
+    const alcance = rhTextoAlcance(D.pagos.map(p=>p.nomina));
+    const emitido = contDd(getTodayDate()) + ' ' + new Date().toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'});
+    const mU = (n)=>'$'+formatNum(n), mB = (n)=>formatNum(n);
+    const nCols = 3 + 3*nm;
+    const etCant = tipo==='general' ? 'Cant.' : 'Personal';
+    const th3 = (t) => (usd?`<th>${t} $</th>`:'') + (bs?`<th>${t} Bs.</th>`:'');
+    const td = (u, b, cls) => (usd?`<td class="m ${cls||''}">${u==null?'':mU(u)}</td>`:'') + (bs?`<td class="m ${cls||''}">${b==null?'':mB(b)}</td>`:'');
+    const montosLinea = (r) => (r.tipo==='A' ? td(r.usd, r.bs) : td(null, null)) + (r.tipo==='D' ? td(r.usd, r.bs) : td(null, null)) + td(null, null);
+    const montosTot = (t) => td(t.asigUSD, t.asigBs) + td(t.dedUSD, t.dedBs) + td(t.netoUSD, t.netoBs, 'neto');
+    const cabecera = `<thead><tr><th class="l">Código</th><th class="l">Concepto</th><th>${etCant}</th>${th3('Asignaciones')}${th3('Deducciones')}${th3('Neto')}</tr></thead>`;
+    const colg = `<colgroup><col class="cod"><col><col class="cant">${((usd?'<col class="u">':'')+(bs?'<col class="b">':'')).repeat(3)}</colgroup>`;
+    let cuerpo = '', tablaAbierta = false, tbAbierto = false, blkAbierto = false;
+    const abrirTabla = () => { if(!tablaAbierta){ cuerpo += `<table>${colg}${cabecera}`; tablaAbierta = true; } };
+    const cerrarTb = () => { if(tbAbierto){ cuerpo += '</tbody>'; tbAbierto = false; } };
+    const cerrarTabla = () => { cerrarTb(); if(tablaAbierta){ cuerpo += '</table>'; tablaAbierta = false; } };
+    const abrirTb = (cls) => { cerrarTb(); cuerpo += `<tbody class="${cls}">`; tbAbierto = true; };
+    // En los dos resúmenes, cada centro de costo (y cada resumen final) va en un bloque que no se parte entre páginas si cabe en una
+    const envolver = tipo !== 'general';
+    const cerrarBlk = () => { cerrarTabla(); if(blkAbierto){ cuerpo += '</div>'; blkAbierto = false; } };
+    rows.forEach(r=>{
+      if(r.k==='barra'){ if((envolver && (r.n===1 || tipo==='centros')) || r.texto==='PAGOS INCLUIDOS'){ cerrarBlk(); cuerpo += '<div class="blk">'; blkAbierto = true; } else cerrarTabla(); cuerpo += `<div class="barra n${r.n}"><span>${esc(r.texto)}</span><span class="der">${esc(r.der||'')}</span></div>`; return; }
+      abrirTabla();
+      if(r.k==='grupo'){ abrirTb('grp'); cuerpo += `<tr class="grupo"><td colspan="${nCols}">${esc(r.texto)}</td></tr>`; return; }
+      if(r.k==='cab'){ abrirTb('trab'); cuerpo += `<tr class="cab"><td colspan="${nCols}"><b>${esc(r.texto)}</b>${r.sub?`<span class="sub">${esc(r.sub)}</span>`:''}${r.der?`<span class="der">${esc(r.der)}</span>`:''}</td></tr>`; return; }
+      if(!tbAbierto) abrirTb('grp');
+      if(r.k==='linea' || r.k==='fila'){ cuerpo += `<tr><td class="l cod">${esc(r.cod)}</td><td class="l">${esc(r.desc)}</td><td class="c">${esc(rhCantidadTexto(r.cant))}</td>${montosLinea(r)}</tr>`; return; }
+      if(r.k==='res'){ cuerpo += `<tr><td class="l cod">${esc(r.cod)}</td><td class="l">${esc(r.desc)}</td><td class="c">${esc(rhCantidadTexto(r.cant))}</td>${montosTot(r.t)}</tr>`; return; }
+      if(r.k==='tot'){ cuerpo += `<tr class="tot ${r.n}"><td class="l" colspan="3">${esc(r.texto)}</td>${montosTot(r.t)}</tr>`; if(r.n==='trab') cerrarTb(); if(blkAbierto && ((tipo==='centros' && (r.n==='centro' || r.n==='general')) || (tipo==='general' && r.n==='general'))) cerrarBlk(); }
+    });
+    cerrarBlk();
+    const vv = (t, clave) => [usd?`<div>${mU(t[clave+'USD'])}</div>`:'', bs?`<div>Bs. ${mB(t[clave+'Bs'])}</div>`:''].join('');
+    const tarjetas = kpisInforme(tipo, D).map(([l,n,clave,s],i)=>`<div class="kpi ${i===4?'t':''}"><div class="l">${esc(l)}</div><div class="v">${clave?vv(D.tot,clave):esc(n)}</div>${s?`<div class="s">${esc(s)}</div>`:''}</div>`).join('');
+    const cssStr = (s) => '"' + String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/</g,'\\3C ').replace(/[\r\n]+/g,' ') + '"';
+    const horizontal = tipo==='general' || nm===2;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:16px;color:#0f172a;}.wrap{max-width:1120px;margin:0 auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.12);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;}.membrete h1{font-size:17px;text-transform:uppercase;letter-spacing:.3px;}.membrete p{font-size:9.5px;opacity:.92;margin-top:3px;}.membrete .tit{text-align:right;font-size:13px;font-weight:900;text-transform:uppercase;line-height:1.35;}.membrete .tit span{display:block;font-size:10px;font-weight:400;opacity:.95;text-transform:none;}.franja{height:4px;background:#0f172a;}.btn-print{display:block;margin:14px 24px;padding:11px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 22px;}.meta{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#475569;padding:4px 0 10px;border-bottom:1px solid #e2e8f0;margin-bottom:12px;}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:6px;}.kpi{border:1px solid #e2e8f0;border-left:4px solid #0891b2;border-radius:6px;padding:7px 10px;background:#f8fafc;}.kpi.t{border-left-color:#ea580c;background:#fff7ed;}.kpi .l{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;letter-spacing:.4px;}.kpi .v{font-size:13px;font-weight:900;margin-top:2px;white-space:nowrap;}.kpi .s{font-size:8.5px;color:#64748b;margin-top:1px;}.barra{display:flex;justify-content:space-between;gap:12px;font-weight:900;text-transform:uppercase;color:#fff;break-after:avoid;page-break-after:avoid;}.barra.n1{background:#0f172a;font-size:11px;letter-spacing:.4px;padding:7px 10px;margin-top:16px;}.barra.n2{background:#0e7490;font-size:10px;padding:6px 10px;margin-top:10px;}.barra .der{font-weight:400;text-transform:none;opacity:.95;font-size:9px;}table{width:100%;border-collapse:collapse;font-size:9.5px;table-layout:fixed;}col.cod{width:62px;}col.cant{width:58px;}col.u{width:86px;}col.b{width:112px;}td.m{white-space:nowrap;}thead{display:table-header-group;}th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:8px;padding:5px 6px;text-align:right;border-bottom:2px solid #cbd5e1;}th.l,td.l{text-align:left;}td{padding:4px 6px;text-align:right;border-bottom:1px solid #eef2f7;font-variant-numeric:tabular-nums;vertical-align:top;}td.l{overflow-wrap:anywhere;}td.c{text-align:center;}td.cod{font-family:'Courier New',monospace;color:#0e7490;font-weight:700;}tr{break-inside:avoid;page-break-inside:avoid;}tbody.trab,.blk{break-inside:avoid;page-break-inside:avoid;}tr.grupo td{background:#e2e8f0;color:#334155;font-weight:900;font-size:8.5px;letter-spacing:.5px;text-align:left;border-bottom:none;}tr.cab td{background:#f1f5f9;text-align:left;border-top:1px solid #cbd5e1;border-bottom:none;padding:5px 6px;}tr.cab .sub{color:#64748b;margin-left:10px;font-weight:400;}tr.cab .der{float:right;color:#64748b;font-size:8.5px;}tr.tot td{font-weight:900;background:#f8fafc;border-top:1px solid #0f172a;border-bottom:none;}tr.tot.centro td{background:#e0f2fe;}tr.tot.pago td,tr.tot.general td{background:#0f172a;color:#fff;}td.neto{font-weight:900;}.firmas{display:flex;gap:40px;margin-top:34px;page-break-inside:avoid;break-inside:avoid;page-break-before:avoid;break-before:avoid;}.firmas div{flex:1;text-align:center;font-size:9px;color:#475569;border-top:1px solid #0f172a;padding-top:5px;}.nota{font-size:8.5px;color:#64748b;margin-top:12px;line-height:1.5;page-break-before:avoid;break-before:avoid;}@page{size:letter ${horizontal?'landscape':'portrait'};margin:9mm 9mm 13mm;@bottom-left{content:${cssStr(empresa+' · '+def[1])};font:8px Arial,Helvetica,sans-serif;color:#64748b;}@bottom-right{content:"Página " counter(page) " de " counter(pages);font:8px Arial,Helvetica,sans-serif;color:#64748b;}}@media print{body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.contenido{padding:0 2px 10px;}.membrete{padding:12px 14px;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${esc(def[1])} - ${esc(alcance)}</title><style>${css}</style></head><body><div class="wrap">
+      <div class="membrete"><div><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)} · ${esc(dir)}</p></div><div class="tit">${esc(def[1])}<span>${esc(alcance)}</span></div></div>
+      <div class="franja"></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        <div class="meta"><span>Moneda: <b>${esc(nombreMonedaInf(moneda))}</b> · ${D.pagos.length} pago(s) · ${D.nRecibos} recibo(s) · ${D.personas} trabajador(es)</span><span>Emitido el ${esc(emitido)}</span></div>
+        <div class="kpis">${tarjetas}</div>
+        ${cuerpo}
+        <div class="firmas"><div>Elaborado por</div><div>Revisado por</div><div>Aprobado por</div></div>
+        <p class="nota">Cifras tomadas de lo guardado en cada pago (las mismas del recibo de pago): las deducciones se muestran en positivo y se omiten los conceptos sin monto. ${tipo==='general' ? 'Cant. = días u horas pagados en el concepto.' : 'Personal = trabajadores distintos que tienen el concepto.'}</p>
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+    else alert('El navegador bloqueó la ventana del PDF. Permite las ventanas emergentes para este sitio e inténtalo de nuevo.');
+  };
+  const exportarInformeExcel = async (tipo, D, moneda) => {
+    if(exportandoInforme) return;
+    if(!D || D.pagos.length===0) return alert('No hay trabajadores cargados en los pagos elegidos.');
+    setExportandoInforme(true);
+    try{
+      const EJ = await ccLoadExcelJS();
+      const {empresa, rif, dir} = _empresaDatos();
+      const usd = rhVeUSD(moneda), bs = rhVeBS(moneda), nm = (usd?1:0)+(bs?1:0);
+      const monedas = [usd?'USD':null, bs?'Bs':null].filter(Boolean);
+      const def = RH_INFORMES.find(x=>x[0]===tipo) || RH_INFORMES[0];
+      const rows = rhInformeFilas(tipo, D, benTasasTexto);
+      const nominasSel = D.pagos.map(p=>p.nomina);
+      const alcance = rhTextoAlcance(nominasSel);
+      const hoy = contDd(getTodayDate());
+      const INK='FF0F172A', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB', SLATE='FFF1F5F9', MUTED='FF64748B', TEAL='FF0E7490', SKY='FFE0F2FE', BAND='FFE2E8F0', ZEBRA='FFF8FAFC';
+      const NF = {USD:'"$"#,##0.00', Bs:'#,##0.00'};
+      const fill = a=>({type:'pattern', pattern:'solid', fgColor:{argb:a}});
+      const thin = {style:'thin', color:{argb:GRID}};
+      const bd = {top:thin, left:thin, bottom:thin, right:thin};
+      const NC = 3 + 3*nm;
+      const letra = (n) => { let s=''; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; };
+      // columnas de montos: grupo 0 = Asignaciones, 1 = Deducciones, 2 = Neto; dentro de cada grupo, $ y/o Bs.
+      const colMonto = (g, mi) => 4 + g*nm + mi;
+      const etCant = tipo==='general' ? 'CANT.' : 'PERSONAL';
+      const wb = new EJ.Workbook();
+      wb.creator = String(empresa||''); wb.created = new Date();
+      const HR = 8;
+      const orient = NC>7 ? 'landscape' : 'portrait';
+      const ws = wb.addWorksheet(def[1], {
+        properties:{tabColor:{argb:ORANGE}},
+        views:[{state:'frozen', ySplit:HR, showGridLines:false}],
+        pageSetup:{paperSize:1, orientation:orient, fitToPage:true, fitToWidth:1, fitToHeight:0, horizontalCentered:true, margins:{left:0.3, right:0.3, top:0.4, bottom:0.55, header:0.2, footer:0.25}, printTitlesRow:`${HR}:${HR}`},
+        headerFooter:{oddFooter:`&L&8&"Arial,Regular"${String(empresa||'').replace(/&/g,'&&')} - ${def[1]}&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
+      });
+      ws.getColumn(1).width = 11; ws.getColumn(2).width = 52; ws.getColumn(3).width = 11;
+      for(let g=0; g<3; g++) monedas.forEach((m,mi)=>{ ws.getColumn(colMonto(g,mi)).width = m==='USD' ? 17 : 20; });
+      const put = (r, c1, c2, val, font, al) => { if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle', horizontal:'left', indent:1}; return cell; };
+      // Encabezado: empresa, RIF y dirección; el título del informe en grande; el pago (o pagos) que cubre y la moneda
+      put(1,1,NC,String(empresa||''),{name:'Arial', size:15, bold:true, color:{argb:INK}});
+      put(2,1,NC,`RIF: ${rif||''}`,{name:'Arial', size:9, color:{argb:'FF475569'}});
+      put(3,1,NC,String(dir||''),{name:'Arial', size:8, color:{argb:MUTED}});
+      put(4,1,NC,def[1].toUpperCase(),{name:'Arial', size:17, bold:true, color:{argb:ORANGE}});
+      put(5,1,NC,alcance,{name:'Arial', size:10.5, bold:true, color:{argb:INK}});
+      put(6,1,NC,`Moneda: ${nombreMonedaInf(moneda)}  ·  ${D.pagos.length} pago(s)  ·  ${D.nRecibos} recibo(s)  ·  ${D.personas} trabajador(es)  ·  Emitido el ${hoy}`,{name:'Arial', size:9, color:{argb:MUTED}});
+      [22,14,13,27,18,15].forEach((h,k)=>{ ws.getRow(k+1).height = h; });
+      for(let c=1;c<=NC;c++) ws.getCell(7,c).fill = fill(ORANGE);
+      ws.getRow(7).height = 4;
+      // Fila de títulos de columna
+      const titulos = ['CÓDIGO','CONCEPTO',etCant];
+      ['ASIGNACIONES','DEDUCCIONES','NETO'].forEach(g=>monedas.forEach(m=>titulos.push(`${g} (${m==='USD'?'$':'Bs.'})`)));
+      titulos.forEach((t,i)=>{
+        const c = ws.getCell(HR,i+1); c.value = t;
+        c.font = {name:'Arial', size:9, bold:true, color:{argb:WHITE}}; c.fill = fill(INK);
+        c.alignment = {vertical:'middle', horizontal:'center', wrapText:true};
+        c.border = {left:{style:'thin',color:{argb:WHITE}}, right:{style:'thin',color:{argb:WHITE}}, bottom:{style:'medium',color:{argb:ORANGE}}};
+      });
+      ws.getRow(HR).height = 30;
+      // Cuerpo: una fila de Excel por fila del informe; los totales son fórmulas (SUM) con su resultado ya calculado
+      const refs = {lineas:[], trab:[], centro:[], pago:[], res:[]};
+      const sumaFormula = (col, filas) => {
+        if(filas.length===0) return '0';
+        const L = letra(col);
+        const consecutivas = filas.every((x,i)=>i===0 || x===filas[i-1]+1);
+        if(consecutivas) return `SUM(${L}${filas[0]}:${L}${filas[filas.length-1]})`;
+        const trozos = []; for(let i=0;i<filas.length;i+=200) trozos.push(`SUM(${filas.slice(i,i+200).map(x=>L+x).join(',')})`);
+        return trozos.join('+');
+      };
+      const valorSuma = (col, filas, resultado) => { const fm = sumaFormula(col, filas); return (fm && fm.length <= 8000) ? {formula:fm, result:resultado} : resultado; };
+      const montoCell = (r, col, valor, nf, font, bg) => { const cell = ws.getCell(r,col); cell.value = (valor==null) ? null : valor; cell.numFmt = nf; cell.font = font; cell.alignment = {horizontal:'right', vertical:'middle', indent:1}; if(bg) cell.fill = fill(bg); return cell; };
+      let r = HR + 1, zebra = 0;
+      rows.forEach(f=>{
+        if(f.k==='barra' || f.k==='grupo' || f.k==='cab'){
+          const texto = f.k==='cab' ? [f.texto, f.sub, f.der].filter(Boolean).join('   ·   ') : (f.k==='barra' ? [f.texto, f.der].filter(Boolean).join('   ·   ') : f.texto);
+          const estilo = f.k==='barra' ? (f.n===1 ? {bg:INK, color:WHITE, size:10, h:21} : {bg:TEAL, color:WHITE, size:10, h:19}) : (f.k==='grupo' ? {bg:BAND, color:'FF334155', size:9, h:17} : {bg:SLATE, color:INK, size:9.5, h:19});
+          const c = put(r,1,NC,texto,{name:'Arial', size:estilo.size, bold:true, color:{argb:estilo.color}});
+          c.fill = fill(estilo.bg);
+          for(let k=1;k<=NC;k++) ws.getCell(r,k).fill = fill(estilo.bg);
+          ws.getRow(r).height = estilo.h; zebra = 0; r++; return;
+        }
+        if(f.k==='linea' || f.k==='fila' || f.k==='res'){
+          const bg = (zebra++)%2 ? ZEBRA : WHITE;
+          const base = {name:'Arial', size:9, color:{argb:'FF1F2937'}};
+          [[1,f.cod,'left'],[2,f.desc,'left'],[3,f.cant==null?null:f.cant,'center']].forEach(([col,v,al])=>{ const cell=ws.getCell(r,col); cell.value=(v===''||v==null)?null:v; cell.font = col===1 ? {...base, name:'Courier New', bold:true, color:{argb:TEAL}} : base; cell.alignment={vertical:'middle', horizontal:al, indent:al==='left'?1:0, wrapText:col===2}; });
+          for(let g=0; g<3; g++) monedas.forEach((m,mi)=>{
+            let v = null;
+            if(f.k==='res') v = f.t[(g===0?'asig':(g===1?'ded':'neto')) + (m==='USD'?'USD':'Bs')];
+            else if(g===0 && f.tipo==='A') v = m==='USD' ? f.usd : f.bs;
+            else if(g===1 && f.tipo==='D') v = m==='USD' ? f.usd : f.bs;
+            montoCell(r, colMonto(g,mi), v, NF[m], {...base, bold:f.k==='res' && g===2});
+          });
+          for(let k=1;k<=NC;k++){ const cell = ws.getCell(r,k); cell.fill = fill(bg); cell.border = bd; }
+          ws.getRow(r).height = Math.max(17, Math.ceil(String(f.desc||'').length/58)*12.5+4);
+          if(f.k==='res') refs.res.push(r); else refs.lineas.push(r);
+          r++; return;
+        }
+        if(f.k==='tot'){
+          const oscuro = f.n==='pago' || f.n==='general';
+          const bg = oscuro ? INK : (f.n==='centro' ? SKY : ZEBRA);
+          const col = oscuro ? WHITE : INK;
+          ws.mergeCells(r,1,r,3);
+          const lb = ws.getCell(r,1); lb.value = f.texto; lb.font = {name:'Arial', size:oscuro?10:9.5, bold:true, color:{argb:col}}; lb.alignment = {horizontal:'left', vertical:'middle', indent:1};
+          for(let k=1;k<=NC;k++){ const cell = ws.getCell(r,k); cell.fill = fill(bg); cell.border = {top:{style:oscuro?'medium':'thin', color:{argb:oscuro?ORANGE:INK}}}; }
+          const lista = refs[f.suma] || [];
+          const fuente = lista.slice();
+          monedas.forEach((m,mi)=>{
+            const sufijo = m==='USD' ? 'USD' : 'Bs';
+            const cA = colMonto(0,mi), cD = colMonto(1,mi), cN = colMonto(2,mi);
+            const fontT = {name:'Arial', size:oscuro?10:9.5, bold:true, color:{argb:col}};
+            montoCell(r, cA, valorSuma(cA, fuente, f.t['asig'+sufijo]), NF[m], fontT, bg);
+            montoCell(r, cD, valorSuma(cD, fuente, f.t['ded'+sufijo]), NF[m], fontT, bg);
+            montoCell(r, cN, {formula:`${letra(cA)}${r}-${letra(cD)}${r}`, result:f.t['neto'+sufijo]}, NF[m], fontT, bg);
+          });
+          for(let k=1;k<=NC;k++) ws.getCell(r,k).border = {top:{style:oscuro?'medium':'thin', color:{argb:oscuro?ORANGE:INK}}};
+          ws.getRow(r).height = oscuro ? 22 : 19;
+          refs[f.suma] = [];
+          if(refs[f.n]) refs[f.n].push(r);
+          zebra = 0; r++; return;
+        }
+      });
+      put(r+1,1,NC,tipo==='general' ? 'Cant. = días u horas pagados en el concepto. Cada trabajador con sus conceptos; los totales son fórmulas.' : 'Personal = trabajadores distintos que tienen el concepto. Los totales son fórmulas.',{name:'Arial', size:8, italic:true, color:{argb:MUTED}});
+      // Solo la Nómina General de Pago: segunda hoja con todos los datos en una tabla plana (filtrable, para tablas dinámicas)
+      if(tipo==='general'){
+        const wd = wb.addWorksheet('Datos', {properties:{tabColor:{argb:TEAL}}, views:[{state:'frozen', ySplit:1, showGridLines:false}], pageSetup:{paperSize:1, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
+        const cab2 = ['PAGO','PERÍODO','CENTRO DE COSTO','DEPARTAMENTO','CÉDULA','TRABAJADOR','CARGO','RECIBO','CÓDIGO','CONCEPTO','TIPO','CANT.'];
+        monedas.forEach(m=>cab2.push(`MONTO (${m==='USD'?'$':'Bs.'})`));
+        const anchos = [22,26,26,22,14,32,28,15,10,44,13,9]; monedas.forEach(m=>anchos.push(m==='USD'?14:17));
+        anchos.forEach((w,i)=>{ wd.getColumn(i+1).width = w; });
+        cab2.forEach((t,i)=>{ const c = wd.getCell(1,i+1); c.value = t; c.font = {name:'Arial', size:9, bold:true, color:{argb:WHITE}}; c.fill = fill(INK); c.alignment = {vertical:'middle', horizontal:'center', wrapText:true}; });
+        wd.getRow(1).height = 28;
+        let rd = 2;
+        D.pagos.forEach(p=>{ const rg = rhRangoPago(p.nomina); const periodoTxt = `${rhEtiquetaMes(p.nomina.mes)} · ${p.nomina.quincena||''}${rg.desde?` · ${rhFechaCorta(rg.desde)} al ${rhFechaCorta(rg.hasta)}`:''}`; p.centros.forEach(ce=>ce.trabajadores.forEach(t=>t.lineas.forEach(l=>{
+          const vals = [p.nomina.concepto||'', periodoTxt, ce.nombre, t.depto||'', t.cedula, t.nombre, t.cargo||'', t.nroRecibo, l.codigo, l.concepto, l.tipo==='A'?'Asignación':'Deducción', l.cant==null?null:l.cant];
+          monedas.forEach(m=>vals.push(m==='USD'?l.usd:l.bs));
+          vals.forEach((v,i)=>{ const c = wd.getCell(rd,i+1); c.value = (v===''||v==null)?null:v; c.font = {name:'Arial', size:9, color:{argb:'FF1F2937'}}; c.border = bd; if(rd%2) c.fill = fill(ZEBRA); c.alignment = {vertical:'middle', horizontal:(i===11)?'center':(i>=12?'right':'left')}; if(i>=12) c.numFmt = NF[monedas[i-12]]; });
+          rd++;
+        })));});
+        wd.autoFilter = {from:{row:1, column:1}, to:{row:Math.max(rd-1,1), column:cab2.length}};
+      }
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const base = tipo==='general' ? 'Nomina_General_de_Pago' : (tipo==='conceptos' ? 'Resumen_de_Conceptos' : 'Resumen_Conceptos_por_Centro_de_Costo');
+      a.href = url; a.download = `${base}_${rhEtiquetaArchivo(nominasSel)}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }catch(e){
+      alert('No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)));
+    }finally{
+      setExportandoInforme(false);
+    }
+  };
   const exportarTrabajadoresPDF = (lista) => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -4367,6 +4774,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <div className="flex gap-2">
               <button onClick={()=>{setRepModo('nomina');}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='nomina'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>📋 Por Nómina</button>
               <button onClick={()=>{setRepModo('trabajador');setRepNominaSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='trabajador'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>👤 Por Trabajador</button>
+              <button data-testid="modo-informes" onClick={()=>{setRepModo('informes');setRepNominaSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='informes'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>📑 Informes</button>
             </div>
             {selMoneda()}
           </div>
@@ -4401,7 +4809,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <button onClick={()=>setRepNominaSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
-                <button onClick={()=>exportarReporteNominaPDF(rn, repMoneda)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><Printer size={13}/> Imprimir / PDF</button>
+                <div className="flex items-center gap-2">
+                  <button data-testid="btn-informes-del-pago" onClick={()=>{setRepNominaId(rn.id);setRepNominaSel(null);setRepModo('informes');}} className="bg-cyan-50 text-cyan-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-cyan-100 flex items-center gap-1.5"><FileText size={13}/> Informes del pago</button>
+                  <button onClick={()=>exportarReporteNominaPDF(rn, repMoneda)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><Printer size={13}/> Imprimir / PDF</button>
+                </div>
               </div>
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <p className="font-black text-lg text-gray-800">{rn.concepto}</p>
@@ -4445,6 +4856,78 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <button onClick={imprimir} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><Printer size={13}/> Imprimir / PDF</button>
               </div>
               {tablaReporte(filas, true, 'Sin recibos para estos filtros.')}
+            </>);
+          })()}
+
+          {repModo==='informes' && (()=>{
+            // Pagos que cubre el informe: los que pasan los filtros o, si se elige uno, solo ese (del más antiguo al más reciente)
+            const nominaSelEf = (repNominaId!=='TODAS' && nominasFiltradas.some(n=>n.id===repNominaId)) ? repNominaId : 'TODAS';
+            const enAlcance = (nominaSelEf==='TODAS' ? nominasFiltradas : nominasFiltradas.filter(n=>n.id===nominaSelEf)).slice()
+              .sort((a,b)=>(a.mes||'').localeCompare(b.mes||'')||(a.quincena||'').localeCompare(b.quincena||'')||String(a.fechaPago||'').localeCompare(String(b.fechaPago||'')));
+            const D = datosInforme(enAlcance);
+            const hayDatos = D.pagos.length>0;
+            const tipoInf = (RH_INFORMES.find(x=>x[0]===repInforme)||RH_INFORMES[0])[0];
+            const filas = hayDatos ? rhInformeFilas(tipoInf, D, benTasasTexto) : [];
+            const LIM = 600, vista = filas.slice(0, LIM);
+            const nm = (usd?1:0)+(bs?1:0), nCols = 3+3*nm;
+            const sinRecibos = enAlcance.length - D.pagos.length;
+            const mc = (u, b, cls) => [usd && <td key="u" className={`py-1 px-3 text-right font-mono whitespace-nowrap ${cls||''}`}>{u==null?'':'$'+formatNum(u)}</td>, bs && <td key="b" className={`py-1 px-3 text-right font-mono whitespace-nowrap ${cls||''}`}>{b==null?'':formatNum(b)}</td>];
+            const thM = (n) => [usd && <th key="u" className="text-right py-2 px-3 whitespace-nowrap">{n} $</th>, bs && <th key="b" className="text-right py-2 px-3 whitespace-nowrap">{n} Bs.</th>];
+            const montosTot = (t, osc) => (<>{mc(t.asigUSD, t.asigBs, osc?'text-white':'')}{mc(t.dedUSD, t.dedBs, osc?'text-white':'text-red-500')}{mc(t.netoUSD, t.netoBs, osc?'text-white':'text-cyan-700')}</>);
+            const montosLinea = (r) => (<>{mc(r.tipo==='A'?r.usd:null, r.tipo==='A'?r.bs:null)}{mc(r.tipo==='D'?r.usd:null, r.tipo==='D'?r.bs:null, 'text-red-500')}{mc(null, null)}</>);
+            const filaVista = (r, i) => {
+              if(r.k==='barra') return <tr key={i}><td colSpan={nCols} className={`py-1.5 px-3 text-white ${r.n===1?'bg-gray-900 text-[11px]':'bg-cyan-700 text-[10px]'}`}><div className="flex justify-between gap-3"><span className="font-black uppercase">{r.texto}</span><span className="font-normal opacity-90 text-[9px]">{r.der}</span></div></td></tr>;
+              if(r.k==='grupo') return <tr key={i}><td colSpan={nCols} className="py-1 px-3 bg-gray-200 text-gray-600 font-black text-[9px] uppercase tracking-wide">{r.texto}</td></tr>;
+              if(r.k==='cab') return <tr key={i}><td colSpan={nCols} className="py-1.5 px-3 bg-gray-100 border-t border-gray-300"><span className="font-black text-gray-800">{r.texto}</span>{r.sub && <span className="ml-3 text-gray-500">{r.sub}</span>}{r.der && <span className="float-right text-gray-500 text-[9px]">{r.der}</span>}</td></tr>;
+              if(r.k==='tot'){ const osc = r.n==='pago' || r.n==='general'; return <tr key={i} className={`font-black border-t border-gray-800 ${osc?'bg-gray-900 text-white':(r.n==='centro'?'bg-sky-100 text-gray-800':'bg-gray-50 text-gray-800')}`}><td colSpan={3} className="py-1.5 px-3 uppercase text-[10px]">{r.texto}</td>{montosTot(r.t, osc)}</tr>; }
+              return <tr key={i} className="border-t border-gray-100"><td className="py-1 px-3 font-mono font-bold text-cyan-700 whitespace-nowrap">{r.cod}</td><td className="py-1 px-3">{r.desc}</td><td className="py-1 px-3 text-center text-gray-600">{rhCantidadTexto(r.cant)}</td>{r.k==='res' ? montosTot(r.t, false) : montosLinea(r)}</tr>;
+            };
+            return (<>
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap gap-2 items-end">
+                {filtrosBase}
+                {selFiltro('Pago', nominaSelEf, setRepNominaId, [['TODAS', `Todos los pagos filtrados (${nominasFiltradas.length})`], ...nominasFiltradas.map(n=>[n.id, `${n.concepto} · ${n.mes} · ${n.quincena} · ${contDd(n.fechaPago)}`])])}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2" data-testid="informe-tipos">
+                {RH_INFORMES.map(([id,nombre,desc])=>(
+                  <button key={id} data-testid={`informe-tipo-${id}`} onClick={()=>setRepInforme(id)} className={`text-left rounded-xl border-2 p-3 transition-all ${tipoInf===id?'border-cyan-500 bg-cyan-50 shadow-sm':'border-gray-200 bg-white hover:border-gray-300'}`}>
+                    <p className={`font-black text-xs ${tipoInf===id?'text-cyan-700':'text-gray-800'}`}>{nombre}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">{desc}</p>
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-black text-sm text-gray-800" data-testid="informe-alcance">{hayDatos ? rhTextoAlcance(D.pagos.map(p=>p.nomina)) : 'Sin pagos con recibos para estos filtros'}</p>
+                  {hayDatos && <p className="text-[10px] text-gray-400">{D.pagos.length} pago(s) · {D.nRecibos} recibo(s) · {D.personas} trabajador(es){sinRecibos>0?` · ${sinRecibos} pago(s) sin recibos no se incluyen`:''}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button data-testid="btn-informe-pdf" disabled={!hayDatos} onClick={()=>exportarInformePDF(tipoInf, D, repMoneda)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-100 disabled:opacity-40"><Printer size={13}/> Imprimir / PDF</button>
+                  <button data-testid="btn-informe-excel" disabled={!hayDatos || exportandoInforme} onClick={()=>exportarInformeExcel(tipoInf, D, repMoneda)} className="flex items-center gap-1.5 bg-green-50 text-green-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-green-100 disabled:opacity-40"><FileSpreadsheet size={13}/> {exportandoInforme?'Generando...':'Excel'}</button>
+                </div>
+              </div>
+              {hayDatos ? (<>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2" data-testid="informe-kpis">
+                  {kpisInforme(tipoInf, D).map(([l,n,clave,s],i)=>(
+                    <div key={l} className={`rounded-xl border-2 p-3 ${i===4?'border-orange-200 bg-orange-50':'border-gray-200 bg-white'}`}>
+                      <p className="text-[9px] font-black text-gray-400 uppercase">{l}</p>
+                      <div className="font-black text-gray-800 mt-0.5 font-mono text-sm">{clave ? (<>{usd && <span className="block">${formatNum(D.tot[clave+'USD'])}</span>}{bs && <span className="block">Bs. {formatNum(D.tot[clave+'Bs'])}</span>}</>) : n}</div>
+                      {s && <p className="text-[9px] text-gray-400">{s}</p>}
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto" data-testid="informe-vista">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+                      <th className="text-left py-2 px-3 w-20">Código</th><th className="text-left py-2 px-3">Concepto</th><th className="text-center py-2 px-3 w-16">{tipoInf==='general'?'Cant.':'Personal'}</th>
+                      {thM('Asignaciones')}{thM('Deducciones')}{thM('Neto')}
+                    </tr></thead>
+                    <tbody>{vista.map(filaVista)}</tbody>
+                  </table>
+                </div>
+                {filas.length>LIM && <p className="text-[10px] text-gray-400 text-center">Vista previa: primeras {LIM} de {filas.length} líneas. El PDF y el Excel traen todo.</p>}
+              </>) : (
+                <div className="bg-white rounded-2xl border border-gray-200 py-12 text-center text-gray-400 text-sm">Sin recibos de pago para estos filtros. Cambia el año, el mes, el período o el tipo de nómina.</div>
+              )}
             </>);
           })()}
         </div>
