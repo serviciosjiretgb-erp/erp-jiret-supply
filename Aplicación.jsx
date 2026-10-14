@@ -1188,6 +1188,31 @@ const rhMontosDetalle = (d, tasaPago) => {
   const dedBs = benR2(((d && d.deducciones) || []).reduce((s, x) => s + rhBsFila(x, 'montoBs', 'montoUSD', tasa), 0));
   return { asigUSD:benNum(d && d.totalAsignacionesUSD), dedUSD:benNum(d && d.totalDeduccionesUSD), netoUSD:benNum(d && d.netoUSD), asigBs, dedBs, netoBs:benR2(asigBs - dedBs) };
 };
+// Bs. con que se guarda (y sale en el recibo, el reporte y el asiento) cada asignación de un pago:
+//   · las que se calculan en $ (Días Trabajados = días × tasa diaria, y los conceptos con fórmula): Bs. = $ × tasa de la nómina
+//   · las que se escriben en Bs. (p. ej. DIFERENCIA DE SUELDO): el Bs. escrito tal cual, sin pasar por los $ redondeados a centavos (Bs. 1.000,00 no puede quedar en 996,44)
+const rhBsAsignacion = (a, tasa) => {
+  const enUSD = !!a && (a.cantidadDias !== undefined || !!a.token);
+  const raw = a ? a.montoBs : undefined;
+  const n = (raw == null || raw === '') ? NaN : Number(raw);
+  if (!enUSD && Number.isFinite(n)) return parseFloat(n.toFixed(2));
+  return parseFloat((benNum(a && a.montoUSD) * benNum(tasa)).toFixed(2));
+};
+
+// Cantidad (días u horas) que se paga en una fila del recibo:
+//   · Días Trabajados: cantidadDias · conceptos con fórmula (descanso, horas extras...): la cantidad escrita; se muestra aunque sea 0
+//   · conceptos escritos en Bs. (cesta ticket, bonos): la cantidad opcional que puso el usuario, solo si es mayor que 0
+//   · IVSS/RPE/FAOV, HCM y Bolsa no llevan cantidad: null
+const rhCantidadFila = (f) => {
+  if (!f) return null;
+  const enFormula = f.cantidadDias !== undefined || !!f.token;
+  const n = f.cantidadDias !== undefined ? Number(f.cantidadDias) : Number(f.cantidad);
+  if (!Number.isFinite(n)) return null;
+  if (enFormula) return n >= 0 ? n : null;
+  return n > 0 ? n : null;
+};
+// 4 → «4»; 7,5 → «7,5»; null → «» (sin ceros de más)
+const rhCantidadTexto = (n) => (n == null || !Number.isFinite(Number(n))) ? '' : (Number.isInteger(Number(n)) ? String(Number(n)) : String(parseFloat(Number(n).toFixed(2))).replace('.', ','));
 
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'parafiscales' | 'conceptos'
@@ -2529,6 +2554,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       return conLegalesAlDia(m, asignaciones);
     });
   };
+  // Cantidad (días u horas) de un concepto escrito en Bs. (cesta ticket, bonos): solo informativa, sale en el recibo; no cambia ningún monto.
+  const actualizarCantidadInformativa = (idx, valor) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a, cantidad:(valor===''||valor==null)?0:Math.max(0,Number(valor)||0)}:a)}));
   // Para el Sueldo Básico: recalcula el monto en USD a partir de Cantidad de Días × Tasa Diaria.
   const actualizarCantidadTasaAsignacion = (idx, campo, valor) => {
     setCargarTrabModal(m=>{
@@ -2566,7 +2593,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const guardarDetalleNomina = async () => {
     if(!cargarTrabModal || !nominaActiva) return;
     const tasa = Number(nominaActiva.tasa||0);
-    const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
+    const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,...a})=>({...a, montoBs:rhBsAsignacion(a, tasa)}));
     // Las deducciones legales se toman tal como quedaron en pantalla (el usuario pudo haberlas
     // editado o quitado) — no se vuelven a calcular de cero aquí.
     const deduccionesLegales = (cargarTrabModal.deduccionesLegales||[]).filter(d=>d.incluida).map(({incluida,...d})=>d);
@@ -2574,11 +2601,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // HCM / Bolsa automáticos: se guardan como una deducción más (sin los campos que son solo de pantalla)
     const deduccionesBen = (cargarTrabModal.deduccionesBeneficios||[]).filter(d=>d.incluida).map(({incluida,aviso,previosMes,montoBsTexto,...d})=>d);
     const totalPatronalBenUSD = deduccionesBen.reduce((s,d)=>s+(d.montoPatronalUSD||0),0); // aporte de la empresa en HCM (aparte de las cargas sociales)
-    // HCM/Bolsa con tasa propia: su Bs. no es USD x tasa de la nómina; se suma la diferencia (con tasas iguales es 0 y no cambia nada)
-    const ajusteBenBs = benAjusteBs(deduccionesBen, tasa), ajustePatronalBenBs = benAjusteBs(deduccionesBen, tasa, 'montoPatronalBs', 'montoPatronalUSD');
+    // Aporte de la empresa en HCM/Bolsa con tasa propia: su Bs. no es USD x tasa de la nómina; se suma la diferencia (con tasas iguales es 0 y no cambia nada)
+    const ajustePatronalBenBs = benAjusteBs(deduccionesBen, tasa, 'montoPatronalBs', 'montoPatronalUSD');
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
     const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual,...deduccionesBen].reduce((s,d)=>s+d.montoUSD,0);
     const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
+    // Neto en Bs. = Bs. de las asignaciones − Bs. de las deducciones, fila por fila (la misma cifra del recibo, del reporte y del asiento); no los $ redondeados a centavos × tasa
+    const netoBsFilas = benR2(asignaciones.reduce((s,a)=>s+rhBsFila(a,'montoBs','montoUSD',tasa),0) - [...deduccionesLegales,...deduccionesManual,...deduccionesBen].reduce((s,d)=>s+rhBsFila(d,'montoBs','montoUSD',tasa),0));
     const {desde:periodoDesde, hasta:periodoHasta} = periodoQuincena(nominaActiva);
     const mesM = String(nominaActiva.mes||'').split('-')[1], añoM = String(nominaActiva.mes||'').split('-')[0];
     setBusyNomina(true);
@@ -2600,7 +2629,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
         totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
         totalPatronalBenUSD:parseFloat(totalPatronalBenUSD.toFixed(2)), totalPatronalBenBs:parseFloat((totalPatronalBenUSD*tasa+ajustePatronalBenBs).toFixed(2)),
-        netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa-ajusteBenBs).toFixed(2)),
+        netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:netoBsFilas,
         tasa, nroRecibo, periodoDesde, periodoHasta, novedades:cargarTrabModal.novedadesValores||{}, updatedAt:Date.now(),
       },{merge:true});
       await batchRecibo.commit();
@@ -2678,10 +2707,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const totalAsigBs = d.asignaciones.reduce((s,a)=>s+Number(a.montoBs||0),0);
     const totalDedBs = d.deducciones.reduce((s,x)=>s+Number(x.montoBs||0),0);
     const netoBs = totalAsigBs - totalDedBs;
-    const filaC = (cod,desc,asigBs,dedBs)=>`<tr><td>${_escRH(cod)}</td><td>${_escRH(desc)}</td><td class="num">${asigBs?('BS. '+formatNum(asigBs)):''}</td><td class="num">${dedBs?('BS. -'+formatNum(dedBs)):''}</td></tr>`;
+    const filaC = (cod,desc,cant,asigBs,dedBs)=>`<tr><td>${_escRH(cod)}</td><td>${_escRH(desc)}</td><td class="cant">${_escRH(rhCantidadTexto(cant))}</td><td class="num">${asigBs?('BS. '+formatNum(asigBs)):''}</td><td class="num">${dedBs?('BS. -'+formatNum(dedBs)):''}</td></tr>`;
     const filasConceptos = [
-      ...d.asignaciones.map((a,i)=>filaC(`A${String(i+1).padStart(3,'0')}`, a.concepto.toUpperCase(), a.montoBs, 0)),
-      ...d.deducciones.map((x,i)=>filaC(`R${String(i+1).padStart(3,'0')}`, x.concepto.toUpperCase(), 0, x.montoBs)),
+      ...d.asignaciones.map((a,i)=>filaC(`A${String(i+1).padStart(3,'0')}`, a.concepto.toUpperCase(), rhCantidadFila(a), a.montoBs, 0)),
+      ...d.deducciones.map((x,i)=>filaC(`R${String(i+1).padStart(3,'0')}`, x.concepto.toUpperCase(), rhCantidadFila(x), 0, x.montoBs)),
     ].join('');
     const stub = `<div class="stub">
       <div class="hdr">
@@ -2702,7 +2731,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         <tr><td class="lbl">CUENTA<br/>BANCARIA:</td><td colspan="3" class="ancho">${_escRH(t.cuentaBancaria||'—')}</td></tr>
       </table>
       <table class="box conceptos-table">
-        <thead><tr><th>CONCEPTO</th><th>DESCRIPCIÓN</th><th>ASIGNACIÓN</th><th>DEDUC/RETEN</th></tr></thead>
+        <thead><tr><th>CONCEPTO</th><th>DESCRIPCIÓN</th><th class="cant">CANT.</th><th>ASIGNACIÓN</th><th>DEDUC/RETEN</th></tr></thead>
         <tbody>${filasConceptos}</tbody>
       </table>
       <table class="box total-table"><tr><td>TOTAL:</td><td class="num">BS. ${formatNum(totalAsigBs)}</td><td class="num">BS. -${formatNum(totalDedBs)}</td></tr></table>
@@ -2734,6 +2763,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       .conceptos-table{width:100%;border-collapse:collapse;font-size:8pt;}
       .conceptos-table th{background:#111;color:#fff;text-align:left;padding:0.05in 0.08in;font-size:7.6pt;}
       .conceptos-table th.num,.conceptos-table td.num{text-align:right;}
+      .conceptos-table th.cant,.conceptos-table td.cant{text-align:center;white-space:nowrap;padding-left:0.03in;padding-right:0.03in;}
+      .conceptos-table td.cant{font-weight:700;}
       .conceptos-table td{padding:0.035in 0.08in;border-top:1px solid #ddd;}
       .conceptos-table tbody tr:first-child td{border-top:none;}
       table.num,.num{text-align:right;font-weight:700;}
@@ -4640,7 +4671,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           const totalDedBen = benIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
           const totalDed = totalDedManual+totalDedLegal+totalDedBen;
           const neto = totalAsig - totalDed;
-          const ajusteBenBs = benAjusteBs(benIncluidas, tasa); // HCM/Bolsa con tasa propia: su Bs. no es USD x tasa de la nómina (con tasas iguales es 0)
+          // Bs. del panel = suma de los Bs. de las filas (la misma cifra del recibo, del reporte y del asiento), no los $ redondeados a centavos × tasa: IVSS $0,01 es Bs. 12 y RPE $0,00 es Bs. 3
+          const totalAsigBs = benR2(asigIncluidas.reduce((s,a)=>s+rhBsAsignacion(a,tasa),0));
+          const totalDedBs = benR2([...legalesIncluidas,...benIncluidas,...dedIncluidas].reduce((s,d)=>s+rhBsFila(d,'montoBs','montoUSD',tasa),0));
+          const netoBs = benR2(totalAsigBs - totalDedBs);
           const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length + benIncluidas.length;
           // Navegación Anterior/Siguiente entre los trabajadores de esta nómina (mismo orden que la lista)
           const listaNav = trabajadores.filter(w=>w.estado!=='Egresado' && w.departamentoId).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
@@ -4651,11 +4685,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             abrirCargarTrabajador(listaNav[ni]);
           };
           const previewData = () => {
-            const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,...a})=>({...a, montoBs:parseFloat((a.montoUSD*tasa).toFixed(2))}));
+            const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,...a})=>({...a, montoBs:rhBsAsignacion(a, tasa)}));
             const deducciones = [
               ...legalesIncluidas.map(({_idx,_tipo,incluida,...d})=>d),
               ...benIncluidas.map(({_idx,_tipo,incluida,aviso,previosMes,montoBsTexto,...d})=>d),
-              ...dedIncluidas.map(({_idx,_tipo,incluida,...d})=>({...d, montoBs:parseFloat((d.montoUSD*tasa).toFixed(2)), esLegal:false})),
+              ...dedIncluidas.map(({_idx,_tipo,incluida,...d})=>({...d, montoBs:rhBsFila(d,'montoBs','montoUSD',tasa), esLegal:false})),
             ];
             return {trabajadorId:t.id, trabajadorNombre:t.nombre, trabajadorCedula:t.cedula, departamentoId:t.departamentoId, asignaciones, deducciones, nroRecibo:cargarTrabModal._nroReciboExistente};
           };
@@ -4674,9 +4708,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div className="flex items-baseline gap-2"><span className="text-[10px] font-bold text-gray-400 w-36 flex-shrink-0 uppercase">Departamento:</span><span className="text-sm font-bold">{nombreDepto(t.departamentoId)}</span></div>
               </div>
               <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-1.5">
-                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Asignaciones</span><span className="text-right"><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalAsig*tasa)}</span></span></div>
-                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Deducciones</span><span className="text-right"><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalDed*tasa+ajusteBenBs)}</span></span></div>
-                <div className="flex justify-between items-baseline text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="text-right"><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(neto*tasa-ajusteBenBs)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Asignaciones</span><span className="text-right"><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalAsigBs)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Deducciones</span><span className="text-right"><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalDedBs)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="text-right"><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(netoBs)}</span></span></div>
                 <div className="flex justify-between text-[10px] text-gray-400"><span>Items:</span><span>{itemsCount}</span></div>
               </div>
             </div>
@@ -4708,7 +4742,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                             <span>{a.concepto}</span>
                             <input type="number" step="0.5" value={a.cantidad||0} onChange={e=>actualizarCantidadConcepto('asignaciones',a._idx,e.target.value)} className="w-16 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500"/>
                           </div>
-                        ) : a.concepto}
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span>{a.concepto}</span>
+                            <input type="number" step="0.5" min="0" placeholder="cant." title="Días u horas que se pagan en este concepto (solo sale en el recibo; no cambia el monto)" value={a.cantidad>0?a.cantidad:''} onChange={e=>actualizarCantidadInformativa(a._idx,e.target.value)} className="w-16 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500 placeholder:font-normal placeholder:text-gray-300"/>
+                          </div>
+                        )}
                       </td>
                       <td className="py-1.5 px-3 text-right">
                         {(esSueldo||a.token) ? <span className="font-mono font-black text-emerald-600">${formatNum(a.montoUSD)}</span>
