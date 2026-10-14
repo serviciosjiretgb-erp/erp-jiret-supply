@@ -992,33 +992,34 @@ const rfPlanConversion = (conceptos, deps) => {
 // == RRHH - Asiento contable de la nómina (cuentas) ==
 // Arma las líneas Debe/Haber de una nómina, por departamento. Función pura: todo lo que necesita llega en `ctx`, para poder probarla sin pantalla.
 //   IVSS / RPE / FAOV por Pagar → la cuenta de «Parafiscales → Cuenta Contable (Pasivo)»; si ahí no hay, la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.
-//   Nómina por Pagar (Banco)    → «Configuración → Cuentas del asiento de nómina».
+//   Nómina por Pagar (Banco)    → la cuenta de pasivo del tipo de nómina del pago («Configuración → Tipos de nómina»); los pagos anteriores, sin tipo, usan la cuenta general que ya tenían guardada.
 //   Aporte patronal (Debe)      → la cuenta del concepto «APORTE PATRONAL (IVSS)», «APORTE PATRONAL SPF» o «APORTE PATRONAL BANAVIH» (Conceptos) para el centro de costo del trabajador: una línea por aporte.
-//   Cargas Sociales Patronales  → solo el aporte cuyo concepto no tenga cuenta: la cuenta del centro de costo del trabajador en «Configuración → Cuentas del asiento de nómina» o, si no tiene, la general; si tampoco, la antigua del departamento (rrhh_cuentas_nomina).
+//   Cargas Sociales Patronales  → solo el aporte cuyo concepto no tenga cuenta: la cuenta de respaldo que hubiera guardada (la del centro de costo del trabajador o, si no tiene, la general; si tampoco, la antigua del departamento en rrhh_cuentas_nomina); si no hay ninguna, sale «sin cuenta configurada».
 // Las líneas sin cuenta siguen saliendo (con su monto) marcadas «sin cuenta configurada»: ningún monto cambia.
 const RH_ASIENTO_NOMBRES = { ivss:'IVSS por Pagar', rpe:'RPE por Pagar', faov:'FAOV por Pagar', banco:'Nómina por Pagar (Banco)', patronal:'Cargas Sociales Patronales' };
-const RH_ASIENTO_DONDE = { ivss:'Parafiscales → Seguro Social → Cuenta Contable (Pasivo)', rpe:'Parafiscales → Paro Forzoso → Cuenta Contable (Pasivo)', faov:'Parafiscales → FAOV → Cuenta Contable (Pasivo)', banco:'Configuración → Cuentas del asiento de nómina', patronal:'Configuración → Cuentas del asiento de nómina → «2. Cargas Sociales Patronales»: la cuenta de cada aporte (IVSS, SPF y BANAVIH) en cada centro de costo (o una sola de respaldo para todos)' };
+const RH_ASIENTO_DONDE = { ivss:'Parafiscales → Seguro Social → Cuenta Contable (Pasivo)', rpe:'Parafiscales → Paro Forzoso → Cuenta Contable (Pasivo)', faov:'Parafiscales → FAOV → Cuenta Contable (Pasivo)', banco:'Configuración → Tipos de nómina: la cuenta de pasivo del tipo de este pago', patronal:'Configuración → Cuentas del asiento de nómina → «Cargas Sociales Patronales»: la cuenta de cada aporte (IVSS, SPF y BANAVIH) en cada centro de costo' };
 const RH_ASIENTO_SIN = ' (⚠️ sin cuenta configurada)';
 const rhAsientoCuenta = (x) => { const cod = (x && x.codigo) ? String(x.codigo).trim() : ''; return cod ? { codigo:cod, nombre:String(x.nombre==null?'':x.nombre) } : { codigo:'', nombre:'' }; };
 // Conceptos del aporte de la empresa (Conceptos, tipo Patronal): su cuenta contable por centro de costo es el Debe del aporte patronal de cada ley.
-const RH_PATRONAL_NOMBRES = { ivss:'APORTE PATRONAL (IVSS)', rpe:'APORTE PATRONAL SPF', faov:'APORTE PATRONAL BANAVIH' };
-const RH_PATRONAL_CODIGOS = { ivss:'R0001', rpe:'R0002', faov:'R0003' };
+const RH_PATRONAL_NOMBRES = { ivss:'APORTE PATRONAL (IVSS)', rpe:'APORTE PATRONAL SPF', faov:'APORTE PATRONAL BANAVIH', inces:'APORTE PATRONAL INCES' };
+const RH_PATRONAL_CODIGOS = { ivss:'R0001', rpe:'R0002', faov:'R0003', inces:'R0004' };
 const rhEsConceptoPatronal = (c, clave) => {
   const n = String((c && c.nombre) || '');
   if (!/patronal/i.test(n)) return false;
   if (clave === 'ivss') return /ivss|seguro social|s\.?s\.?o\b|seg(uridad)?\.?\s*y\s*salud/i.test(n);
   if (clave === 'rpe') return /\bspf\b|\brpe\b|paro forzoso|prestacional de empleo|seguro de paro/i.test(n);
   if (clave === 'faov') return /faov|banavih|vivienda/i.test(n);
+  if (clave === 'inces') return /\bi\.?n\.?c\.?e\.?s\b/i.test(n);
   return false;
 };
-// Conceptos activos «APORTE PATRONAL …» de esa ley, en el orden en que se buscan: primero el del código de siempre (R0001/R0002/R0003), luego los demás que se llamen igual.
+// Conceptos activos «APORTE PATRONAL …» de esa ley, en el orden en que se buscan: primero el del código de siempre (R0001/R0002/R0003/R0004), luego los demás que se llamen igual.
 // El primero es el «principal»: el que se actualiza al asignar una cuenta desde Configuración → Cuentas del asiento de nómina.
 const rhConceptosPatronales = (conceptos, clave) => {
   const lista = (conceptos || []).filter(c => c && c.activo !== false && rhEsConceptoPatronal(c, clave));
   lista.sort((a, b) => (a.codigo === RH_PATRONAL_CODIGOS[clave] ? 0 : 1) - (b.codigo === RH_PATRONAL_CODIGOS[clave] ? 0 : 1));
   return lista;
 };
-// Cuenta del concepto «APORTE PATRONAL …» de esa ley para un centro de costo: el concepto activo con el código de siempre (R0001/R0002/R0003) primero, luego los demás que se llamen igual; el primero que tenga cuenta para ese centro.
+// Cuenta del concepto «APORTE PATRONAL …» de esa ley para un centro de costo: el concepto activo con el código de siempre (R0001/R0002/R0003/R0004) primero, luego los demás que se llamen igual; el primero que tenga cuenta para ese centro.
 const rhCuentaConceptoPatronal = (conceptos, clave, centroId) => {
   for (const c of rhConceptosPatronales(conceptos, clave)) { const cu = rhAsientoCuenta(c.cuentasPorCentro && c.cuentasPorCentro[centroId]); if (cu.codigo) return cu; }
   return null;
@@ -1118,7 +1119,7 @@ const rhAsientoPorDepartamento = (detalles, ctx) => {
   resultado.forEach(dep => Object.values(dep.cuentas).forEach(c => { c.debeBs = benR2(c.debeBs); c.haberBs = benR2(c.haberBs); }));
   return resultado;
 };
-// Líneas del asiento que quedaron sin cuenta y se configuran en Parafiscales o en «Cuentas del asiento de nómina», con el lugar donde se configura cada una
+// Líneas del asiento que quedaron sin cuenta y se configuran en Parafiscales, en Tipos de nómina o en «Cuentas del asiento de nómina», con el lugar donde se configura cada una
 // `nombreCentro` (opcional): para decir en el aviso de las cargas patronales qué aporte y qué centro de costo están sin cuenta.
 const rhAsientoFaltantes = (asiento, nombreCentro) => {
   const vistas = {}, pend = {};
@@ -1155,9 +1156,11 @@ const rhLegalesAlDia = (actuales, frescas) => {
 // == RRHH - Tipos de nómina y montos en Bs. del asiento y de los reportes ==
 // Tipos de nómina (Configuración → Tipos de nómina, colección rrhh_tipos_nomina): Nómina, Bono de alimentación, Utilidades… Cada tipo tiene su propia cuenta de pasivo,
 // que es la que se acredita por el neto de sus pagos en el asiento (en lugar de una sola «Nómina por Pagar» para todo).
-//   periodo: '' = se elige al iniciar el pago | 'Quincena 1' | 'Quincena 2' (el tipo fija la quincena del pago).
-// El pago guarda tipoNominaId y su concepto = nombre del tipo. Los pagos anteriores (sin tipo) siguen usando «Nómina por Pagar (Banco)» de Configuración → Cuentas del asiento de nómina.
-const RH_PERIODOS_TIPO = ['Quincena 1', 'Quincena 2'];
+//   periodo: '' = se elige al iniciar el pago | 'Quincena 1' | 'Quincena 2' | 'Mensual' (el tipo fija el período del pago: una quincena o el mes completo).
+// El pago guarda tipoNominaId y su concepto = nombre del tipo. Los pagos anteriores (sin tipo) siguen usando la cuenta general «Nómina por Pagar (Banco)» que ya tenían guardada (rrhh_config/asiento).
+const RH_PERIODOS_TIPO = ['Quincena 1', 'Quincena 2', 'Mensual'];
+// El pago guarda su período en «quincena»: 'Quincena 1' | 'Quincena 2' | 'Mensual' (mes completo). Prefijo del N° de recibo: 1Q-… | 2Q-… | M-…
+const rhPrefijoRecibo = (periodo) => periodo === 'Mensual' ? 'M' : (/2/.test(periodo || '') ? '2Q' : '1Q');
 const rhTipoNominaLimpio = (t) => {
   const s = (x) => String(x == null ? '' : x);
   return { nombre:s(t && t.nombre).trim(), periodo:RH_PERIODOS_TIPO.includes(t && t.periodo) ? t.periodo : '', codigoPasivo:s(t && t.codigoPasivo).trim(), nombrePasivo:s(t && t.nombrePasivo).trim(), activo:!(t && t.activo === false) };
@@ -1236,13 +1239,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     faov:{pctTrabajador:1, pctPatronal:2, codigoPasivo:'', nombrePasivo:'', numeroPredeterminado:'03054262'},
     inces:{pctTrabajadorUtilidades:0.5, pctPatronalTrimestral:2, codigoPasivo:'', nombrePasivo:''},
   });
-  // Cuentas del asiento de la nómina (Nómina por Pagar y Cargas Sociales Patronales): se guardan en rrhh_config/asiento
+  // Cuentas que se guardaron antes en rrhh_config/asiento («Nómina por Pagar (Banco)» general y la de respaldo de Cargas Sociales Patronales): ya no se editan en pantalla
+  // (cada tipo de nómina trae su cuenta de pasivo y cada aporte patronal su cuenta por centro de costo), pero se siguen leyendo en el asiento de los pagos sin tipo y de los aportes sin cuenta propia.
   const [configAsiento,setConfigAsiento]=useState(rhAsientoCfgMerge(null));
-  const guardarConfigAsiento = async () => {
-    const limpio = rhAsientoCfgMerge(configAsiento);
-    try{ await setDoc(getDocRef('rrhh_config','asiento'),limpio); setConfigAsiento(limpio); alert('Cuentas del asiento de nómina guardadas.'); }
-    catch(e){ alert('Error: '+e.message); }
-  };
   // Beneficios (HCM y Bolsa de alimentos): se guardan en rrhh_config/beneficios
   const [configBeneficios,setConfigBeneficios]=useState(benMerge(null));
   const [busqCuentaBen,setBusqCuentaBen]=useState({});
@@ -1458,7 +1457,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     try{ await updateDoc(getDocRef('rrhh_conceptos', c.codigo), {[`cuentasPorCentro.${centroId}`]: null}); }
     catch(e){ alert('Error: '+e.message); }
   };
-  // Configuración → Cuentas del asiento de nómina → Cargas Sociales Patronales: cuenta de gasto de cada aporte (ivss | rpe | faov) para cada centro de costo.
+  // Configuración → Cuentas del asiento de nómina → Cargas Sociales Patronales: cuenta de gasto de cada aporte (ivss | rpe | faov | inces) para cada centro de costo.
   // Se guarda en el concepto «APORTE PATRONAL» de esa ley (el principal), la misma cuenta que se ve en Conceptos y que usa el asiento.
   // Si ese mismo concepto está abierto en la pestaña Conceptos, su formulario es una copia hecha al abrirlo: se actualiza también (solo las cuentas por centro), para que «Guardar concepto» no vuelva a escribir las cuentas de antes
   const sincronizarFormConcepto = (codigo, centroId, cuenta) => {
@@ -2252,12 +2251,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
   // Calcula IVSS/RPE/FAOV/INCES según la config — SOLO si "Sueldo Básico" está entre las
   // Cuenta los lunes dentro del rango típico de una quincena (1-15 o 16-fin de mes) de un mes
-  // calendario dado. "mes" viene como 'YYYY-MM'. quincena === 'Quincena 1' | 'Quincena 2'.
+  // calendario dado. "mes" viene como 'YYYY-MM'. quincena === 'Quincena 1' | 'Quincena 2' | 'Mensual' (todos los lunes del mes).
   const contarLunesEnQuincena = (mes, quincena) => {
     if(!mes) return 0;
     const [anio, mesNum] = mes.split('-').map(Number);
     const ultimoDia = new Date(anio, mesNum, 0).getDate();
-    const desde = quincena==='Quincena 1' ? 1 : 16;
+    const desde = (quincena==='Quincena 1' || quincena==='Mensual') ? 1 : 16;
     const hasta = quincena==='Quincena 1' ? 15 : ultimoDia;
     let lunes = 0;
     for(let d=desde; d<=hasta; d++){
@@ -2319,25 +2318,28 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
 
   const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
-  // Rango de fechas (desde/hasta) de la quincena de una nómina, y días calendario que tiene.
+  // Rango de fechas (desde/hasta) del período de una nómina (una quincena o, si es «Mensual», el mes completo), y los días que se pagan.
+  // Mensual: 30 días = el sueldo completo del mes (la tasa diaria es sueldo ÷ 30), sin importar si el mes tiene 28, 29, 30 o 31 días.
   const periodoQuincena = (nomina) => {
     const [añoM, mesM] = String(nomina?.mes||'').split('-');
-    if(!añoM||!mesM) return {desde:'', hasta:'', diasQuincena:15, esQ2:false};
+    if(!añoM||!mesM) return {desde:'', hasta:'', diasQuincena:15, esQ2:false, esMensual:false};
     const lastDay = new Date(parseInt(añoM),parseInt(mesM),0).getDate();
-    const esQ2 = /2/.test(nomina.quincena||'');
+    const esMensual = nomina.quincena==='Mensual';
+    const esQ2 = !esMensual && /2/.test(nomina.quincena||'');
     const desde = `${añoM}-${mesM}-${esQ2?'16':'01'}`;
-    const hasta = `${añoM}-${mesM}-${esQ2?String(lastDay).padStart(2,'0'):'15'}`;
-    const diasQuincena = esQ2 ? (lastDay-15) : 15;
-    return {desde, hasta, diasQuincena, esQ2};
+    const hasta = `${añoM}-${mesM}-${(esQ2||esMensual)?String(lastDay).padStart(2,'0'):'15'}`;
+    const diasQuincena = esMensual ? 30 : (esQ2 ? (lastDay-15) : 15);
+    return {desde, hasta, diasQuincena, esQ2, esMensual};
   };
-  // Días realmente trabajados por el trabajador en esta quincena — completos, salvo que haya
-  // ingresado (fechaIngreso) DENTRO de la quincena, en cuyo caso solo cuentan desde su ingreso.
+  // Días realmente trabajados por el trabajador en este período — completos, salvo que haya
+  // ingresado (fechaIngreso) DENTRO del período, en cuyo caso solo cuentan desde su ingreso (en un pago mensual, máximo 30).
   const diasTrabajadosQuincena = (trabajador, nomina) => {
-    const {desde, hasta, diasQuincena} = periodoQuincena(nomina);
+    const {desde, hasta, diasQuincena, esMensual} = periodoQuincena(nomina);
     if(!desde||!trabajador?.fechaIngreso||trabajador.fechaIngreso<=desde) return diasQuincena;
     if(trabajador.fechaIngreso>hasta) return 0;
     const dIngreso = new Date(trabajador.fechaIngreso+'T00:00:00'), dHasta = new Date(hasta+'T00:00:00');
-    return Math.round((dHasta-dIngreso)/86400000)+1;
+    const dias = Math.round((dHasta-dIngreso)/86400000)+1;
+    return esMensual ? Math.min(diasQuincena, dias) : dias;
   };
   // Arma las 3 deducciones legales (IVSS, RPE, FAOV) ya con incluida:true — se usa al abrir un
   // trabajador, y también desde el botón "Recalcular" si cambia el Sueldo después.
@@ -2577,7 +2579,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
     const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual,...deduccionesBen].reduce((s,d)=>s+d.montoUSD,0);
     const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
-    const {desde:periodoDesde, hasta:periodoHasta, esQ2} = periodoQuincena(nominaActiva);
+    const {desde:periodoDesde, hasta:periodoHasta} = periodoQuincena(nominaActiva);
     const mesM = String(nominaActiva.mes||'').split('-')[1], añoM = String(nominaActiva.mes||'').split('-')[0];
     setBusyNomina(true);
     try{
@@ -2586,9 +2588,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       let nroRecibo = cargarTrabModal._nroReciboExistente;
       const batchRecibo = writeBatch(db);
       if(!nroRecibo){
-        const qNum = esQ2?'2':'1';
         const correlativo = Math.max(1, parseInt(settings?.correlativoReciboNomina||1,10));
-        nroRecibo = `${qNum}Q-${mesM}${añoM}-${String(correlativo).padStart(3,'0')}`;
+        nroRecibo = `${rhPrefijoRecibo(nominaActiva.quincena)}-${mesM}${añoM}-${String(correlativo).padStart(3,'0')}`;
         batchRecibo.set(getDocRef('settings','general'),{correlativoReciboNomina:correlativo+1},{merge:true});
       }
       batchRecibo.set(getDocRef('rrhh_nomina_detalles',key),{
@@ -2672,8 +2673,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const tel = settings?.empresaTelefono || '0414-6930342';
     const t = trabajadores.find(tr=>tr.id===d.trabajadorId) || {};
     const [añoM, mesM] = String(nomina.mes||'').split('-');
-    const qNum = /2/.test(nomina.quincena||'') ? '2' : '1';
-    const nroRecibo = d.nroRecibo || `${qNum}Q-${mesM}${añoM}-${String(correlativoNominaPreview()).padStart(3,'0')}`;
+    const nroRecibo = d.nroRecibo || `${rhPrefijoRecibo(nomina.quincena)}-${mesM}${añoM}-${String(correlativoNominaPreview()).padStart(3,'0')}`;
     const salarioPeriodoBs = d.asignaciones.reduce((s,a)=>s+Number(a.montoBs||0),0);
     const totalAsigBs = d.asignaciones.reduce((s,a)=>s+Number(a.montoBs||0),0);
     const totalDedBs = d.deducciones.reduce((s,x)=>s+Number(x.montoBs||0),0);
@@ -3547,11 +3547,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <input value={tipoForm.nombre} onChange={e=>setTipoForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej.: Nómina Quincenal, Bono de alimentación, Utilidades" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
               </div>
               <div>
-                <label className={lblCls}>Quincena</label>
+                <label className={lblCls}>Período</label>
                 <select value={tipoForm.periodo} onChange={e=>setTipoForm(f=>({...f,periodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
                   <option value="">Se elige al iniciar cada pago</option>
                   <option value="Quincena 1">Siempre Quincena 1</option>
                   <option value="Quincena 2">Siempre Quincena 2</option>
+                  <option value="Mensual">Siempre Mensual (mes completo)</option>
                 </select>
               </div>
               {selectorCuenta('tipoPasivo','Cuenta de pasivo de este tipo',tipoForm.codigoPasivo,tipoForm.nombrePasivo,(c)=>setTipoForm(f=>({...f,codigoPasivo:c.codigo,nombrePasivo:c.nombre})),()=>setTipoForm(f=>({...f,codigoPasivo:'',nombrePasivo:''})))}
@@ -3569,7 +3570,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div key={t.id} className={`flex flex-wrap items-center justify-between gap-2 border-2 rounded-xl px-3 py-2 ${t.activo===false?'border-gray-100 bg-gray-50 opacity-70':'border-gray-100'}`}>
                   <div>
                     <p className="text-xs font-black text-gray-800">{t.nombre}{t.activo===false && <span className="ml-2 text-[9px] font-black uppercase bg-gray-200 text-gray-500 rounded-full px-2 py-0.5">Inactivo</span>}</p>
-                    <p className="text-[10px] text-gray-500">Pasivo: {t.codigoPasivo ? <span><span className="font-mono text-cyan-600">{t.codigoPasivo}</span> {t.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>} · {t.periodo || 'Quincena a elegir'} · {usadosPor(t)} pago(s)</p>
+                    <p className="text-[10px] text-gray-500">Pasivo: {t.codigoPasivo ? <span><span className="font-mono text-cyan-600">{t.codigoPasivo}</span> {t.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>} · {t.periodo || 'Período a elegir'} · {usadosPor(t)} pago(s)</p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button onClick={()=>editarTipoNomina(t)} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Editar</button>
@@ -3580,7 +3581,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               ))}
               {tiposNomina.length===0 && <p className="text-xs text-gray-400 text-center py-8">Aún no hay tipos de nómina. Crea el primero a la izquierda.</p>}
             </div>
-            <p className="text-[10px] text-gray-400 mt-3">Los pagos anteriores, que no tienen tipo, siguen usando la cuenta general «Nómina por Pagar (Banco)» de «Cuentas del asiento de nómina».</p>
+            <p className="text-[10px] text-gray-400 mt-3">Los pagos anteriores, que no tienen tipo, siguen usando la cuenta «Nómina por Pagar (Banco)» que ya tenían guardada.</p>
           </div>
 
         </div>
@@ -3588,123 +3589,69 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         })()}
 
         {cfgSub==='asiento' && (()=>{
-          const patronalDe = (centroId) => (configAsiento.patronalPorCentro||{})[centroId] || null;
-          const setPatronalCentro = (centroId, cuenta) => setConfigAsiento(a=>{
-            const nuevo = {...(a.patronalPorCentro||{})};
-            if(cuenta) nuevo[centroId] = {codigo:cuenta.codigo, nombre:cuenta.nombre}; else delete nuevo[centroId];
-            return {...a, patronalPorCentro:nuevo};
-          });
-          const aporteSinConcepto = (centroId) => ['ivss','rpe','faov'].some(k=>!rhCuentaConceptoPatronal(conceptos,k,centroId));
-          const centrosSinPatronal = centros.filter(c=>!(patronalDe(c.id)&&patronalDe(c.id).codigo) && aporteSinConcepto(c.id));
-          const antiguas = cuentasNomina.filter(c=>c.tipo==='patronal' && c.codigoCuenta);
           const _pm = appUser?.permissions||{};
-          const puedeParafiscales = !appUser || appUser.role==='Master' || !Object.keys(_pm).some(k=>k.startsWith('rrhh_')&&_pm[k]) || !!_pm.rrhh_parafiscales;
           const puedeConceptos = !appUser || appUser.role==='Master' || !Object.keys(_pm).some(k=>k.startsWith('rrhh_')&&_pm[k]) || !!_pm.rrhh_conceptos;
-          const filasLegales = [['ivss','IVSS por Pagar','Seguro Social'],['rpe','RPE por Pagar','Paro Forzoso'],['faov','FAOV por Pagar','FAOV']];
           return (
-        <>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">1. Nómina por pagar (Banco)</h3>
-            <p className="text-[10px] text-gray-400 mb-3">En el asiento de cada pago, esta línea es el neto que se le paga a los trabajadores. Elige la cuenta que se acredita por ese monto. Esta cuenta general se usa en los pagos que no tienen tipo de nómina; cada tipo (Configuración → Tipos de nómina) trae su propia cuenta de pasivo.</p>
-            {selectorCuenta('asNomina','Cuenta de Nómina por Pagar (Banco)',configAsiento.nominaPorPagar.codigo,configAsiento.nominaPorPagar.nombre,(c)=>setConfigAsiento(a=>({...a,nominaPorPagar:{codigo:c.codigo,nombre:c.nombre}})),()=>setConfigAsiento(a=>({...a,nominaPorPagar:{codigo:'',nombre:''}})))}
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-4">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cargas Sociales Patronales</h3>
-            <p className="text-[10px] text-gray-400 mb-3">Gasto del aporte de la empresa a IVSS, RPE y FAOV. Elige, para cada aporte, la cuenta de cada centro de costo: se guarda en el concepto «APORTE PATRONAL» de esa ley (es la misma cuenta que ves en Conceptos → cuentas por centro de costo) y el asiento pone una línea por aporte con la cuenta del centro de costo del trabajador. Las cuentas de respaldo de más abajo solo se usan para el aporte que no tenga cuenta propia: la del centro de costo del trabajador o, si el centro no tiene, la cuenta general.</p>
-            <div className="mb-3 space-y-2" data-testid="estado-conceptos-patronales">
-              {['ivss','rpe','faov'].map(k=>{
-                const lista = rhConceptosPatronales(conceptos,k);
-                const hay = lista.length>0;
-                const principal = lista[0];
-                return (
-                <div key={k} data-testid={'aporte-'+k} className="border-2 border-gray-100 rounded-xl px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-gray-700">{RH_PATRONAL_NOMBRES[k]}{principal && <span className="ml-2 text-[10px] font-mono font-bold text-gray-400">{principal.codigo}</span>}</span>
-                    {!hay && <span className="text-[10px] font-black uppercase text-amber-600">No hay un concepto activo con ese nombre</span>}
-                    {puedeConceptos && <button onClick={()=>setRhTab('conceptos')} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Configurar en Conceptos</button>}
-                  </div>
-                  {hay && <div className="mt-1.5">
-                    {centros.map(c=>{
-                      const cu = rhCuentaConceptoPatronal(conceptos,k,c.id);
-                      if(!puedeConceptos) return (
-                        <p key={c.id} className="text-[10px] text-gray-500"><span className="font-bold">{c.nombre}:</span> {cu ? <span><span className="font-mono text-cyan-600">{cu.codigo}</span> {cu.nombre}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>}</p>
-                      );
-                      const clave = 'asApo:'+k+':'+c.id;
-                      const q = busqCuentaBen[clave]||'';
-                      const coincidencias = q ? planCuentasRH.filter(p=>(p.codigo||'').includes(q)||(p.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,10) : [];
-                      return (
-                      <div key={c.id} data-testid={'aporte-'+k+'-'+c.id} className="flex items-start justify-between gap-3 py-1.5 border-b border-gray-50 last:border-0">
-                        <span className="text-xs font-bold text-gray-600 w-32 flex-shrink-0 truncate pt-1.5" title={c.nombre+' ('+(c.naturaleza||'Gasto')+')'}>{c.nombre}</span>
-                        <div className="flex-1 min-w-0">
-                          {cu ? (
-                            <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-1.5">
-                              <span className="text-[11px] font-bold truncate"><span className="font-mono text-cyan-600 mr-1.5">{cu.codigo}</span>{cu.nombre}</span>
-                              <button onClick={()=>quitarAporteCentro(k,c.id)} title="Quitar la cuenta" className="text-red-400 hover:text-red-600 flex-shrink-0 ml-2"><X size={13}/></button>
-                            </div>
-                          ) : (
-                            <>
-                              <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-amber-200 rounded-xl px-3 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
-                              {q && (
-                                <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto mt-1">
-                                  {coincidencias.map(p=>(
-                                    <div key={p.id} onClick={()=>{asignarAporteCentro(k,c.id,p);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
-                                      <span className="font-mono font-black text-cyan-700">{p.codigo}</span> <span className="text-gray-700 uppercase">{p.nombre}</span>
-                                    </div>
-                                  ))}
-                                  {coincidencias.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Cargas Sociales Patronales</h3>
+          <p className="text-[10px] text-gray-400 mb-3">Gasto del aporte de la empresa a IVSS, RPE, FAOV e INCES. Elige, para cada aporte, la cuenta de cada centro de costo: se guarda en el concepto «APORTE PATRONAL» de esa ley (es la misma cuenta que ves en Conceptos → cuentas por centro de costo) y el asiento pone una línea por aporte con la cuenta del centro de costo del trabajador. El pasivo del neto sale del tipo de nómina (Configuración → Tipos de nómina) y el de IVSS, RPE y FAOV de Parafiscales.</p>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3" data-testid="estado-conceptos-patronales">
+            {['ivss','rpe','faov','inces'].map(k=>{
+              const lista = rhConceptosPatronales(conceptos,k);
+              const hay = lista.length>0;
+              const principal = lista[0];
+              return (
+              <div key={k} data-testid={'aporte-'+k} className="border-2 border-gray-100 rounded-xl px-3 py-2 self-start">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-gray-700">{RH_PATRONAL_NOMBRES[k]}{principal && <span className="ml-2 text-[10px] font-mono font-bold text-gray-400">{principal.codigo}</span>}</span>
+                  {!hay && <span className="text-[10px] font-black uppercase text-amber-600">No hay un concepto activo con ese nombre</span>}
+                  {puedeConceptos && <button onClick={()=>setRhTab('conceptos')} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Configurar en Conceptos</button>}
+                </div>
+                {k==='inces' && <p data-testid="nota-inces" className="text-[10px] text-gray-400 mt-1">El INCES patronal se calcula por trimestre (Elaboración de Nómina → INCES Trimestral): el asiento de cada pago no genera línea para él.</p>}
+                {hay && <div className="mt-1.5">
+                  {centros.map(c=>{
+                    const cu = rhCuentaConceptoPatronal(conceptos,k,c.id);
+                    if(!puedeConceptos) return (
+                      <p key={c.id} className="text-[10px] text-gray-500"><span className="font-bold">{c.nombre}:</span> {cu ? <span><span className="font-mono text-cyan-600">{cu.codigo}</span> {cu.nombre}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>}</p>
+                    );
+                    const clave = 'asApo:'+k+':'+c.id;
+                    const q = busqCuentaBen[clave]||'';
+                    const coincidencias = q ? planCuentasRH.filter(p=>(p.codigo||'').includes(q)||(p.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,10) : [];
+                    return (
+                    <div key={c.id} data-testid={'aporte-'+k+'-'+c.id} className="flex items-start justify-between gap-3 py-1.5 border-b border-gray-50 last:border-0">
+                      <span className="text-xs font-bold text-gray-600 w-32 flex-shrink-0 truncate pt-1.5" title={c.nombre+' ('+(c.naturaleza||'Gasto')+')'}>{c.nombre}</span>
+                      <div className="flex-1 min-w-0">
+                        {cu ? (
+                          <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-1.5">
+                            <span className="text-[11px] font-bold truncate"><span className="font-mono text-cyan-600 mr-1.5">{cu.codigo}</span>{cu.nombre}</span>
+                            <button onClick={()=>quitarAporteCentro(k,c.id)} title="Quitar la cuenta" className="text-red-400 hover:text-red-600 flex-shrink-0 ml-2"><X size={13}/></button>
+                          </div>
+                        ) : (
+                          <>
+                            <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-amber-200 rounded-xl px-3 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                            {q && (
+                              <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto mt-1">
+                                {coincidencias.map(p=>(
+                                  <div key={p.id} onClick={()=>{asignarAporteCentro(k,c.id,p);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
+                                    <span className="font-mono font-black text-cyan-700">{p.codigo}</span> <span className="text-gray-700 uppercase">{p.nombre}</span>
+                                  </div>
+                                ))}
+                                {coincidencias.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
-                      );
-                    })}
-                  </div>}
-                </div>
-                );
-              })}
-            </div>
-            {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
-            {centros.length>0 && <p className="text-[10px] font-black text-gray-400 uppercase mt-4 mb-2">Respaldo: una sola cuenta para los aportes que no tengan cuenta propia</p>}
-            <div className="space-y-3">
-              {centros.map(c=>{ const g = patronalDe(c.id); return (
-                <div key={c.id}>{selectorCuenta('asPat:'+c.id, c.nombre+' ('+(c.naturaleza||'Gasto')+')', g?g.codigo:'', g?g.nombre:'', (cu)=>setPatronalCentro(c.id,cu), ()=>setPatronalCentro(c.id,null))}</div>
-              ); })}
-            </div>
-            <div className="mt-3 pt-3 border-t border-gray-100">
-              {selectorCuenta('asPatGeneral','Cuenta general: para los centros que no tengan una propia',configAsiento.patronalGeneral.codigo,configAsiento.patronalGeneral.nombre,(c)=>setConfigAsiento(a=>({...a,patronalGeneral:{codigo:c.codigo,nombre:c.nombre}})),()=>setConfigAsiento(a=>({...a,patronalGeneral:{codigo:'',nombre:''}})))}
-            </div>
-            {centros.length>0 && !configAsiento.patronalGeneral.codigo && centrosSinPatronal.length>0 && (
-              <p className="text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-2.5 py-1.5 mt-3">Falta la cuenta de: {centrosSinPatronal.map(c=>c.nombre).join(', ')}. Las cargas patronales de esos trabajadores saldrán "sin cuenta configurada" en el asiento.</p>
-            )}
-            {antiguas.length>0 && (
-              <p className="text-[9px] text-gray-400 mt-3">Hay cuentas antiguas guardadas por departamento ({antiguas.map(c=>nombreDepto(c.departamentoId)+' → '+c.codigoCuenta).join(', ')}). Solo se usan cuando el centro del trabajador no tiene cuenta propia ni hay cuenta general.</p>
-            )}
+                    </div>
+                    );
+                  })}
+                </div>}
+              </div>
+              );
+            })}
           </div>
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-4 lg:col-span-2">
-            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">3. IVSS, RPE y FAOV por pagar</h3>
-            <p className="text-[10px] text-gray-400 mb-3">Estas cuentas no se eligen aquí: salen de Parafiscales → (Seguro Social, Paro Forzoso o FAOV) → "Cuenta Contable (Pasivo)". Si ahí no hay cuenta, el asiento usa la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.</p>
-            <div className="space-y-2">
-              {filasLegales.map(([id,etiqueta,seccion])=>{ const cf = configParafiscal[id]||{}; return (
-                <div key={id} className="flex flex-wrap items-center justify-between gap-2 border-2 border-gray-100 rounded-xl px-3 py-2">
-                  <span className="text-xs font-bold text-gray-700">{etiqueta}</span>
-                  {cf.codigoPasivo
-                    ? <span className="text-xs font-bold"><span className="font-mono text-cyan-600 mr-1.5">{cf.codigoPasivo}</span>{cf.nombrePasivo}</span>
-                    : <span className="text-[10px] font-black uppercase text-amber-600">Sin cuenta en Parafiscales</span>}
-                  {puedeParafiscales && <button onClick={()=>{setParafiscalSel(id);setRhTab('parafiscales');}} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Configurar en Parafiscales → {seccion}</button>}
-                </div>
-              ); })}
-            </div>
-          </div>
-
+          {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
         </div>
-        <button onClick={guardarConfigAsiento} className="mt-4 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar cuentas del asiento</button>
-        </>
           );
         })()}
 
@@ -3782,7 +3729,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               return (
               <>
                 <p className="font-black text-gray-800 mb-1">Seguro Social Obligatorio (IVSS)</p>
-                <p className="text-[10px] text-gray-400 mb-4">Base: Salario Normal · Cálculo por semanas (lunes de la quincena) · Art. 66 LSS</p>
+                <p className="text-[10px] text-gray-400 mb-4">Base: Salario Normal · Cálculo por semanas (lunes del período: quincena o mes) · Art. 66 LSS</p>
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador (fijo)</label><input type="number" value={cfg.pctTrabajador} disabled className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none bg-gray-50 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Nivel de Riesgo</label>
@@ -3799,7 +3746,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 {campoNumeroFicha(cfg, set, 'N° de IVSS predeterminado en la ficha')}
                 <div className="mb-4"><BuscadorCuentaPasivo cfg={cfg} set={set}/></div>
                 <div className="bg-gray-50 rounded-xl p-3 mb-4">
-                  <p className="text-[9px] text-gray-400 mb-2">Fórmula: (base × 12 ÷ 52) × % × lunes de la quincena. Si el sueldo supera el tope, se usa el tope.</p>
+                  <p className="text-[9px] text-gray-400 mb-2">Fórmula: (base × 12 ÷ 52) × % × lunes del período (quincena o mes). Si el sueldo supera el tope, se usa el tope.</p>
                   <p className="text-[10px] font-black text-cyan-600">Trabajador {cfg.pctTrabajador}% · Patrono {pctPatronal}%</p>
                 </div>
               </>
@@ -4323,7 +4270,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           if(!n.mes) return false;
           if(repAnio && n.mes.substring(0,4)!==repAnio) return false;
           if(repMes!=='TODOS' && n.mes.substring(5,7)!==repMes) return false;
-          if(repQ!=='AMBAS' && !(n.quincena||'').includes(repQ)) return false;
+          if(repQ!=='AMBAS' && !(repQ==='M' ? n.quincena==='Mensual' : (n.quincena||'').includes(repQ))) return false;
           return okTipo(n);
         }).sort((a,b)=>(b.mes||'').localeCompare(a.mes||'')||(b.quincena||'').localeCompare(a.quincena||''));
         const anioActual = new Date().getFullYear();
@@ -4337,7 +4284,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         const filtrosBase = [
           selFiltro('Año', repAnio, setRepAnio, [anioActual-1,anioActual,anioActual+1].map(y=>[String(y),String(y)])),
           selFiltro('Mes', repMes, setRepMes, [['TODOS','Todos'], ...MESES_LBL.map((m,i)=>[String(i+1).padStart(2,'0'),m])]),
-          selFiltro('Quincena', repQ, setRepQ, [['AMBAS','Ambas'],['1','Quincena 1'],['2','Quincena 2']]),
+          selFiltro('Período', repQ, setRepQ, [['AMBAS','Todos'],['1','Quincena 1'],['2','Quincena 2'],['M','Mensual']]),
           selFiltro('Tipo de nómina', repTipo, setRepTipo, [['TODOS','Todos'], ...tiposNomina.map(t=>[t.id, t.nombre+(t.activo===false?' (inactivo)':'')]), ...(nominas.some(n=>!n.tipoNominaId)?[['__SIN__','Sin tipo (pagos anteriores)']]:[])]),
         ];
         // Neto de un pago (suma de sus trabajadores) en la moneda elegida
@@ -4448,7 +4395,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             const textoTipo = repTipo==='TODOS' ? 'Todos' : (repTipo==='__SIN__' ? 'Sin tipo' : ((tiposNomina.find(t=>t.id===repTipo)||{}).nombre||'—'));
             const imprimir = () => exportarReporteFilasPDF({
               titulo:'Reporte de Nómina por Trabajador', ventana:'Reporte Nómina por Trabajador',
-              sub:`Año ${repAnio} · Mes: ${repMes==='TODOS'?'Todos':MESES_LBL[parseInt(repMes,10)-1]} · Quincena: ${repQ==='AMBAS'?'Ambas':'Quincena '+repQ} · Tipo de nómina: ${textoTipo} · Nómina: ${nominaSelEf==='TODAS'?'Todas':(enAlcance[0]?enAlcance[0].concepto+' ('+enAlcance[0].mes+' · '+enAlcance[0].quincena+')':'—')} · Trabajador: ${repT?repT.nombre:'Todos'}`,
+              sub:`Año ${repAnio} · Mes: ${repMes==='TODOS'?'Todos':MESES_LBL[parseInt(repMes,10)-1]} · Período: ${repQ==='AMBAS'?'Todos':(repQ==='M'?'Mensual':'Quincena '+repQ)} · Tipo de nómina: ${textoTipo} · Nómina: ${nominaSelEf==='TODAS'?'Todas':(enAlcance[0]?enAlcance[0].concepto+' ('+enAlcance[0].mes+' · '+enAlcance[0].quincena+')':'—')} · Trabajador: ${repT?repT.nombre:'Todos'}`,
               filas, moneda:repMoneda, porTrabajador:true,
             });
             return (<>
@@ -4486,8 +4433,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Mes</span><input type="month" value={nominaForm.mes} onChange={e=>setNominaForm(f=>({...f,mes:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/></div>
                 <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tipo de nómina</span><select data-testid="sel-tipo-pago" value={tipoNominaSel?tipoNominaSel.id:''} onChange={e=>setNominaForm(f=>({...f,tipoNominaId:e.target.value}))} className="w-60 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option value="">{tiposNominaActivos.length?'Elige el tipo de nómina…':'No hay tipos de nómina'}</option>{tiposNominaActivos.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
                 {tipoNominaSel && tipoNominaSel.periodo
-                  ? <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Quincena</span><span className="block w-32 border-2 border-gray-100 bg-gray-50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-gray-600">{tipoNominaSel.periodo}</span></div>
-                  : <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Quincena</span><select value={nominaForm.quincena} onChange={e=>setNominaForm(f=>({...f,quincena:e.target.value}))} className="w-32 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincena 1</option><option>Quincena 2</option></select></div>}
+                  ? <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Período</span><span className="block w-32 border-2 border-gray-100 bg-gray-50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-gray-600">{tipoNominaSel.periodo}</span></div>
+                  : <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Período</span><select value={nominaForm.quincena} onChange={e=>setNominaForm(f=>({...f,quincena:e.target.value}))} className="w-32 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincena 1</option><option>Quincena 2</option><option>Mensual</option></select></div>}
                 <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Fecha de pago</span><input type="date" value={nominaForm.fechaPago} onChange={e=>setNominaForm(f=>({...f,fechaPago:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/></div>
                 <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tasa de la nómina (Bs. por $)</span><input type="number" step="0.01" value={nominaForm.tasa} onChange={e=>setNominaForm(f=>({...f,tasa:e.target.value}))} placeholder="Tasa de cambio a usar" className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
               </div>
