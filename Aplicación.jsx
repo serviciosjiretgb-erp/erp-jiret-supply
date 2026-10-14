@@ -86,7 +86,8 @@ const calcISLR=(montoUSD,tasaBCV,conceptoCod,tipoContrib,valorUT=43)=>{
 
 // ── MÓDULO IMPUESTOS UI ──────────────────────────────────────────────
 // == RRHH - Beneficios de nomina: HCM (medicina prepagada) y Bolsa de alimentos ==
-// Calculo puro (sin React), se prueba aparte. Montos en USD; el Bs. sale de USD x tasa del pago.
+// Calculo puro (sin React), se prueba aparte. Montos en USD; el Bs. sale de USD x tasa. HCM y Bolsa pueden tener su PROPIA tasa en el pago
+// (tasaHCM / tasaBolsa, distintas a la de la nomina); si el pago no la trae usan la tasa de la nomina (benTasaDe).
 // HCM: aporte mensual del trabajador = pctTrabajador % de (primaPersona x personas cubiertas);
 //      el resto lo paga la empresa. Se descuenta en 'cuotasPorMes' pagos (por defecto 4).
 // Bolsa: bolsas x descuentoBolsa; la parte de la empresa (subsidio = costo - descuento) va como gasto/costo segun el centro de costo del trabajador.
@@ -172,7 +173,7 @@ const bolsaCalcular = (t, cfg) => {
 const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExistente, detallesMes }) => {
   const t = trabajador || {};
   const conf = benMerge(cfg);
-  const tasa = benNum(nomina && nomina.tasa);
+  const tasaNom = benNum(nomina && nomina.tasa); // HCM y Bolsa usan la suya si el pago la trae (benTasaDe); si no, esta
   const mes = benMesOk(nomina && nomina.mes) ? nomina.mes : benMesActual();
   const guardadas = (detalleExistente && detalleExistente.deducciones) || [];
   const hayDetalle = !!detalleExistente;
@@ -198,6 +199,7 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
       || (auto ? guardadas.find(x => !x.esLegal && !x.esBeneficio && !x.tipoBeneficio && x.codigo === cod) : null)
       || null;
     if (auto || g) {
+      const tasa = benTasaDe(nomina, 'hcm');
       const calc = hcmCalcularMes(t, mes, conf);
       const cuentaPas = conf.hcm.codigoPasivo ? { codigo: conf.hcm.codigoPasivo, nombre: conf.hcm.nombrePasivo || '' } : cuentaDe(cod);
       // Cuenta de gasto/costo del aporte de la empresa: la del centro de costo del trabajador; si ese centro no tiene, la unica del esquema anterior
@@ -205,19 +207,21 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
       const ctaGasto = (gc && gc.codigo) ? { codigo: gc.codigo, nombre: gc.nombre || '' } : { codigo: conf.hcm.codigoGasto || '', nombre: conf.hcm.nombreGasto || '' };
       const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'hcm' || !auto);
       const cuotas = (g && Number(g.cuotas) > 0) ? Math.round(Number(g.cuotas)) : 1;
-      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual;
+      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual, tasaCambio;
       if (conservar) {
         montoUSD = benR2(g.montoUSD);
         montoBs = benR2(g.montoBs != null ? g.montoBs : g.montoUSD * tasa);
         montoPatronalUSD = benR2(g.montoPatronalUSD);
         montoPatronalBs = benR2(g.montoPatronalBs != null ? g.montoPatronalBs : g.montoPatronalUSD * tasa);
         incluida = true; editadoManual = true;
+        tasaCambio = benNum(g.tasaCambio) > 0 ? benNum(g.tasaCambio) : (g.montoBs != null ? tasaNom : tasa); // lo guardado sin tasa propia se calculo con la de la nomina
       } else {
         montoUSD = benR2(calc.porPagoTrab * cuotas);
         montoPatronalUSD = benR2(calc.porPagoEmp * cuotas);
         montoBs = benR2(montoUSD * tasa);
         montoPatronalBs = benR2(montoPatronalUSD * tasa);
         editadoManual = false;
+        tasaCambio = tasa;
         incluida = g ? true : (hayDetalle ? false : (!!(nomina && nomina.aplicaHCM) && calc.personas > 0 && calc.aporteTrab > 0));
       }
       const pasados = hcmHijosPasadosEdad(t, mes, conf.hcm.edadMaxHijos);
@@ -229,7 +233,7 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
       lineas.push({
         tipoBeneficio: 'hcm', esBeneficio: true, esLegal: false, incluida,
         concepto: nombreDe(cod, 'POLIZA HCM'), codigo: cod,
-        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs,
+        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, tasaCambio,
         codigoCuenta: cuentaPas.codigo, nombreCuenta: cuentaPas.nombre,
         codigoCuentaPatronal: ctaGasto.codigo, nombreCuentaPatronal: ctaGasto.nombre,
         personas: calc.personas, primaMes: calc.prima, aporteMesTrab: calc.aporteTrab, aporteMesEmp: calc.aporteEmp,
@@ -246,12 +250,13 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
       || (auto ? guardadas.find(x => !x.esLegal && !x.esBeneficio && !x.tipoBeneficio && x.codigo === cod) : null)
       || null;
     if (auto || g) {
+      const tasa = benTasaDe(nomina, 'bolsa');
       const cuenta = conf.bolsa.codigoCuenta ? { codigo: conf.bolsa.codigoCuenta, nombre: conf.bolsa.nombreCuenta || '' } : cuentaDe(cod);
       // Cuenta de gasto/costo de la parte de la empresa: la del centro de costo del trabajador (si el centro no tiene, queda vacia y el asiento lo avisa)
       const gcB = (conf.bolsa.gastoPorCentro && t.centroCostoId) ? conf.bolsa.gastoPorCentro[t.centroCostoId] : null;
       const ctaGastoB = (gcB && gcB.codigo) ? { codigo: gcB.codigo, nombre: gcB.nombre || '' } : { codigo: '', nombre: '' };
       const conservar = !!g && (g.editadoManual === true || g.tipoBeneficio !== 'bolsa' || !auto);
-      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual;
+      let montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, incluida, editadoManual, tasaCambio;
       if (conservar) {
         montoUSD = benR2(g.montoUSD);
         montoBs = benR2(g.montoBs != null ? g.montoBs : g.montoUSD * tasa);
@@ -259,19 +264,21 @@ const benConstruirLineas = ({ trabajador, nomina, cfg, conceptos, detalleExisten
         montoPatronalUSD = benR2(g.montoPatronalUSD);
         montoPatronalBs = benR2(g.montoPatronalBs != null ? g.montoPatronalBs : g.montoPatronalUSD * tasa);
         incluida = true; editadoManual = true;
+        tasaCambio = benNum(g.tasaCambio) > 0 ? benNum(g.tasaCambio) : (g.montoBs != null ? tasaNom : tasa); // lo guardado sin tasa propia se calculo con la de la nomina
       } else {
         montoUSD = b.descuento;
         montoPatronalUSD = Math.max(0, b.subsidio);
         montoBs = benR2(montoUSD * tasa);
         montoPatronalBs = benR2(montoPatronalUSD * tasa);
         editadoManual = false;
+        tasaCambio = tasa;
         incluida = g ? true : (hayDetalle ? false : (!!(nomina && nomina.aplicaBolsa) && b.bolsas > 0));
       }
       const aviso = bolsasPrevias > 0 ? 'La bolsa ya se descontó este mes en otro pago' : '';
       lineas.push({
         tipoBeneficio: 'bolsa', esBeneficio: true, esLegal: false, incluida,
         concepto: nombreDe(cod, 'BOLSA ALIMENTOS'), codigo: cod,
-        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs,
+        montoUSD, montoBs, montoPatronalUSD, montoPatronalBs, tasaCambio,
         codigoCuenta: cuenta.codigo, nombreCuenta: cuenta.nombre,
         codigoCuentaPatronal: ctaGastoB.codigo, nombreCuentaPatronal: ctaGastoB.nombre,
         bolsas: b.bolsas, descuentoUnit: b.descuentoUnit, costoUnit: b.costoUnit, subsidioEmpresa: b.subsidio,
@@ -289,13 +296,43 @@ const benAplicarCuotas = (l, cuotasIn, tasa) => {
   const montoUSD = benR2(benR2(l.aporteMesTrab / cm) * cuotas);
   const montoPatronalUSD = benR2(benR2(l.aporteMesEmp / cm) * cuotas);
   const aviso = ((l.previosMes || 0) + cuotas > cm) ? ('Con este pago el mes lleva ' + ((l.previosMes || 0) + cuotas) + ' de ' + cm + ' cuotas de HCM') : '';
-  return { ...resto, cuotas, montoUSD, montoBs: benR2(montoUSD * tasa), montoPatronalUSD, montoPatronalBs: benR2(montoPatronalUSD * tasa), editadoManual: false, aviso };
+  return { ...resto, cuotas, montoUSD, montoBs: benR2(montoUSD * tasa), montoPatronalUSD, montoPatronalBs: benR2(montoPatronalUSD * tasa), tasaCambio: tasa, editadoManual: false, aviso };
 };
 // El usuario escribe el monto en Bs. (como en el resto de la pantalla): el USD sale de dividir entre la tasa.
 const benEditarMontoBs = (l, textoBs, tasa) => {
   const bs = benNumComa(textoBs);
-  return { ...l, montoUSD: tasa > 0 ? benR2(bs / tasa) : 0, montoBs: benR2(bs), montoBsTexto: textoBs, editadoManual: true };
+  return { ...l, montoUSD: tasa > 0 ? benR2(bs / tasa) : 0, montoBs: benR2(bs), montoBsTexto: textoBs, tasaCambio: tasa, editadoManual: true };
 };
+
+// Tasa de cambio de cada beneficio: HCM y Bolsa de alimentos pueden tener su PROPIA tasa en el pago (tasaHCM / tasaBolsa), distinta a la de la nomina.
+// Si el pago no la trae (pagos anteriores, o se dejo vacia) se usa la tasa de la nomina.
+const benTasaDe = (nomina, tipo) => {
+  const n = nomina || {};
+  const propia = benNum(tipo === 'hcm' ? n.tasaHCM : (tipo === 'bolsa' ? n.tasaBolsa : 0));
+  return propia > 0 ? propia : benNum(n.tasa);
+};
+// Lo que se escribe en el campo de tasa de HCM / Bolsa: vacio = usar la de la nomina; un numero mayor que 0 = tasa propia; otra cosa = invalida.
+const benTasaEscrita = (texto) => {
+  const s = String(texto == null ? '' : texto).trim();
+  if (!s) return { vacia: true };
+  const n = benNum(s);
+  return n > 0 ? { valor: n } : { invalida: true };
+};
+// "Tasa 900" o, si el pago tiene tasa propia para HCM / Bolsa, "Tasa 900 · HCM 950 · Bolsa 940".
+const benTasasTexto = (nomina) => {
+  const n = nomina || {};
+  let s = 'Tasa ' + (n.tasa == null ? '' : n.tasa);
+  if (benNum(n.tasaHCM) > 0) s += ' · HCM ' + n.tasaHCM;
+  if (benNum(n.tasaBolsa) > 0) s += ' · Bolsa ' + n.tasaBolsa;
+  return s;
+};
+// Diferencia en Bs. de las lineas de HCM/Bolsa que usan una tasa distinta a la de la nomina: lo que valen con SU tasa menos lo que valdrian con la de la nomina.
+// Corrige los totales en Bs. (que salen de USD x tasa de la nomina). Con tasas iguales (o lineas sin tasa anotada) es 0: nada cambia.
+const benAjusteBs = (lineas, tasaNomina, campoBs = 'montoBs', campoUSD = 'montoUSD') => (lineas || []).reduce((s, l) => {
+  const tl = benNum(l && l.tasaCambio), tn = benNum(tasaNomina);
+  if (!(tl > 0) || tl === tn) return s;
+  return s + (benNum(l[campoBs]) - benNum(l[campoUSD]) * tn);
+}, 0);
 
 // == RRHH - Conceptos: exportar / importar con Excel ==
 // El archivo exportado trae todos los campos del concepto y, por cada centro de costo, la cuenta contable (codigo + nombre del Plan de Cuentas).
@@ -956,12 +993,36 @@ const rfPlanConversion = (conceptos, deps) => {
 // Arma las líneas Debe/Haber de una nómina, por departamento. Función pura: todo lo que necesita llega en `ctx`, para poder probarla sin pantalla.
 //   IVSS / RPE / FAOV por Pagar → la cuenta de «Parafiscales → Cuenta Contable (Pasivo)»; si ahí no hay, la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.
 //   Nómina por Pagar (Banco)    → «Configuración → Cuentas del asiento de nómina».
-//   Cargas Sociales Patronales  → esa misma pestaña: la cuenta del centro de costo del trabajador o, si no tiene, la general; si tampoco, la antigua del departamento (rrhh_cuentas_nomina).
+//   Aporte patronal (Debe)      → la cuenta del concepto «APORTE PATRONAL (IVSS)», «APORTE PATRONAL SPF» o «APORTE PATRONAL BANAVIH» (Conceptos) para el centro de costo del trabajador: una línea por aporte.
+//   Cargas Sociales Patronales  → solo el aporte cuyo concepto no tenga cuenta: la cuenta del centro de costo del trabajador en «Configuración → Cuentas del asiento de nómina» o, si no tiene, la general; si tampoco, la antigua del departamento (rrhh_cuentas_nomina).
 // Las líneas sin cuenta siguen saliendo (con su monto) marcadas «sin cuenta configurada»: ningún monto cambia.
 const RH_ASIENTO_NOMBRES = { ivss:'IVSS por Pagar', rpe:'RPE por Pagar', faov:'FAOV por Pagar', banco:'Nómina por Pagar (Banco)', patronal:'Cargas Sociales Patronales' };
-const RH_ASIENTO_DONDE = { ivss:'Parafiscales → Seguro Social → Cuenta Contable (Pasivo)', rpe:'Parafiscales → Paro Forzoso → Cuenta Contable (Pasivo)', faov:'Parafiscales → FAOV → Cuenta Contable (Pasivo)', banco:'Configuración → Cuentas del asiento de nómina', patronal:'Configuración → Cuentas del asiento de nómina' };
+const RH_ASIENTO_DONDE = { ivss:'Parafiscales → Seguro Social → Cuenta Contable (Pasivo)', rpe:'Parafiscales → Paro Forzoso → Cuenta Contable (Pasivo)', faov:'Parafiscales → FAOV → Cuenta Contable (Pasivo)', banco:'Configuración → Cuentas del asiento de nómina', patronal:'Configuración → Cuentas del asiento de nómina → «2. Cargas Sociales Patronales»: la cuenta de cada aporte (IVSS, SPF y BANAVIH) en cada centro de costo (o una sola de respaldo para todos)' };
 const RH_ASIENTO_SIN = ' (⚠️ sin cuenta configurada)';
 const rhAsientoCuenta = (x) => { const cod = (x && x.codigo) ? String(x.codigo).trim() : ''; return cod ? { codigo:cod, nombre:String(x.nombre==null?'':x.nombre) } : { codigo:'', nombre:'' }; };
+// Conceptos del aporte de la empresa (Conceptos, tipo Patronal): su cuenta contable por centro de costo es el Debe del aporte patronal de cada ley.
+const RH_PATRONAL_NOMBRES = { ivss:'APORTE PATRONAL (IVSS)', rpe:'APORTE PATRONAL SPF', faov:'APORTE PATRONAL BANAVIH' };
+const RH_PATRONAL_CODIGOS = { ivss:'R0001', rpe:'R0002', faov:'R0003' };
+const rhEsConceptoPatronal = (c, clave) => {
+  const n = String((c && c.nombre) || '');
+  if (!/patronal/i.test(n)) return false;
+  if (clave === 'ivss') return /ivss|seguro social|s\.?s\.?o\b|seg(uridad)?\.?\s*y\s*salud/i.test(n);
+  if (clave === 'rpe') return /\bspf\b|\brpe\b|paro forzoso|prestacional de empleo|seguro de paro/i.test(n);
+  if (clave === 'faov') return /faov|banavih|vivienda/i.test(n);
+  return false;
+};
+// Conceptos activos «APORTE PATRONAL …» de esa ley, en el orden en que se buscan: primero el del código de siempre (R0001/R0002/R0003), luego los demás que se llamen igual.
+// El primero es el «principal»: el que se actualiza al asignar una cuenta desde Configuración → Cuentas del asiento de nómina.
+const rhConceptosPatronales = (conceptos, clave) => {
+  const lista = (conceptos || []).filter(c => c && c.activo !== false && rhEsConceptoPatronal(c, clave));
+  lista.sort((a, b) => (a.codigo === RH_PATRONAL_CODIGOS[clave] ? 0 : 1) - (b.codigo === RH_PATRONAL_CODIGOS[clave] ? 0 : 1));
+  return lista;
+};
+// Cuenta del concepto «APORTE PATRONAL …» de esa ley para un centro de costo: el concepto activo con el código de siempre (R0001/R0002/R0003) primero, luego los demás que se llamen igual; el primero que tenga cuenta para ese centro.
+const rhCuentaConceptoPatronal = (conceptos, clave, centroId) => {
+  for (const c of rhConceptosPatronales(conceptos, clave)) { const cu = rhAsientoCuenta(c.cuentasPorCentro && c.cuentasPorCentro[centroId]); if (cu.codigo) return cu; }
+  return null;
+};
 // Configuración guardada (rrhh_config/asiento): siempre completa y sin undefined (Firestore los rechaza)
 const rhAsientoCfgMerge = (d) => {
   const porCentro = {};
@@ -983,9 +1044,14 @@ const rhAsientoPorDepartamento = (detalles, ctx) => {
     if (ded.codigoCuenta) return { codigo:String(ded.codigoCuenta), nombre:ded.nombreCuenta || RH_ASIENTO_NOMBRES[clave] };
     return { codigo:'', nombre:(p.nombrePasivo || RH_ASIENTO_NOMBRES[clave]) + RH_ASIENTO_SIN };
   };
-  const cuentaBanco = () => cfgA.nominaPorPagar.codigo
-    ? { codigo:cfgA.nominaPorPagar.codigo, nombre:cfgA.nominaPorPagar.nombre || RH_ASIENTO_NOMBRES.banco }
-    : { codigo:'', nombre:RH_ASIENTO_NOMBRES.banco + RH_ASIENTO_SIN };
+  // Pasivo del neto: la cuenta del tipo de nómina del pago (ctx.cuentaPasivoNomina); si el pago no tiene tipo, la cuenta general «Nómina por Pagar (Banco)»
+  const cuentaBanco = () => {
+    const delTipo = rhAsientoCuenta(ctx.cuentaPasivoNomina);
+    if (delTipo.codigo) return { codigo:delTipo.codigo, nombre:delTipo.nombre || RH_ASIENTO_NOMBRES.banco };
+    return cfgA.nominaPorPagar.codigo
+      ? { codigo:cfgA.nominaPorPagar.codigo, nombre:cfgA.nominaPorPagar.nombre || RH_ASIENTO_NOMBRES.banco }
+      : { codigo:'', nombre:RH_ASIENTO_NOMBRES.banco + RH_ASIENTO_SIN };
+  };
   // Cargas Sociales Patronales: cuenta del centro de costo del trabajador > cuenta general > cuenta antigua del departamento > sin cuenta
   const cuentaPatronal = (d) => {
     const propia = cfgA.patronalPorCentro[d.centroCostoId];
@@ -1000,41 +1066,124 @@ const rhAsientoPorDepartamento = (detalles, ctx) => {
     const key = d.departamentoId;
     if (!porDepto[key]) porDepto[key] = { departamentoId:key, nombreDepto:nombreDepto(key), trabajadores:0, cuentas:{} };
     porDepto[key].trabajadores++;
-    const addCuenta = (codigo, nombre, tipo, monto, clave) => {
-      if (monto <= 0) return;
+    // Cada línea suma el USD y también el Bs. de las mismas filas (debeBs / haberBs): HCM y Bolsa traen el Bs. de su propia tasa
+    const tasaD = benNum(d.tasa) > 0 ? benNum(d.tasa) : benNum(ctx.tasa);
+    let asigBs = 0, dedBs = 0; // para el neto en Bs.: lo sumado al Debe (asignaciones) menos lo sumado al Haber (deducciones del trabajador), así el asiento cuadra también en Bs.
+    // Una fila entra al asiento si tiene monto en USD o en Bs.: una fila guardada con $0,00 pero con Bs. (el USD redondeado a centavos puede quedar en cero) igual cuenta en Bs., para que el asiento sea la misma cifra del recibo y del reporte
+    const addCuenta = (codigo, nombre, tipo, monto, clave, montoBs) => {
+      const mu = Number(monto) > 0 ? Number(monto) : 0;
+      const bs = Number.isFinite(Number(montoBs)) ? Number(montoBs) : 0;
+      if (mu <= 0 && bs <= 0) return null;
       const ck = codigo || nombre;
-      if (!porDepto[key].cuentas[ck]) porDepto[key].cuentas[ck] = { codigo, nombre, debe:0, haber:0 };
+      if (!porDepto[key].cuentas[ck]) porDepto[key].cuentas[ck] = { codigo, nombre, debe:0, haber:0, debeBs:0, haberBs:0 };
       const linea = porDepto[key].cuentas[ck];
       if (clave && !linea.clave) linea.clave = clave;
-      if (tipo === 'debe') linea.debe += monto; else linea.haber += monto;
+      if (tipo === 'debe') { linea.debe += mu; linea.debeBs += bs; } else { linea.haber += mu; linea.haberBs += bs; }
+      return linea;
     };
-    (d.asignaciones || []).forEach(a => addCuenta(a.codigoCuenta, a.nombreCuenta || a.concepto, 'debe', a.montoUSD));
-    let totalPatronalDepto = 0;
+    (d.asignaciones || []).forEach(a => { const bs = rhBsFila(a, 'montoBs', 'montoUSD', tasaD); if (addCuenta(a.codigoCuenta, a.nombreCuenta || a.concepto, 'debe', a.montoUSD, undefined, bs)) asigBs += bs; });
+    let totalPatronalDepto = 0, totalPatronalDeptoBs = 0;
+    const sinCuentaConcepto = []; // aportes patronales de este trabajador cuyo concepto no tiene cuenta (van a Cargas Sociales Patronales)
     (d.deducciones || []).forEach(ded => {
       const clave = ded.esLegal ? claveLegal(ded.concepto) : null;
       const legal = clave ? cuentaLegal(ded, clave, d.centroCostoId) : null;
       const codigo = legal ? legal.codigo : (ded.esLegal ? '' : ded.codigoCuenta);
       const nombre = legal ? legal.nombre : (ded.nombreCuenta || ded.concepto);
-      addCuenta(codigo, nombre, 'haber', ded.montoUSD, clave);
-      if (ded.montoPatronalUSD > 0) {
-        addCuenta(codigo, nombre, 'haber', ded.montoPatronalUSD, clave);
+      const bsDed = rhBsFila(ded, 'montoBs', 'montoUSD', tasaD);
+      if (addCuenta(codigo, nombre, 'haber', ded.montoUSD, clave, bsDed)) dedBs += bsDed;
+      const bsPat = rhBsFila(ded, 'montoPatronalBs', 'montoPatronalUSD', tasaD);
+      const usdPat = Number(ded.montoPatronalUSD) > 0 ? Number(ded.montoPatronalUSD) : 0;
+      if (usdPat > 0 || bsPat > 0) {
+        addCuenta(codigo, nombre, 'haber', usdPat, clave, bsPat);
         if (ded.esBeneficio) {
           // El aporte de la empresa en HCM y en la Bolsa de alimentos va a su cuenta de gasto según el centro de costo (Configuración → HCM / Bolsa de alimentos), no a Cargas Sociales
-          addCuenta(ded.codigoCuentaPatronal || '', ded.nombreCuentaPatronal || ('Gasto ' + ded.concepto + ' (empresa)' + RH_ASIENTO_SIN), 'debe', ded.montoPatronalUSD);
-        } else { totalPatronalDepto += ded.montoPatronalUSD; }
+          addCuenta(ded.codigoCuentaPatronal || '', ded.nombreCuentaPatronal || ('Gasto ' + ded.concepto + ' (empresa)' + RH_ASIENTO_SIN), 'debe', usdPat, undefined, bsPat);
+        } else {
+          // Debe del aporte patronal: la cuenta del concepto «APORTE PATRONAL …» para el centro de costo del trabajador (una línea por aporte); si no tiene, se suma a Cargas Sociales Patronales
+          const cp = (clave && ctx.cuentaConceptoPatronal) ? rhAsientoCuenta(ctx.cuentaConceptoPatronal(clave, d.centroCostoId)) : null;
+          if (cp && cp.codigo) addCuenta(cp.codigo, cp.nombre || RH_PATRONAL_NOMBRES[clave], 'debe', usdPat, undefined, bsPat);
+          else { totalPatronalDepto += usdPat; totalPatronalDeptoBs += bsPat; if (clave && ctx.cuentaConceptoPatronal) sinCuentaConcepto.push(clave + '|' + (d.centroCostoId == null ? '' : d.centroCostoId)); }
+        }
       }
     });
     const banco = cuentaBanco();
-    addCuenta(banco.codigo, banco.nombre, 'haber', d.netoUSD, 'banco');
-    if (totalPatronalDepto > 0) { const pat = cuentaPatronal(d); addCuenta(pat.codigo, pat.nombre, 'debe', totalPatronalDepto, 'patronal'); }
+    addCuenta(banco.codigo, banco.nombre, 'haber', d.netoUSD, 'banco', benR2(asigBs - dedBs));
+    if (totalPatronalDepto > 0 || totalPatronalDeptoBs > 0) {
+      const pat = cuentaPatronal(d);
+      const lin = addCuenta(pat.codigo, pat.nombre, 'debe', totalPatronalDepto, 'patronal', totalPatronalDeptoBs);
+      if (lin && !pat.codigo && sinCuentaConcepto.length) lin.pend = (lin.pend || []).concat(sinCuentaConcepto);
+    }
   });
-  return Object.values(porDepto);
+  const resultado = Object.values(porDepto);
+  resultado.forEach(dep => Object.values(dep.cuentas).forEach(c => { c.debeBs = benR2(c.debeBs); c.haberBs = benR2(c.haberBs); }));
+  return resultado;
 };
 // Líneas del asiento que quedaron sin cuenta y se configuran en Parafiscales o en «Cuentas del asiento de nómina», con el lugar donde se configura cada una
-const rhAsientoFaltantes = (asiento) => {
-  const vistas = {};
-  (asiento || []).forEach(dep => Object.values(dep.cuentas || {}).forEach(c => { if (c.clave && !c.codigo) vistas[c.clave] = true; }));
-  return ['ivss', 'rpe', 'faov', 'banco', 'patronal'].filter(k => vistas[k]).map(k => ({ clave:k, nombre:RH_ASIENTO_NOMBRES[k], donde:RH_ASIENTO_DONDE[k] }));
+// `nombreCentro` (opcional): para decir en el aviso de las cargas patronales qué aporte y qué centro de costo están sin cuenta.
+const rhAsientoFaltantes = (asiento, nombreCentro) => {
+  const vistas = {}, pend = {};
+  (asiento || []).forEach(dep => Object.values(dep.cuentas || {}).forEach(c => {
+    if (c.clave && !c.codigo) vistas[c.clave] = true;
+    (c.pend || []).forEach(p => { const i = p.indexOf('|'); const k = p.slice(0, i), cen = p.slice(i + 1); (pend[k] = pend[k] || {})[cen] = true; });
+  }));
+  return ['ivss', 'rpe', 'faov', 'banco', 'patronal'].filter(k => vistas[k]).map(k => {
+    const r = { clave:k, nombre:RH_ASIENTO_NOMBRES[k], donde:RH_ASIENTO_DONDE[k] };
+    if (k === 'patronal') {
+      const partes = ['ivss', 'rpe', 'faov'].filter(x => pend[x]).map(x => '«' + RH_PATRONAL_NOMBRES[x] + '» en ' + Object.keys(pend[x]).map(cen => (nombreCentro ? nombreCentro(cen) : cen) || 'sin centro').join(', '));
+      if (partes.length) r.detalle = partes.join(' · ');
+    }
+    return r;
+  });
+};
+
+// == RRHH - IVSS / RPE / FAOV de la pantalla del trabajador, al día con las asignaciones ==
+// `actuales` = las filas que hay ahora en pantalla; `frescas` = las mismas recién calculadas con las asignaciones de este momento. Función pura.
+//   · Sin filas frescas (no hay «Días Trabajados» incluido): se dejan como están.
+//   · Fila quitada por el usuario (incluida:false): sigue quitada, pero con el monto al día por si la vuelve a agregar.
+//   · Fila editada a mano (editadoManual): se respeta el monto del trabajador; el aporte patronal sí sigue a las asignaciones.
+//   · Las demás: se reemplazan por la recién calculada.
+const rhLegalesAlDia = (actuales, frescas) => {
+  if (!frescas || frescas.length === 0) return actuales;
+  return frescas.map(f => {
+    const a = (actuales || []).find(x => x.concepto === f.concepto);
+    if (!a) return f;
+    if (a.editadoManual) return { ...a, montoPatronalUSD:f.montoPatronalUSD, montoPatronalBs:f.montoPatronalBs };
+    return { ...f, incluida:a.incluida };
+  });
+};
+
+// == RRHH - Tipos de nómina y montos en Bs. del asiento y de los reportes ==
+// Tipos de nómina (Configuración → Tipos de nómina, colección rrhh_tipos_nomina): Nómina, Bono de alimentación, Utilidades… Cada tipo tiene su propia cuenta de pasivo,
+// que es la que se acredita por el neto de sus pagos en el asiento (en lugar de una sola «Nómina por Pagar» para todo).
+//   periodo: '' = se elige al iniciar el pago | 'Quincena 1' | 'Quincena 2' (el tipo fija la quincena del pago).
+// El pago guarda tipoNominaId y su concepto = nombre del tipo. Los pagos anteriores (sin tipo) siguen usando «Nómina por Pagar (Banco)» de Configuración → Cuentas del asiento de nómina.
+const RH_PERIODOS_TIPO = ['Quincena 1', 'Quincena 2'];
+const rhTipoNominaLimpio = (t) => {
+  const s = (x) => String(x == null ? '' : x);
+  return { nombre:s(t && t.nombre).trim(), periodo:RH_PERIODOS_TIPO.includes(t && t.periodo) ? t.periodo : '', codigoPasivo:s(t && t.codigoPasivo).trim(), nombrePasivo:s(t && t.nombrePasivo).trim(), activo:!(t && t.activo === false) };
+};
+// Cuenta de pasivo del tipo de nómina de un pago ({codigo,nombre}); null si el pago no tiene tipo (pagos anteriores), el tipo ya no existe o no tiene cuenta.
+const rhCuentaPasivoDePago = (tipos, nomina) => {
+  const id = nomina && nomina.tipoNominaId;
+  const t = id ? (tipos || []).find(x => x && x.id === id) : null;
+  return (t && String(t.codigoPasivo || '').trim()) ? { codigo:String(t.codigoPasivo).trim(), nombre:String(t.nombrePasivo || '') } : null;
+};
+// Moneda del asiento y de los reportes de nómina: 'USD' | 'BS' | 'AMBAS' (la elige el usuario)
+const RH_MONEDAS = [['USD', 'USD'], ['BS', 'Bs.'], ['AMBAS', 'Ambas']];
+const rhVeUSD = (m) => m !== 'BS';
+const rhVeBS = (m) => m !== 'USD';
+// Bs. de una fila guardada: el que trae; si no trae (datos muy antiguos) USD × tasa
+const rhBsFila = (fila, campoBs, campoUSD, tasa) => {
+  const raw = fila ? fila[campoBs] : undefined;
+  const n = (raw == null || raw === '') ? NaN : Number(raw);
+  return Number.isFinite(n) ? n : benR2(benNum(fila ? fila[campoUSD] : 0) * benNum(tasa));
+};
+// Montos de un trabajador cargado en un pago, en USD y en Bs.: el USD es el guardado; el Bs. es la suma de las filas (la misma cifra del recibo), así Asignaciones − Deducciones = Neto
+const rhMontosDetalle = (d, tasaPago) => {
+  const tasa = benNum(d && d.tasa) > 0 ? benNum(d.tasa) : benNum(tasaPago);
+  const asigBs = benR2(((d && d.asignaciones) || []).reduce((s, a) => s + rhBsFila(a, 'montoBs', 'montoUSD', tasa), 0));
+  const dedBs = benR2(((d && d.deducciones) || []).reduce((s, x) => s + rhBsFila(x, 'montoBs', 'montoUSD', tasa), 0));
+  return { asigUSD:benNum(d && d.totalAsignacionesUSD), dedUSD:benNum(d && d.totalDeduccionesUSD), netoUSD:benNum(d && d.netoUSD), asigBs, dedBs, netoBs:benR2(asigBs - dedBs) };
 };
 
 function RRHHApp({fbUser,onBack,settings,appUser}) {
@@ -1044,7 +1193,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const perms=appUser?.permissions||{};
     const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
     if(appUser?.role==='Master'||!tieneSubs) return;
-    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',beneficios:'rrhh_beneficios',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores'};
+    const mapa={config:'rrhh_configuracion',nomina:'rrhh_nomina',parafiscales:'rrhh_parafiscales',beneficios:'rrhh_beneficios',conceptos:'rrhh_conceptos',trabajadores:'rrhh_trabajadores',elaboracion:'rrhh_nomina'};
     if(perms[mapa[rhTab]]) return;
     const primero=Object.keys(mapa).find(k=>perms[mapa[k]]);
     if(primero) setRhTab(primero);
@@ -1166,6 +1315,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   );
   const [nominas,setNominas]=useState([]);
   const [nominaDetalles,setNominaDetalles]=useState([]);
+  const [tiposNomina,setTiposNomina]=useState([]); // Configuración → Tipos de nómina (cada uno con su cuenta de pasivo)
   useEffect(()=>{
     const s1=onSnapshot(getColRef('rrhh_centros_costo'),s=>setCentros(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s2=onSnapshot(getColRef('rrhh_departamentos'),s=>setDepartamentos(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -1190,7 +1340,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
     const s7=onSnapshot(getColRef('rrhh_nominas'),s=>setNominas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))));
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();s13();};
+    const s14=onSnapshot(getColRef('rrhh_tipos_nomina'),s=>setTiposNomina(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')))));
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();s13();s14();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -1306,6 +1457,24 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const quitarCuentaConcepto = async (c, centroId) => {
     try{ await updateDoc(getDocRef('rrhh_conceptos', c.codigo), {[`cuentasPorCentro.${centroId}`]: null}); }
     catch(e){ alert('Error: '+e.message); }
+  };
+  // Configuración → Cuentas del asiento de nómina → Cargas Sociales Patronales: cuenta de gasto de cada aporte (ivss | rpe | faov) para cada centro de costo.
+  // Se guarda en el concepto «APORTE PATRONAL» de esa ley (el principal), la misma cuenta que se ve en Conceptos y que usa el asiento.
+  // Si ese mismo concepto está abierto en la pestaña Conceptos, su formulario es una copia hecha al abrirlo: se actualiza también (solo las cuentas por centro), para que «Guardar concepto» no vuelva a escribir las cuentas de antes
+  const sincronizarFormConcepto = (codigo, centroId, cuenta) => {
+    if(conceptoSelCod===codigo && !esNuevoConcepto) setConceptoForm(f=>f?({...f, cuentasPorCentro:{...(f.cuentasPorCentro||{}), [centroId]:cuenta}}):f);
+  };
+  const asignarAporteCentro = async (clave, centroId, cuenta) => {
+    const principal = rhConceptosPatronales(conceptos, clave)[0];
+    if(!principal) return alert('No hay un concepto activo «'+RH_PATRONAL_NOMBRES[clave]+'» en Conceptos: créalo (tipo Patronal) para poder asignarle cuenta por centro de costo.');
+    const nueva = {codigo:cuenta.codigo, nombre:cuenta.nombre};
+    sincronizarFormConcepto(principal.codigo, centroId, nueva);
+    await asignarCuentaConcepto(principal, centroId, nueva);
+  };
+  // Quitar la cuenta: de todos los conceptos de esa ley que la tengan para ese centro (si no, la de otro concepto con nombre parecido reaparecería)
+  const quitarAporteCentro = async (clave, centroId) => {
+    const conCuenta = rhConceptosPatronales(conceptos, clave).filter(c=>rhAsientoCuenta(c.cuentasPorCentro && c.cuentasPorCentro[centroId]).codigo);
+    for(const c of conCuenta){ sincronizarFormConcepto(c.codigo, centroId, null); await quitarCuentaConcepto(c, centroId); }
   };
   // ── Motor de cálculo de fórmulas de Conceptos ──────────────────────────────
   // Una fórmula tiene la forma "{cantidad} TEXTO x {tarifa}" — a veces solo tiene
@@ -1945,32 +2114,56 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const nombreDepto = (id) => departamentos.find(d=>d.id===id)?.nombre||'—';
   const [subiendoFoto,setSubiendoFoto]=useState(false);
   // ── Registro de Nómina ────────────────────────────────────────────────────
-  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', concepto:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||''), aplicaHCM:true, aplicaBolsa:false});
+  const initNominaForm = () => ({mes:new Date().toISOString().slice(0,7), quincena:'Quincena 1', tipoNominaId:'', fechaPago:getTodayDate(), tasa:String(settings?.tasaBCV||''), tasaHCM:'', tasaBolsa:'', aplicaHCM:true, aplicaBolsa:false});
   const [nominaForm,setNominaForm]=useState(initNominaForm());
+  const tiposNominaActivos = tiposNomina.filter(t=>t.activo!==false);
+  const tipoNominaSel = tiposNominaActivos.find(t=>t.id===nominaForm.tipoNominaId) || null; // tipo elegido en «Iniciar nuevo pago»
+  const _pmCfg = appUser?.permissions||{};
+  const puedeConfigurar = !appUser || appUser.role==='Master' || !Object.keys(_pmCfg).some(k=>k.startsWith('rrhh_')&&_pmCfg[k]) || !!_pmCfg.rrhh_configuracion;
+  const [tasaBenKey,setTasaBenKey]=useState(0); // repinta los campos de tasa HCM/Bolsa del pago abierto cuando lo escrito no es valido
   const [nominaActiva,setNominaActiva]=useState(null);
   const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador'
   const [repAnio,setRepAnio]=useState(String(new Date().getFullYear()));
   const [repMes,setRepMes]=useState('TODOS');
   const [repQ,setRepQ]=useState('AMBAS');
   const [repNominaSel,setRepNominaSel]=useState(null);
-  const [repTrabajadorSel,setRepTrabajadorSel]=useState(null);
-  const [repBusqTrab,setRepBusqTrab]=useState('');
+  const [repTipo,setRepTipo]=useState('TODOS'); // filtro por tipo de nómina: 'TODOS' | id del tipo | '__SIN__' (pagos anteriores, sin tipo)
+  const [repNominaId,setRepNominaId]=useState('TODAS'); // «Por trabajador»: un pago o todos los que pasan los filtros
+  const [repTrabId,setRepTrabId]=useState('TODOS'); // «Por trabajador»: un trabajador o todos
+  const [repMoneda,setRepMoneda]=useState('AMBAS'); // moneda del asiento y de los reportes de nómina: 'USD' | 'BS' | 'AMBAS'
+  // Selector USD / Bs. / Ambas (se llama como función, no como componente, para no perder el foco)
+  const selMoneda = () => (
+    <div className="flex items-center gap-1.5" data-testid="sel-moneda">
+      <span className="text-[9px] font-black text-gray-400 uppercase">Moneda</span>
+      {RH_MONEDAS.map(([id,etiqueta])=>(
+        <button key={id} onClick={()=>setRepMoneda(id)} className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase transition-all ${repMoneda===id?'bg-cyan-600 text-white shadow':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>{etiqueta}</button>
+      ))}
+    </div>
+  );
   const [agregarConceptoBusq,setAgregarConceptoBusq]=useState('');
   const [cargarTrabBusq,setCargarTrabBusq]=useState('');
   const [busyNomina,setBusyNomina]=useState(false);
   const crearNomina = async () => {
-    if(!nominaForm.concepto.trim()) return alert('Escribe el concepto de este pago');
+    // El tipo de nómina (Configuración → Tipos de nómina) reemplaza al concepto escrito a mano: su nombre es el concepto del pago y su cuenta de pasivo la usa el asiento
+    const tipo = tiposNomina.find(x=>x.id===nominaForm.tipoNominaId && x.activo!==false);
+    if(!tipo) return alert('Elige el tipo de nómina de este pago (los creas en Configuración → Tipos de nómina)');
     if(!nominaForm.tasa||Number(nominaForm.tasa)<=0) return alert('Ingresa la tasa de cambio a usar');
+    // HCM y Bolsa de alimentos pueden llevar su propia tasa (distinta a la de la nómina); vacía = usan la de la nómina
+    const tH = benTasaEscrita(nominaForm.tasaHCM), tB = benTasaEscrita(nominaForm.tasaBolsa);
+    if(tH.invalida) return alert('La tasa de HCM debe ser mayor que 0 (o déjala vacía para usar la tasa de la nómina)');
+    if(tB.invalida) return alert('La tasa de la Bolsa de alimentos debe ser mayor que 0 (o déjala vacía para usar la tasa de la nómina)');
+    const {tasaHCM:_tasaHCMForm, tasaBolsa:_tasaBolsaForm, tipoNominaId:_tipoNominaForm, ...baseNomina} = nominaForm;
+    const datosNomina = {...baseNomina, concepto:tipo.nombre, tipoNominaId:tipo.id, quincena:(tipo.periodo||nominaForm.quincena), tasa:Number(nominaForm.tasa), ...(tH.valor?{tasaHCM:tH.valor}:{}), ...(tB.valor?{tasaBolsa:tB.valor}:{}), estado:'abierta'};
     setBusyNomina(true);
     try{
-      const ref = await addDoc(getColRef('rrhh_nominas'),{...nominaForm, tasa:Number(nominaForm.tasa), estado:'abierta', createdAt:Date.now()});
-      setNominaActiva({id:ref.id, ...nominaForm, tasa:Number(nominaForm.tasa), estado:'abierta'});
+      const ref = await addDoc(getColRef('rrhh_nominas'),{...datosNomina, createdAt:Date.now()});
+      setNominaActiva({id:ref.id, ...datosNomina});
       setNominaForm(initNominaForm());
     } catch(e){ alert('Error al crear: '+e.message); }
     finally{ setBusyNomina(false); }
   };
   const cerrarNomina = async (n) => {
-    if(!window.confirm(`¿Cerrar "${n.concepto}"? Ya no se podrán cargar ni editar trabajadores en este pago.`)) return;
+    if(!window.confirm(`¿Cerrar "${n.concepto}"? Ya no se podrán cargar ni editar trabajadores en este pago (podrás reabrirlo si lo necesitas).`)) return;
     try{ await updateDoc(getDocRef('rrhh_nominas',n.id),{estado:'cerrada'}); if(nominaActiva?.id===n.id) setNominaActiva(v=>({...v,estado:'cerrada'})); }
     catch(e){ alert('Error: '+e.message); }
   };
@@ -1978,6 +2171,71 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const cambiarFlagNomina = async (campo, valor) => {
     if(!nominaActiva || nominaActiva.estado!=='abierta') return;
     try{ await updateDoc(getDocRef('rrhh_nominas',nominaActiva.id),{[campo]:valor}); setNominaActiva(v=>v?({...v,[campo]:valor}):v); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  // En un pago abierto: fijar (o quitar) la tasa propia de HCM / Bolsa de alimentos. Vacía = usa la tasa de la nómina.
+  const cambiarTasaBeneficio = async (campo, texto) => {
+    if(!nominaActiva || nominaActiva.estado!=='abierta') return;
+    const r = benTasaEscrita(texto);
+    if(r.invalida){ alert('La tasa debe ser mayor que 0 (o déjala vacía para usar la tasa de la nómina)'); setTasaBenKey(k=>k+1); return; }
+    const valor = r.vacia ? null : r.valor;
+    const actual = benNum(nominaActiva[campo]) > 0 ? benNum(nominaActiva[campo]) : null;
+    if(valor === actual){ setTasaBenKey(k=>k+1); return; }
+    try{ await updateDoc(getDocRef('rrhh_nominas',nominaActiva.id),{[campo]:valor}); setNominaActiva(v=>v?({...v,[campo]:valor}):v); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  // Reabrir un pago cerrado para poder cargar y editar trabajadores (luego se vuelve a cerrar)
+  const reabrirNomina = async (n) => {
+    if(!window.confirm(`¿Reabrir "${n.concepto}"? Podrás cargar y editar trabajadores en este pago y volver a cerrarlo cuando termines.`)) return;
+    try{ await updateDoc(getDocRef('rrhh_nominas',n.id),{estado:'abierta'}); if(nominaActiva?.id===n.id) setNominaActiva(v=>v?({...v,estado:'abierta'}):v); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  // Editar un trabajador ya cargado: abre la misma pantalla completa de cuando se crea, con lo guardado. Si el pago está cerrado hay que reabrirlo primero.
+  const editarDetalleNomina = async (d) => {
+    if(!nominaActiva) return;
+    const trab = trabajadores.find(x=>x.id===d.trabajadorId);
+    if(!trab) return alert('No se encontró la ficha de este trabajador (¿fue eliminado?), por eso no se puede editar su pago.');
+    if(nominaActiva.estado==='cerrada'){
+      if(!window.confirm(`Este pago está CERRADO. Para editar a "${d.trabajadorNombre}" hay que reabrirlo (después lo puedes volver a cerrar).\n\n¿Reabrir y editar?`)) return;
+      try{ await updateDoc(getDocRef('rrhh_nominas',nominaActiva.id),{estado:'abierta'}); setNominaActiva(v=>v?({...v,estado:'abierta'}):v); }
+      catch(e){ return alert('Error: '+e.message); }
+    }
+    abrirCargarTrabajador(trab);
+  };
+  // ── Tipos de nómina (Configuración → Tipos de nómina) ──
+  const tipoFormVacio = () => ({id:null, nombre:'', periodo:'', codigoPasivo:'', nombrePasivo:'', activo:true});
+  const [tipoForm,setTipoForm]=useState(tipoFormVacio());
+  const [busyTipo,setBusyTipo]=useState(false);
+  const guardarTipoNomina = async () => {
+    const f = rhTipoNominaLimpio(tipoForm);
+    if(!f.nombre) return alert('Escribe el nombre del tipo de nómina (por ejemplo: Nómina, Bono de alimentación, Utilidades)');
+    if(!f.codigoPasivo) return alert('Elige la cuenta de pasivo de este tipo de nómina: es la que se acredita por el neto de sus pagos en el asiento.');
+    if(tiposNomina.some(t=>t.id!==tipoForm.id && String(t.nombre||'').trim().toUpperCase()===f.nombre.toUpperCase())) return alert('Ya existe un tipo de nómina con ese nombre.');
+    // Cambiar la cuenta de pasivo de un tipo que ya tiene pagos: el asiento de TODOS esos pagos (también los cerrados) pasa a usar la cuenta nueva
+    if(tipoForm.id){
+      const previo = tiposNomina.find(t=>t.id===tipoForm.id);
+      const nPagos = nominas.filter(n=>n.tipoNominaId===tipoForm.id).length;
+      if(previo && String(previo.codigoPasivo||'').trim()!==f.codigoPasivo && nPagos>0 && !window.confirm(`El tipo "${f.nombre}" tiene ${nPagos} pago(s). Al cambiar su cuenta de pasivo, el asiento de TODOS esos pagos (también los ya cerrados) usará la cuenta nueva.\n\n¿Cambiar la cuenta?`)) return;
+    }
+    setBusyTipo(true);
+    try{
+      // «activo» no se toca al editar (se cambia con Activar / Desactivar): así no se reactiva un tipo que se desactivó con este formulario abierto
+      if(tipoForm.id){ const {activo:_activoForm, ...sinActivo} = f; await updateDoc(getDocRef('rrhh_tipos_nomina',tipoForm.id),{...sinActivo, updatedAt:Date.now()}); }
+      else await addDoc(getColRef('rrhh_tipos_nomina'),{...f, createdAt:Date.now()});
+      setTipoForm(tipoFormVacio());
+    } catch(e){ alert('Error al guardar el tipo de nómina: '+e.message); }
+    finally{ setBusyTipo(false); }
+  };
+  const editarTipoNomina = (t) => setTipoForm({id:t.id, nombre:t.nombre||'', periodo:t.periodo||'', codigoPasivo:t.codigoPasivo||'', nombrePasivo:t.nombrePasivo||'', activo:t.activo!==false});
+  const cambiarActivoTipo = async (t) => {
+    try{ await updateDoc(getDocRef('rrhh_tipos_nomina',t.id),{activo:t.activo===false, updatedAt:Date.now()}); }
+    catch(e){ alert('Error: '+e.message); }
+  };
+  const eliminarTipoNomina = async (t) => {
+    const usados = nominas.filter(n=>n.tipoNominaId===t.id).length;
+    if(usados>0) return alert(`No se puede eliminar "${t.nombre}": ${usados} pago(s) usan este tipo. Puedes desactivarlo para que ya no salga al iniciar un pago.`);
+    if(!window.confirm(`¿Eliminar el tipo de nómina "${t.nombre}"?`)) return;
+    try{ await deleteDoc(getDocRef('rrhh_tipos_nomina',t.id)); if(tipoForm.id===t.id) setTipoForm(tipoFormVacio()); }
     catch(e){ alert('Error: '+e.message); }
   };
   const eliminarNomina = async (n) => {
@@ -2012,7 +2270,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // - IVSS/RPE: (base semanal × %) × lunes de la quincena, con tope propio cada uno (5x / 10x
   //   salario mínimo). Base = Salario Normal (todas las asignaciones incluidas que cuenten como
   //   salario normal — se excluyen Utilidades y Bono Vacacional).
-  // - FAOV: % directo sobre el Sueldo Básico de la quincena, sin fórmula de semanas ni tope.
+  // - FAOV: % directo sobre el TOTAL de asignaciones (trabajador 1%, patronal 2%, según Parafiscales), sin fórmula de semanas ni tope.
   // - INCES: NO se calcula aquí — el trabajador solo se descuenta sobre utilidades (aparte), y el
   //   patronal es trimestral (pantalla propia).
   // Devuelve, para cada una, el monto AL TRABAJADOR y el APORTE PATRONAL por separado.
@@ -2049,10 +2307,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const cfg = configParafiscal.faov;
       if(!hayBase) return {concepto:'FAOV', montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
       // FAOV se calcula sobre el TOTAL de asignaciones (sin excluir utilidades/bono vacacional, a
-      // diferencia de IVSS/RPE que usan Salario Normal).
-      const montoUSD = parseFloat((totalAsig*cfg.pctTrabajador/100).toFixed(2));
-      const montoPatronalUSD = parseFloat((totalAsig*cfg.pctPatronal/100).toFixed(2));
-      return {concepto:'FAOV', montoUSD, montoPatronalUSD, montoBs:parseFloat((montoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((montoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
+      // diferencia de IVSS/RPE que usan Salario Normal): trabajador = % de Parafiscales (1%) y
+      // aporte patronal = % patronal de Parafiscales (2%). Sin redondear todavía: el redondeo va al
+      // final, en cada moneda por separado — así el Bs. es exactamente el % del total en Bs. (1% de
+      // Bs. 191.250,00 = Bs. 1.912,50) y no los $ ya redondeados a centavos × la tasa (daba Bs. 1.917,00).
+      const crudoUSD = totalAsig*cfg.pctTrabajador/100;
+      const crudoPatronalUSD = totalAsig*cfg.pctPatronal/100;
+      return {concepto:'FAOV', montoUSD:parseFloat(crudoUSD.toFixed(2)), montoPatronalUSD:parseFloat(crudoPatronalUSD.toFixed(2)), montoBs:parseFloat((crudoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((crudoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
     };
     return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov};
   };
@@ -2100,6 +2361,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
   };
   const recalcularLegalesAhora = () => setCargarTrabModal(m=>m?{...m, deduccionesLegales:recalcularDeduccionesLegales(m.asignaciones, m.trabajador.centroCostoId)}:m);
+  // IVSS/RPE/FAOV siguen a las asignaciones: cada vez que cambia una asignación se recalculan con lo que hay en pantalla en ese momento
+  // (la fila quitada sigue quitada y la editada a mano conserva su monto — ver rhLegalesAlDia). "Recalcular legales" las reinicia a mano.
+  const conLegalesAlDia = (m, asignaciones) => ({...m, asignaciones, deduccionesLegales:rhLegalesAlDia(m.deduccionesLegales, recalcularDeduccionesLegales(asignaciones, m.trabajador.centroCostoId))});
   const actualizarNovedadValor = (token, valor) => setCargarTrabModal(m=>m?{...m, novedadesValores:{...m.novedadesValores, [token]:valor}}:m);
   // Corre el motor de fórmulas (el mismo de "Probar un Trabajador") con los valores capturados en el
   // panel de Novedades, y sincroniza el resultado con las filas de asignaciones/deducciones de
@@ -2118,7 +2382,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       if(v==null || v===0) return {...x, incluida:false, montoUSD:0};
       return {...x, incluida:true, montoUSD:parseFloat(v.toFixed(2))};
     });
-    return {...m, asignaciones:sync(m.asignaciones), deduccionesManual:sync(m.deduccionesManual)};
+    return {...conLegalesAlDia(m, sync(m.asignaciones)), deduccionesManual:sync(m.deduccionesManual)};
   });
   // Ubica en el catálogo de Conceptos (rrhh_conceptos) el que representa "Días Trabajados"/Sueldo —
   // por código 00001 (el mismo que usa tu pantalla de referencia) o, si no calza, por nombre.
@@ -2183,7 +2447,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // catálogo de Conceptos — no entre los días reales de la quincena (14/15/16 según el mes).
     const tasaDiariaDef = parseFloat((Number(trabajador.salarioBase||0)/30).toFixed(4));
     const cantidadDiasDef = diasTrabajadosQuincena(trabajador, nominaActiva);
-    const asignaciones = asignacionesCfg.map(c=>{
+    const asignacionesCat = asignacionesCfg.map(c=>{
       const esSueldo = conceptoEsSueldo(c);
       const tieneFormula = !esSueldo && esConceptoCalculable(c);
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
@@ -2197,7 +2461,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       // su propio campo de cantidad (igual que Días Trabajados), no un monto plano.
       return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo||CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
     });
-    const deduccionesManual = deduccionesCfgManual.map(c=>{
+    // Filas ya guardadas en este pago cuyo concepto ya no sale en la lista (se desactivó o se eliminó de Conceptos después de guardar): se conservan al editar,
+    // para que volver a guardar no las borre en silencio ni cambie la base de IVSS/RPE/FAOV. Quedan incluidas y se pueden quitar con la X.
+    const asignacionesHuerfanas = (detalleExistente?.asignaciones||[]).filter(g=>!asignacionesCat.some(a=>a.codigo===g.codigo)).map(({montoBsTexto,...g})=>({...g, incluida:true}));
+    const asignaciones = [...asignacionesCat, ...asignacionesHuerfanas];
+    const deduccionesManualCat = deduccionesCfgManual.map(c=>{
       const tieneFormula = esConceptoCalculable(c);
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
@@ -2205,6 +2473,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
       return {concepto:c.nombre, codigo:c.codigo, incluida:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
+    // Igual para las deducciones manuales guardadas. No cuentan: las legales (IVSS/RPE/FAOV, aunque se hayan guardado sin marca), las de HCM/Bolsa (van por su propio camino) ni las que ya salen en la lista.
+    const esDeLeyGuardada = (g) => { const c0 = {codigo:g.codigo, nombre:g.concepto}, cat = conceptosActivos.find(c=>c.codigo===g.codigo); return [conceptoEsIVSS, conceptoEsRPE, conceptoEsFAOV].some(es=>es(c0) || (cat && es(cat))); };
+    const deduccionesHuerfanas = (detalleExistente?.deducciones||[]).filter(g=>!g.esLegal && !g.esBeneficio && !g.tipoBeneficio && !codigosAutoBen.includes(g.codigo) && !esDeLeyGuardada(g) && !deduccionesManualCat.some(d=>d.codigo===g.codigo)).map(({montoBsTexto,...g})=>({...g, incluida:true}));
+    const deduccionesManual = [...deduccionesManualCat, ...deduccionesHuerfanas];
     // Deducciones legales (IVSS, RPE, FAOV): se recalculan SOLAS cada vez que se abre el trabajador —
     // así, si se corrige la fórmula o la configuración, se refleja de inmediato sin tener que darle a
     // "Recalcular" a mano. Solo se respeta lo guardado en dos casos: (a) el usuario editó el monto a
@@ -2214,24 +2486,23 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const legalesGuardadas = detalleExistente?.deducciones?.filter(d=>d.esLegal) || null;
     const deduccionesLegales = legalesFrescas.map(fresca=>{
       const guardada = legalesGuardadas?.find(g=>g.concepto===fresca.concepto);
-      if(guardada?.editadoManual) return {...guardada, incluida:true};
+      if(guardada?.editadoManual) return {...guardada, incluida:true, montoPatronalUSD:fresca.montoPatronalUSD, montoPatronalBs:fresca.montoPatronalBs}; // el monto del trabajador se respeta; el aporte patronal siempre sigue a las asignaciones
       if(legalesGuardadas && !guardada) return {...fresca, incluida:false}; // la había quitado
       return fresca; // recalculada sola, sin editar a mano
     });
     const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
     setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
   };
-  const toggleAsignacion = (idx) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)}));
+  const toggleAsignacion = (idx) => setCargarTrabModal(m=>conLegalesAlDia(m, m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
   // Beneficios automáticos (HCM / Bolsa de alimentos) del trabajador abierto
   const toggleBeneficio = (idx) => setCargarTrabModal(m=>({...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
+  // HCM y Bolsa usan SU tasa (benTasaDe): la del pago para ese beneficio o, si no tiene, la de la nómina
   const actualizarMontoBeneficio = (idx, montoBsInput) => setCargarTrabModal(m=>{
-    const tasa = Number(nominaActiva?.tasa||0);
-    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benEditarMontoBs(d, montoBsInput, tasa):d)};
+    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benEditarMontoBs(d, montoBsInput, benTasaDe(nominaActiva, d.tipoBeneficio)):d)};
   });
   const actualizarCuotasHCM = (idx, valor) => setCargarTrabModal(m=>{
-    const tasa = Number(nominaActiva?.tasa||0);
-    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benAplicarCuotas(d, valor, tasa):d)};
+    return {...m, deduccionesBeneficios:(m.deduccionesBeneficios||[]).map((d,i)=>i===idx?benAplicarCuotas(d, valor, benTasaDe(nominaActiva, d.tipoBeneficio)):d)};
   });
   const recalcularBeneficiosAhora = () => setCargarTrabModal(m=>{
     if(!m) return m;
@@ -2253,7 +2524,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       // "16348," o "16348,5") — si solo guardáramos el número, la coma desaparecería de la pantalla
       // en cuanto se escribiera, porque 16348 no tiene coma que mostrar.
       const asignaciones = m.asignaciones.map((a,i)=>i===idx?{...a, montoUSD, montoBs:parseFloat(montoBs.toFixed(2)), montoBsTexto:montoBsInput}:a);
-      return {...m, asignaciones};
+      return conLegalesAlDia(m, asignaciones);
     });
   };
   // Para el Sueldo Básico: recalcula el monto en USD a partir de Cantidad de Días × Tasa Diaria.
@@ -2266,7 +2537,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         const montoUSD = parseFloat((Number(upd.cantidadDias||0)*Number(upd.tasaDiaria||0)).toFixed(2));
         return {...upd, montoUSD, montoBs:parseFloat((montoUSD*tasaCambio).toFixed(2))};
       });
-      return {...m, asignaciones};
+      return conLegalesAlDia(m, asignaciones);
     });
   };
   // Para cualquier concepto con fórmula propia (token): al cambiar la cantidad, recalcula el monto
@@ -2279,7 +2550,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const montoUSD = parseFloat(evaluarConceptoEnVivo({formula:x._formula}, cantidad, m.trabajador).toFixed(2));
       return {...x, cantidad, montoUSD, montoBs:parseFloat((montoUSD*tasaCambio).toFixed(2)), incluida:true};
     });
-    return {...m, [lista]:items};
+    return lista==='asignaciones' ? conLegalesAlDia(m, items) : {...m, [lista]:items};
   });
   const actualizarMontoDeduccionManual = (idx, montoBsInput) => {
     setCargarTrabModal(m=>{
@@ -2301,6 +2572,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // HCM / Bolsa automáticos: se guardan como una deducción más (sin los campos que son solo de pantalla)
     const deduccionesBen = (cargarTrabModal.deduccionesBeneficios||[]).filter(d=>d.incluida).map(({incluida,aviso,previosMes,montoBsTexto,...d})=>d);
     const totalPatronalBenUSD = deduccionesBen.reduce((s,d)=>s+(d.montoPatronalUSD||0),0); // aporte de la empresa en HCM (aparte de las cargas sociales)
+    // HCM/Bolsa con tasa propia: su Bs. no es USD x tasa de la nómina; se suma la diferencia (con tasas iguales es 0 y no cambia nada)
+    const ajusteBenBs = benAjusteBs(deduccionesBen, tasa), ajustePatronalBenBs = benAjusteBs(deduccionesBen, tasa, 'montoPatronalBs', 'montoPatronalUSD');
     const totalAsignacionesUSD = asignaciones.reduce((s,a)=>s+a.montoUSD,0);
     const totalDeduccionesUSD = [...deduccionesLegales,...deduccionesManual,...deduccionesBen].reduce((s,d)=>s+d.montoUSD,0);
     const totalPatronalUSD = deduccionesLegales.reduce((s,d)=>s+(d.montoPatronalUSD||0),0);
@@ -2325,8 +2598,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         asignaciones:asignaciones.map(benSinUndefined), deducciones:[...deduccionesLegales,...deduccionesManual,...deduccionesBen].map(benSinUndefined),
         totalAsignacionesUSD:parseFloat(totalAsignacionesUSD.toFixed(2)), totalDeduccionesUSD:parseFloat(totalDeduccionesUSD.toFixed(2)),
         totalPatronalUSD:parseFloat(totalPatronalUSD.toFixed(2)), totalPatronalBs:parseFloat((totalPatronalUSD*tasa).toFixed(2)),
-        totalPatronalBenUSD:parseFloat(totalPatronalBenUSD.toFixed(2)), totalPatronalBenBs:parseFloat((totalPatronalBenUSD*tasa).toFixed(2)),
-        netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa).toFixed(2)),
+        totalPatronalBenUSD:parseFloat(totalPatronalBenUSD.toFixed(2)), totalPatronalBenBs:parseFloat((totalPatronalBenUSD*tasa+ajustePatronalBenBs).toFixed(2)),
+        netoUSD:parseFloat((totalAsignacionesUSD-totalDeduccionesUSD).toFixed(2)), netoBs:parseFloat(((totalAsignacionesUSD-totalDeduccionesUSD)*tasa-ajusteBenBs).toFixed(2)),
         tasa, nroRecibo, periodoDesde, periodoHasta, novedades:cargarTrabModal.novedadesValores||{}, updatedAt:Date.now(),
       },{merge:true});
       await batchRecibo.commit();
@@ -2372,10 +2645,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const cu = c ? cuentaDeConcepto(c, centroCostoId) : null;
     return (cu && cu.codigo) ? {codigo:cu.codigo, nombre:cu.nombre||''} : null;
   };
-  const calcularAsientoPorDepartamento = (nominaId) => rhAsientoPorDepartamento(
-    nominaDetalles.filter(d=>d.nominaId===nominaId),
-    {configParafiscal, configAsiento, cuentasNomina, nombreDepto, cuentaConceptoLegal:cuentaConceptoLegalDe}
-  );
+  const calcularAsientoPorDepartamento = (nominaId) => {
+    const pago = nominas.find(n=>n.id===nominaId) || (nominaActiva && nominaActiva.id===nominaId ? nominaActiva : null);
+    return rhAsientoPorDepartamento(
+      nominaDetalles.filter(d=>d.nominaId===nominaId),
+      {configParafiscal, configAsiento, cuentasNomina, nombreDepto, tasa:pago?pago.tasa:0, cuentaPasivoNomina:rhCuentaPasivoDePago(tiposNomina, pago), cuentaConceptoLegal:cuentaConceptoLegalDe, cuentaConceptoPatronal:(clave, centroId)=>rhCuentaConceptoPatronal(conceptos, clave, centroId)}
+    );
+  };
 
   const [detalleVerModal,setDetalleVerModal]=useState(null);
 
@@ -2479,30 +2755,41 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // número final y estable se asigna recién al guardar el detalle (guardarDetalleNomina).
   const correlativoNominaPreview = () => Math.max(1, parseInt(settings?.correlativoReciboNomina||1,10));
 
-  const exportarReporteNominaPDF = (nomina) => {
+  // Reporte de nómina para imprimir / guardar en PDF, en la moneda elegida ('USD' | 'BS' | 'AMBAS').
+  // `filas` = [{d: detalle del trabajador, nomina: el pago}]. `porTrabajador`: agrega las columnas Período y Nómina (varios pagos en un mismo reporte).
+  const exportarReporteFilasPDF = ({titulo, ventana, sub, filas, moneda, porTrabajador}) => {
     const {empresa, rif, dir} = _empresaDatos();
-    const detalles = nominaDetalles.filter(d=>d.nominaId===nomina.id);
-    const totAsigUSD = detalles.reduce((s,d)=>s+d.totalAsignacionesUSD,0);
-    const totDedUSD = detalles.reduce((s,d)=>s+d.totalDeduccionesUSD,0);
-    const totNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
-    const totNetoBs = detalles.reduce((s,d)=>s+d.netoBs,0);
-    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:900px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}th:first-child,th:nth-child(2),th:nth-child(3){text-align:left;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}tbody td:first-child,tbody td:nth-child(2),tbody td:nth-child(3){text-align:left;}tfoot td:first-child{text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
-    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Reporte Nómina - ${_escRH(nomina.concepto)}</title><style>${css}</style></head><body><div class="wrap">
+    const usd = rhVeUSD(moneda), bs = rhVeBS(moneda);
+    const datos = (filas||[]).map(f=>({...f, m:rhMontosDetalle(f.d, f.nomina&&f.nomina.tasa)}));
+    const T = datos.reduce((s,f)=>({asigUSD:s.asigUSD+f.m.asigUSD, dedUSD:s.dedUSD+f.m.dedUSD, netoUSD:s.netoUSD+f.m.netoUSD, asigBs:s.asigBs+f.m.asigBs, dedBs:s.dedBs+f.m.dedBs, netoBs:s.netoBs+f.m.netoBs}),{asigUSD:0,dedUSD:0,netoUSD:0,asigBs:0,dedBs:0,netoBs:0});
+    const nTxt = porTrabajador ? 5 : 3; // columnas de texto antes de los montos
+    const th = (n) => (usd?`<th>${n} $</th>`:'') + (bs?`<th>${n} Bs.</th>`:'');
+    const td = (m, k, signo) => (usd?`<td>${signo}$${formatNum(m[k+'USD'])}</td>`:'') + (bs?`<td>${signo}${formatNum(m[k+'Bs'])}</td>`:'');
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;color:#111;}.wrap{max-width:1100px;margin:0 auto;background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;}.membrete h1{font-size:16px;text-transform:uppercase;}.membrete p{font-size:10px;opacity:.9;margin-top:2px;}.btn-print{display:block;margin:16px 24px;padding:12px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 24px;}table{width:100%;border-collapse:collapse;font-size:11px;}th{background:#0f172a;color:#fff;padding:6px 8px;text-align:right;font-size:9px;text-transform:uppercase;}td{padding:5px 8px;border-bottom:1px solid #e5e7eb;text-align:right;}.c3 th:nth-child(-n+3),.c3 tbody td:nth-child(-n+3),.c5 th:nth-child(-n+5),.c5 tbody td:nth-child(-n+5),tfoot td:first-child{text-align:left;}tfoot td{background:#f1f5f9;font-weight:900;}@media print{@page{size:landscape;margin:8mm;}body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.btn-print{display:none!important;}.membrete{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const encabezados = `${porTrabajador?'<th>Período</th><th>Nómina</th>':''}<th>Trabajador</th><th>Cargo</th><th>Departamento</th>${th('Asignaciones')}${th('Deducciones')}${th('Neto')}`;
+    const cuerpo = datos.map(f=>`<tr>${porTrabajador?`<td>${_escRH(f.nomina.mes)} · ${_escRH(f.nomina.quincena)}</td><td>${_escRH(f.nomina.concepto)}</td>`:''}<td>${_escRH(f.d.trabajadorNombre)}</td><td>${_escRH(cargoDeDetalle(f.d)||'—')}</td><td>${_escRH(nombreDepto(f.d.departamentoId))}</td>${td(f.m,'asig','')}${td(f.m,'ded','-')}${td(f.m,'neto','')}</tr>`).join('');
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${_escRH(ventana||titulo)}</title><style>${css}</style></head><body><div class="wrap">
       <div class="membrete"><div><h1>${_escRH(empresa)}</h1><p>RIF: ${_escRH(rif)} · ${_escRH(dir)}</p></div></div>
       <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
       <div class="contenido">
-        <h2 style="font-size:14px;margin-bottom:4px">Reporte de Nómina — ${_escRH(nomina.concepto)}</h2>
-        <p style="font-size:10px;color:#6b7280;margin-bottom:12px">${_escRH(nomina.mes)} · ${_escRH(nomina.quincena)} · Fecha de pago ${_escRH(contDd(nomina.fechaPago))} · Tasa ${_escRH(nomina.tasa)}</p>
-        <table>
-          <thead><tr><th>Trabajador</th><th>Cargo</th><th>Departamento</th><th>Asignaciones $</th><th>Deducciones $</th><th>Neto $</th><th>Neto Bs.</th></tr></thead>
-          <tbody>${detalles.map(d=>`<tr><td>${_escRH(d.trabajadorNombre)}</td><td>${_escRH(cargoDeDetalle(d)||'—')}</td><td>${_escRH(nombreDepto(d.departamentoId))}</td><td>$${formatNum(d.totalAsignacionesUSD)}</td><td>-$${formatNum(d.totalDeduccionesUSD)}</td><td>$${formatNum(d.netoUSD)}</td><td>${formatNum(d.netoBs)}</td></tr>`).join('')}</tbody>
-          <tfoot><tr><td colspan="3">TOTALES · ${detalles.length} trabajador(es)</td><td>$${formatNum(totAsigUSD)}</td><td>-$${formatNum(totDedUSD)}</td><td>$${formatNum(totNetoUSD)}</td><td>${formatNum(totNetoBs)}</td></tr></tfoot>
+        <h2 style="font-size:14px;margin-bottom:4px">${_escRH(titulo)}</h2>
+        <p style="font-size:10px;color:#6b7280;margin-bottom:12px">${_escRH(sub)}</p>
+        <table class="${porTrabajador?'c5':'c3'}">
+          <thead><tr>${encabezados}</tr></thead>
+          <tbody>${cuerpo}</tbody>
+          <tfoot><tr><td colspan="${nTxt}">TOTALES · ${datos.length} ${porTrabajador?'recibo(s)':'trabajador(es)'}</td>${td(T,'asig','')}${td(T,'ded','-')}${td(T,'neto','')}</tr></tfoot>
         </table>
       </div>
     </div></body></html>`;
     const w = window.open('', '_blank');
     if(w){ w.document.write(html); w.document.close(); }
   };
+  // Reporte general de un pago (todos sus trabajadores) en la moneda elegida
+  const exportarReporteNominaPDF = (nomina, moneda) => exportarReporteFilasPDF({
+    titulo:`Reporte de Nómina — ${nomina.concepto}`, ventana:`Reporte Nómina - ${nomina.concepto}`,
+    sub:`${nomina.mes} · ${nomina.quincena} · Fecha de pago ${contDd(nomina.fechaPago)} · ${benTasasTexto(nomina)}`,
+    filas:nominaDetalles.filter(d=>d.nominaId===nomina.id).map(d=>({d, nomina})), moneda:moneda||'USD', porTrabajador:false,
+  });
   const exportarTrabajadoresPDF = (lista) => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -3051,7 +3338,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           setB({gastoPorCentro:nuevo});
         };
         const centrosSinGastoB = centros.filter(c=>!(gastoDeB(c.id)&&gastoDeB(c.id).codigo));
-        const subTabsCfg = [['estructura','Centro de Costo y Departamento'],['tabulador','Tabulador de Sueldos y Cargos'],['hcm','HCM'],['bolsa','Bolsa de alimentos'],['asiento','Cuentas del asiento de nómina']];
+        const subTabsCfg = [['estructura','Centro de Costo y Departamento'],['tabulador','Tabulador de Sueldos y Cargos'],['hcm','HCM'],['bolsa','Bolsa de alimentos'],['tipos','Tipos de nómina'],['asiento','Cuentas del asiento de nómina']];
         return (
       <div className="p-6">
         <div className="flex flex-wrap gap-2 mb-4">
@@ -3245,6 +3532,61 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         </>
         )}
 
+        {cfgSub==='tipos' && (()=>{
+          const usadosPor = (t) => nominas.filter(n=>n.tipoNominaId===t.id).length;
+          const editando = !!tipoForm.id;
+          return (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">{editando ? 'Editar tipo de nómina' : 'Nuevo tipo de nómina'}</h3>
+            <p className="text-[10px] text-gray-400 mb-3">Cada tipo (Nómina, Bono de alimentación, Utilidades, Vacaciones…) tiene su propia cuenta de pasivo: es la que se acredita por el neto de sus pagos en el asiento. Al iniciar un pago eliges el tipo de esta lista.</p>
+            <div className="space-y-3">
+              <div>
+                <label className={lblCls}>Nombre del tipo</label>
+                <input value={tipoForm.nombre} onChange={e=>setTipoForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej.: Nómina Quincenal, Bono de alimentación, Utilidades" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
+              </div>
+              <div>
+                <label className={lblCls}>Quincena</label>
+                <select value={tipoForm.periodo} onChange={e=>setTipoForm(f=>({...f,periodo:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  <option value="">Se elige al iniciar cada pago</option>
+                  <option value="Quincena 1">Siempre Quincena 1</option>
+                  <option value="Quincena 2">Siempre Quincena 2</option>
+                </select>
+              </div>
+              {selectorCuenta('tipoPasivo','Cuenta de pasivo de este tipo',tipoForm.codigoPasivo,tipoForm.nombrePasivo,(c)=>setTipoForm(f=>({...f,codigoPasivo:c.codigo,nombrePasivo:c.nombre})),()=>setTipoForm(f=>({...f,codigoPasivo:'',nombrePasivo:''})))}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={guardarTipoNomina} disabled={busyTipo} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyTipo ? 'Guardando...' : (editando ? 'Guardar cambios' : 'Agregar tipo')}</button>
+              {editando && <button onClick={()=>setTipoForm(tipoFormVacio())} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-gray-300">Cancelar</button>}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-200 p-4">
+            <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Tipos de nómina ({tiposNomina.length})</h3>
+            <div className="space-y-2" data-testid="lista-tipos-nomina">
+              {tiposNomina.map(t=>(
+                <div key={t.id} className={`flex flex-wrap items-center justify-between gap-2 border-2 rounded-xl px-3 py-2 ${t.activo===false?'border-gray-100 bg-gray-50 opacity-70':'border-gray-100'}`}>
+                  <div>
+                    <p className="text-xs font-black text-gray-800">{t.nombre}{t.activo===false && <span className="ml-2 text-[9px] font-black uppercase bg-gray-200 text-gray-500 rounded-full px-2 py-0.5">Inactivo</span>}</p>
+                    <p className="text-[10px] text-gray-500">Pasivo: {t.codigoPasivo ? <span><span className="font-mono text-cyan-600">{t.codigoPasivo}</span> {t.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>} · {t.periodo || 'Quincena a elegir'} · {usadosPor(t)} pago(s)</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={()=>editarTipoNomina(t)} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Editar</button>
+                    <button onClick={()=>cambiarActivoTipo(t)} className="text-[10px] font-black uppercase text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg px-2.5 py-1.5">{t.activo===false ? 'Activar' : 'Desactivar'}</button>
+                    <button onClick={()=>eliminarTipoNomina(t)} title="Eliminar tipo" className="text-red-400 hover:text-red-600 px-1"><Trash2 size={14}/></button>
+                  </div>
+                </div>
+              ))}
+              {tiposNomina.length===0 && <p className="text-xs text-gray-400 text-center py-8">Aún no hay tipos de nómina. Crea el primero a la izquierda.</p>}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-3">Los pagos anteriores, que no tienen tipo, siguen usando la cuenta general «Nómina por Pagar (Banco)» de «Cuentas del asiento de nómina».</p>
+          </div>
+
+        </div>
+          );
+        })()}
+
         {cfgSub==='asiento' && (()=>{
           const patronalDe = (centroId) => (configAsiento.patronalPorCentro||{})[centroId] || null;
           const setPatronalCentro = (centroId, cuenta) => setConfigAsiento(a=>{
@@ -3252,10 +3594,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             if(cuenta) nuevo[centroId] = {codigo:cuenta.codigo, nombre:cuenta.nombre}; else delete nuevo[centroId];
             return {...a, patronalPorCentro:nuevo};
           });
-          const centrosSinPatronal = centros.filter(c=>!(patronalDe(c.id)&&patronalDe(c.id).codigo));
+          const aporteSinConcepto = (centroId) => ['ivss','rpe','faov'].some(k=>!rhCuentaConceptoPatronal(conceptos,k,centroId));
+          const centrosSinPatronal = centros.filter(c=>!(patronalDe(c.id)&&patronalDe(c.id).codigo) && aporteSinConcepto(c.id));
           const antiguas = cuentasNomina.filter(c=>c.tipo==='patronal' && c.codigoCuenta);
           const _pm = appUser?.permissions||{};
           const puedeParafiscales = !appUser || appUser.role==='Master' || !Object.keys(_pm).some(k=>k.startsWith('rrhh_')&&_pm[k]) || !!_pm.rrhh_parafiscales;
+          const puedeConceptos = !appUser || appUser.role==='Master' || !Object.keys(_pm).some(k=>k.startsWith('rrhh_')&&_pm[k]) || !!_pm.rrhh_conceptos;
           const filasLegales = [['ivss','IVSS por Pagar','Seguro Social'],['rpe','RPE por Pagar','Paro Forzoso'],['faov','FAOV por Pagar','FAOV']];
           return (
         <>
@@ -3263,14 +3607,69 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
             <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">1. Nómina por pagar (Banco)</h3>
-            <p className="text-[10px] text-gray-400 mb-3">En el asiento de cada pago, esta línea es el neto que se le paga a los trabajadores. Elige la cuenta que se acredita por ese monto.</p>
+            <p className="text-[10px] text-gray-400 mb-3">En el asiento de cada pago, esta línea es el neto que se le paga a los trabajadores. Elige la cuenta que se acredita por ese monto. Esta cuenta general se usa en los pagos que no tienen tipo de nómina; cada tipo (Configuración → Tipos de nómina) trae su propia cuenta de pasivo.</p>
             {selectorCuenta('asNomina','Cuenta de Nómina por Pagar (Banco)',configAsiento.nominaPorPagar.codigo,configAsiento.nominaPorPagar.nombre,(c)=>setConfigAsiento(a=>({...a,nominaPorPagar:{codigo:c.codigo,nombre:c.nombre}})),()=>setConfigAsiento(a=>({...a,nominaPorPagar:{codigo:'',nombre:''}})))}
           </div>
 
           <div className="bg-white rounded-2xl border border-gray-200 p-4">
             <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">2. Cargas Sociales Patronales</h3>
-            <p className="text-[10px] text-gray-400 mb-3">Gasto del aporte de la empresa a IVSS, RPE y FAOV. Se usa la cuenta del centro de costo del trabajador; si el centro no tiene, la cuenta general.</p>
+            <p className="text-[10px] text-gray-400 mb-3">Gasto del aporte de la empresa a IVSS, RPE y FAOV. Elige, para cada aporte, la cuenta de cada centro de costo: se guarda en el concepto «APORTE PATRONAL» de esa ley (es la misma cuenta que ves en Conceptos → cuentas por centro de costo) y el asiento pone una línea por aporte con la cuenta del centro de costo del trabajador. Las cuentas de respaldo de más abajo solo se usan para el aporte que no tenga cuenta propia: la del centro de costo del trabajador o, si el centro no tiene, la cuenta general.</p>
+            <div className="mb-3 space-y-2" data-testid="estado-conceptos-patronales">
+              {['ivss','rpe','faov'].map(k=>{
+                const lista = rhConceptosPatronales(conceptos,k);
+                const hay = lista.length>0;
+                const principal = lista[0];
+                return (
+                <div key={k} data-testid={'aporte-'+k} className="border-2 border-gray-100 rounded-xl px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-gray-700">{RH_PATRONAL_NOMBRES[k]}{principal && <span className="ml-2 text-[10px] font-mono font-bold text-gray-400">{principal.codigo}</span>}</span>
+                    {!hay && <span className="text-[10px] font-black uppercase text-amber-600">No hay un concepto activo con ese nombre</span>}
+                    {puedeConceptos && <button onClick={()=>setRhTab('conceptos')} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Configurar en Conceptos</button>}
+                  </div>
+                  {hay && <div className="mt-1.5">
+                    {centros.map(c=>{
+                      const cu = rhCuentaConceptoPatronal(conceptos,k,c.id);
+                      if(!puedeConceptos) return (
+                        <p key={c.id} className="text-[10px] text-gray-500"><span className="font-bold">{c.nombre}:</span> {cu ? <span><span className="font-mono text-cyan-600">{cu.codigo}</span> {cu.nombre}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>}</p>
+                      );
+                      const clave = 'asApo:'+k+':'+c.id;
+                      const q = busqCuentaBen[clave]||'';
+                      const coincidencias = q ? planCuentasRH.filter(p=>(p.codigo||'').includes(q)||(p.nombre||'').toUpperCase().includes(q.toUpperCase())).slice(0,10) : [];
+                      return (
+                      <div key={c.id} data-testid={'aporte-'+k+'-'+c.id} className="flex items-start justify-between gap-3 py-1.5 border-b border-gray-50 last:border-0">
+                        <span className="text-xs font-bold text-gray-600 w-32 flex-shrink-0 truncate pt-1.5" title={c.nombre+' ('+(c.naturaleza||'Gasto')+')'}>{c.nombre}</span>
+                        <div className="flex-1 min-w-0">
+                          {cu ? (
+                            <div className="flex items-center justify-between border-2 border-gray-200 rounded-xl px-3 py-1.5">
+                              <span className="text-[11px] font-bold truncate"><span className="font-mono text-cyan-600 mr-1.5">{cu.codigo}</span>{cu.nombre}</span>
+                              <button onClick={()=>quitarAporteCentro(k,c.id)} title="Quitar la cuenta" className="text-red-400 hover:text-red-600 flex-shrink-0 ml-2"><X size={13}/></button>
+                            </div>
+                          ) : (
+                            <>
+                              <input value={q} onChange={e=>setBusqCuentaBen(st=>({...st,[clave]:e.target.value}))} placeholder="Buscar cuenta en el Plan de Cuentas..." className="w-full border-2 border-amber-200 rounded-xl px-3 py-1.5 text-[11px] font-bold outline-none focus:border-cyan-500"/>
+                              {q && (
+                                <div className="border-2 border-gray-100 rounded-xl max-h-32 overflow-y-auto mt-1">
+                                  {coincidencias.map(p=>(
+                                    <div key={p.id} onClick={()=>{asignarAporteCentro(k,c.id,p);setBusqCuentaBen(st=>({...st,[clave]:''}));}} className="px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[10px]">
+                                      <span className="font-mono font-black text-cyan-700">{p.codigo}</span> <span className="text-gray-700 uppercase">{p.nombre}</span>
+                                    </div>
+                                  ))}
+                                  {coincidencias.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>}
+                </div>
+                );
+              })}
+            </div>
             {centros.length===0 && <p className="text-[10px] text-gray-400 py-2">Crea primero los centros de costo en la sub-pestaña "Centro de Costo y Departamento".</p>}
+            {centros.length>0 && <p className="text-[10px] font-black text-gray-400 uppercase mt-4 mb-2">Respaldo: una sola cuenta para los aportes que no tengan cuenta propia</p>}
             <div className="space-y-3">
               {centros.map(c=>{ const g = patronalDe(c.id); return (
                 <div key={c.id}>{selectorCuenta('asPat:'+c.id, c.nombre+' ('+(c.naturaleza||'Gasto')+')', g?g.codigo:'', g?g.nombre:'', (cu)=>setPatronalCentro(c.id,cu), ()=>setPatronalCentro(c.id,null))}</div>
@@ -3430,7 +3829,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               return (
               <>
                 <p className="font-black text-gray-800 mb-1">FAOV — Fondo de Ahorro Obligatorio para la Vivienda</p>
-                <p className="text-[10px] text-gray-400 mb-4">Base: Sueldo Básico de la quincena · % directo, sin fórmula de semanas · Sin tope</p>
+                <p className="text-[10px] text-gray-400 mb-4">Base: Total de asignaciones del pago (lo que se le paga al trabajador) · % directo, sin fórmula de semanas · Sin tope · El % Patronal se aplica sobre ese mismo total</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
@@ -3918,53 +4317,95 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
       {rhTab==='nomina' && (()=>{
         const MESES_LBL=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+        const usd = rhVeUSD(repMoneda), bs = rhVeBS(repMoneda);
+        const okTipo = (n) => repTipo==='TODOS' ? true : (repTipo==='__SIN__' ? !n.tipoNominaId : n.tipoNominaId===repTipo);
         const nominasFiltradas = nominas.filter(n=>{
           if(!n.mes) return false;
           if(repAnio && n.mes.substring(0,4)!==repAnio) return false;
           if(repMes!=='TODOS' && n.mes.substring(5,7)!==repMes) return false;
           if(repQ!=='AMBAS' && !(n.quincena||'').includes(repQ)) return false;
-          return true;
+          return okTipo(n);
         }).sort((a,b)=>(b.mes||'').localeCompare(a.mes||'')||(b.quincena||'').localeCompare(a.quincena||''));
-        const trabajadoresFiltrados = trabajadores.filter(t=>!repBusqTrab || (t.nombre||'').toUpperCase().includes(repBusqTrab.toUpperCase()) || (t.cedula||'').includes(repBusqTrab));
+        const anioActual = new Date().getFullYear();
+        const selFiltro = (etiqueta, valor, alCambiar, opciones) => (
+          <div key={etiqueta}><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">{etiqueta}</label>
+            <select value={valor} onChange={e=>alCambiar(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white max-w-xs">
+              {opciones.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+        );
+        const filtrosBase = [
+          selFiltro('Año', repAnio, setRepAnio, [anioActual-1,anioActual,anioActual+1].map(y=>[String(y),String(y)])),
+          selFiltro('Mes', repMes, setRepMes, [['TODOS','Todos'], ...MESES_LBL.map((m,i)=>[String(i+1).padStart(2,'0'),m])]),
+          selFiltro('Quincena', repQ, setRepQ, [['AMBAS','Ambas'],['1','Quincena 1'],['2','Quincena 2']]),
+          selFiltro('Tipo de nómina', repTipo, setRepTipo, [['TODOS','Todos'], ...tiposNomina.map(t=>[t.id, t.nombre+(t.activo===false?' (inactivo)':'')]), ...(nominas.some(n=>!n.tipoNominaId)?[['__SIN__','Sin tipo (pagos anteriores)']]:[])]),
+        ];
+        // Neto de un pago (suma de sus trabajadores) en la moneda elegida
+        const netoDePago = (n) => nominaDetalles.filter(d=>d.nominaId===n.id).reduce((s,d)=>{ const m = rhMontosDetalle(d, n.tasa); return {u:s.u+m.netoUSD, b:s.b+m.netoBs, c:s.c+1}; }, {u:0,b:0,c:0});
+        const textoNeto = (u, b) => [usd?('$'+formatNum(u)):null, bs?('Bs. '+formatNum(b)):null].filter(Boolean).join(' · ');
+        // Tabla del reporte (la misma para un pago y para «Por trabajador»): montos en la moneda elegida, totales e ícono del recibo
+        const tablaReporte = (filas, porTrabajador, vacio) => {
+          const datos = filas.map(f=>({...f, m:rhMontosDetalle(f.d, f.nomina.tasa)}));
+          const T = datos.reduce((s,f)=>({asigUSD:s.asigUSD+f.m.asigUSD, dedUSD:s.dedUSD+f.m.dedUSD, netoUSD:s.netoUSD+f.m.netoUSD, asigBs:s.asigBs+f.m.asigBs, dedBs:s.dedBs+f.m.dedBs, netoBs:s.netoBs+f.m.netoBs}),{asigUSD:0,dedUSD:0,netoUSD:0,asigBs:0,dedBs:0,netoBs:0});
+          const nTxt = porTrabajador ? 5 : 3;
+          const nCols = nTxt + (usd?3:0) + (bs?3:0) + 1;
+          const cab = (n) => [usd && <th key={n+'u'} className="text-right py-2 px-3">{n} $</th>, bs && <th key={n+'b'} className="text-right py-2 px-3">{n} Bs.</th>];
+          const celdas = (m, k, signo, cls, pad) => [usd && <td key={k+'u'} className={`${pad} text-right font-mono ${cls}`}>{signo}${formatNum(m[k+'USD'])}</td>, bs && <td key={k+'b'} className={`${pad} text-right font-mono ${cls}`}>{signo}{formatNum(m[k+'Bs'])}</td>];
+          return (
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto" data-testid="tabla-reporte">
+              <table className="w-full text-xs">
+                <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+                  {porTrabajador && <th className="text-left py-2 px-3">Período</th>}{porTrabajador && <th className="text-left py-2 px-3">Nómina</th>}
+                  <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Cargo</th><th className="text-left py-2 px-3">Departamento</th>
+                  {cab('Asig.')}{cab('Ded.')}{cab('Neto')}
+                  <th className="text-center py-2 px-3 w-10">PDF</th>
+                </tr></thead>
+                <tbody>
+                  {datos.map((f,i)=>(
+                    <tr key={f.d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                      {porTrabajador && <td className="py-1.5 px-3 font-bold whitespace-nowrap">{f.nomina.mes} · {f.nomina.quincena}</td>}{porTrabajador && <td className="py-1.5 px-3 text-gray-500">{f.nomina.concepto}</td>}
+                      <td className="py-1.5 px-3 font-bold">{f.d.trabajadorNombre}</td>
+                      <td className="py-1.5 px-3 text-gray-500">{cargoDeDetalle(f.d)||'—'}</td>
+                      <td className="py-1.5 px-3 text-gray-500">{nombreDepto(f.d.departamentoId)}</td>
+                      {celdas(f.m,'asig','','','py-1.5 px-3')}{celdas(f.m,'ded','-','text-red-500','py-1.5 px-3')}{celdas(f.m,'neto','','font-black text-cyan-600','py-1.5 px-3')}
+                      <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(f.d,f.nomina)} title="Imprimir Recibo de Pago" className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
+                    </tr>
+                  ))}
+                  {datos.length===0 && <tr><td colSpan={nCols} className="py-8 text-center text-gray-400">{vacio}</td></tr>}
+                </tbody>
+                {datos.length>0 && <tfoot><tr className="bg-gray-100 font-black">
+                  <td colSpan={nTxt} className="py-2 px-3 uppercase text-[10px]">Totales ({datos.length}{porTrabajador?' recibo(s)':''})</td>
+                  {celdas(T,'asig','','','py-2 px-3')}{celdas(T,'ded','-','text-red-500','py-2 px-3')}{celdas(T,'neto','','text-cyan-700','py-2 px-3')}
+                  <td></td>
+                </tr></tfoot>}
+              </table>
+            </div>
+          );
+        };
 
         return (
         <div className="p-6 space-y-4">
-          <div className="flex gap-2">
-            <button onClick={()=>{setRepModo('nomina');setRepTrabajadorSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='nomina'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>📋 Por Nómina</button>
-            <button onClick={()=>{setRepModo('trabajador');setRepNominaSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='trabajador'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>👤 Por Trabajador</button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex gap-2">
+              <button onClick={()=>{setRepModo('nomina');}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='nomina'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>📋 Por Nómina</button>
+              <button onClick={()=>{setRepModo('trabajador');setRepNominaSel(null);}} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${repModo==='trabajador'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>👤 Por Trabajador</button>
+            </div>
+            {selMoneda()}
           </div>
 
           {repModo==='nomina' && !repNominaSel && (<>
-            <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap gap-2 items-end">
-              <div><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Año</label>
-                <select value={repAnio} onChange={e=>setRepAnio(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                  {[String(new Date().getFullYear()-1),String(new Date().getFullYear()),String(new Date().getFullYear()+1)].map(y=><option key={y} value={y}>{y}</option>)}
-                </select>
-              </div>
-              <div><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Mes</label>
-                <select value={repMes} onChange={e=>setRepMes(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                  <option value="TODOS">Todos</option>
-                  {MESES_LBL.map((m,i)=><option key={m} value={String(i+1).padStart(2,'0')}>{m}</option>)}
-                </select>
-              </div>
-              <div><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">Quincena</label>
-                <select value={repQ} onChange={e=>setRepQ(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
-                  <option value="AMBAS">Ambas</option><option value="1">Quincena 1</option><option value="2">Quincena 2</option>
-                </select>
-              </div>
-            </div>
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap gap-2 items-end">{filtrosBase}</div>
             <div className="space-y-2">
               {nominasFiltradas.map(n=>{
-                const detalles = nominaDetalles.filter(d=>d.nominaId===n.id);
-                const totalUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+                const tp = netoDePago(n);
                 return (
                   <div key={n.id} onClick={()=>setRepNominaSel(n)} className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 flex items-center justify-between">
                     <div>
                       <p className="font-black text-sm text-gray-800">{n.concepto}</p>
-                      <p className="text-[10px] text-gray-400">{n.mes} · {n.quincena} · {detalles.length} trabajador(es) · Tasa {n.tasa} · Pago {contDd(n.fechaPago)}</p>
+                      <p className="text-[10px] text-gray-400">{n.mes} · {n.quincena} · {tp.c} trabajador(es) · {benTasasTexto(n)} · Pago {contDd(n.fechaPago)}</p>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="font-mono font-black text-cyan-600">${formatNum(totalUSD)}</span>
+                      <span className="font-mono font-black text-cyan-600">{textoNeto(tp.u, tp.b)}</span>
                       <span className={`text-[9px] font-black uppercase px-2 py-1 rounded-full ${n.estado==='cerrada'?'bg-gray-100 text-gray-500':'bg-green-100 text-green-600'}`}>{n.estado}</span>
                       <ChevronRight size={16} className="text-gray-300"/>
                     </div>
@@ -3976,108 +4417,57 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           </>)}
 
           {repModo==='nomina' && repNominaSel && (()=>{
-            const detalles = nominaDetalles.filter(d=>d.nominaId===repNominaSel.id);
-            const totalAsigUSD = detalles.reduce((s,d)=>s+d.totalAsignacionesUSD,0);
-            const totalDedUSD = detalles.reduce((s,d)=>s+d.totalDeduccionesUSD,0);
-            const totalNetoUSD = detalles.reduce((s,d)=>s+d.netoUSD,0);
+            const rn = nominas.find(n=>n.id===repNominaSel.id) || repNominaSel;
+            const filas = nominaDetalles.filter(d=>d.nominaId===rn.id).map(d=>({d, nomina:rn}));
             return (
             <div className="space-y-3">
-              <button onClick={()=>setRepNominaSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
+              <div className="flex items-center justify-between">
+                <button onClick={()=>setRepNominaSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
+                <button onClick={()=>exportarReporteNominaPDF(rn, repMoneda)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><Printer size={13}/> Imprimir / PDF</button>
+              </div>
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
-                <p className="font-black text-lg text-gray-800">{repNominaSel.concepto}</p>
-                <p className="text-xs text-gray-500">{repNominaSel.mes} · {repNominaSel.quincena} · Fecha de pago {contDd(repNominaSel.fechaPago)} · Tasa {repNominaSel.tasa}</p>
+                <p className="font-black text-lg text-gray-800">{rn.concepto}</p>
+                <p className="text-xs text-gray-500">{rn.mes} · {rn.quincena} · Fecha de pago {contDd(rn.fechaPago)} · {benTasasTexto(rn)}</p>
               </div>
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
-                    <th className="text-left py-2 px-3">Trabajador</th><th className="text-left py-2 px-3">Cargo</th><th className="text-left py-2 px-3">Departamento</th>
-                    <th className="text-right py-2 px-3">Asig. $</th><th className="text-right py-2 px-3">Ded. $</th>
-                    <th className="text-right py-2 px-3">Neto $</th><th className="text-center py-2 px-3 w-10">PDF</th>
-                  </tr></thead>
-                  <tbody>
-                    {detalles.map((d,i)=>(
-                      <tr key={d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
-                        <td className="py-1.5 px-3 font-bold">{d.trabajadorNombre}</td>
-                        <td className="py-1.5 px-3 text-gray-500">{cargoDeDetalle(d)||'—'}</td>
-                        <td className="py-1.5 px-3 text-gray-500">{nombreDepto(d.departamentoId)}</td>
-                        <td className="py-1.5 px-3 text-right font-mono">${formatNum(d.totalAsignacionesUSD)}</td>
-                        <td className="py-1.5 px-3 text-right font-mono text-red-500">-${formatNum(d.totalDeduccionesUSD)}</td>
-                        <td className="py-1.5 px-3 text-right font-mono font-black text-cyan-600">${formatNum(d.netoUSD)}</td>
-                        <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(d,repNominaSel)} className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
-                      </tr>
-                    ))}
-                    {detalles.length===0 && <tr><td colSpan={7} className="py-8 text-center text-gray-400">Ningún trabajador cargado en esta nómina.</td></tr>}
-                  </tbody>
-                  {detalles.length>0 && <tfoot><tr className="bg-gray-100 font-black">
-                    <td colSpan={3} className="py-2 px-3 uppercase text-[10px]">Totales ({detalles.length})</td>
-                    <td className="py-2 px-3 text-right font-mono">${formatNum(totalAsigUSD)}</td>
-                    <td className="py-2 px-3 text-right font-mono text-red-500">-${formatNum(totalDedUSD)}</td>
-                    <td className="py-2 px-3 text-right font-mono text-cyan-700">${formatNum(totalNetoUSD)}</td>
-                    <td></td>
-                  </tr></tfoot>}
-                </table>
-              </div>
+              {tablaReporte(filas, false, 'Ningún trabajador cargado en esta nómina.')}
             </div>
             );
           })()}
 
-          {repModo==='trabajador' && !repTrabajadorSel && (<>
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-3 text-gray-400"/>
-              <input value={repBusqTrab} onChange={e=>setRepBusqTrab(e.target.value)} placeholder="Buscar trabajador por nombre o cédula..." className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-cyan-500"/>
-            </div>
-            <div className="space-y-1.5">
-              {trabajadoresFiltrados.map(t=>(
-                <div key={t.id} onClick={()=>setRepTrabajadorSel(t)} className="bg-white rounded-xl border border-gray-200 p-3 cursor-pointer hover:border-cyan-300 flex items-center justify-between">
-                  <div><p className="text-xs font-black text-gray-800">{t.nombre}</p><p className="text-[10px] text-gray-400">{t.cedula} · {t.cargo||'—'} · {nombreDepto(t.departamentoId)}</p></div>
-                  <ChevronRight size={16} className="text-gray-300"/>
+          {repModo==='trabajador' && (()=>{
+            // Pagos que pasan los filtros (año, mes, quincena, tipo); si se elige un pago concreto, solo ese
+            const nominaSelEf = (repNominaId!=='TODAS' && nominasFiltradas.some(n=>n.id===repNominaId)) ? repNominaId : 'TODAS';
+            const enAlcance = nominaSelEf==='TODAS' ? nominasFiltradas : nominasFiltradas.filter(n=>n.id===nominaSelEf);
+            const idsAlcance = new Set(enAlcance.map(n=>n.id));
+            const listaTrab = trabajadores.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+            const trabSelEf = listaTrab.some(t=>t.id===repTrabId) ? repTrabId : 'TODOS';
+            const repT = trabSelEf==='TODOS' ? null : listaTrab.find(t=>t.id===trabSelEf);
+            const filas = nominaDetalles.filter(d=>idsAlcance.has(d.nominaId) && (trabSelEf==='TODOS' || d.trabajadorId===trabSelEf))
+              .map(d=>({d, nomina:nominas.find(n=>n.id===d.nominaId)})).filter(f=>f.nomina)
+              .sort((a,b)=>(b.nomina.mes||'').localeCompare(a.nomina.mes||'')||(b.nomina.quincena||'').localeCompare(a.nomina.quincena||'')||String(a.d.trabajadorNombre||'').localeCompare(String(b.d.trabajadorNombre||'')));
+            const textoTipo = repTipo==='TODOS' ? 'Todos' : (repTipo==='__SIN__' ? 'Sin tipo' : ((tiposNomina.find(t=>t.id===repTipo)||{}).nombre||'—'));
+            const imprimir = () => exportarReporteFilasPDF({
+              titulo:'Reporte de Nómina por Trabajador', ventana:'Reporte Nómina por Trabajador',
+              sub:`Año ${repAnio} · Mes: ${repMes==='TODOS'?'Todos':MESES_LBL[parseInt(repMes,10)-1]} · Quincena: ${repQ==='AMBAS'?'Ambas':'Quincena '+repQ} · Tipo de nómina: ${textoTipo} · Nómina: ${nominaSelEf==='TODAS'?'Todas':(enAlcance[0]?enAlcance[0].concepto+' ('+enAlcance[0].mes+' · '+enAlcance[0].quincena+')':'—')} · Trabajador: ${repT?repT.nombre:'Todos'}`,
+              filas, moneda:repMoneda, porTrabajador:true,
+            });
+            return (<>
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap gap-2 items-end">
+                {filtrosBase}
+                {selFiltro('Nómina', nominaSelEf, setRepNominaId, [['TODAS','Todas'], ...nominasFiltradas.map(n=>[n.id, `${n.concepto} · ${n.mes} · ${n.quincena} · ${contDd(n.fechaPago)}`])])}
+                {selFiltro('Trabajador', trabSelEf, setRepTrabId, [['TODOS','Todos'], ...listaTrab.map(t=>[t.id, `${t.nombre}${t.cedula?' · '+t.cedula:''}`])])}
+              </div>
+              {repT && (
+                <div className="bg-white rounded-2xl border border-gray-200 p-4">
+                  <p className="font-black text-lg text-gray-800">{repT.nombre}</p>
+                  <p className="text-xs text-gray-500">{repT.cedula} · {repT.cargo||'—'} · {nombreDepto(repT.departamentoId)}</p>
                 </div>
-              ))}
-              {trabajadoresFiltrados.length===0 && <p className="text-center text-gray-400 text-sm py-12">Sin resultados.</p>}
-            </div>
-          </>)}
-
-          {repModo==='trabajador' && repTrabajadorSel && (()=>{
-            const historial = nominaDetalles.filter(d=>d.trabajadorId===repTrabajadorSel.id)
-              .map(d=>({...d, _nomina:nominas.find(n=>n.id===d.nominaId)}))
-              .filter(d=>d._nomina)
-              .sort((a,b)=>(b._nomina.mes||'').localeCompare(a._nomina.mes||'')||(b._nomina.quincena||'').localeCompare(a._nomina.quincena||''));
-            const totalHistNetoUSD = historial.reduce((s,d)=>s+d.netoUSD,0);
-            const repT = trabajadores.find(x=>x.id===repTrabajadorSel.id)||repTrabajadorSel; // datos actuales del trabajador
-            return (
-            <div className="space-y-3">
-              <button onClick={()=>setRepTrabajadorSel(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
-              <div className="bg-white rounded-2xl border border-gray-200 p-4">
-                <p className="font-black text-lg text-gray-800">{repT.nombre}</p>
-                <p className="text-xs text-gray-500">{repT.cedula} · {repT.cargo||'—'} · {nombreDepto(repT.departamentoId)}</p>
+              )}
+              <div className="flex justify-end">
+                <button onClick={imprimir} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><Printer size={13}/> Imprimir / PDF</button>
               </div>
-              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
-                    <th className="text-left py-2 px-3">Período</th><th className="text-left py-2 px-3">Concepto</th>
-                    <th className="text-right py-2 px-3">Neto $</th><th className="text-right py-2 px-3">Neto Bs.</th><th className="text-center py-2 px-3 w-10">PDF</th>
-                  </tr></thead>
-                  <tbody>
-                    {historial.map((d,i)=>(
-                      <tr key={d.id} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
-                        <td className="py-1.5 px-3 font-bold">{d._nomina.mes} · {d._nomina.quincena}</td>
-                        <td className="py-1.5 px-3 text-gray-500">{d._nomina.concepto}</td>
-                        <td className="py-1.5 px-3 text-right font-mono font-black text-cyan-600">${formatNum(d.netoUSD)}</td>
-                        <td className="py-1.5 px-3 text-right font-mono">{formatNum(d.netoBs)}</td>
-                        <td className="py-1.5 px-3 text-center"><button onClick={()=>exportarReciboPDF(d,d._nomina)} className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button></td>
-                      </tr>
-                    ))}
-                    {historial.length===0 && <tr><td colSpan={5} className="py-8 text-center text-gray-400">Sin recibos registrados para este trabajador.</td></tr>}
-                  </tbody>
-                  {historial.length>0 && <tfoot><tr className="bg-gray-100 font-black">
-                    <td colSpan={2} className="py-2 px-3 uppercase text-[10px]">Total acumulado ({historial.length} recibo(s))</td>
-                    <td className="py-2 px-3 text-right font-mono text-cyan-700">${formatNum(totalHistNetoUSD)}</td>
-                    <td colSpan={2}></td>
-                  </tr></tfoot>}
-                </table>
-              </div>
-            </div>
-            );
+              {tablaReporte(filas, true, 'Sin recibos para estos filtros.')}
+            </>);
           })()}
         </div>
         );
@@ -4092,21 +4482,32 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             </div>
             <div className="bg-white rounded-2xl border border-gray-200 p-4 mb-4">
               <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Iniciar Nuevo Pago</h3>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <input type="month" value={nominaForm.mes} onChange={e=>setNominaForm(f=>({...f,mes:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                <select value={nominaForm.quincena} onChange={e=>setNominaForm(f=>({...f,quincena:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincena 1</option><option>Quincena 2</option></select>
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2">
+                <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Mes</span><input type="month" value={nominaForm.mes} onChange={e=>setNominaForm(f=>({...f,mes:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tipo de nómina</span><select data-testid="sel-tipo-pago" value={tipoNominaSel?tipoNominaSel.id:''} onChange={e=>setNominaForm(f=>({...f,tipoNominaId:e.target.value}))} className="w-60 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option value="">{tiposNominaActivos.length?'Elige el tipo de nómina…':'No hay tipos de nómina'}</option>{tiposNominaActivos.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+                {tipoNominaSel && tipoNominaSel.periodo
+                  ? <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Quincena</span><span className="block w-32 border-2 border-gray-100 bg-gray-50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-gray-600">{tipoNominaSel.periodo}</span></div>
+                  : <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Quincena</span><select value={nominaForm.quincena} onChange={e=>setNominaForm(f=>({...f,quincena:e.target.value}))} className="w-32 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincena 1</option><option>Quincena 2</option></select></div>}
+                <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Fecha de pago</span><input type="date" value={nominaForm.fechaPago} onChange={e=>setNominaForm(f=>({...f,fechaPago:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tasa de la nómina (Bs. por $)</span><input type="number" step="0.01" value={nominaForm.tasa} onChange={e=>setNominaForm(f=>({...f,tasa:e.target.value}))} placeholder="Tasa de cambio a usar" className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
               </div>
-              <input value={nominaForm.concepto} onChange={e=>setNominaForm(f=>({...f,concepto:e.target.value}))} placeholder="Concepto: Nómina Quincena 2, Bonificación, Utilidades..." className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 mb-3"/>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <input type="date" value={nominaForm.fechaPago} onChange={e=>setNominaForm(f=>({...f,fechaPago:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
-                <input type="number" step="0.01" value={nominaForm.tasa} onChange={e=>setNominaForm(f=>({...f,tasa:e.target.value}))} placeholder="Tasa de cambio a usar" className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
-              </div>
-              <p className="text-[10px] text-gray-400 mb-3">Esta tasa la fijas tú — igual para todos los trabajadores de este pago, no se vuelve a pedir por cada uno.</p>
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-3">
+              {tipoNominaSel
+                ? <p className="text-[10px] text-gray-500 mb-3">Pasivo del asiento para este pago: {tipoNominaSel.codigoPasivo ? <span><span className="font-mono text-cyan-600">{tipoNominaSel.codigoPasivo}</span> {tipoNominaSel.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">este tipo no tiene cuenta (se usará «Nómina por Pagar (Banco)»)</span>}</p>
+                : <p className="text-[10px] text-gray-400 mb-3">{tiposNominaActivos.length ? 'Elige el tipo de nómina: define la cuenta de pasivo que usa el asiento de este pago.' : 'Primero crea los tipos de nómina (cada uno con su cuenta de pasivo) en Configuración → Tipos de nómina.'}{tiposNominaActivos.length===0 && puedeConfigurar && <button onClick={()=>{setCfgSub('tipos');setRhTab('config');}} className="ml-2 text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1">Crear tipos de nómina</button>}</p>}
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-2">
                 <span className="text-[10px] font-black text-gray-400 uppercase">Descontar automáticamente:</span>
-                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaHCM===true} onChange={e=>setNominaForm(f=>({...f,aplicaHCM:e.target.checked}))}/> HCM</label>
-                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaBolsa===true} onChange={e=>setNominaForm(f=>({...f,aplicaBolsa:e.target.checked}))}/> Bolsa de alimentos</label>
+                <span className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaHCM===true} onChange={e=>setNominaForm(f=>({...f,aplicaHCM:e.target.checked}))}/> HCM</label>
+                  <span className="text-[10px] font-bold text-gray-400">Tasa</span>
+                  <input type="number" step="0.01" value={nominaForm.tasaHCM} onChange={e=>setNominaForm(f=>({...f,tasaHCM:e.target.value}))} placeholder={nominaForm.tasa?('nómina '+nominaForm.tasa):'Tasa HCM'} title="Tasa de cambio propia del HCM en este pago. Vacía = usa la tasa de la nómina" className="w-32 border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                </span>
+                <span className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaForm.aplicaBolsa===true} onChange={e=>setNominaForm(f=>({...f,aplicaBolsa:e.target.checked}))}/> Bolsa de alimentos</label>
+                  <span className="text-[10px] font-bold text-gray-400">Tasa</span>
+                  <input type="number" step="0.01" value={nominaForm.tasaBolsa} onChange={e=>setNominaForm(f=>({...f,tasaBolsa:e.target.value}))} placeholder={nominaForm.tasa?('nómina '+nominaForm.tasa):'Tasa Bolsa'} title="Tasa de cambio propia de la Bolsa de alimentos en este pago. Vacía = usa la tasa de la nómina" className="w-32 border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+                </span>
               </div>
+              <p className="text-[10px] text-gray-400 mb-3">Las tasas las fijas tú — iguales para todos los trabajadores de este pago, no se vuelven a pedir por cada uno. HCM y Bolsa de alimentos pueden tener su propia tasa; si la dejas vacía usan la de la nómina.</p>
               <button onClick={crearNomina} disabled={busyNomina} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Creando...':'Comenzar a Cargar Trabajadores →'}</button>
             </div>
 
@@ -4119,7 +4520,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <div key={n.id} onClick={()=>setNominaActiva(n)} className="bg-white rounded-xl border border-gray-200 p-4 cursor-pointer hover:border-cyan-300 flex items-center justify-between">
                     <div>
                       <p className="font-black text-sm text-gray-800">{n.concepto}</p>
-                      <p className="text-[10px] text-gray-400">{n.mes} · {n.quincena} · {detalles.length} trabajador(es) · Tasa {n.tasa}</p>
+                      <p className="text-[10px] text-gray-400">{n.mes} · {n.quincena} · {detalles.length} trabajador(es) · {benTasasTexto(n)}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="font-mono font-black text-cyan-600">${formatNum(totalUSD)}</span>
@@ -4144,9 +4545,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <button onClick={()=>setNominaActiva(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a Pagos</button>
-              <div className="flex gap-2">
-                <button onClick={()=>exportarReporteNominaPDF(nominaActiva)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><FileText size={13}/> Reporte de Nómina</button>
+              <div className="flex flex-wrap items-center gap-2">
+                {selMoneda()}
+                <button onClick={()=>exportarReporteNominaPDF(nominaActiva, repMoneda)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><FileText size={13}/> Reporte de Nómina</button>
                 {nominaActiva.estado==='abierta' && <button onClick={()=>cerrarNomina(nominaActiva)} className="bg-amber-50 text-amber-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-amber-100">Cerrar Pago</button>}
+                {nominaActiva.estado==='cerrada' && <button onClick={()=>reabrirNomina(nominaActiva)} className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-100">Reabrir Pago</button>}
               </div>
             </div>
 
@@ -4155,15 +4558,17 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 <p className="font-black text-lg text-gray-800">{nominaActiva.concepto}</p>
                 <span className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-full ${nominaActiva.estado==='cerrada'?'bg-gray-100 text-gray-500':'bg-green-100 text-green-600'}`}>{nominaActiva.estado}</span>
               </div>
-              <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · Tasa {nominaActiva.tasa}</p>
+              <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · {benTasasTexto(nominaActiva)}</p>
             </div>
 
             {nominaActiva.estado==='abierta' && (
               <div className="bg-white rounded-2xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
                 <span className="text-[10px] font-black text-gray-400 uppercase">Descuentos automáticos en este pago</span>
                 <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaActiva.aplicaHCM===true} onChange={e=>cambiarFlagNomina('aplicaHCM',e.target.checked)}/> HCM</label>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-gray-400">Tasa <input key={'thcm'+nominaActiva.id+'-'+(nominaActiva.tasaHCM||'')+'-'+tasaBenKey} type="number" step="0.01" defaultValue={nominaActiva.tasaHCM||''} placeholder={'nómina '+nominaActiva.tasa} title="Tasa de cambio propia del HCM en este pago. Vacía = usa la tasa de la nómina" onBlur={e=>cambiarTasaBeneficio('tasaHCM',e.target.value)} onKeyDown={e=>{if(e.key==='Enter') e.currentTarget.blur();}} className="w-28 border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 outline-none focus:border-cyan-500 text-right"/></span>
                 <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" checked={nominaActiva.aplicaBolsa===true} onChange={e=>cambiarFlagNomina('aplicaBolsa',e.target.checked)}/> Bolsa de alimentos</label>
-                <span className="text-[10px] text-gray-400">Rige para los trabajadores que cargues desde ahora; los ya guardados no cambian (usa «Recalcular HCM/Bolsa» dentro del trabajador).</span>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-gray-400">Tasa <input key={'tbolsa'+nominaActiva.id+'-'+(nominaActiva.tasaBolsa||'')+'-'+tasaBenKey} type="number" step="0.01" defaultValue={nominaActiva.tasaBolsa||''} placeholder={'nómina '+nominaActiva.tasa} title="Tasa de cambio propia de la Bolsa de alimentos en este pago. Vacía = usa la tasa de la nómina" onBlur={e=>cambiarTasaBeneficio('tasaBolsa',e.target.value)} onKeyDown={e=>{if(e.key==='Enter') e.currentTarget.blur();}} className="w-28 border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold text-gray-700 outline-none focus:border-cyan-500 text-right"/></span>
+                <span className="text-[10px] text-gray-400">Rige para los trabajadores que cargues desde ahora; los ya guardados no cambian (usa «Recalcular HCM/Bolsa» dentro del trabajador). Tasa vacía = la de la nómina ({nominaActiva.tasa}).</span>
               </div>
             )}
 
@@ -4203,6 +4608,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-black text-cyan-600 text-sm">${formatNum(d.netoUSD)}</span>
+                      <button onClick={()=>editarDetalleNomina(d)} title="Editar el pago de este trabajador" className="flex items-center gap-1 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 px-2 py-1 rounded-lg text-[10px] font-black uppercase"><Edit size={12}/> Editar</button>
                       <button onClick={()=>exportarReciboPDF(d,nominaActiva)} title="Imprimir Recibo de Pago" className="text-orange-400 hover:text-orange-600"><Printer size={14}/></button>
                       <button onClick={()=>setDetalleVerModal(d)} className="text-gray-400 hover:text-gray-600"><Eye size={14}/></button>
                       {nominaActiva.estado==='abierta' && <button onClick={()=>eliminarDetalleNomina(d)} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>}
@@ -4213,39 +4619,56 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
             </div>
 
-            {asientoPorDepto.length>0 && (
+            {asientoPorDepto.length>0 && (()=>{
+              const usd = rhVeUSD(repMoneda), bs = rhVeBS(repMoneda);
+              return (
               <div className="bg-white rounded-2xl border border-gray-200 p-4">
                 <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Asiento Contable — Agrupado por Departamento</h3>
+                <div className="mb-3">{selMoneda()}</div>
                 <div className="space-y-4">
-                  {asientoPorDepto.map(dep=>(
+                  {asientoPorDepto.map(dep=>{
+                    const lineas = Object.values(dep.cuentas);
+                    const suma = (k) => lineas.reduce((s,c)=>s+(c[k]||0),0);
+                    return (
                     <div key={dep.departamentoId}>
                       <div className="flex items-center gap-2 mb-2">
                         <span className="bg-cyan-100 text-cyan-700 text-[10px] font-black uppercase px-2.5 py-1 rounded-lg">{dep.nombreDepto}</span>
                         <span className="text-[10px] text-gray-400">{dep.trabajadores} trabajador(es) sumados en estas líneas</span>
                       </div>
                       <table className="w-full text-xs">
-                        <thead><tr className="text-[9px] text-gray-400 uppercase"><th className="text-left pb-1">Cuenta</th><th className="text-right pb-1">Debe</th><th className="text-right pb-1">Haber</th></tr></thead>
+                        <thead><tr className="text-[9px] text-gray-400 uppercase"><th className="text-left pb-1">Cuenta</th>{usd && <th className="text-right pb-1">Debe $</th>}{usd && <th className="text-right pb-1">Haber $</th>}{bs && <th className="text-right pb-1">Debe Bs.</th>}{bs && <th className="text-right pb-1">Haber Bs.</th>}</tr></thead>
                         <tbody>
-                          {Object.values(dep.cuentas).map((c,i)=>(
+                          {lineas.filter(c=>(usd && (c.debe>0 || c.haber>0)) || (bs && (c.debeBs>0 || c.haberBs>0))).map((c,i)=>(
                             <tr key={i} className="border-t border-gray-100">
                               <td className="py-1.5 text-gray-700 font-bold">{c.codigo?<span className="font-mono text-cyan-600 mr-1">{c.codigo}</span>:null}{c.nombre}</td>
-                              <td className="py-1.5 text-right font-mono font-black text-emerald-600">{c.debe>0?'$'+formatNum(c.debe):''}</td>
-                              <td className="py-1.5 text-right font-mono font-black text-red-500">{c.haber>0?'$'+formatNum(c.haber):''}</td>
+                              {usd && <td className="py-1.5 text-right font-mono font-black text-emerald-600">{c.debe>0?'$'+formatNum(c.debe):''}</td>}
+                              {usd && <td className="py-1.5 text-right font-mono font-black text-red-500">{c.haber>0?'$'+formatNum(c.haber):''}</td>}
+                              {bs && <td className="py-1.5 text-right font-mono font-black text-emerald-600">{c.debeBs>0?formatNum(c.debeBs):''}</td>}
+                              {bs && <td className="py-1.5 text-right font-mono font-black text-red-500">{c.haberBs>0?formatNum(c.haberBs):''}</td>}
                             </tr>
                           ))}
                         </tbody>
+                        <tfoot><tr className="border-t-2 border-gray-200">
+                          <td className="py-1.5 text-[10px] font-black uppercase text-gray-500">Totales</td>
+                          {usd && <td className="py-1.5 text-right font-mono font-black text-emerald-700">${formatNum(suma('debe'))}</td>}
+                          {usd && <td className="py-1.5 text-right font-mono font-black text-red-600">${formatNum(suma('haber'))}</td>}
+                          {bs && <td className="py-1.5 text-right font-mono font-black text-emerald-700">{formatNum(suma('debeBs'))}</td>}
+                          {bs && <td className="py-1.5 text-right font-mono font-black text-red-600">{formatNum(suma('haberBs'))}</td>}
+                        </tr></tfoot>
                       </table>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
-                {(()=>{ const faltan = rhAsientoFaltantes(asientoPorDepto); return faltan.length>0 ? (
+                {(()=>{ const faltan = rhAsientoFaltantes(asientoPorDepto, nombreCentro); return faltan.length>0 ? (
                   <div className="mt-4 text-[10px] font-bold text-amber-700 bg-amber-50 rounded-lg px-3 py-2 space-y-0.5">
                     <p className="font-black">Estas líneas del asiento no tienen cuenta contable. Así se configuran:</p>
-                    {faltan.map(f=>(<p key={f.clave}>{f.nombre} → {f.donde}</p>))}
+                    {faltan.map(f=>(<p key={f.clave}>{f.nombre} → {f.donde}{f.detalle ? ' · Sin cuenta ahora: '+f.detalle : ''}</p>))}
                   </div>
                 ) : null; })()}
               </div>
-            )}
+              );
+            })()}
           </div>
           );
         })()}
@@ -4270,6 +4693,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           const totalDedBen = benIncluidas.reduce((s,d)=>s+Number(d.montoUSD||0),0);
           const totalDed = totalDedManual+totalDedLegal+totalDedBen;
           const neto = totalAsig - totalDed;
+          const ajusteBenBs = benAjusteBs(benIncluidas, tasa); // HCM/Bolsa con tasa propia: su Bs. no es USD x tasa de la nómina (con tasas iguales es 0)
           const itemsCount = asigIncluidas.length + dedIncluidas.length + legalesIncluidas.length + benIncluidas.length;
           // Navegación Anterior/Siguiente entre los trabajadores de esta nómina (mismo orden que la lista)
           const listaNav = trabajadores.filter(w=>w.estado!=='Egresado' && w.departamentoId).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
@@ -4292,7 +4716,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <button onClick={()=>setCargarTrabModal(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
-              <p className="text-[10px] text-gray-400 font-bold uppercase">{nominaActiva.concepto} · {nominaActiva.mes} · {nominaActiva.quincena} · Tasa {nominaActiva.tasa}</p>
+              <p className="text-[10px] text-gray-400 font-bold uppercase">{nominaActiva.concepto} · {nominaActiva.mes} · {nominaActiva.quincena} · {benTasasTexto(nominaActiva)}</p>
             </div>
 
             <div className="bg-white rounded-2xl border border-gray-200 p-4 grid grid-cols-[1fr_220px] gap-4">
@@ -4304,8 +4728,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
               <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-1.5">
                 <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Asignaciones</span><span className="text-right"><span className="font-mono font-black text-emerald-600">${formatNum(totalAsig)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalAsig*tasa)}</span></span></div>
-                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Deducciones</span><span className="text-right"><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalDed*tasa)}</span></span></div>
-                <div className="flex justify-between items-baseline text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="text-right"><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(neto*tasa)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs"><span className="text-gray-500">Deducciones</span><span className="text-right"><span className="font-mono font-black text-red-500">${formatNum(totalDed)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(totalDed*tasa+ajusteBenBs)}</span></span></div>
+                <div className="flex justify-between items-baseline text-xs border-t border-gray-200 pt-1.5"><span className="text-gray-700 font-bold">Total</span><span className="text-right"><span className="font-mono font-black text-cyan-600">${formatNum(neto)}</span><span className="block text-[9px] text-gray-400 font-normal">Bs.{formatNum(neto*tasa-ajusteBenBs)}</span></span></div>
                 <div className="flex justify-between text-[10px] text-gray-400"><span>Items:</span><span>{itemsCount}</span></div>
               </div>
             </div>
@@ -4381,7 +4805,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={d.montoBsTexto??String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoBeneficio(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></div>
-                        <div className="text-[9px] text-gray-400 font-normal">≈ ${formatNum(d.montoUSD)}</div>
+                        <div className="text-[9px] text-gray-400 font-normal">≈ ${formatNum(d.montoUSD)}{benNum(d.tasaCambio)>0 && benNum(d.tasaCambio)!==tasa ? ' · tasa '+formatNum(d.tasaCambio) : ''}</div>
                       </td>
                       <td className="py-1.5 px-3 text-center"><button onClick={()=>toggleBeneficio(d._idx)} className="text-red-400 hover:text-red-600"><X size={14}/></button></td>
                     </tr>
@@ -18363,7 +18787,7 @@ const SYSTEM_MODULES = [
     label: '13. MÓDULO RRHH',
     icon: '🧑‍💼',
     submodules: [
-      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Tabulador, HCM, Bolsa de alimentos, Cuentas del asiento de nómina)' },
+      { id: 'rrhh_configuracion', label: 'Configuración (Centros de Costo, Deptos, Tabulador, HCM, Bolsa de alimentos, Tipos de nómina, Cuentas del asiento de nómina)' },
       { id: 'rrhh_nomina',        label: 'Registro de Nómina' },
       { id: 'rrhh_parafiscales',  label: 'Parafiscales (IVSS, RPE, FAOV, INCES)' },
       { id: 'rrhh_beneficios',    label: 'Beneficios (reportes de HCM y Bolsa de alimentos)' },
