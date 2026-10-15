@@ -1171,6 +1171,91 @@ const rhCuentaPasivoDePago = (tipos, nomina) => {
   const t = id ? (tipos || []).find(x => x && x.id === id) : null;
   return (t && String(t.codigoPasivo || '').trim()) ? { codigo:String(t.codigoPasivo).trim(), nombre:String(t.nombrePasivo || '') } : null;
 };
+// == RRHH - Conceptos que carga cada tipo de nómina al ingresar un trabajador ==
+// Un pago de «Bono de alimentación» solo lleva el concepto del bono, uno de «Horas extras diurna» solo ese concepto…: al abrir un trabajador entran ya incluidos únicamente los conceptos
+// de su tipo (sin Días Trabajados ni los predeterminados) y todo lo demás sigue disponible en «Buscar concepto para agregar». Cada tipo (Configuración → Tipos de nómina) guarda:
+//   cargaModo: 'auto'    → según el nombre del tipo (tabla RH_CARGA_POR_NOMBRE); si el nombre no coincide con ninguna regla, como siempre (también lo que tienen los tipos que aún no lo guardaron)
+//              'solo'    → solo los conceptos de conceptosCarga ([{codigo, montoTabulador}]) y, si se marcan, HCM / Bolsa automáticos (aplicaHCM / aplicaBolsa)
+//              'clasico' → como siempre: Días Trabajados (sueldo) + los conceptos predeterminados
+//   montoTabulador: el monto del concepto sale ya con el salario del trabajador según el tabulador (Beneficio Complementario); sigue siendo editable.
+// Los conceptos se ubican por CÓDIGO (el nombre se puede cambiar en Conceptos). Los pagos sin tipo (anteriores) y los trabajadores ya guardados no cambian.
+const RH_CARGA_MODOS = ['auto', 'solo', 'clasico'];
+// Mayúsculas, sin tildes ni signos y con un solo espacio entre palabras: «Bono de Alimentación.» → «BONO DE ALIMENTACION»
+const rhNormalizarNombre = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+// Reglas automáticas por el nombre del tipo (se prueban en este orden; gana la primera). hcm = «Descontar HCM automáticamente» al iniciar un pago de ese tipo.
+const RH_CARGA_POR_NOMBRE = [
+  // BENEFICIO COMPLEMENTARIO I y II: el bono presencial de productividad (su monto es el del tabulador del trabajador; los días de «cant.» son informativos) + la póliza HCM automática
+  { id:'beneficio-complementario', patron:/BENEFICIO COMPLEMENTARIO/, hcm:true, conceptos:[{ codigo:'RETR0', etiqueta:'BONO PRESENCIAL DE PRODUCTIVIDAD', nombre:/BONO PRESENCIAL/, nombrePrimero:true, montoTabulador:true }] },
+  // BONO DE TRANSPORTE / BENEFICIO ALIMENTACIÓN COMPLEMENTARIA: complemento de alimentación
+  { id:'complemento-alimentacion', patron:/TRANSPORTE|ALIMENTACION COMPLE|COMPLE\w* (DE )?ALIMENTACION/, hcm:false, conceptos:[{ codigo:'00026', etiqueta:'COMPLEMENTO DE ALIMENTACION' }] },
+  // BONO DE ALIMENTACIÓN: bono de alimentación ley
+  { id:'bono-alimentacion', patron:/ALIMENTACION/, hcm:false, conceptos:[{ codigo:'00011', etiqueta:'BONO DE ALIMENTACION LEY' }] },
+  // HORAS EXTRAS DIURNA / HORAS NOCTURNA
+  { id:'horas-extras-diurnas', patron:/(HORA|EXTRA).*DIURN|DIURN.*(HORA|EXTRA)/, hcm:false, conceptos:[{ codigo:'00005', etiqueta:'HORAS EXTRAS DIURNAS' }] },
+  { id:'horas-extras-nocturnas', patron:/(HORA|EXTRA).*NOCTURN|NOCTURN.*(HORA|EXTRA)/, hcm:false, conceptos:[{ codigo:'00006', etiqueta:'HORAS EXTRAS NOCTURNAS' }] },
+  // BONO POR CARGOS Y KPI
+  { id:'bono-cargo-kpi', patron:/KPI|(BONO|BONIFICACION) POR CARGO/, hcm:false, conceptos:[{ codigo:'R0023', etiqueta:'BONIFICACION POR CARGO / KPI' }] },
+];
+// Regla automática que corresponde al nombre de un tipo, o null
+const rhReglaCargaPorNombre = (nombre) => {
+  const n = rhNormalizarNombre(nombre);
+  return n ? (RH_CARGA_POR_NOMBRE.find(r => r.patron.test(n)) || null) : null;
+};
+// [{codigo, montoTabulador}] sin códigos vacíos ni repetidos: la forma en que se guardan en el tipo
+const rhConceptosCargaLimpios = (lista) => {
+  const vistos = {}, salida = [];
+  (Array.isArray(lista) ? lista : []).forEach(x => {
+    const codigo = String(x && x.codigo != null ? x.codigo : '').trim();
+    const k = codigo.toUpperCase();
+    if (!codigo || vistos[k]) return;
+    vistos[k] = true;
+    salida.push({ codigo, montoTabulador:!!(x && x.montoTabulador) });
+  });
+  return salida;
+};
+// Lo que guarda el formulario de «Tipos de nómina» sobre este tema (lo demás del tipo lo limpia rhTipoNominaLimpio)
+const rhTipoCargaLimpia = (t) => {
+  const modo = RH_CARGA_MODOS.includes(t && t.cargaModo) ? t.cargaModo : 'auto';
+  const solo = modo === 'solo';
+  return { cargaModo:modo, conceptosCarga:solo ? rhConceptosCargaLimpios(t && t.conceptosCarga) : [], aplicaHCM:solo && !!(t && t.aplicaHCM === true), aplicaBolsa:solo && !!(t && t.aplicaBolsa === true) };
+};
+// Lo que carga de verdad un tipo: { solo, conceptos:[{codigo, montoTabulador, …}], aplicaHCM, aplicaBolsa, origen:'tipo'|'regla'|'ninguno', regla }
+//   solo=false (sin tipo, tipo «clasico», o «auto» sin regla para su nombre) = como siempre: Días Trabajados + predeterminados, con HCM sí y Bolsa no, como antes.
+const rhCargaDeTipo = (tipo) => {
+  const t = tipo || {};
+  const modo = RH_CARGA_MODOS.includes(t.cargaModo) ? t.cargaModo : 'auto';
+  if (modo === 'solo') return { solo:true, conceptos:rhConceptosCargaLimpios(t.conceptosCarga), aplicaHCM:t.aplicaHCM === true, aplicaBolsa:t.aplicaBolsa === true, origen:'tipo', regla:null };
+  const regla = modo === 'auto' ? rhReglaCargaPorNombre(t.nombre) : null;
+  if (regla) return { solo:true, conceptos:regla.conceptos.map(c => ({ ...c })), aplicaHCM:regla.hcm === true, aplicaBolsa:false, origen:'regla', regla };
+  return { solo:false, conceptos:[], aplicaHCM:true, aplicaBolsa:false, origen:modo === 'clasico' ? 'tipo' : 'ninguno', regla:null };
+};
+// Ubica en el catálogo (conceptos activos de asignación) los conceptos configurados: por código; el de la regla del Beneficio Complementario (bono presencial) se busca primero por nombre.
+//   → { encontrados:[{ concepto, montoTabulador }], faltan:[«texto del concepto que no está activo o no existe»] }
+const rhResolverCargaConceptos = (catalogo, items) => {
+  const norm = (x) => String(x == null ? '' : x).trim().toUpperCase();
+  const lista = (catalogo || []).filter(Boolean);
+  const encontrados = [], faltan = [];
+  (items || []).forEach(it => {
+    const porCodigo = lista.find(c => norm(c.codigo) === norm(it.codigo)) || null;
+    const porNombreLista = it.nombre ? lista.filter(c => it.nombre.test(rhNormalizarNombre(c.nombre))) : [];
+    const porNombre = porNombreLista.find(c => norm(c.codigo) === norm(it.codigo)) || porNombreLista[0] || null;
+    const c = it.nombrePrimero ? (porNombre || porCodigo) : (porCodigo || porNombre);
+    if (!c) faltan.push(it.etiqueta ? `${it.etiqueta} (${it.codigo})` : String(it.codigo));
+    else if (!encontrados.some(e => e.concepto === c)) encontrados.push({ concepto:c, montoTabulador:!!it.montoTabulador });
+  });
+  return { encontrados, faltan };
+};
+// Qué carga un tipo, en texto (formulario de «Iniciar nuevo pago» y lista de tipos): «Solo 00011 BONO DE ALIMENTACION LEY» · «Como siempre: Días Trabajados y los conceptos predeterminados»
+const rhTextoCargaTipo = (tipo, conceptos) => {
+  const c = rhCargaDeTipo(tipo);
+  if (!c.solo) return 'Como siempre: Días Trabajados y los conceptos predeterminados';
+  const activos = (conceptos || []).filter(x => x && x.activo !== false && ['A', 'V', 'L'].includes(x.tipo));
+  const r = rhResolverCargaConceptos(activos, c.conceptos);
+  const partes = r.encontrados.map(e => `${e.concepto.codigo} ${e.concepto.nombre}${e.montoTabulador ? ' (monto del tabulador)' : ''}`).concat(r.faltan.map(f => `${f}: no está activo en Conceptos`));
+  if (c.aplicaHCM) partes.push('HCM automático');
+  if (c.aplicaBolsa) partes.push('Bolsa de alimentos automática');
+  return 'Solo ' + (partes.length ? partes.join(' + ') : '(ningún concepto)');
+};
 // Moneda del asiento y de los reportes de nómina: 'USD' | 'BS' | 'AMBAS' (la elige el usuario)
 const RH_MONEDAS = [['USD', 'USD'], ['BS', 'Bs.'], ['AMBAS', 'Ambas']];
 const rhVeUSD = (m) => m !== 'BS';
@@ -2315,6 +2400,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [nominaForm,setNominaForm]=useState(initNominaForm());
   const tiposNominaActivos = tiposNomina.filter(t=>t.activo!==false);
   const tipoNominaSel = tiposNominaActivos.find(t=>t.id===nominaForm.tipoNominaId) || null; // tipo elegido en «Iniciar nuevo pago»
+  // Al elegir el tipo del pago, «Descontar automáticamente» (HCM / Bolsa) arranca como lo define el tipo (Beneficio Complementario: HCM sí; Bono de alimentación, Horas extras…: no); se puede cambiar antes de comenzar
+  const elegirTipoPago = (id) => setNominaForm(f=>{ const c = rhCargaDeTipo(tiposNominaActivos.find(t=>t.id===id)); return {...f, tipoNominaId:id, aplicaHCM:c.aplicaHCM, aplicaBolsa:c.aplicaBolsa}; });
   const _pmCfg = appUser?.permissions||{};
   const puedeConfigurar = !appUser || appUser.role==='Master' || !Object.keys(_pmCfg).some(k=>k.startsWith('rrhh_')&&_pmCfg[k]) || !!_pmCfg.rrhh_configuracion;
   const [tasaBenKey,setTasaBenKey]=useState(0); // repinta los campos de tasa HCM/Bolsa del pago abierto cuando lo escrito no es valido
@@ -2402,13 +2489,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     abrirCargarTrabajador(trab);
   };
   // ── Tipos de nómina (Configuración → Tipos de nómina) ──
-  const tipoFormVacio = () => ({id:null, nombre:'', periodo:'', codigoPasivo:'', nombrePasivo:'', activo:true});
+  const tipoFormVacio = () => ({id:null, nombre:'', periodo:'', codigoPasivo:'', nombrePasivo:'', activo:true, cargaModo:'auto', conceptosCarga:[], aplicaHCM:false, aplicaBolsa:false});
   const [tipoForm,setTipoForm]=useState(tipoFormVacio());
+  const [tipoConceptoBusq,setTipoConceptoBusq]=useState(''); // búsqueda de conceptos en «Cargar solo los conceptos que yo elija»
   const [busyTipo,setBusyTipo]=useState(false);
   const guardarTipoNomina = async () => {
-    const f = rhTipoNominaLimpio(tipoForm);
+    const f = {...rhTipoNominaLimpio(tipoForm), ...rhTipoCargaLimpia(tipoForm)};
     if(!f.nombre) return alert('Escribe el nombre del tipo de nómina (por ejemplo: Nómina, Bono de alimentación, Utilidades)');
     if(!f.codigoPasivo) return alert('Elige la cuenta de pasivo de este tipo de nómina: es la que se acredita por el neto de sus pagos en el asiento.');
+    if(f.cargaModo==='solo' && f.conceptosCarga.length===0) return alert('Elige al menos un concepto que cargue este tipo de nómina, o cambia a «Automático según el nombre» / «Como siempre».');
     if(tiposNomina.some(t=>t.id!==tipoForm.id && String(t.nombre||'').trim().toUpperCase()===f.nombre.toUpperCase())) return alert('Ya existe un tipo de nómina con ese nombre.');
     // Cambiar la cuenta de pasivo de un tipo que ya tiene pagos: el asiento de TODOS esos pagos (también los cerrados) pasa a usar la cuenta nueva
     if(tipoForm.id){
@@ -2421,11 +2510,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       // «activo» no se toca al editar (se cambia con Activar / Desactivar): así no se reactiva un tipo que se desactivó con este formulario abierto
       if(tipoForm.id){ const {activo:_activoForm, ...sinActivo} = f; await updateDoc(getDocRef('rrhh_tipos_nomina',tipoForm.id),{...sinActivo, updatedAt:Date.now()}); }
       else await addDoc(getColRef('rrhh_tipos_nomina'),{...f, createdAt:Date.now()});
-      setTipoForm(tipoFormVacio());
+      setTipoForm(tipoFormVacio()); setTipoConceptoBusq('');
     } catch(e){ alert('Error al guardar el tipo de nómina: '+e.message); }
     finally{ setBusyTipo(false); }
   };
-  const editarTipoNomina = (t) => setTipoForm({id:t.id, nombre:t.nombre||'', periodo:t.periodo||'', codigoPasivo:t.codigoPasivo||'', nombrePasivo:t.nombrePasivo||'', activo:t.activo!==false});
+  const editarTipoNomina = (t) => { setTipoConceptoBusq(''); setTipoForm({id:t.id, nombre:t.nombre||'', periodo:t.periodo||'', codigoPasivo:t.codigoPasivo||'', nombrePasivo:t.nombrePasivo||'', activo:t.activo!==false, ...rhTipoCargaLimpia(t)}); };
   const cambiarActivoTipo = async (t) => {
     try{ await updateDoc(getDocRef('rrhh_tipos_nomina',t.id),{activo:t.activo===false, updatedAt:Date.now()}); }
     catch(e){ alert('Error: '+e.message); }
@@ -2649,6 +2738,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // catálogo de Conceptos — no entre los días reales de la quincena (14/15/16 según el mes).
     const tasaDiariaDef = parseFloat((Number(trabajador.salarioBase||0)/30).toFixed(4));
     const cantidadDiasDef = diasTrabajadosQuincena(trabajador, nominaActiva);
+    // Tipo de nómina del pago (Configuración → Tipos de nómina): si solo carga ciertos conceptos, solo esos entran ya incluidos al abrir al trabajador (sin Días Trabajados ni predeterminados;
+    // lo demás sigue en «Buscar concepto para agregar»). Pago sin tipo, tipo «como siempre» o nombre sin regla: todo igual que antes. Un trabajador ya guardado conserva sus filas guardadas.
+    const tipoDelPago = nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null;
+    const cargaTipo = tipoDelPago ? rhCargaDeTipo(tipoDelPago) : null;
+    const cargaResuelta = (cargaTipo && cargaTipo.solo) ? rhResolverCargaConceptos(asignacionesCfg, cargaTipo.conceptos) : null;
+    const avisosCarga = cargaResuelta ? cargaResuelta.faltan.map(f=>`El concepto ${f} de este tipo de nómina no está activo en Conceptos (o no existe): no se pudo cargar.`) : [];
+    const tasaPago = Number(nominaActiva?.tasa||0);
     const asignacionesCat = asignacionesCfg.map(c=>{
       const esSueldo = conceptoEsSueldo(c);
       const tieneFormula = !esSueldo && esConceptoCalculable(c);
@@ -2661,7 +2757,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       // incompleta (ingreso a mitad de quincena) sale correcta sola. El resto de asignaciones del
       // catálogo quedan disponibles para agregar a mano si aplican, y si tienen fórmula, entran con
       // su propio campo de cantidad (igual que Días Trabajados), no un monto plano.
-      return {concepto:c.nombre, codigo:c.codigo, incluida:esSueldo||CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
+      // «Monto = salario del tabulador» (Beneficio Complementario): el monto sale ya con el salario del trabajador según el tabulador — el mismo en cada pago, no se prorratea por los días de «cant.» —; sigue editable en Bs.
+      const cargaItem = cargaResuelta ? cargaResuelta.encontrados.find(e=>e.concepto===c) : null;
+      const usaTabulador = !!(cargaItem && cargaItem.montoTabulador && !esSueldo && !tieneFormula);
+      const montoTabUSD = usaTabulador ? parseFloat(Number(trabajador.salarioBase||0).toFixed(2)) : 0;
+      if(usaTabulador && !(montoTabUSD>0)) avisosCarga.push(`${trabajador.nombre} no tiene salario en el tabulador (ficha del trabajador): «${c.nombre}» sale en 0.`);
+      return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?!!cargaItem:(esSueldo||CODIGOS_PREDETERMINADOS.includes(c.codigo)), montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):montoTabUSD, montoBs:usaTabulador?parseFloat((montoTabUSD*tasaPago).toFixed(2)):0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
     });
     // Filas ya guardadas en este pago cuyo concepto ya no sale en la lista (se desactivó o se eliminó de Conceptos después de guardar): se conservan al editar,
     // para que volver a guardar no las borre en silencio ni cambie la base de IVSS/RPE/FAOV. Quedan incluidas y se pueden quitar con la X.
@@ -2673,7 +2774,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
       const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal && !d.esBeneficio);
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
-      return {concepto:c.nombre, codigo:c.codigo, incluida:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
+      return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?false:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
     // Igual para las deducciones manuales guardadas. No cuentan: las legales (IVSS/RPE/FAOV, aunque se hayan guardado sin marca), las de HCM/Bolsa (van por su propio camino) ni las que ya salen en la lista.
     const esDeLeyGuardada = (g) => { const c0 = {codigo:g.codigo, nombre:g.concepto}, cat = conceptosActivos.find(c=>c.codigo===g.codigo); return [conceptoEsIVSS, conceptoEsRPE, conceptoEsFAOV].some(es=>es(c0) || (cat && es(cat))); };
@@ -2693,7 +2794,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       return fresca; // recalculada sola, sin editar a mano
     });
     const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null});
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null, avisosCarga});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>conLegalesAlDia(m, m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
@@ -3973,6 +4074,25 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         {cfgSub==='tipos' && (()=>{
           const usadosPor = (t) => nominas.filter(n=>n.tipoNominaId===t.id).length;
           const editando = !!tipoForm.id;
+          // Conceptos que carga el tipo al ingresar un trabajador (solo asignaciones activas del catálogo de Conceptos)
+          const catalogoCarga = conceptos.filter(c=>c.activo!==false && ['A','V','L'].includes(c.tipo));
+          const modoCarga = RH_CARGA_MODOS.includes(tipoForm.cargaModo) ? tipoForm.cargaModo : 'auto';
+          const listaCarga = rhConceptosCargaLimpios(tipoForm.conceptosCarga);
+          const mismoCodigo = (a,b) => String(a).trim().toUpperCase()===String(b).trim().toUpperCase();
+          const conceptoDeCodigo = (cod) => catalogoCarga.find(c=>mismoCodigo(c.codigo,cod));
+          const busqCarga = rhNormalizarNombre(tipoConceptoBusq);
+          const coincideCarga = tipoConceptoBusq.trim() ? catalogoCarga.filter(c=>!listaCarga.some(x=>mismoCodigo(x.codigo,c.codigo)) && (rhNormalizarNombre(c.nombre).includes(busqCarga) || String(c.codigo).toUpperCase().includes(tipoConceptoBusq.trim().toUpperCase()))).slice(0,8) : [];
+          // Al pasar a «solo» sin nada elegido se parte de lo que el nombre del tipo ya sugiere (si tiene regla automática); después todo se puede cambiar
+          const cambiarModoCarga = (modo) => setTipoForm(f=>{
+            if(modo!=='solo' || (f.conceptosCarga||[]).length>0) return {...f, cargaModo:modo};
+            const regla = rhReglaCargaPorNombre(f.nombre);
+            if(!regla) return {...f, cargaModo:modo};
+            const r = rhResolverCargaConceptos(catalogoCarga, regla.conceptos);
+            return {...f, cargaModo:modo, conceptosCarga:r.encontrados.map(e=>({codigo:e.concepto.codigo, montoTabulador:e.montoTabulador})), aplicaHCM:regla.hcm===true, aplicaBolsa:false};
+          });
+          const agregarConceptoCarga = (c) => { setTipoForm(f=>({...f, conceptosCarga:rhConceptosCargaLimpios([...(f.conceptosCarga||[]), {codigo:c.codigo, montoTabulador:false}])})); setTipoConceptoBusq(''); };
+          const quitarConceptoCarga = (cod) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).filter(x=>!mismoCodigo(x.codigo,cod))}));
+          const alternarMontoTabulador = (cod) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).map(x=>mismoCodigo(x.codigo,cod)?{...x, montoTabulador:!x.montoTabulador}:x)}));
           return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
@@ -3994,10 +4114,55 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 </select>
               </div>
               {selectorCuenta('tipoPasivo','Cuenta de pasivo de este tipo',tipoForm.codigoPasivo,tipoForm.nombrePasivo,(c)=>setTipoForm(f=>({...f,codigoPasivo:c.codigo,nombrePasivo:c.nombre})),()=>setTipoForm(f=>({...f,codigoPasivo:'',nombrePasivo:''})))}
+              <div className="border-2 border-gray-100 rounded-xl p-3 space-y-2.5" data-testid="tipo-carga">
+                <label className={lblCls}>Al ingresar un trabajador en un pago de este tipo</label>
+                <select data-testid="tipo-carga-modo" value={modoCarga} onChange={e=>cambiarModoCarga(e.target.value)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white">
+                  <option value="auto">Automático según el nombre del tipo</option>
+                  <option value="solo">Cargar solo los conceptos que yo elija</option>
+                  <option value="clasico">Como siempre: Días Trabajados y conceptos predeterminados</option>
+                </select>
+                {modoCarga==='auto' && <p data-testid="tipo-carga-auto" className="text-[10px] text-gray-500">{rhReglaCargaPorNombre(tipoForm.nombre) ? 'Por el nombre del tipo: ' : 'Este nombre no tiene regla automática: '}<b className="text-gray-700">{rhTextoCargaTipo({...tipoForm, cargaModo:'auto'}, conceptos)}</b></p>}
+                {modoCarga==='clasico' && <p className="text-[10px] text-gray-500">Entran ya incluidos Días Trabajados y los conceptos predeterminados (como hasta ahora).</p>}
+                {modoCarga==='solo' && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-gray-500">Solo estos conceptos entran ya incluidos al abrir al trabajador (sin Días Trabajados ni predeterminados); el resto sigue disponible en «Buscar concepto para agregar».</p>
+                    <div className="space-y-1.5" data-testid="tipo-carga-lista">
+                      {listaCarga.map(x=>{
+                        const c = conceptoDeCodigo(x.codigo);
+                        return (
+                          <div key={x.codigo} className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg px-2.5 py-1.5">
+                            <span className="text-[11px] font-bold text-gray-700"><span className="font-mono text-cyan-600 mr-1.5">{x.codigo}</span>{c ? c.nombre : <span className="text-amber-600">(no está activo en Conceptos)</span>}</span>
+                            <span className="flex items-center gap-2">
+                              <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600 cursor-pointer" title="El monto sale ya con el salario del trabajador según el tabulador (sigue siendo editable). Solo para conceptos que se escriben en Bs."><input type="checkbox" checked={x.montoTabulador===true} onChange={()=>alternarMontoTabulador(x.codigo)}/> Monto = salario del tabulador</label>
+                              <button onClick={()=>quitarConceptoCarga(x.codigo)} title="Quitar" className="text-red-400 hover:text-red-600"><X size={13}/></button>
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {listaCarga.length===0 && <p className="text-[10px] font-black uppercase text-amber-600">Agrega al menos un concepto</p>}
+                    </div>
+                    <div className="relative max-w-sm">
+                      <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400"/>
+                      <input data-testid="tipo-carga-buscar" value={tipoConceptoBusq} onChange={e=>setTipoConceptoBusq(e.target.value)} placeholder="Buscar concepto por nombre o código..." className="w-full pl-8 pr-3 py-1.5 border-2 border-gray-200 rounded-lg text-xs font-bold outline-none focus:border-cyan-500"/>
+                    </div>
+                    {tipoConceptoBusq.trim() && (
+                      <div className="border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm" data-testid="tipo-carga-resultados">
+                        {coincideCarga.map(c=>(<div key={c.id||c.codigo} onClick={()=>agregarConceptoCarga(c)} className="px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px] font-bold text-emerald-700 flex items-center gap-1.5"><Plus size={11}/><span className="font-mono">{c.codigo}</span> {c.nombre}</div>))}
+                        {coincideCarga.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                      <span className="text-[10px] font-black text-gray-400 uppercase">Descontar automáticamente en estos pagos:</span>
+                      <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" data-testid="tipo-carga-hcm" checked={tipoForm.aplicaHCM===true} onChange={e=>setTipoForm(f=>({...f,aplicaHCM:e.target.checked}))}/> HCM</label>
+                      <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" data-testid="tipo-carga-bolsa" checked={tipoForm.aplicaBolsa===true} onChange={e=>setTipoForm(f=>({...f,aplicaBolsa:e.target.checked}))}/> Bolsa de alimentos</label>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={guardarTipoNomina} disabled={busyTipo} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyTipo ? 'Guardando...' : (editando ? 'Guardar cambios' : 'Agregar tipo')}</button>
-              {editando && <button onClick={()=>setTipoForm(tipoFormVacio())} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-gray-300">Cancelar</button>}
+              {editando && <button onClick={()=>{setTipoForm(tipoFormVacio());setTipoConceptoBusq('');}} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-gray-300">Cancelar</button>}
             </div>
           </div>
 
@@ -4009,6 +4174,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   <div>
                     <p className="text-xs font-black text-gray-800">{t.nombre}{t.activo===false && <span className="ml-2 text-[9px] font-black uppercase bg-gray-200 text-gray-500 rounded-full px-2 py-0.5">Inactivo</span>}</p>
                     <p className="text-[10px] text-gray-500">Pasivo: {t.codigoPasivo ? <span><span className="font-mono text-cyan-600">{t.codigoPasivo}</span> {t.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>} · {t.periodo || 'Período a elegir'} · {usadosPor(t)} pago(s)</p>
+                    <p data-testid="carga-tipo" className="text-[10px] text-gray-400">Al ingresar un trabajador: {rhTextoCargaTipo(t, conceptos)}</p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button onClick={()=>editarTipoNomina(t)} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Editar</button>
@@ -4945,7 +5111,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <h3 className="text-[10px] font-black text-gray-400 uppercase mb-3">Iniciar Nuevo Pago</h3>
               <div className="flex flex-wrap items-end gap-x-3 gap-y-2 mb-2">
                 <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Mes</span><input type="month" value={nominaForm.mes} onChange={e=>setNominaForm(f=>({...f,mes:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/></div>
-                <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tipo de nómina</span><select data-testid="sel-tipo-pago" value={tipoNominaSel?tipoNominaSel.id:''} onChange={e=>setNominaForm(f=>({...f,tipoNominaId:e.target.value}))} className="w-60 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option value="">{tiposNominaActivos.length?'Elige el tipo de nómina…':'No hay tipos de nómina'}</option>{tiposNominaActivos.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
+                <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tipo de nómina</span><select data-testid="sel-tipo-pago" value={tipoNominaSel?tipoNominaSel.id:''} onChange={e=>elegirTipoPago(e.target.value)} className="w-60 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option value="">{tiposNominaActivos.length?'Elige el tipo de nómina…':'No hay tipos de nómina'}</option>{tiposNominaActivos.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
                 {tipoNominaSel && tipoNominaSel.periodo
                   ? <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Período</span><span className="block w-32 border-2 border-gray-100 bg-gray-50 rounded-lg px-2.5 py-1.5 text-xs font-bold text-gray-600">{tipoNominaSel.periodo}</span></div>
                   : <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Período</span><select value={nominaForm.quincena} onChange={e=>setNominaForm(f=>({...f,quincena:e.target.value}))} className="w-32 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 bg-white"><option>Quincena 1</option><option>Quincena 2</option><option>Mensual</option></select></div>}
@@ -4955,6 +5121,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               {tipoNominaSel
                 ? <p className="text-[10px] text-gray-500 mb-3">Pasivo del asiento para este pago: {tipoNominaSel.codigoPasivo ? <span><span className="font-mono text-cyan-600">{tipoNominaSel.codigoPasivo}</span> {tipoNominaSel.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">este tipo no tiene cuenta (se usará «Nómina por Pagar (Banco)»)</span>}</p>
                 : <p className="text-[10px] text-gray-400 mb-3">{tiposNominaActivos.length ? 'Elige el tipo de nómina: define la cuenta de pasivo que usa el asiento de este pago.' : 'Primero crea los tipos de nómina (cada uno con su cuenta de pasivo) en Configuración → Tipos de nómina.'}{tiposNominaActivos.length===0 && puedeConfigurar && <button onClick={()=>{setCfgSub('tipos');setRhTab('config');}} className="ml-2 text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1">Crear tipos de nómina</button>}</p>}
+              {tipoNominaSel && <p data-testid="hint-carga-tipo" className="text-[10px] text-gray-500 mb-3">Al ingresar cada trabajador: <b className="text-gray-700">{rhTextoCargaTipo(tipoNominaSel, conceptos)}</b>.</p>}
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mb-2">
                 <span className="text-[10px] font-black text-gray-400 uppercase">Descontar automáticamente:</span>
                 <span className="flex items-center gap-2">
@@ -5182,6 +5349,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <button onClick={()=>setCargarTrabModal(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver</button>
               <p className="text-[10px] text-gray-400 font-bold uppercase">{nominaActiva.concepto} · {nominaActiva.mes} · {nominaActiva.quincena} · {benTasasTexto(nominaActiva)}</p>
             </div>
+            {(cargarTrabModal.avisosCarga||[]).length>0 && (
+              <div data-testid="avisos-carga" className="bg-amber-50 border-2 border-amber-200 rounded-xl px-3 py-2 space-y-0.5">
+                {cargarTrabModal.avisosCarga.map((m,i)=><p key={i} className="text-[10px] font-black text-amber-700">⚠ {m}</p>)}
+              </div>
+            )}
 
             <div className="bg-white rounded-2xl border border-gray-200 p-4 grid grid-cols-[1fr_220px] gap-4">
               <div className="space-y-2.5">
