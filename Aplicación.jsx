@@ -1177,19 +1177,20 @@ const rhCuentaPasivoDePago = (tipos, nomina) => {
 //   cargaModo: 'auto'    → según el nombre del tipo (tabla RH_CARGA_POR_NOMBRE); si el nombre no coincide con ninguna regla, como siempre (también lo que tienen los tipos que aún no lo guardaron)
 //              'solo'    → solo los conceptos de conceptosCarga ([{codigo, montoTabulador}]) y, si se marcan, HCM / Bolsa automáticos (aplicaHCM / aplicaBolsa)
 //              'clasico' → como siempre: Días Trabajados (sueldo) + los conceptos predeterminados
-//   montoTabulador: el monto del concepto sale ya con el salario del trabajador según el tabulador (Beneficio Complementario); sigue siendo editable.
+//   montoTabulador: el monto del concepto = el monto mensual del Tabulador ÷ 30 × los días de «cant.» (por defecto, los días del período, como Días Trabajados); sigue siendo editable.
+//                   Beneficio Complementario → el salario del tabulador del trabajador; Bono de alimentación (00011) → «Bono alim. ley $» del Tabulador; Bono de transporte (00026) → «Bono transporte $» del Tabulador.
 // Los conceptos se ubican por CÓDIGO (el nombre se puede cambiar en Conceptos). Los pagos sin tipo (anteriores) y los trabajadores ya guardados no cambian.
 const RH_CARGA_MODOS = ['auto', 'solo', 'clasico'];
 // Mayúsculas, sin tildes ni signos y con un solo espacio entre palabras: «Bono de Alimentación.» → «BONO DE ALIMENTACION»
 const rhNormalizarNombre = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 // Reglas automáticas por el nombre del tipo (se prueban en este orden; gana la primera). hcm = «Descontar HCM automáticamente» al iniciar un pago de ese tipo.
 const RH_CARGA_POR_NOMBRE = [
-  // BENEFICIO COMPLEMENTARIO I y II: el bono presencial de productividad (su monto es el del tabulador del trabajador; los días de «cant.» son informativos) + la póliza HCM automática
+  // BENEFICIO COMPLEMENTARIO I y II: el bono presencial de productividad (su monto es el salario del tabulador del trabajador ÷ 30 × los días de «cant.») + la póliza HCM automática
   { id:'beneficio-complementario', patron:/BENEFICIO COMPLEMENTARIO/, hcm:true, conceptos:[{ codigo:'RETR0', etiqueta:'BONO PRESENCIAL DE PRODUCTIVIDAD', nombre:/BONO PRESENCIAL/, nombrePrimero:true, montoTabulador:true }] },
-  // BONO DE TRANSPORTE / BENEFICIO ALIMENTACIÓN COMPLEMENTARIA: complemento de alimentación
-  { id:'complemento-alimentacion', patron:/TRANSPORTE|ALIMENTACION COMPLE|COMPLE\w* (DE )?ALIMENTACION/, hcm:false, conceptos:[{ codigo:'00026', etiqueta:'COMPLEMENTO DE ALIMENTACION' }] },
-  // BONO DE ALIMENTACIÓN: bono de alimentación ley
-  { id:'bono-alimentacion', patron:/ALIMENTACION/, hcm:false, conceptos:[{ codigo:'00011', etiqueta:'BONO DE ALIMENTACION LEY' }] },
+  // BONO DE TRANSPORTE / BENEFICIO ALIMENTACIÓN COMPLEMENTARIA: complemento de alimentación (su monto: «Bono transporte $» del Tabulador ÷ 30 × días)
+  { id:'complemento-alimentacion', patron:/TRANSPORTE|ALIMENTACION COMPLE|COMPLE\w* (DE )?ALIMENTACION/, hcm:false, conceptos:[{ codigo:'00026', etiqueta:'COMPLEMENTO DE ALIMENTACION', montoTabulador:true }] },
+  // BONO DE ALIMENTACIÓN: bono de alimentación ley (su monto: «Bono alim. ley $» del Tabulador ÷ 30 × días)
+  { id:'bono-alimentacion', patron:/ALIMENTACION/, hcm:false, conceptos:[{ codigo:'00011', etiqueta:'BONO DE ALIMENTACION LEY', montoTabulador:true }] },
   // HORAS EXTRAS DIURNA / HORAS NOCTURNA
   { id:'horas-extras-diurnas', patron:/(HORA|EXTRA).*DIURN|DIURN.*(HORA|EXTRA)/, hcm:false, conceptos:[{ codigo:'00005', etiqueta:'HORAS EXTRAS DIURNAS' }] },
   { id:'horas-extras-nocturnas', patron:/(HORA|EXTRA).*NOCTURN|NOCTURN.*(HORA|EXTRA)/, hcm:false, conceptos:[{ codigo:'00006', etiqueta:'HORAS EXTRAS NOCTURNAS' }] },
@@ -1245,13 +1246,36 @@ const rhResolverCargaConceptos = (catalogo, items) => {
   });
   return { encontrados, faltan };
 };
+// == RRHH - Monto del tabulador ÷ 30 × días ==
+// Un concepto de un tipo de nómina marcado «Monto del tabulador ÷ 30 × días» (Beneficio Complementario, Bono de alimentación, Bono de transporte) se calcula con el monto MENSUAL en $ que el trabajador
+// tiene en el Tabulador y los días que se pagan (por defecto los del período, como Días Trabajados): monto = monto mensual ÷ 30 × días — la tasa diaria es monto ÷ 30, un mes completo = 30 días.
+// El Bs. se calcula de una vez con la tasa del pago (un solo redondeo) y el $ aparte; ambos a 2 decimales.
+const rhMontoTabulador = (base, dias, tasa) => {
+  const b = Math.max(0, Number(base) || 0), d = Math.max(0, Number(dias) || 0), t = Math.max(0, Number(tasa) || 0);
+  return { montoUSD:benR2(b * d / 30), montoBs:benR2(b * t * d / 30) };
+};
+// Montos mensuales de ley / habituales, hasta los momentos: bono de alimentación ley $40 y bono de transporte $30. Salen si el cargo del trabajador en el Tabulador no tiene otro monto (se editan en el Tabulador).
+const RH_BONO_ALIMENTACION_LEY = 40;
+const RH_BONO_TRANSPORTE = 30;
+// Número ≥ 0 de un campo del Tabulador; si está vacío o no es válido, def
+const rhNumTabulador = (v, def) => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : def; };
+// De dónde sale el monto mensual del tabulador de cada concepto, según la nómina → { base (en $), etiqueta, campo }
+//   00011 BONO DE ALIMENTACION LEY      → «Bono alim. ley $» del cargo del trabajador en el Tabulador (si ese cargo no lo tiene: $40)
+//   00026 BONO DE TRANSPORTE / COMPLEMENTO DE ALIMENTACION → «Bono transporte $» del cargo (si no lo tiene: $30)
+//   cualquier otro (el bono presencial) → el salario del tabulador del trabajador (salarioBase de su ficha)
+const rhBaseTabulador = (trabajador, codigo, cargoTab) => {
+  const cod = String(codigo == null ? '' : codigo).trim().toUpperCase();
+  if (cod === '00011') return { base:rhNumTabulador(cargoTab && cargoTab.bonoAlimentacion, RH_BONO_ALIMENTACION_LEY), etiqueta:'bono de alimentación ley', campo:'bonoAlimentacion' };
+  if (cod === '00026') return { base:rhNumTabulador(cargoTab && cargoTab.bonoTransporte, RH_BONO_TRANSPORTE), etiqueta:'bono de transporte', campo:'bonoTransporte' };
+  return { base:rhNumTabulador(trabajador && trabajador.salarioBase, 0), etiqueta:'salario del tabulador', campo:'salarioBase' };
+};
 // Qué carga un tipo, en texto (formulario de «Iniciar nuevo pago» y lista de tipos): «Solo 00011 BONO DE ALIMENTACION LEY» · «Como siempre: Días Trabajados y los conceptos predeterminados»
 const rhTextoCargaTipo = (tipo, conceptos) => {
   const c = rhCargaDeTipo(tipo);
   if (!c.solo) return 'Como siempre: Días Trabajados y los conceptos predeterminados';
   const activos = (conceptos || []).filter(x => x && x.activo !== false && ['A', 'V', 'L'].includes(x.tipo));
   const r = rhResolverCargaConceptos(activos, c.conceptos);
-  const partes = r.encontrados.map(e => `${e.concepto.codigo} ${e.concepto.nombre}${e.montoTabulador ? ' (monto del tabulador)' : ''}`).concat(r.faltan.map(f => `${f}: no está activo en Conceptos`));
+  const partes = r.encontrados.map(e => `${e.concepto.codigo} ${e.concepto.nombre}${e.montoTabulador ? ' (monto del tabulador ÷ 30 × días)' : ''}`).concat(r.faltan.map(f => `${f}: no está activo en Conceptos`));
   if (c.aplicaHCM) partes.push('HCM automático');
   if (c.aplicaBolsa) partes.push('Bolsa de alimentos automática');
   return 'Solo ' + (partes.length ? partes.join(' + ') : '(ningún concepto)');
@@ -1513,7 +1537,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [calcValores,setCalcValores]=useState({});
   const [calcBusqTrab,setCalcBusqTrab]=useState('');
   const [tabuladorCargos,setTabuladorCargos]=useState([]);
-  const [nuevoCargoTab,setNuevoCargoTab]=useState({cargo:'',salarioBase:''});
+  const [nuevoCargoTab,setNuevoCargoTab]=useState({cargo:'',salarioBase:'',bonoAlimentacion:'',bonoTransporte:''});
   const [trabajadores,setTrabajadores]=useState([]);
   const [configParafiscal,setConfigParafiscal]=useState({
     salarioMinimo: 130,
@@ -2227,13 +2251,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(tabuladorCargos.some(c=>(c.cargo||'').toUpperCase()===cargo)) return alert('Ese cargo ya existe en el tabulador');
     try{
       const id=`CARGO-${Date.now()}`;
-      await setDoc(getDocRef('rrhh_tabulador_cargos', id), {id, cargo, salarioBase:parseFloat(nuevoCargoTab.salarioBase)||0, createdAt:Date.now()});
-      setNuevoCargoTab({cargo:'',salarioBase:''});
+      await setDoc(getDocRef('rrhh_tabulador_cargos', id), {id, cargo, salarioBase:parseFloat(nuevoCargoTab.salarioBase)||0, bonoAlimentacion:rhNumTabulador(nuevoCargoTab.bonoAlimentacion, RH_BONO_ALIMENTACION_LEY), bonoTransporte:rhNumTabulador(nuevoCargoTab.bonoTransporte, RH_BONO_TRANSPORTE), createdAt:Date.now()});
+      setNuevoCargoTab({cargo:'',salarioBase:'',bonoAlimentacion:'',bonoTransporte:''});
     } catch(e){ alert('Error al agregar: '+e.message); }
   };
   const actualizarCargoTab = async (c, patch) => {
     try{ await updateDoc(getDocRef('rrhh_tabulador_cargos', c.id), patch); }
     catch(e){ alert('Error al actualizar: '+e.message); }
+  };
+  // Bono alim. ley $ / Bono transporte $ de un cargo del Tabulador: vacío o inválido = el monto de siempre ($40 / $30); solo se guarda si cambió
+  const guardarBonoTab = (c, campo, input, def) => {
+    const v = rhNumTabulador(input.value, def);
+    input.value = String(v);
+    if(v !== rhNumTabulador(c[campo], def)) actualizarCargoTab(c, {[campo]:v});
   };
   const eliminarCargoTab = async (c) => {
     if(!window.confirm(`¿Eliminar el cargo "${c.cargo}" del tabulador?`)) return;
@@ -2751,18 +2781,21 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
       const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
       const guardada = detalleExistente?.asignaciones?.find(a=>a.codigo===c.codigo);
-      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad, cantidadDias:guardada.cantidadDias??(esSueldo?cantidadDiasDef:undefined), tasaDiaria:guardada.tasaDiaria??(esSueldo?tasaDiariaDef:undefined)};
+      // «Monto del tabulador ÷ 30 × días» (Beneficio Complementario: salario del tabulador del trabajador; Bono de alimentación: Bono alim. ley del Tabulador; Bono de transporte: Bono transporte del Tabulador):
+      // monto = monto mensual ÷ 30 × los días de «cant.» (por defecto, los días del período, como Días Trabajados); al cambiar los días se recalcula; sigue editable en Bs.
+      const cargaItem = cargaResuelta ? cargaResuelta.encontrados.find(e=>e.concepto===c) : null;
+      const usaTabulador = !!(cargaItem && cargaItem.montoTabulador && !esSueldo && !tieneFormula);
+      const baseTab = usaTabulador ? rhBaseTabulador(trabajador, c.codigo, tabuladorCargos.find(x=>x.cargo===escalaDe(trabajador))) : null;
+      const marcaTab = (baseTab && baseTab.base>0) ? {porTabulador:true, baseTabulador:baseTab.base, etiquetaTabulador:baseTab.etiqueta} : {};
+      if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad, cantidadDias:guardada.cantidadDias??(esSueldo?cantidadDiasDef:undefined), tasaDiaria:guardada.tasaDiaria??(esSueldo?tasaDiariaDef:undefined), ...marcaTab};
       // Predeterminado: "Días Trabajados"/Sueldo entra ya incluido, como Cantidad de Días × Tasa
       // Diaria (el salario del trabajador dividido entre los días de la quincena) — así una quincena
       // incompleta (ingreso a mitad de quincena) sale correcta sola. El resto de asignaciones del
       // catálogo quedan disponibles para agregar a mano si aplican, y si tienen fórmula, entran con
       // su propio campo de cantidad (igual que Días Trabajados), no un monto plano.
-      // «Monto = salario del tabulador» (Beneficio Complementario): el monto sale ya con el salario del trabajador según el tabulador — el mismo en cada pago, no se prorratea por los días de «cant.» —; sigue editable en Bs.
-      const cargaItem = cargaResuelta ? cargaResuelta.encontrados.find(e=>e.concepto===c) : null;
-      const usaTabulador = !!(cargaItem && cargaItem.montoTabulador && !esSueldo && !tieneFormula);
-      const montoTabUSD = usaTabulador ? parseFloat(Number(trabajador.salarioBase||0).toFixed(2)) : 0;
-      if(usaTabulador && !(montoTabUSD>0)) avisosCarga.push(`${trabajador.nombre} no tiene salario en el tabulador (ficha del trabajador): «${c.nombre}» sale en 0.`);
-      return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?!!cargaItem:(esSueldo||CODIGOS_PREDETERMINADOS.includes(c.codigo)), montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):montoTabUSD, montoBs:usaTabulador?parseFloat((montoTabUSD*tasaPago).toFixed(2)):0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
+      if(baseTab && !(baseTab.base>0)) avisosCarga.push(baseTab.campo==='salarioBase' ? `${trabajador.nombre} no tiene salario en el tabulador (ficha del trabajador): «${c.nombre}» sale en 0.` : `${trabajador.nombre} tiene en 0 el ${baseTab.etiqueta} de su cargo en el Tabulador: «${c.nombre}» sale en 0.`);
+      const montoTab = marcaTab.porTabulador ? rhMontoTabulador(baseTab.base, cantidadDiasDef, tasaPago) : null;
+      return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?!!cargaItem:(esSueldo||CODIGOS_PREDETERMINADOS.includes(c.codigo)), montoUSD:esSueldo?parseFloat((cantidadDiasDef*tasaDiariaDef).toFixed(2)):(montoTab?montoTab.montoUSD:0), montoBs:montoTab?montoTab.montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:montoTab?cantidadDiasDef:0, ...marcaTab, ...(esSueldo?{cantidadDias:cantidadDiasDef, tasaDiaria:tasaDiariaDef}:{})};
     });
     // Filas ya guardadas en este pago cuyo concepto ya no sale en la lista (se desactivó o se eliminó de Conceptos después de guardar): se conservan al editar,
     // para que volver a guardar no las borre en silencio ni cambie la base de IVSS/RPE/FAOV. Quedan incluidas y se pueden quitar con la X.
@@ -2831,7 +2864,18 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     });
   };
   // Cantidad (días u horas) de un concepto escrito en Bs. (cesta ticket, bonos): solo informativa, sale en el recibo; no cambia ningún monto.
-  const actualizarCantidadInformativa = (idx, valor) => setCargarTrabModal(m=>({...m, asignaciones:m.asignaciones.map((a,i)=>i===idx?{...a, cantidad:(valor===''||valor==null)?0:Math.max(0,Number(valor)||0)}:a)}));
+  // Salvo el concepto con «Monto del tabulador ÷ 30 × días» (Beneficio Complementario, Bono de alimentación, Bono de transporte): ahí los días SÍ cambian el monto (monto mensual del Tabulador ÷ 30 × días, en Bs. con la tasa del pago) y el total.
+  const actualizarCantidadInformativa = (idx, valor) => setCargarTrabModal(m=>{
+    const cantidad = (valor===''||valor==null)?0:Math.max(0,Number(valor)||0);
+    const porTabulador = !!(m.asignaciones[idx] && m.asignaciones[idx].porTabulador);
+    const asignaciones = m.asignaciones.map((a,i)=>{
+      if(i!==idx) return a;
+      if(!a.porTabulador) return {...a, cantidad};
+      const {montoBsTexto, ...resto} = a;
+      return {...resto, cantidad, ...rhMontoTabulador(a.baseTabulador, cantidad, nominaActiva?.tasa)};
+    });
+    return porTabulador ? conLegalesAlDia(m, asignaciones) : {...m, asignaciones};
+  });
   // Para el Sueldo Básico: recalcula el monto en USD a partir de Cantidad de Días × Tasa Diaria.
   const actualizarCantidadTasaAsignacion = (idx, campo, valor) => {
     setCargarTrabModal(m=>{
@@ -2869,7 +2913,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const guardarDetalleNomina = async () => {
     if(!cargarTrabModal || !nominaActiva) return;
     const tasa = Number(nominaActiva.tasa||0);
-    const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,...a})=>({...a, montoBs:rhBsAsignacion(a, tasa)}));
+    const asignaciones = cargarTrabModal.asignaciones.filter(a=>a.incluida).map(({incluida,porTabulador,baseTabulador,etiquetaTabulador,...a})=>({...a, montoBs:rhBsAsignacion(a, tasa)}));
     // Las deducciones legales se toman tal como quedaron en pantalla (el usuario pudo haberlas
     // editado o quitado) — no se vuelven a calcular de cero aquí.
     const deduccionesLegales = (cargarTrabModal.deduccionesLegales||[]).filter(d=>d.incluida).map(({incluida,...d})=>d);
@@ -3962,29 +4006,39 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </style></head><body>
               <h1>Tabulador de Sueldos y Cargos</h1>
               <div class="sub">${emp} · RIF ${rifEmp} · Generado ${hoy}</div>
-              <table><thead><tr><th>Cargo</th><th style="text-align:right">Salario Base $</th></tr></thead><tbody>
-              ${filas.map(c=>`<tr><td>${c.cargo||''}</td><td class="num">$${(parseFloat(c.salarioBase)||0).toFixed(2)}</td></tr>`).join('')}
+              <table><thead><tr><th>Cargo</th><th style="text-align:right">Salario Base $</th><th style="text-align:right">Bono Alim. Ley $</th><th style="text-align:right">Bono Transporte $</th></tr></thead><tbody>
+              ${filas.map(c=>`<tr><td>${c.cargo||''}</td><td class="num">$${(parseFloat(c.salarioBase)||0).toFixed(2)}</td><td class="num">$${rhNumTabulador(c.bonoAlimentacion, RH_BONO_ALIMENTACION_LEY).toFixed(2)}</td><td class="num">$${rhNumTabulador(c.bonoTransporte, RH_BONO_TRANSPORTE).toFixed(2)}</td></tr>`).join('')}
               </tbody></table>
               <script>window.onload=()=>window.print();</script></body></html>`;
               const w=window.open('','_blank','width=700,height=800'); if(w){w.document.write(html);w.document.close();}
             }} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700"><FileText size={11}/>PDF</button>
           </div>
-          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Tabulador se elige de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto. El Cargo que sale en el recibo de pago y en los reportes se escribe aparte, en la ficha del trabajador.</p>
+          <p className="text-[9px] text-gray-400 mb-3">Al crear un trabajador, el Tabulador se elige de esta lista y llena el Salario Base solo — luego sigue siendo editable si ese trabajador en particular gana distinto. El Cargo que sale en el recibo de pago y en los reportes se escribe aparte, en la ficha del trabajador. El Bono alim. ley (hasta los momentos $40) y el Bono transporte (hasta los momentos $30) son montos mensuales en $, editables por cargo: en una nómina de Bono de alimentación o de Bono de transporte, al ingresar a cada trabajador el monto sale solo = ese monto ÷ 30 × los días que pongas.</p>
           <div className="border border-gray-200 rounded-xl overflow-hidden mb-3">
-            <div className="grid grid-cols-[1fr_140px_56px] bg-gray-900 text-cyan-400 text-[9px] font-black uppercase">
+            <div className="grid grid-cols-[1fr_110px_130px_150px_56px] bg-gray-900 text-cyan-400 text-[9px] font-black uppercase">
               <div className="px-3 py-2">Cargo</div>
               <div className="px-3 py-2 text-right">Salario $</div>
+              <div className="px-3 py-2 text-right" title="Monto mensual en $ del Bono de alimentación ley (hasta los momentos $40). En la nómina «Bono de alimentación» el monto sale solo = este monto ÷ 30 × los días.">Bono alim. ley $</div>
+              <div className="px-3 py-2 text-right" title="Monto mensual en $ del Bono de transporte (hasta los momentos $30). En la nómina «Bono de transporte» el monto sale solo = este monto ÷ 30 × los días.">Bono transporte $</div>
               <div className="px-3 py-2 text-center">Acción</div>
             </div>
             {tabuladorCargos.length===0 && <p className="text-xs text-gray-400 text-center py-6">Sin cargos aún — agrega el primero abajo</p>}
             {tabuladorCargos.slice().sort((a,b)=>(a.cargo||'').localeCompare(b.cargo||'')).map((c,i)=>(
-              <div key={c.id} className={`grid grid-cols-[1fr_140px_56px] items-center border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+              <div key={c.id} className={`grid grid-cols-[1fr_110px_130px_150px_56px] items-center border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
                 <div className="px-3 py-1.5">
                   <input defaultValue={c.cargo} onBlur={e=>actualizarCargoTab(c,{cargo:e.target.value.toUpperCase()})} className="w-full border border-transparent hover:border-gray-200 rounded-lg px-2 py-1 text-[11px] font-bold uppercase outline-none focus:border-cyan-500 bg-transparent focus:bg-white"/>
                 </div>
                 <div className="px-3 py-1.5 flex items-center justify-end gap-1">
                   <span className="text-gray-400 text-xs">$</span>
                   <input type="number" defaultValue={c.salarioBase} onBlur={e=>actualizarCargoTab(c,{salarioBase:parseFloat(e.target.value)||0})} className="w-20 border border-transparent hover:border-gray-200 rounded-lg px-2 py-1 text-[11px] font-bold outline-none focus:border-cyan-500 text-right bg-transparent focus:bg-white"/>
+                </div>
+                <div className="px-3 py-1.5 flex items-center justify-end gap-1">
+                  <span className="text-gray-400 text-xs">$</span>
+                  <input type="number" min="0" step="0.01" data-testid="tab-bono-alim" defaultValue={rhNumTabulador(c.bonoAlimentacion, RH_BONO_ALIMENTACION_LEY)} onBlur={e=>guardarBonoTab(c,'bonoAlimentacion',e.target,RH_BONO_ALIMENTACION_LEY)} className="w-16 border border-transparent hover:border-gray-200 rounded-lg px-2 py-1 text-[11px] font-bold outline-none focus:border-cyan-500 text-right bg-transparent focus:bg-white"/>
+                </div>
+                <div className="px-3 py-1.5 flex items-center justify-end gap-1">
+                  <span className="text-gray-400 text-xs">$</span>
+                  <input type="number" min="0" step="0.01" data-testid="tab-bono-transp" defaultValue={rhNumTabulador(c.bonoTransporte, RH_BONO_TRANSPORTE)} onBlur={e=>guardarBonoTab(c,'bonoTransporte',e.target,RH_BONO_TRANSPORTE)} className="w-16 border border-transparent hover:border-gray-200 rounded-lg px-2 py-1 text-[11px] font-bold outline-none focus:border-cyan-500 text-right bg-transparent focus:bg-white"/>
                 </div>
                 <div className="px-3 py-1.5 flex items-center justify-center">
                   <button onClick={()=>eliminarCargoTab(c)} className="text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
@@ -3995,6 +4049,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           <div className="flex gap-2">
             <input value={nuevoCargoTab.cargo} onChange={e=>setNuevoCargoTab(f=>({...f,cargo:e.target.value}))} placeholder="Ej: VENDEDOR, SUPERVISOR..." className="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500"/>
             <input type="number" value={nuevoCargoTab.salarioBase} onChange={e=>setNuevoCargoTab(f=>({...f,salarioBase:e.target.value}))} placeholder="Salario $" className="w-28 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+            <input type="number" min="0" step="0.01" data-testid="nuevo-bono-alim" value={nuevoCargoTab.bonoAlimentacion} onChange={e=>setNuevoCargoTab(f=>({...f,bonoAlimentacion:e.target.value}))} placeholder={`Alim. ley $ (${RH_BONO_ALIMENTACION_LEY})`} title="Bono alim. ley: monto mensual en $ (en blanco = $40)" className="w-36 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
+            <input type="number" min="0" step="0.01" data-testid="nuevo-bono-transp" value={nuevoCargoTab.bonoTransporte} onChange={e=>setNuevoCargoTab(f=>({...f,bonoTransporte:e.target.value}))} placeholder={`Transporte $ (${RH_BONO_TRANSPORTE})`} title="Bono transporte: monto mensual en $ (en blanco = $30)" className="w-36 border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/>
             <button onClick={agregarCargoTab} disabled={busy} className="bg-cyan-600 text-white px-3 rounded-xl disabled:opacity-50"><Plus size={16}/></button>
           </div>
         </div>
@@ -4133,7 +4189,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                           <div key={x.codigo} className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg px-2.5 py-1.5">
                             <span className="text-[11px] font-bold text-gray-700"><span className="font-mono text-cyan-600 mr-1.5">{x.codigo}</span>{c ? c.nombre : <span className="text-amber-600">(no está activo en Conceptos)</span>}</span>
                             <span className="flex items-center gap-2">
-                              <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600 cursor-pointer" title="El monto sale ya con el salario del trabajador según el tabulador (sigue siendo editable). Solo para conceptos que se escriben en Bs."><input type="checkbox" checked={x.montoTabulador===true} onChange={()=>alternarMontoTabulador(x.codigo)}/> Monto = salario del tabulador</label>
+                              <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600 cursor-pointer" title="El monto = el monto mensual del Tabulador ÷ 30 × los días de «cant.» (por defecto, los días del período, como Días Trabajados); sigue siendo editable. Bono de alimentación ley (00011): su monto del Tabulador ($40 si el cargo no tiene otro); bono de transporte (00026): su monto del Tabulador ($30); los demás: el salario del tabulador del trabajador. Solo para conceptos que se escriben en Bs."><input type="checkbox" checked={x.montoTabulador===true} onChange={()=>alternarMontoTabulador(x.codigo)}/> Monto del tabulador ÷ 30 × días{x.montoTabulador===true ? <span className="font-normal text-gray-400"> ({rhBaseTabulador(null, x.codigo, null).etiqueta})</span> : null}</label>
                               <button onClick={()=>quitarConceptoCarga(x.codigo)} title="Quitar" className="text-red-400 hover:text-red-600"><X size={13}/></button>
                             </span>
                           </div>
@@ -5335,7 +5391,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             abrirCargarTrabajador(listaNav[ni]);
           };
           const previewData = () => {
-            const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,...a})=>({...a, montoBs:rhBsAsignacion(a, tasa)}));
+            const asignaciones = asigIncluidas.map(({_idx,_tipo,incluida,porTabulador,baseTabulador,etiquetaTabulador,...a})=>({...a, montoBs:rhBsAsignacion(a, tasa)}));
             const deducciones = [
               ...legalesIncluidas.map(({_idx,_tipo,incluida,...d})=>d),
               ...benIncluidas.map(({_idx,_tipo,incluida,aviso,previosMes,montoBsTexto,...d})=>d),
@@ -5400,7 +5456,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <span>{a.concepto}</span>
-                            <input type="number" step="0.5" min="0" placeholder="cant." title="Días u horas que se pagan en este concepto (solo sale en el recibo; no cambia el monto)" value={a.cantidad>0?a.cantidad:''} onChange={e=>actualizarCantidadInformativa(a._idx,e.target.value)} className="w-16 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500 placeholder:font-normal placeholder:text-gray-300"/>
+                            <input type="number" step="0.5" min="0" placeholder="cant." title={a.porTabulador ? `Días que se pagan: el monto es el ${a.etiquetaTabulador||'monto del tabulador'} ÷ 30 × estos días (también sale en el recibo)` : 'Días u horas que se pagan en este concepto (solo sale en el recibo; no cambia el monto)'} value={a.cantidad>0?a.cantidad:''} onChange={e=>actualizarCantidadInformativa(a._idx,e.target.value)} className="w-16 text-right border-2 border-gray-200 rounded-lg px-1.5 py-0.5 text-xs font-bold outline-none focus:border-cyan-500 placeholder:font-normal placeholder:text-gray-300"/>
+                            {a.porTabulador && <span data-testid="detalle-tabulador" className="text-[9px] text-gray-400 font-normal">{a.etiquetaTabulador||'tabulador'} ${formatNum(a.baseTabulador)} ÷ 30 × días</span>}
                           </div>
                         )}
                       </td>
