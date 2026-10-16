@@ -991,7 +991,8 @@ const rfPlanConversion = (conceptos, deps) => {
 
 // == RRHH - Asiento contable de la nómina (cuentas) ==
 // Arma las líneas Debe/Haber de una nómina, por departamento. Función pura: todo lo que necesita llega en `ctx`, para poder probarla sin pantalla.
-//   (INCES por Pagar → solo lo usa «Cierre de Mes», con su deducción de clave 'inces': el asiento de cada pago no genera línea para él.)
+//   INCES por Pagar             → lo descontado al trabajador en un pago de Utilidades (0,5 % sobre las utilidades; clave 'inces'): la cuenta que el tipo de nómina le asignó al concepto INCES, si le asignó una; si no, la de «Parafiscales → INCES → Cuenta Contable (Pasivo)».
+//                                 «Cierre de Mes» también lo usa para el aporte de la empresa del mes. En los demás pagos el asiento no genera línea de INCES.
 //   IVSS / RPE / FAOV por Pagar → la cuenta de «Parafiscales → Cuenta Contable (Pasivo)»; si ahí no hay, la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.
 //   Nómina por Pagar (Banco)    → la cuenta de pasivo del tipo de nómina del pago («Configuración → Tipos de nómina»); los pagos anteriores, sin tipo, usan la cuenta general que ya tenían guardada.
 //   Aporte patronal (Debe)      → la cuenta del concepto «APORTE PATRONAL (IVSS)», «APORTE PATRONAL SPF» o «APORTE PATRONAL BANAVIH» (Conceptos) para el centro de costo del trabajador: una línea por aporte.
@@ -1036,9 +1037,11 @@ const rhAsientoPorDepartamento = (detalles, ctx) => {
   const cfgP = ctx.configParafiscal || {};
   const cfgA = rhAsientoCfgMerge(ctx.configAsiento);
   const nombreDepto = ctx.nombreDepto || ((id) => String(id == null ? '' : id));
-  const claveLegal = (concepto) => /^ivss/i.test(concepto) ? 'ivss' : (/rpe|paro forzoso/i.test(concepto) ? 'rpe' : (/faov/i.test(concepto) ? 'faov' : null));
+  const claveLegal = (concepto) => /^ivss/i.test(concepto) ? 'ivss' : (/rpe|paro forzoso/i.test(concepto) ? 'rpe' : (/faov/i.test(concepto) ? 'faov' : (/^inces/i.test(concepto) ? 'inces' : null)));
   // IVSS / RPE / FAOV por pagar: la misma cuenta recibe lo del trabajador y lo de la empresa
   const cuentaLegal = (ded, clave, centroId) => {
+    // La cuenta que el tipo de nómina le asignó al concepto (el INCES de Utilidades) manda sobre la de Parafiscales
+    if (ded.cuentaDeTipo === true && ded.codigoCuenta) return { codigo:String(ded.codigoCuenta), nombre:ded.nombreCuenta || RH_ASIENTO_NOMBRES[clave] };
     const p = cfgP[clave] || {};
     if (p.codigoPasivo) return { codigo:String(p.codigoPasivo), nombre:p.nombrePasivo || RH_ASIENTO_NOMBRES[clave] };
     const delConcepto = ctx.cuentaConceptoLegal ? ctx.cuentaConceptoLegal(clave, centroId) : null;
@@ -1183,6 +1186,9 @@ const rhCuentaPasivoDePago = (tipos, nomina) => {
 //                   si no se dice, por el concepto: 00011 → «Bono alim. ley $»; 00026 → «Bono transporte $»; RETR0 → «Beneficio social $»; R0023 → «Bono por cargo $»; cualquier otro → el salario del trabajador.
 //                   Beneficio Complementario → «Beneficio social $» (igual al Salario $ del cargo en el Tabulador si el cargo no tiene otro monto); Bono por cargos y KPI → «Bono por cargo $» (lo escribe el usuario por cargo); Bono de alimentación → «Bono alim. ley $»;
 //                   Bono de transporte → «Bono transporte $»; Beneficio alimentación complementaria → «Bono compl. alim. $».
+//   lado (opcional): 'A' → el concepto se carga como asignación (suma al pago) · 'D' → como deducción (se resta). Si no se elige, el natural del concepto: los de tipo D son deducciones; los A, V y L, asignaciones.
+//   codigoCuenta / nombreCuenta (opcional): la cuenta contable que el usuario le asignó al concepto en este tipo (Debe si es asignación, Haber si es deducción); sin ella se usa la del concepto en el centro de costo del trabajador (Conceptos).
+//   El INCES (deducción) de un pago de Utilidades —o de un tipo que lo lista— se calcula solo: ver rhIncesDelPago.
 // Los conceptos se ubican por CÓDIGO (el nombre se puede cambiar en Conceptos). Los pagos sin tipo (anteriores) y los trabajadores ya guardados no cambian.
 const RH_CARGA_MODOS = ['auto', 'solo', 'clasico'];
 // Mayúsculas, sin tildes ni signos y con un solo espacio entre palabras: «Bono de Alimentación.» → «BONO DE ALIMENTACION»
@@ -1217,7 +1223,11 @@ const rhConceptosCargaLimpios = (lista) => {
     if (!codigo || vistos[k]) return;
     vistos[k] = true;
     const fuente = rhFuenteTabuladorValida(x && x.fuenteTabulador);
-    salida.push({ codigo, montoTabulador:!!(x && x.montoTabulador), ...(fuente ? { fuenteTabulador:fuente } : {}) });
+    // lado: 'A' (se carga como asignación) o 'D' (como deducción); si el usuario no lo eligió no se guarda y vale el natural del concepto (rhLadoCarga)
+    const lado = (x && (x.lado === 'A' || x.lado === 'D')) ? x.lado : '';
+    // cuenta (opcional): la que el usuario le asignó al concepto en este tipo
+    const cuenta = rhAsientoCuenta({ codigo:x && x.codigoCuenta, nombre:x && x.nombreCuenta });
+    salida.push({ codigo, montoTabulador:!!(x && x.montoTabulador), ...(fuente ? { fuenteTabulador:fuente } : {}), ...(lado ? { lado } : {}), ...(cuenta.codigo ? { codigoCuenta:cuenta.codigo, nombreCuenta:cuenta.nombre } : {}) });
   });
   return salida;
 };
@@ -1237,8 +1247,8 @@ const rhCargaDeTipo = (tipo) => {
   if (regla) return { solo:true, conceptos:regla.conceptos.map(c => ({ ...c })), aplicaHCM:regla.hcm === true, aplicaBolsa:false, origen:'regla', regla };
   return { solo:false, conceptos:[], aplicaHCM:true, aplicaBolsa:false, origen:modo === 'clasico' ? 'tipo' : 'ninguno', regla:null };
 };
-// Ubica en el catálogo (conceptos activos de asignación) los conceptos configurados: por código; el de la regla del Beneficio Complementario (bono presencial) se busca primero por nombre.
-//   → { encontrados:[{ concepto, montoTabulador, fuenteTabulador? }], faltan:[«texto del concepto que no está activo o no existe»] }
+// Ubica en el catálogo (conceptos activos) los conceptos configurados: por código; el de la regla del Beneficio Complementario (bono presencial) se busca primero por nombre.
+//   → { encontrados:[{ concepto, montoTabulador, fuenteTabulador?, lado:'A'|'D', cuenta?:{codigo, nombre} }], faltan:[«texto del concepto que no está activo o no existe»] }
 const rhResolverCargaConceptos = (catalogo, items) => {
   const norm = (x) => String(x == null ? '' : x).trim().toUpperCase();
   const lista = (catalogo || []).filter(Boolean);
@@ -1249,7 +1259,7 @@ const rhResolverCargaConceptos = (catalogo, items) => {
     const porNombre = porNombreLista.find(c => norm(c.codigo) === norm(it.codigo)) || porNombreLista[0] || null;
     const c = it.nombrePrimero ? (porNombre || porCodigo) : (porCodigo || porNombre);
     if (!c) faltan.push(it.etiqueta ? `${it.etiqueta} (${it.codigo})` : String(it.codigo));
-    else if (!encontrados.some(e => e.concepto === c)) encontrados.push({ concepto:c, montoTabulador:!!it.montoTabulador, ...(it.fuenteTabulador ? { fuenteTabulador:it.fuenteTabulador } : {}) });
+    else if (!encontrados.some(e => e.concepto === c)) encontrados.push({ concepto:c, montoTabulador:!!it.montoTabulador, ...(it.fuenteTabulador ? { fuenteTabulador:it.fuenteTabulador } : {}), lado:rhLadoCarga(it, c), ...(it.codigoCuenta ? { cuenta:{ codigo:String(it.codigoCuenta), nombre:String(it.nombreCuenta == null ? '' : it.nombreCuenta) } } : {}) });
   });
   return { encontrados, faltan };
 };
@@ -1360,9 +1370,9 @@ const rhTextoFuenteTabulador = (codigo, fuente) => {
 const rhTextoCargaTipo = (tipo, conceptos) => {
   const c = rhCargaDeTipo(tipo);
   if (!c.solo) return 'Como siempre: Días Trabajados y los conceptos predeterminados';
-  const activos = (conceptos || []).filter(x => x && x.activo !== false && ['A', 'V', 'L'].includes(x.tipo));
+  const activos = (conceptos || []).filter(x => x && x.activo !== false && (['A', 'V', 'L'].includes(x.tipo) || (c.origen === 'tipo' && x.tipo === 'D')));
   const r = rhResolverCargaConceptos(activos, c.conceptos);
-  const partes = r.encontrados.map(e => `${e.concepto.codigo} ${e.concepto.nombre}${e.montoTabulador ? ` (${rhTextoFuenteTabulador(e.concepto.codigo, e.fuenteTabulador)} ÷ 30 × días)` : ''}`).concat(r.faltan.map(f => `${f}: no está activo en Conceptos`));
+  const partes = r.encontrados.map(e => `${e.concepto.codigo} ${e.concepto.nombre}${e.lado === 'D' ? ' (deducción)' : ''}${e.montoTabulador ? ` (${rhTextoFuenteTabulador(e.concepto.codigo, e.fuenteTabulador)} ÷ 30 × días)` : ''}${e.cuenta ? ` → cuenta ${e.cuenta.codigo}` : ''}`).concat(r.faltan.map(f => `${f}: no está activo en Conceptos`));
   if (c.aplicaHCM) partes.push('HCM automático');
   if (c.aplicaBolsa) partes.push('Bolsa de alimentos automática');
   return 'Solo ' + (partes.length ? partes.join(' + ') : '(ningún concepto)');
@@ -1409,6 +1419,42 @@ const rhCantidadFila = (f) => {
 };
 // 4 → «4»; 7,5 → «7,5»; null → «» (sin ceros de más)
 const rhCantidadTexto = (n) => (n == null || !Number.isFinite(Number(n))) ? '' : (Number.isInteger(Number(n)) ? String(Number(n)) : String(parseFloat(Number(n).toFixed(2))).replace('.', ','));
+
+// == RRHH - INCES del trabajador en las nóminas de Utilidades ==
+// Parafiscales → INCES → «% Trabajador (solo utilidades)» (0,5 %) se descuenta al trabajador sobre las utilidades que se le pagan: el pago de Utilidades (o el de un tipo que tenga el concepto INCES en su lista como deducción) lo calcula solo.
+//   Base = las asignaciones incluidas cuyo nombre dice «utilidad» (UTILIDADES, ALICUOTA DE UTILIDAD…); si ninguna lo dice, todas las asignaciones incluidas del pago (un pago de Utilidades paga utilidades).
+//   $ = base en $ × %; Bs. = base en Bs. (el de cada fila: lo escrito en Bs. tal cual) × %; cada uno a centavos. En los pagos que no son de Utilidades no hay INCES del trabajador: su concepto INCES sigue siendo una deducción a mano.
+// El concepto de deducción INCES (50014 o cualquier deducción que se llame INCES; no el «APORTE PATRONAL INCES»)
+const rhEsConceptoInces = (c) => !!c && c.tipo === 'D' && (String(c.codigo == null ? '' : c.codigo).trim() === '50014' || (/\bi\.?n\.?c\.?e\.?s\b/i.test(String(c.nombre || '')) && !/patronal/i.test(String(c.nombre || ''))));
+// ¿El pago es de Utilidades? (el nombre del pago —que es el del tipo— o el del tipo dice «utilidad»)
+const rhEsPagoUtilidades = (pago, tipo) => /utilidad/i.test(String((pago && pago.concepto) || '')) || /utilidad/i.test(String((tipo && tipo.nombre) || ''));
+// Lado con que un tipo de nómina carga un concepto: 'A' (asignación, suma al pago) o 'D' (deducción, se resta): el que eligió el usuario; si no eligió, el natural del concepto (los de tipo D son deducciones; los demás, asignaciones)
+const rhLadoCarga = (item, concepto) => { const l = item && item.lado; return (l === 'A' || l === 'D') ? l : (concepto && concepto.tipo === 'D' ? 'D' : 'A'); };
+// Base y monto del INCES del trabajador. incluidas = las asignaciones incluidas en el pago (con montoUSD / montoBs tal como están en pantalla); pct = el % trabajador de Parafiscales
+const rhIncesUtilidades = (incluidas, tasa, pct) => {
+  const lista = (incluidas || []).filter(Boolean);
+  const porNombre = lista.filter(a => /utilidad/i.test(String(a.concepto || '')));
+  const filas = porNombre.length ? porNombre : lista;
+  let usd = 0, bs = 0;
+  filas.forEach(a => { usd += benNum(a.montoUSD); bs += rhBsAsignacion(a, tasa); });
+  const p = Math.min(100, Math.max(0, benNum(pct)));
+  return { filas, usaTodas:porNombre.length === 0, baseUSD:benR2(usd), baseBs:benR2(bs), pct:p, montoUSD:benR2(usd * p / 100), montoBs:benR2(bs * p / 100) };
+};
+// ¿El INCES del trabajador se calcula solo en este pago? → { auto, incluida, esUtilidades, enLista, concepto, cuenta }
+//   auto     = el pago es de Utilidades o su tipo tiene el concepto INCES en su lista como deducción
+//   incluida = entra ya marcado: siempre, salvo en un tipo «solo los conceptos que yo elija» que no lista el INCES (ahí queda disponible en «Buscar concepto para agregar»)
+//   concepto = el concepto INCES de Conceptos (su código y su cuenta); cuenta = la cuenta que el tipo le asignó, si le asignó una
+const rhIncesDelPago = (pago, tipo, conceptos) => {
+  const activos = (conceptos || []).filter(c => c && c.activo !== false);
+  const carga = tipo ? rhCargaDeTipo(tipo) : null;
+  let item = null;
+  if (carga && carga.solo && carga.origen === 'tipo') {
+    item = rhResolverCargaConceptos(activos.filter(c => ['A', 'V', 'L', 'D'].includes(c.tipo)), carga.conceptos).encontrados.find(e => rhEsConceptoInces(e.concepto) && e.lado === 'D') || null;
+  }
+  const esUtilidades = rhEsPagoUtilidades(pago, tipo);
+  const auto = esUtilidades || !!item;
+  return { auto, incluida:auto && !(carga && carga.solo && !item), esUtilidades, enLista:!!item, concepto:item ? item.concepto : (activos.find(rhEsConceptoInces) || null), cuenta:(item && item.cuenta) || null };
+};
 
 // ═════ Informes de nómina: Nómina General de Pago · Resumen de Conceptos · Resumen por Centro de Costo (los del ERP, mejorados) ═════
 // Todo sale de lo ya guardado en cada pago (rrhh_nominas + rrhh_nomina_detalles): las mismas cifras del recibo, del reporte y del asiento.
@@ -1591,6 +1637,7 @@ const rhInformeFilas = (tipo, D, tasasTexto) => {
 //   · HCM y Bolsas       → dos comprobantes cada uno: (1) lo cobrado a los trabajadores en la nómina: Debe la cuenta por cobrar / Haber la cuenta «por pagar» (la «Cuenta de pasivo (cierre de mes)» de Configuración); (2) el aporte de la empresa según el centro de costo: Debe el gasto de cada centro / Haber esa misma cuenta «por pagar».
 // Las cifras salen del asiento de cada pago (rhAsientoPorDepartamento), repartidas en comprobantes por tema y sumadas por cuenta para todo el mes (con el Bs. guardado en cada pago, cada uno con su tasa). Lo del trabajador va en Nóminas y Beneficios; el aporte de la empresa va solo en su propio comprobante, así ningún monto se cuenta dos veces.
 // El INCES del mes (Parafiscales → INCES → % patronal, normalmente 2%) es la provisión mensual del aporte trimestral: se calcula sobre el salario normal del mes (asignaciones sin Utilidades ni Bono vacacional), la misma base de «INCES Trimestral»; los 3 meses del trimestre suman ese aporte.
+// El INCES que se descuenta al trabajador en un pago de Utilidades (0,5 % sobre las utilidades) va en el comprobante de ese tipo de nómina, contra el mismo «INCES por pagar»; no se mezcla con la provisión de la empresa.
 // Los comprobantes no pasan solos a la contabilidad: se guardan en «Cierre de Mes» (colección rrhh_cierres_mes, un documento por mes) y se pueden imprimir o bajar a Excel.
 const RH_CIERRE_CATEGORIAS = [
   { id:'nomina', label:'Nóminas', pref:'NOM', icono:'💰' },
@@ -2696,11 +2743,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // queda anotado en el Historial de Aumentos de cada ficha. Los pagos ya guardados no cambian.
   const [sincFichasMarca,setSincFichasMarca]=useState({}); // id de ficha → true si el usuario la marcó
   const [busySinc,setBusySinc]=useState(false);
-  const igualarFichasAlTabulador = async (lista) => {
+  const igualarFichasAlTabulador = async (lista, op) => {
+    const o = op || {};
     const items = (lista||[]).filter(d=>d && d.id && d.salarioTabulador>0);
-    if(!items.length || busySinc) return;
+    if(!items.length || busySinc) return 0;
     const filas = items.slice(0,12).map(d=>`• ${d.nombre}: $${formatNum(d.salarioFicha)} → $${formatNum(d.salarioTabulador)}`).join('\n') + (items.length>12 ? `\n• … y ${items.length-12} más` : '');
-    if(!window.confirm(`¿Igualar al Tabulador el salario de ${items.length} ficha(s)?\n\n${filas}\n\nQueda anotado en el Historial de Aumentos de cada ficha. Los pagos ya guardados no cambian.`)) return;
+    if(!window.confirm(`¿Igualar al Tabulador el salario de ${items.length} ficha(s)?\n\n${filas}\n\nQueda anotado en el Historial de Aumentos de cada ficha. Los pagos ya guardados no cambian.${o.nota ? '\n\n'+o.nota : ''}`)) return 0;
     setBusySinc(true);
     const fallos = [];
     let hechos = 0;
@@ -2715,7 +2763,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     }
     setSincFichasMarca({});
     setBusySinc(false);
-    alert(fallos.length ? `Se igualaron ${hechos} de ${items.length} ficha(s). No se pudo con:\n${fallos.join('\n')}` : `Listo: ${hechos} ficha(s) igualada(s) al Tabulador.`);
+    if(fallos.length || !o.sinAviso) alert(fallos.length ? `Se igualaron ${hechos} de ${items.length} ficha(s). No se pudo con:\n${fallos.join('\n')}` : `Listo: ${hechos} ficha(s) igualada(s) al Tabulador.`);
+    return hechos;
   };
   const eliminarCargoTab = async (c) => {
     if(!window.confirm(`¿Eliminar el cargo "${c.cargo}" del tabulador?`)) return;
@@ -3042,8 +3091,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   //   salario mínimo). Base = Salario Normal (todas las asignaciones incluidas que cuenten como
   //   salario normal — se excluyen Utilidades y Bono Vacacional).
   // - FAOV: % directo sobre el TOTAL de asignaciones (trabajador 1%, patronal 2%, según Parafiscales), sin fórmula de semanas ni tope.
-  // - INCES: NO se calcula aquí — el trabajador solo se descuenta sobre utilidades (aparte), y el
-  //   patronal es trimestral (pantalla propia).
+  // - INCES: el trabajador solo se descuenta sobre utilidades: mkInces (solo se usa en pagos de Utilidades o de un tipo que lista el concepto INCES: % «Trabajador (solo utilidades)» de Parafiscales
+  //   sobre las utilidades del pago, ver rhIncesUtilidades). El patronal es trimestral (pantalla propia) y mensual en «Cierre de Mes».
   // Devuelve, para cada una, el monto AL TRABAJADOR y el APORTE PATRONAL por separado.
   const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina, mes, quincena) => {
     const incluidas = asignaciones.filter(a=>a.incluida);
@@ -3086,7 +3135,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const crudoPatronalUSD = totalAsig*cfg.pctPatronal/100;
       return {concepto:'FAOV', montoUSD:parseFloat(crudoUSD.toFixed(2)), montoPatronalUSD:parseFloat(crudoPatronalUSD.toFixed(2)), montoBs:parseFloat((crudoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((crudoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
     };
-    return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov};
+    // INCES del trabajador: sin aporte patronal aquí (el de la empresa es trimestral y mensual en el cierre)
+    const mkInces = (cuenta, codigo) => {
+      const cfg = configParafiscal.inces || {};
+      const r = rhIncesUtilidades(incluidas, tasa, cfg.pctTrabajadorUtilidades);
+      return {concepto:'INCES', ...(codigo ? {codigo} : {}), montoUSD:r.montoUSD, montoPatronalUSD:0, montoBs:r.montoBs, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'INCES', esLegal:true, claveLegal:'inces'};
+    };
+    return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov, mkInces};
   };
 
   const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
@@ -3115,14 +3170,18 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   // Arma las 3 deducciones legales (IVSS, RPE, FAOV) ya con incluida:true — se usa al abrir un
   // trabajador, y también desde el botón "Recalcular" si cambia el Sueldo después.
+  // En un pago de Utilidades (o de un tipo que lista el concepto INCES) agrega el INCES del trabajador: % de Parafiscales sobre las utilidades; con la cuenta que el tipo le asignó, si le asignó una.
   const recalcularDeduccionesLegales = (asignaciones, centroCostoId) => {
     const tasa = Number(nominaActiva?.tasa||0);
     const conceptosActivos = conceptos.filter(c=>c.activo!==false && c.tipo==='D');
     const cIVSSc = conceptosActivos.find(conceptoEsIVSS), cRPEc = conceptosActivos.find(conceptoEsRPE), cFAOVc = conceptosActivos.find(conceptoEsFAOV);
     const aCuenta = (c) => { const cu=c?cuentaDeConcepto(c,centroCostoId):null; return {codigoCuenta:cu?.codigo||'', nombreCuenta:cu?.nombre||''}; };
-    const {hayBase, mkSemanal, mkFaov} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
-    if(!hayBase) return [];
-    return [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true}));
+    const {hayBase, mkSemanal, mkFaov, mkInces} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
+    const base = hayBase ? [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true})) : [];
+    const inc = rhIncesDelPago(nominaActiva, nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null, conceptos);
+    if(!inc.auto) return base;
+    const cuentaInces = inc.cuenta ? {codigoCuenta:inc.cuenta.codigo, nombreCuenta:inc.cuenta.nombre} : aCuenta(inc.concepto);
+    return [...base, {...mkInces(cuentaInces, inc.concepto ? inc.concepto.codigo : ''), ...(inc.cuenta ? {cuentaDeTipo:true} : {}), incluida:inc.incluida}];
   };
   const toggleDeduccionLegal = (idx) => setCargarTrabModal(m=>({...m, deduccionesLegales:m.deduccionesLegales.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
   const actualizarMontoDeduccionLegal = (idx, montoBsInput) => {
@@ -3137,7 +3196,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const recalcularLegalesAhora = () => setCargarTrabModal(m=>m?{...m, deduccionesLegales:recalcularDeduccionesLegales(m.asignaciones, m.trabajador.centroCostoId)}:m);
   // IVSS/RPE/FAOV siguen a las asignaciones: cada vez que cambia una asignación se recalculan con lo que hay en pantalla en ese momento
   // (la fila quitada sigue quitada y la editada a mano conserva su monto — ver rhLegalesAlDia). "Recalcular legales" las reinicia a mano.
-  const conLegalesAlDia = (m, asignaciones) => ({...m, asignaciones, deduccionesLegales:rhLegalesAlDia(m.deduccionesLegales, recalcularDeduccionesLegales(asignaciones, m.trabajador.centroCostoId))});
+  // El INCES del trabajador (pagos de Utilidades) se pone al día aparte: así IVSS/RPE/FAOV siguen igual que siempre (sin Días Trabajados se dejan como están).
+  const conLegalesAlDia = (m, asignaciones) => {
+    const frescas = recalcularDeduccionesLegales(asignaciones, m.trabajador.centroCostoId);
+    const previas = m.deduccionesLegales||[];
+    const esInces = (d) => d.claveLegal==='inces';
+    return {...m, asignaciones, deduccionesLegales:[...rhLegalesAlDia(previas.filter(d=>!esInces(d)), frescas.filter(d=>!esInces(d))), ...rhLegalesAlDia(previas.filter(esInces), frescas.filter(esInces))]};
+  };
   const actualizarNovedadValor = (token, valor) => setCargarTrabModal(m=>m?{...m, novedadesValores:{...m.novedadesValores, [token]:valor}}:m);
   // Corre el motor de fórmulas (el mismo de "Probar un Trabajador") con los valores capturados en el
   // panel de Novedades, y sincroniza el resultado con las filas de asignaciones/deducciones de
@@ -3198,10 +3263,22 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // Predeterminados: tomados del catálogo real de Conceptos (Recursos Humanos → Conceptos), el
     // mismo con el que se arma la nómina — no una lista aparte.
     const conceptosActivos = conceptos.filter(c=>c.activo!==false);
+    // Tipo de nómina del pago (Configuración → Tipos de nómina): si solo carga ciertos conceptos, solo esos entran ya incluidos al abrir al trabajador (sin Días Trabajados ni predeterminados;
+    // lo demás sigue en «Buscar concepto para agregar»). Pago sin tipo, tipo «como siempre» o nombre sin regla: todo igual que antes. Un trabajador ya guardado conserva sus filas guardadas.
+    const tipoDelPago = nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null;
+    const cargaTipo = tipoDelPago ? rhCargaDeTipo(tipoDelPago) : null;
+    // Lo que el usuario elige en el tipo se busca entre las asignaciones, vacaciones y prestaciones y también entre las deducciones; las reglas automáticas por nombre, solo entre las primeras
+    const cargaResuelta = (cargaTipo && cargaTipo.solo) ? rhResolverCargaConceptos(conceptosActivos.filter(c=>['A','V','L'].includes(c.tipo) || (cargaTipo.origen==='tipo' && c.tipo==='D')), cargaTipo.conceptos) : null;
+    // Con qué lado y con qué cuenta carga el tipo cada concepto de su lista: 'A' (asignación, suma al pago) o 'D' (deducción, se resta); la cuenta que el usuario le asignó en el tipo manda sobre la del concepto en el centro de costo del trabajador
+    const itemCarga = (c) => cargaResuelta ? cargaResuelta.encontrados.find(e=>e.concepto===c) : null;
+    const ladoCarga = (c) => { const it = itemCarga(c); return it ? it.lado : ''; };
+    const cuentaCarga = (c) => { const it = itemCarga(c); return (it && it.cuenta) || cuentaDeConcepto(c, trabajador.centroCostoId); };
+    // INCES del trabajador: en un pago de Utilidades (o de un tipo que lista el concepto INCES) sale de una fila calculada (Parafiscales → INCES → % trabajador), no del concepto escrito a mano
+    const incesPago = rhIncesDelPago(nominaActiva, tipoDelPago, conceptos);
     // Disponibles para "+Agregar" a mano: Asignación, Vacaciones y Prestaciones (son montos que se le
     // pagan al trabajador). Patronal y Resultado quedan fuera — son costo de la empresa o totales
-    // calculados, no líneas que se agreguen sueltas a un recibo.
-    const asignacionesCfg = conceptosActivos.filter(c=>['A','V','L'].includes(c.tipo));
+    // calculados, no líneas que se agreguen sueltas a un recibo. Lo que el tipo carga como deducción sale en las deducciones (y al revés).
+    const asignacionesCfg = conceptosActivos.filter(c=>(['A','V','L'].includes(c.tipo) && ladoCarga(c)!=='D') || (c.tipo==='D' && ladoCarga(c)==='A'));
     // HCM y Bolsa de alimentos se calculan solos (se configuran en Configuración → HCM / Bolsa de alimentos) para quien los tiene marcados en la ficha:
     // su concepto no sale como fila manual para no duplicarlo. Lo guardado a mano antes se conserva (benConstruirLineas).
     // Tampoco sale como fila manual el concepto de una línea automática que ya está guardada en este pago.
@@ -3212,7 +3289,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       (_confBen.bolsa.activo!==false && (parseInt(trabajador.bolsasAlimentos,10)||0)>0) ? (_confBen.bolsa.codigoConcepto||'22000') : null,
       ...((_detBenGuardado?.deducciones||[]).filter(d=>d.esBeneficio).map(d=>d.codigo)),
     ].filter(Boolean);
-    const deduccionesCfgManual = conceptosActivos.filter(c=>c.tipo==='D' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c) && !codigosAutoBen.includes(c.codigo));
+    // Deducciones a mano: las de tipo D (menos IVSS, RPE y FAOV, que se calculan solos, y HCM / Bolsa automáticos) y las que el tipo carga como deducción (aunque sean de otro tipo: ahí el monto se escribe a mano).
+    // El INCES sale de su fila calculada cuando el pago lo calcula solo.
+    const deduccionesCfgManual = conceptosActivos.filter(c=>{
+      if(incesPago.auto && rhEsConceptoInces(c)) return false;
+      if(codigosAutoBen.includes(c.codigo)) return false;
+      const lado = ladoCarga(c);
+      if(lado==='D') return true;
+      return c.tipo==='D' && lado!=='A' && !conceptoEsIVSS(c) && !conceptoEsRPE(c) && !conceptoEsFAOV(c);
+    });
     // Si el trabajador ya tiene un detalle guardado en esta nómina (lo estamos re-abriendo, p.ej. con
     // Anterior/Siguiente), recargamos sus montos ya guardados en vez de empezar de cero.
     const detalleExistente = nominaActiva ? nominaDetalles.find(d=>d.nominaId===nominaActiva.id && d.trabajadorId===trabajador.id) : null;
@@ -3221,23 +3306,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // catálogo de Conceptos — no entre los días reales de la quincena (14/15/16 según el mes).
     const tasaDiariaDef = parseFloat((Number(trabajador.salarioBase||0)/30).toFixed(4));
     const cantidadDiasDef = diasTrabajadosQuincena(trabajador, nominaActiva);
-    // Tipo de nómina del pago (Configuración → Tipos de nómina): si solo carga ciertos conceptos, solo esos entran ya incluidos al abrir al trabajador (sin Días Trabajados ni predeterminados;
-    // lo demás sigue en «Buscar concepto para agregar»). Pago sin tipo, tipo «como siempre» o nombre sin regla: todo igual que antes. Un trabajador ya guardado conserva sus filas guardadas.
-    const tipoDelPago = nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null;
-    const cargaTipo = tipoDelPago ? rhCargaDeTipo(tipoDelPago) : null;
-    const cargaResuelta = (cargaTipo && cargaTipo.solo) ? rhResolverCargaConceptos(asignacionesCfg, cargaTipo.conceptos) : null;
     const avisosCarga = cargaResuelta ? cargaResuelta.faltan.map(f=>`El concepto ${f} de este tipo de nómina no está activo en Conceptos (o no existe): no se pudo cargar.`) : [];
     // Cargo del Tabulador de la escala del trabajador (también si el nombre solo difiere en mayúsculas, tildes, signos o espacios) y aviso si el salario de su ficha no coincide con el del Tabulador:
-    // la nómina calcula el sueldo con el salario de la ficha; no se cambia nada solo, se iguala en Configuración → Tabulador. Un salario puesto por un aumento registrado no avisa.
+    // la nómina calcula el sueldo con el «Salario base» de la ficha y el beneficio social con el del Tabulador; no se cambia nada solo: el botón del aviso (o Configuración → Tabulador → «Igualar al Tabulador») deja la ficha con el salario del Tabulador. Un salario puesto por un aumento registrado no avisa.
     const cargoTabTrab = rhCargoTabuladorDe(tabuladorCargos, escalaDe(trabajador));
     const difSalarioFicha = rhDiferenciaSalarioFicha(trabajador, tabuladorCargos, escalaDe(trabajador));
-    if(difSalarioFicha && !difSalarioFicha.conAumento) avisosCarga.push(`El salario de la ficha de ${trabajador.nombre} ($${formatNum(difSalarioFicha.salarioFicha)}) es distinto al del Tabulador de «${difSalarioFicha.escala}» ($${formatNum(difSalarioFicha.salarioTabulador)}): el sueldo se calcula con el de la ficha. Para igualarlo: Configuración → Tabulador → «Igualar al Tabulador».`);
+    const difFicha = (difSalarioFicha && !difSalarioFicha.conAumento) ? difSalarioFicha : null;
+    if(difFicha) avisosCarga.push(`En la ficha de ${trabajador.nombre} el «Salario base» es $${formatNum(difFicha.salarioFicha)}, pero el Tabulador de «${difFicha.escala}» dice $${formatNum(difFicha.salarioTabulador)}. El sueldo se calcula con el de la ficha ($${formatNum(difFicha.salarioFicha)}); el beneficio social, con el del Tabulador ($${formatNum(difFicha.salarioTabulador)}).`);
     const tasaPago = Number(nominaActiva?.tasa||0);
     const asignacionesCat = asignacionesCfg.map(c=>{
       const esSueldo = conceptoEsSueldo(c);
       const tieneFormula = !esSueldo && esConceptoCalculable(c);
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
-      const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
+      const cuenta = cuentaCarga(c);
       const guardada = detalleExistente?.asignaciones?.find(a=>a.codigo===c.codigo);
       // «Monto del tabulador ÷ 30 × días» (Beneficio Complementario: Beneficio social del Tabulador, igual al Salario $ del cargo si el cargo no tiene otro; Bono por cargos y KPI: Bono por cargo del Tabulador; Bono de alimentación: Bono alim. ley;
       // Bono de transporte: Bono transporte; Beneficio alimentación complementaria: Bono compl. alim. — la fuente la dice el tipo de nómina, si no, el concepto):
@@ -3264,10 +3345,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const deduccionesManualCat = deduccionesCfgManual.map(c=>{
       const tieneFormula = esConceptoCalculable(c);
       const token = tieneFormula ? tokenPrincipalDe(c) : null;
-      const cuenta = cuentaDeConcepto(c, trabajador.centroCostoId);
+      const cuenta = cuentaCarga(c);
       const guardada = detalleExistente?.deducciones?.find(d=>d.codigo===c.codigo && !d.esLegal && !d.esBeneficio);
       if(guardada) return {concepto:c.nombre, codigo:c.codigo, incluida:true, montoUSD:guardada.montoUSD, montoBs:guardada.montoBs, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:guardada.cantidad};
-      return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?false:CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
+      return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?ladoCarga(c)==='D':CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
     // Igual para las deducciones manuales guardadas. No cuentan: las legales (IVSS/RPE/FAOV, aunque se hayan guardado sin marca), las de HCM/Bolsa (van por su propio camino) ni las que ya salen en la lista.
     const esDeLeyGuardada = (g) => { const c0 = {codigo:g.codigo, nombre:g.concepto}, cat = conceptosActivos.find(c=>c.codigo===g.codigo); return [conceptoEsIVSS, conceptoEsRPE, conceptoEsFAOV].some(es=>es(c0) || (cat && es(cat))); };
@@ -3286,8 +3367,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       if(legalesGuardadas && !guardada) return {...fresca, incluida:false}; // la había quitado
       return fresca; // recalculada sola, sin editar a mano
     });
+    // INCES del trabajador en un pago que ya estaba guardado sin él (de antes de este cálculo): queda sin marcar y se avisa; no se agrega solo a un recibo ya hecho
+    const incesCalc = deduccionesLegales.find(d=>d.claveLegal==='inces');
+    if(incesCalc && incesCalc.incluida===false && incesPago.incluida && legalesGuardadas && !(detalleExistente?.deducciones||[]).some(g=>!g.esBeneficio && rhEsConceptoInces({tipo:'D', codigo:g.codigo, nombre:g.concepto}))) avisosCarga.push(`El INCES de ${trabajador.nombre} (${String(configParafiscal.inces.pctTrabajadorUtilidades).replace('.',',')} % sobre las utilidades) no estaba en este pago guardado: queda sin marcar. Si debe descontarse, búscalo en «Buscar concepto para agregar».`);
     const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
-    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null, avisosCarga});
+    setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null, avisosCarga, difFicha});
+  };
+  // Botón del aviso de la pantalla de carga: deja la ficha de ESTE trabajador con el salario del Tabulador de su escala (misma confirmación y nota en el Historial de Aumentos que «Igualar al Tabulador»)
+  // y vuelve a calcular la pantalla con ese salario. Los pagos ya guardados no cambian; en las filas ya guardadas se usan «recalcular con el Tabulador» y «ficha: … · usar».
+  const igualarFichaDesdeCarga = async () => {
+    const m = cargarTrabModal; const d = m && m.difFicha; const t = m && m.trabajador;
+    if(!d || !t || !t.id || !(d.salarioTabulador>0)) return;
+    const hechos = await igualarFichasAlTabulador([{id:t.id, nombre:t.nombre, salarioFicha:d.salarioFicha, salarioTabulador:d.salarioTabulador}], {sinAviso:true, nota:'Esta pantalla se vuelve a calcular con ese salario (lo que no hayas guardado de este trabajador se pierde).'});
+    if(hechos>0) abrirCargarTrabajador({...t, salarioBase:d.salarioTabulador, historialAumentos:[...(Array.isArray(t.historialAumentos)?t.historialAumentos:[]), {fecha:getTodayDate(), salarioAnterior:d.salarioFicha, salarioNuevo:d.salarioTabulador, motivo:RH_MOTIVO_AJUSTE_TABULADOR}]});
   };
   const toggleAsignacion = (idx) => setCargarTrabModal(m=>conLegalesAlDia(m, m.asignaciones.map((a,i)=>i===idx?{...a,incluida:!a.incluida}:a)));
   const toggleDeduccionManual = (idx) => setCargarTrabModal(m=>({...m, deduccionesManual:m.deduccionesManual.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
@@ -3450,6 +3542,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
   // Cuenta del concepto de ley (IVSS, RPE o FAOV) para el centro de costo del trabajador: se usa si en Parafiscales no se eligió una cuenta de pasivo
   const cuentaConceptoLegalDe = (clave, centroCostoId) => {
+    if(clave==='inces') return null; // el INCES por pagar sale de Parafiscales o de la cuenta que ya trae la fila (aquí solo se conocen IVSS, RPE y FAOV)
     const esDeLey = clave==='ivss' ? conceptoEsIVSS : (clave==='rpe' ? conceptoEsRPE : conceptoEsFAOV);
     const c = conceptos.filter(x=>x.activo!==false && x.tipo==='D').find(esDeLey);
     const cu = c ? cuentaDeConcepto(c, centroCostoId) : null;
@@ -4678,26 +4771,33 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         {cfgSub==='tipos' && (()=>{
           const usadosPor = (t) => nominas.filter(n=>n.tipoNominaId===t.id).length;
           const editando = !!tipoForm.id;
-          // Conceptos que carga el tipo al ingresar un trabajador (solo asignaciones activas del catálogo de Conceptos)
-          const catalogoCarga = conceptos.filter(c=>c.activo!==false && ['A','V','L'].includes(c.tipo));
+          // Conceptos que carga el tipo al ingresar un trabajador: asignaciones, vacaciones y prestaciones activas del catálogo de Conceptos y también las deducciones (cada concepto se carga como asignación o como deducción, a elección);
+          // las reglas automáticas por nombre solo usan las primeras
+          const catalogoCargaAVL = conceptos.filter(c=>c.activo!==false && ['A','V','L'].includes(c.tipo));
+          const catalogoCarga = conceptos.filter(c=>c.activo!==false && ['A','V','L','D'].includes(c.tipo));
           const modoCarga = RH_CARGA_MODOS.includes(tipoForm.cargaModo) ? tipoForm.cargaModo : 'auto';
           const listaCarga = rhConceptosCargaLimpios(tipoForm.conceptosCarga);
           const mismoCodigo = (a,b) => String(a).trim().toUpperCase()===String(b).trim().toUpperCase();
           const conceptoDeCodigo = (cod) => catalogoCarga.find(c=>mismoCodigo(c.codigo,cod));
           const busqCarga = rhNormalizarNombre(tipoConceptoBusq);
-          const coincideCarga = tipoConceptoBusq.trim() ? catalogoCarga.filter(c=>!listaCarga.some(x=>mismoCodigo(x.codigo,c.codigo)) && (rhNormalizarNombre(c.nombre).includes(busqCarga) || String(c.codigo).toUpperCase().includes(tipoConceptoBusq.trim().toUpperCase()))).slice(0,8) : [];
+          const qCarga = tipoConceptoBusq.trim().toUpperCase();
+          const empiezaCarga = (c) => rhNormalizarNombre(c.nombre).startsWith(busqCarga) || String(c.codigo).toUpperCase().startsWith(qCarga);
+          const coincideCarga = tipoConceptoBusq.trim() ? catalogoCarga.filter(c=>!listaCarga.some(x=>mismoCodigo(x.codigo,c.codigo)) && (rhNormalizarNombre(c.nombre).includes(busqCarga) || String(c.codigo).toUpperCase().includes(qCarga))).sort((a,b)=>(empiezaCarga(a)?0:1)-(empiezaCarga(b)?0:1)).slice(0,8) : [];
           // Al pasar a «solo» sin nada elegido se parte de lo que el nombre del tipo ya sugiere (si tiene regla automática); después todo se puede cambiar
           const cambiarModoCarga = (modo) => setTipoForm(f=>{
             if(modo!=='solo' || (f.conceptosCarga||[]).length>0) return {...f, cargaModo:modo};
             const regla = rhReglaCargaPorNombre(f.nombre);
             if(!regla) return {...f, cargaModo:modo};
-            const r = rhResolverCargaConceptos(catalogoCarga, regla.conceptos);
+            const r = rhResolverCargaConceptos(catalogoCargaAVL, regla.conceptos);
             return {...f, cargaModo:modo, conceptosCarga:r.encontrados.map(e=>({codigo:e.concepto.codigo, montoTabulador:e.montoTabulador, ...(e.fuenteTabulador?{fuenteTabulador:e.fuenteTabulador}:{})})), aplicaHCM:regla.hcm===true, aplicaBolsa:false};
           });
           const agregarConceptoCarga = (c) => { setTipoForm(f=>({...f, conceptosCarga:rhConceptosCargaLimpios([...(f.conceptosCarga||[]), {codigo:c.codigo, montoTabulador:false}])})); setTipoConceptoBusq(''); };
           const quitarConceptoCarga = (cod) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).filter(x=>!mismoCodigo(x.codigo,cod))}));
           const alternarMontoTabulador = (cod) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).map(x=>mismoCodigo(x.codigo,cod)?{...x, montoTabulador:!x.montoTabulador}:x)}));
           const cambiarFuenteTabulador = (cod, fuente) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).map(x=>mismoCodigo(x.codigo,cod)?{...x, fuenteTabulador:fuente}:x)}));
+          // Lado con que se carga el concepto en este tipo (una deducción no lleva «Monto del tabulador ÷ 30 × días») y su cuenta contable (vacía = la del concepto en el centro de costo del trabajador)
+          const cambiarLadoCarga = (cod, lado) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).map(x=>mismoCodigo(x.codigo,cod)?{...x, lado, ...(lado==='D'?{montoTabulador:false}:{})}:x)}));
+          const asignarCuentaCarga = (cod, cu) => setTipoForm(f=>({...f, conceptosCarga:(f.conceptosCarga||[]).map(x=>{ if(!mismoCodigo(x.codigo,cod)) return x; const {codigoCuenta:_cc, nombreCuenta:_nc, ...resto} = x; return cu ? {...resto, codigoCuenta:cu.codigo, nombreCuenta:cu.nombre} : resto; })}));
           return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
@@ -4731,22 +4831,39 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 {modoCarga==='solo' && (
                   <div className="space-y-2">
                     <p className="text-[10px] text-gray-500">Solo estos conceptos entran ya incluidos al abrir al trabajador (sin Días Trabajados ni predeterminados); el resto sigue disponible en «Buscar concepto para agregar».</p>
+                    <p data-testid="tipo-carga-ayuda-lado" className="text-[10px] text-gray-500">Cada concepto se carga como <b>Asignación</b> (suma al pago) o como <b>Deducción</b> (se resta), y puedes asignarle su cuenta contable: Debe en las asignaciones, Haber en las deducciones. El <b>INCES</b> se calcula solo en los pagos de Utilidades (% «Trabajador (solo utilidades)» de Parafiscales sobre las utilidades).</p>
                     <div className="space-y-1.5" data-testid="tipo-carga-lista">
                       {listaCarga.map(x=>{
                         const c = conceptoDeCodigo(x.codigo);
+                        const lado = rhLadoCarga(x, c);
+                        const esIncesItem = lado==='D' && rhEsConceptoInces(c);
+                        // Un concepto de vacaciones / prestaciones que por su nombre es una deducción (BANAVIH, retención, póliza…) y está como asignación: se avisa (no se cambia solo; lo elige el usuario)
+                        const pareceDeduccion = !!c && c.tipo!=='D' && lado==='A' && /REGIMEN PRESTACIONAL|RETENCION|DEDUC|DESCUENTO|POLIZA|BANAVIH|IVSS|PARO FORZ|INCES/.test(rhNormalizarNombre(c.nombre));
                         return (
-                          <div key={x.codigo} className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg px-2.5 py-1.5">
+                          <div key={x.codigo} data-testid={'carga-item-'+x.codigo} className="bg-gray-50 rounded-lg px-2.5 py-1.5 space-y-1.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-[11px] font-bold text-gray-700"><span className="font-mono text-cyan-600 mr-1.5">{x.codigo}</span>{c ? c.nombre : <span className="text-amber-600">(no está activo en Conceptos)</span>}</span>
-                            <span className="flex items-center gap-2">
-                              <label className="flex items-center gap-1 text-[10px] font-bold text-gray-600 cursor-pointer" title="El monto = el monto mensual del Tabulador ÷ 30 × los días de «cant.» (por defecto, los días del período, como Días Trabajados); sigue siendo editable. Elige de dónde sale el monto mensual: el Salario $ del trabajador o uno de los bonos del Tabulador (si no eliges, por el concepto: 00011 → Bono alim. ley; 00026 → Bono transporte; RETR0 → Beneficio social; R0023 → Bono por cargo; los demás → Salario $). Solo para conceptos que se escriben en Bs."><input type="checkbox" checked={x.montoTabulador===true} onChange={()=>alternarMontoTabulador(x.codigo)}/> Monto del tabulador ÷ 30 × días</label>
-                              {x.montoTabulador===true && (
-                                <select data-testid="tipo-carga-fuente" value={rhFuenteTabuladorValida(x.fuenteTabulador)||rhFuenteTabuladorDeCodigo(x.codigo)} onChange={e=>cambiarFuenteTabulador(x.codigo,e.target.value)} title="De dónde sale el monto mensual: el Salario $ del trabajador o una columna del Tabulador" className="border border-gray-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-gray-600 bg-white outline-none focus:border-cyan-500">
-                                  <option value="salarioBase">Salario $</option>
-                                  {RH_BONOS_TABULADOR.map(b=>(<option key={b.campo} value={b.campo}>{b.col} $</option>))}
+                              <span className="flex items-center gap-2">
+                                <select data-testid="tipo-carga-lado" value={lado} onChange={e=>cambiarLadoCarga(x.codigo,e.target.value)} title="Asignación: suma al pago del trabajador. Deducción: se le resta." className={`border rounded-md px-1.5 py-0.5 text-[10px] font-black bg-white outline-none focus:border-cyan-500 ${lado==='D'?'border-red-200 text-red-600':'border-emerald-200 text-emerald-700'}`}>
+                                  <option value="A">Asignación</option>
+                                  <option value="D">Deducción</option>
                                 </select>
-                              )}
+                                {lado==='A' && (<label className="flex items-center gap-1 text-[10px] font-bold text-gray-600 cursor-pointer" title="El monto = el monto mensual del Tabulador ÷ 30 × los días de «cant.» (por defecto, los días del período, como Días Trabajados); sigue siendo editable. Elige de dónde sale el monto mensual: el Salario $ del trabajador o uno de los bonos del Tabulador (si no eliges, por el concepto: 00011 → Bono alim. ley; 00026 → Bono transporte; RETR0 → Beneficio social; R0023 → Bono por cargo; los demás → Salario $). Solo para conceptos que se escriben en Bs."><input type="checkbox" checked={x.montoTabulador===true} onChange={()=>alternarMontoTabulador(x.codigo)}/> Monto del tabulador ÷ 30 × días</label>)}
+                                {lado==='A' && x.montoTabulador===true && (
+                                  <select data-testid="tipo-carga-fuente" value={rhFuenteTabuladorValida(x.fuenteTabulador)||rhFuenteTabuladorDeCodigo(x.codigo)} onChange={e=>cambiarFuenteTabulador(x.codigo,e.target.value)} title="De dónde sale el monto mensual: el Salario $ del trabajador o una columna del Tabulador" className="border border-gray-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-gray-600 bg-white outline-none focus:border-cyan-500">
+                                    <option value="salarioBase">Salario $</option>
+                                    {RH_BONOS_TABULADOR.map(b=>(<option key={b.campo} value={b.campo}>{b.col} $</option>))}
+                                  </select>
+                                )}
                               <button onClick={()=>quitarConceptoCarga(x.codigo)} title="Quitar" className="text-red-400 hover:text-red-600"><X size={13}/></button>
-                            </span>
+                              </span>
+                            </div>
+                            {esIncesItem && <p data-testid="carga-inces-nota" className="text-[10px] text-gray-500">Se calcula solo: el «% Trabajador (solo utilidades)» de Parafiscales → INCES sobre las utilidades del pago ({String(configParafiscal.inces.pctTrabajadorUtilidades).replace('.',',')} %).</p>}
+                            {pareceDeduccion && <p data-testid="carga-parece-deduccion" className="text-[10px] font-black text-amber-600">⚠ Por su nombre parece una deducción y está como asignación (suma al pago): si debe restarse, elige «Deducción».</p>}
+                            <div>
+                              {selectorCuenta('tipoCuenta:'+x.codigo, lado==='D' ? 'Cuenta de deducción (Haber)' : 'Cuenta de asignación (Debe)', x.codigoCuenta||'', x.nombreCuenta||'', (cu)=>asignarCuentaCarga(x.codigo,cu), ()=>asignarCuentaCarga(x.codigo,null))}
+                              {!x.codigoCuenta && <p data-testid="carga-cuenta-ayuda" className="text-[9px] text-gray-400 mt-1">{esIncesItem ? 'Sin cuenta aquí: se usa la cuenta de pasivo de Parafiscales → INCES.' : 'Sin cuenta aquí: se usa la cuenta del concepto en el centro de costo del trabajador (Conceptos).'}</p>}
+                            </div>
                           </div>
                         );
                       })}
@@ -4758,7 +4875,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     </div>
                     {tipoConceptoBusq.trim() && (
                       <div className="border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm" data-testid="tipo-carga-resultados">
-                        {coincideCarga.map(c=>(<div key={c.id||c.codigo} onClick={()=>agregarConceptoCarga(c)} className="px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px] font-bold text-emerald-700 flex items-center gap-1.5"><Plus size={11}/><span className="font-mono">{c.codigo}</span> {c.nombre}</div>))}
+                        {coincideCarga.map(c=>(<div key={c.id||c.codigo} onClick={()=>agregarConceptoCarga(c)} className={`px-3 py-1.5 hover:bg-cyan-50 cursor-pointer border-b border-gray-50 last:border-0 text-[11px] font-bold flex items-center gap-1.5 ${c.tipo==='D'?'text-red-600':'text-emerald-700'}`}><Plus size={11}/><span className="font-mono">{c.codigo}</span> {c.nombre}<span className="ml-auto text-[9px] font-black uppercase text-gray-400">{TIPOS_CONCEPTO[c.tipo] ? TIPOS_CONCEPTO[c.tipo].label : c.tipo}</span></div>))}
                         {coincideCarga.length===0 && <div className="px-3 py-2 text-center text-[10px] text-gray-400 font-bold">Sin coincidencias</div>}
                       </div>
                     )}
@@ -5218,7 +5335,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               return (
               <>
                 <p className="font-black text-gray-800 mb-1">INCES</p>
-                <p className="text-[10px] text-gray-400 mb-4">Trabajador: solo 0,5% sobre utilidades (no mensual). Patrono: 2% trimestral sobre salario normal total — ve a "Registro de Nómina → INCES Trimestral" para ese cálculo.</p>
+                <p className="text-[10px] text-gray-400 mb-4">Trabajador: solo 0,5% sobre utilidades (no mensual): el pago de Utilidades (o el de un tipo de nómina que lleve el concepto INCES) lo descuenta solo, con este %, sobre lo que se paga como utilidades. Patrono: 2% trimestral sobre salario normal total — ve a "Registro de Nómina → INCES Trimestral" para ese cálculo.</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador (solo utilidades)</label><input type="number" step="0.1" value={cfg.pctTrabajadorUtilidades} onChange={e=>set({pctTrabajadorUtilidades:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal (trimestral)</label><input type="number" step="0.1" value={cfg.pctPatronalTrimestral} onChange={e=>set({pctPatronalTrimestral:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
@@ -6175,6 +6292,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
             {(cargarTrabModal.avisosCarga||[]).length>0 && (
               <div data-testid="avisos-carga" className="bg-amber-50 border-2 border-amber-200 rounded-xl px-3 py-2 space-y-0.5">
                 {cargarTrabModal.avisosCarga.map((m,i)=><p key={i} className="text-[10px] font-black text-amber-700">⚠ {m}</p>)}
+                {cargarTrabModal.difFicha && (puedeSalariosFicha
+                  ? <button type="button" data-testid="usar-tabulador-ficha" disabled={busySinc} onClick={igualarFichaDesdeCarga} className="text-[10px] font-black text-amber-800 underline hover:text-amber-950 disabled:opacity-50">Usar ${formatNum(cargarTrabModal.difFicha.salarioTabulador)} en la ficha de {cargarTrabModal.trabajador.nombre}</button>
+                  : <p className="text-[10px] font-bold text-gray-500">Tu usuario no tiene permiso para cambiar fichas (Trabajadores).</p>)}
               </div>
             )}
 
@@ -6242,7 +6362,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   })}
                   {legalesIncluidas.map(d=>(
                     <tr key={'leg'+d._idx} className="border-t border-gray-100 bg-green-50/50">
-                      <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span></td>
+                      <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span>
+                        {d.claveLegal==='inces' && (()=>{ const r = rhIncesUtilidades(asigIncluidas, tasa, configParafiscal.inces.pctTrabajadorUtilidades); return <div data-testid="inces-detalle" className="text-[9px] font-normal text-green-600">{String(r.pct).replace('.',',')} % sobre {r.usaTodas?'las asignaciones del pago':'las utilidades'}: Bs.{formatNum(r.baseBs)} (${formatNum(r.baseUSD)})</div>; })()}
+                      </td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
                         <div className="flex items-center justify-end gap-1"><span className="text-gray-400 text-[10px]">Bs.</span><input type="text" inputMode="decimal" value={d.montoBsTexto??String(d.montoBs||0).replace('.',',')} onChange={e=>actualizarMontoDeduccionLegal(d._idx,e.target.value)} className="w-24 text-right border-2 border-gray-200 rounded-lg px-2 py-1 text-xs font-bold outline-none focus:border-red-400"/></div>
@@ -6316,7 +6438,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400"/>
                       <input value={agregarConceptoBusq} onChange={e=>setAgregarConceptoBusq(e.target.value)} placeholder={`Buscar concepto para agregar... (${todosDisponibles.length} disponibles)`} className="w-full pl-8 pr-3 py-1.5 border-2 border-gray-200 rounded-lg text-xs font-bold outline-none focus:border-cyan-500"/>
                     </div>
-                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>{benTodos.length>0 && <button onClick={recalcularBeneficiosAhora} title="Vuelve a calcular HCM y Bolsa de alimentos desde cero según la ficha y la configuración" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex-shrink-0"><RefreshCw size={11}/>Recalcular HCM/Bolsa</button>}
+                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV (y el INCES en los pagos de Utilidades) desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>{benTodos.length>0 && <button onClick={recalcularBeneficiosAhora} title="Vuelve a calcular HCM y Bolsa de alimentos desde cero según la ficha y la configuración" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex-shrink-0"><RefreshCw size={11}/>Recalcular HCM/Bolsa</button>}
                   </div>
                   {agregarConceptoBusq.trim() && (
                     <div className="mt-1.5 border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm">
@@ -6768,7 +6890,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
                   ['Datos Personales',[['Cédula',t.cedula],['Sexo',t.sexo],['Nacimiento',contDd(t.fechaNacimiento)],['Edad',calcularEdad(t.fechaNacimiento)!==null?calcularEdad(t.fechaNacimiento)+' años':'—'],['Estado civil',t.estadoCivil],['Nivel educativo',t.nivelEducativo],['Nacionalidad',t.nacionalidad],['Tipo de sangre',t.tipoSangre],['Teléfono',t.telefono],['Correo',t.correo],['Dirección',t.direccion],['Contacto emergencia',t.contactoEmergenciaNombre?`${t.contactoEmergenciaNombre} · ${t.contactoEmergenciaTelefono||''}`:'—']]],
-                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Cargo',t.cargo],['Tabulador',escalaDe(t)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base','$'+formatNum(t.salarioBase)],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
+                  ['Datos Laborales',[['Centro de costo',nombreCentro(t.centroCostoId)],['Departamento',nombreDepto(t.departamentoId)],['Cargo',t.cargo],['Tabulador',escalaDe(t)],['Ingreso',contDd(t.fechaIngreso)],['Contrato',t.tipoContrato],...(t.tipoContrato==='Determinado'?[['Fin de contrato',contDd(t.fechaFinContrato)||'—'],['Días restantes',(()=>{const dr=diasRestantesContrato(t.fechaFinContrato);return dr===null?'—':dr<0?`Vencido (${Math.abs(dr)}d)`:dr===0?'Vence hoy':`${dr} día(s)`;})()]]:[]),['Turno',t.turno],['Salario base',<>${formatNum(t.salarioBase)}{(()=>{ const dif = rhDiferenciaSalarioFicha(t, tabuladorCargos, escalaDe(t)); return dif ? <span data-testid="ficha-ver-dif-tabulador" className="ml-1 text-[9px] font-black text-amber-600">(Tabulador: ${formatNum(dif.salarioTabulador)})</span> : null; })()}</>],['Forma de pago',t.formaPago],['Cuenta bancaria',t.cuentaBancaria],['Supervisor',t.supervisor]]],
                   ['Seguridad Social',[['IVSS',t.ivss],['RPE',t.rpe],['FAOV',t.faov],['RIF',t.rif]]],
                   [`Cargas Familiares (${(t.cargasFamiliares||[]).length})`,(t.cargasFamiliares||[]).map(cg=>{const ed=calcularEdad(cg.fechaNacimiento)??(cg.edad?Number(cg.edad):null);return [`${cg.parentesco}${ed!==null?' ('+ed+' años)':''}${cg.hcm===true?' · HCM':''}`,cg.nombre];})],
                   ['Salud y Seguridad',[['Alergias',t.alergias||'Ninguna reportada'],['Cert. médico ingreso',contDd(t.certificadoMedicoFecha)],['EPP asignado',t.eppAsignado],['Fecha entrega EPP',contDd(t.eppFechaEntrega)]]],
