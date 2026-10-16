@@ -1659,6 +1659,174 @@ const rhInformeFilas = (tipo, D, tasasTexto) => {
   return f;
 };
 
+// == RRHH - Parafiscales: relación de aportes de cada trabajador (IVSS · Paro Forzoso (RPE) · FAOV (BANAVIH) · INCES) ==
+// Parafiscales → «Reportes»: una ventana por parafiscal con cada trabajador, su aporte (lo que se le descontó), el aporte patronal (lo que paga la empresa) y el total, en $ y en Bs., filtrada por mes (o trimestre o año), período y tipo de nómina.
+// Todo sale de lo ya guardado en cada pago (rrhh_nominas + rrhh_nomina_detalles): las mismas cifras del recibo y del Cierre de Mes. El Bs. es el de cada recibo (con la tasa de su pago): no se vuelve a convertir con una tasa nueva.
+//   · IVSS, Paro Forzoso (RPE) y FAOV: las filas de ley del recibo (aporte del trabajador + aporte patronal). Un BANAVIH o un INCES escrito a mano en el recibo (de antes de que se calcularan solos) también cuenta, sin aporte patronal, y se marca «a mano».
+//   · INCES: el trabajador = lo descontado en los pagos de Utilidades; la empresa = la provisión del mes (% patronal de Parafiscales × salario normal de los recibos: todas las asignaciones menos Utilidades y Bono vacacional), la misma base del Cierre de Mes. El aporte de la empresa se paga por trimestre.
+// Los montos se suman tal como están guardados y se redondean a centavos por trabajador; los totales suman esos renglones ya redondeados, así la pantalla, el PDF y el Excel siempre cuadran.
+const RH_PF_LEYES = [
+  { id:'ivss', nombre:'Seguro Social Obligatorio (IVSS)', corto:'IVSS', campo:'ivss' },
+  { id:'rpe', nombre:'Paro Forzoso (RPE)', corto:'RPE', campo:'rpe' },
+  { id:'faov', nombre:'FAOV (BANAVIH)', corto:'FAOV', campo:'faov' },
+  { id:'inces', nombre:'INCES', corto:'INCES', campo:'' },
+];
+const RH_PF_TRIMESTRES = ['1er trimestre (Enero – Marzo)', '2do trimestre (Abril – Junio)', '3er trimestre (Julio – Septiembre)', '4to trimestre (Octubre – Diciembre)'];
+// ¿A qué parafiscal pertenece una deducción guardada en un recibo? 'ivss' | 'rpe' | 'faov' | 'inces' | '' (HCM, Bolsa y las demás deducciones no son parafiscales)
+const rhPfClaveFila = (x) => {
+  if (!x || x.esBeneficio === true || x.tipoBeneficio) return '';
+  const nombre = String(x.concepto || '');
+  if (x.esLegal === true || /^\s*(ivss|rpe|faov)\b/i.test(nombre)) {
+    if (x.claveLegal === 'inces' || /^\s*inces\b/i.test(nombre)) return 'inces';
+    return /^\s*ivss/i.test(nombre) ? 'ivss' : (/rpe|paro forzoso/i.test(nombre) ? 'rpe' : (/faov/i.test(nombre) ? 'faov' : ''));
+  }
+  const c = { tipo:'D', codigo:x.codigo, nombre:nombre };
+  return rhEsConceptoFaov(c) ? 'faov' : (rhEsConceptoInces(c) ? 'inces' : '');
+};
+// ¿Es un descuento escrito a mano (el BANAVIH o el INCES de un pago de Utilidades de antes de que se calcularan solos) y no la fila de ley calculada?
+const rhPfFilaAMano = (x) => !!x && x.esLegal !== true && !/^\s*(ivss|rpe|faov)\b/i.test(String(x.concepto || ''));
+const rhPfCero = () => ({ trabUSD:0, trabBs:0, patUSD:0, patBs:0, aMano:false, n:0 });
+// Lo de cada parafiscal en un recibo → { ivss, rpe, faov, inces }, cada uno { trabUSD, trabBs, patUSD, patBs, aMano, n } (sin redondear).
+//   Las filas de ley traen el aporte del trabajador y el patronal en $ y en Bs. (el Bs. de la fila; si no lo trae, $ × tasa). El INCES de la empresa no está en el recibo: es el % patronal sobre su salario normal (la misma base del Cierre de Mes).
+const rhPfMontosDetalle = (d, tasaPago, pctInces) => {
+  const tasa = benNum(d && d.tasa) > 0 ? benNum(d.tasa) : benNum(tasaPago);
+  const r = { ivss:rhPfCero(), rpe:rhPfCero(), faov:rhPfCero(), inces:rhPfCero() };
+  ((d && d.deducciones) || []).forEach(x => {
+    const k = rhPfClaveFila(x);
+    if (!k) return;
+    const m = r[k];
+    m.trabUSD += benNum(x.montoUSD); m.trabBs += rhBsFila(x, 'montoBs', 'montoUSD', tasa);
+    m.patUSD += benNum(x.montoPatronalUSD); m.patBs += rhBsFila(x, 'montoPatronalBs', 'montoPatronalUSD', tasa);
+    if (rhPfFilaAMano(x)) m.aMano = true;
+    m.n++;
+  });
+  const p = Math.min(100, Math.max(0, benNum(pctInces)));
+  if (p > 0) {
+    let usd = 0, bs = 0;
+    ((d && d.asignaciones) || []).filter(rhCierreEsSalarioNormal).forEach(a => { usd += benNum(a.montoUSD); bs += rhBsFila(a, 'montoBs', 'montoUSD', tasa); });
+    if (usd > 0 || bs > 0) { r.inces.patUSD += usd * p / 100; r.inces.patBs += bs * p / 100; r.inces.n++; }
+  }
+  return r;
+};
+// ¿El mes del pago ('2026-10') entra en el filtro? sel = 'TODOS' (todo el año) | '01'..'12' (un mes) | 'T1'..'T4' (un trimestre); anio = '2026' ('' = cualquiera)
+const rhPfMesEnFiltro = (mes, anio, sel) => {
+  const m = String(mes || '');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) return false;
+  if (anio && m.slice(0, 4) !== String(anio)) return false;
+  if (!sel || sel === 'TODOS') return true;
+  if (/^T[1-4]$/.test(sel)) return Math.ceil(parseInt(m.slice(5, 7), 10) / 3) === parseInt(sel.slice(1), 10);
+  return m.slice(5, 7) === sel;
+};
+// ¿El pago entra en el filtro? f = { anio, mes, q: 'AMBAS' | '1' | '2' | 'M', tipo: 'TODOS' | id del tipo | '__SIN__' (pagos anteriores, sin tipo) }
+const rhPfPagoEnFiltro = (n, f) => {
+  if (!n || !n.mes) return false;
+  const x = f || {};
+  if (!rhPfMesEnFiltro(n.mes, x.anio, x.mes)) return false;
+  const q = x.q || 'AMBAS';
+  if (q !== 'AMBAS' && !(q === 'M' ? n.quincena === 'Mensual' : String(n.quincena || '').includes(q))) return false;
+  const t = x.tipo || 'TODOS';
+  return t === 'TODOS' ? true : (t === '__SIN__' ? !n.tipoNominaId : n.tipoNominaId === t);
+};
+// Suma de renglones ({ trabUSD, trabBs, patUSD, patBs, totUSD, totBs }), redondeada a centavos al final
+const rhPfSumar = (lista) => {
+  const t = { trabUSD:0, trabBs:0, patUSD:0, patBs:0, totUSD:0, totBs:0 };
+  (lista || []).forEach(x => { Object.keys(t).forEach(k => { t[k] += Number(x && x[k]) || 0; }); });
+  Object.keys(t).forEach(k => { t[k] = benR2(t[k]); });
+  return t;
+};
+// Datos de los reportes. pagos = [{nomina, detalles}] · ctx = { centroDe(d) → {id, nombre}, fichaDe(d) → ficha del trabajador | null, pctInces }
+//   → { pagos:[{nomina, nRecibos}], nRecibos, personas, conAporte, abiertos, tot, leyes:{ ivss|rpe|faov|inces: { id, nombre, corto, campo, filas, centros, tot, nTrab, nManual } } }
+//   · filas: un renglón por trabajador y centro de costo (suma de todos sus recibos del filtro), por nombre; los que no tienen monto en ese parafiscal no salen
+//   · centros: lo mismo agrupado por centro de costo (por nombre; «sin centro de costo» al final), con su total
+const rhPfDatos = (pagos, ctx) => {
+  const c = ctx || {};
+  const idTrab = (d) => String((d && (d.trabajadorId || d.trabajadorCedula || d.id)) || '');
+  const pagosOk = (pagos || []).filter(p => p && p.nomina && (p.detalles || []).length > 0);
+  const mapas = {};
+  RH_PF_LEYES.forEach(l => { mapas[l.id] = new Map(); });
+  const enRecibos = new Set();
+  pagosOk.forEach(p => p.detalles.forEach(d => {
+    const trab = idTrab(d);
+    enRecibos.add(trab);
+    const m = rhPfMontosDetalle(d, p.nomina.tasa, c.pctInces);
+    const ce = (c.centroDe && c.centroDe(d)) || { id:'', nombre:RH_SIN_CENTRO };
+    const ficha = c.fichaDe ? c.fichaDe(d) : null;
+    RH_PF_LEYES.forEach(l => {
+      const x = m[l.id];
+      if (!(x.n > 0)) return;
+      if (Math.abs(x.trabUSD) < 1e-9 && Math.abs(x.trabBs) < 1e-9 && Math.abs(x.patUSD) < 1e-9 && Math.abs(x.patBs) < 1e-9) return; // fila de ley en cero: no sale (los centavos de la provisión del INCES sí se acumulan)
+      const k = (ce.id || '') + '|' + trab;
+      const mp = mapas[l.id];
+      if (!mp.has(k)) mp.set(k, { trab, centroId:ce.id || '', centroNombre:ce.id ? ce.nombre : RH_SIN_CENTRO, cedula:'', nombre:'', nro:'', pagos:0, trabUSD:0, trabBs:0, patUSD:0, patBs:0, aMano:false });
+      const r = mp.get(k);
+      r.cedula = r.cedula || String((d && d.trabajadorCedula) || (ficha && ficha.cedula) || '');
+      r.nombre = r.nombre || String((d && d.trabajadorNombre) || (ficha && ficha.nombre) || '');
+      r.nro = r.nro || ((l.campo && ficha) ? String(ficha[l.campo] || '').trim() : '');
+      r.pagos++;
+      r.trabUSD += x.trabUSD; r.trabBs += x.trabBs; r.patUSD += x.patUSD; r.patBs += x.patBs;
+      if (x.aMano) r.aMano = true;
+    });
+  }));
+  const leyes = {}, conAporte = new Set();
+  RH_PF_LEYES.forEach(l => {
+    const filas = [...mapas[l.id].values()].map(r => {
+      const trabUSD = benR2(r.trabUSD), trabBs = benR2(r.trabBs), patUSD = benR2(r.patUSD), patBs = benR2(r.patBs);
+      return { ...r, trabUSD, trabBs, patUSD, patBs, totUSD:benR2(trabUSD + patUSD), totBs:benR2(trabBs + patBs) };
+    }).filter(r => r.trabUSD !== 0 || r.trabBs !== 0 || r.patUSD !== 0 || r.patBs !== 0)
+      .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es') || String(a.cedula).localeCompare(String(b.cedula), 'es'));
+    const porCentro = new Map();
+    filas.forEach(r => { conAporte.add(r.trab); if (!porCentro.has(r.centroId)) porCentro.set(r.centroId, { id:r.centroId, nombre:r.centroNombre, filas:[] }); porCentro.get(r.centroId).filas.push(r); });
+    const centros = [...porCentro.values()].map(ce => ({ ...ce, tot:rhPfSumar(ce.filas) })).sort(rhOrdenCentro);
+    leyes[l.id] = { id:l.id, nombre:l.nombre, corto:l.corto, campo:l.campo, filas, centros, tot:rhPfSumar(filas), nTrab:new Set(filas.map(r => r.trab)).size, nManual:filas.filter(r => r.aMano).length };
+  });
+  return { pagos:pagosOk.map(p => ({ nomina:p.nomina, nRecibos:p.detalles.length })), nRecibos:pagosOk.reduce((s, p) => s + p.detalles.length, 0), personas:enRecibos.size, conAporte:conAporte.size,
+    abiertos:pagosOk.filter(p => p.nomina.estado === 'abierta').length, tot:rhPfSumar(RH_PF_LEYES.map(l => leyes[l.id].tot)), leyes };
+};
+// Filas neutras de la relación de un parafiscal (las mismas para la pantalla, el PDF y el Excel):
+//   barra {texto, der} · fila {n, cedula, nombre, nro, centro, pagos, aMano, t} · sub {texto, t} (total de un centro de costo) · tot {texto, t}
+// `t` = { trabUSD, trabBs, patUSD, patBs, totUSD, totBs }. agrupar = por centro de costo (con su total); si no, una sola lista por nombre.
+const rhPfFilas = (L, agrupar) => {
+  const f = [];
+  if (!L || L.filas.length === 0) return f;
+  const nTxt = (n) => `${n} trabajador(es)`;
+  let i = 0;
+  const fila = (r) => f.push({ k:'fila', n:++i, cedula:r.cedula, nombre:r.nombre, nro:r.nro, centro:r.centroNombre, pagos:r.pagos, aMano:r.aMano, t:{ trabUSD:r.trabUSD, trabBs:r.trabBs, patUSD:r.patUSD, patBs:r.patBs, totUSD:r.totUSD, totBs:r.totBs } });
+  if (agrupar) {
+    L.centros.forEach(ce => {
+      f.push({ k:'barra', texto:`CENTRO DE COSTO · ${ce.nombre}`, der:nTxt(ce.filas.length) });
+      ce.filas.forEach(fila);
+      f.push({ k:'sub', texto:`TOTAL ${ce.nombre} · ${nTxt(ce.filas.length)}`, t:ce.tot });
+    });
+  } else {
+    L.filas.forEach(fila);
+  }
+  f.push({ k:'tot', texto:`TOTAL ${L.corto} · ${nTxt(L.nTrab)}`, t:L.tot });
+  return f;
+};
+// Resumen: una fila por parafiscal con sus trabajadores y totales
+const rhPfResumenFilas = (D) => RH_PF_LEYES.map(l => ({ id:l.id, nombre:l.nombre, corto:l.corto, nTrab:D.leyes[l.id].nTrab, t:D.leyes[l.id].tot }));
+// Texto del período del reporte: «Octubre 2026», «4to trimestre (Octubre – Diciembre) 2026» o «Año 2026», con el período y el tipo de nómina si se filtraron. f = { anio, mes, q, tipoTexto }
+const rhPfTextoPeriodo = (f) => {
+  const x = f || {};
+  const a = String(x.anio || ''), s = x.mes || 'TODOS';
+  const base = s === 'TODOS' ? `Año ${a}` : (/^T[1-4]$/.test(s) ? `${RH_PF_TRIMESTRES[parseInt(s.slice(1), 10) - 1]} ${a}` : `${RH_MESES[parseInt(s, 10) - 1] || s} ${a}`);
+  const q = x.q || 'AMBAS';
+  return [base, q === 'AMBAS' ? '' : (q === 'M' ? 'Mensual' : 'Quincena ' + q), x.tipoTexto ? 'Tipo: ' + x.tipoTexto : ''].filter(Boolean).join(' · ');
+};
+// Parte del nombre del archivo: «2026-10», «2026-T4» o «2026», con «_Q1» / «_Q2» / «_Mensual» si se filtró el período
+const rhPfEtiquetaArchivo = (f) => {
+  const x = f || {};
+  const s = x.mes || 'TODOS', a = String(x.anio || 'sin_anio');
+  const q = x.q || 'AMBAS';
+  return a + (s === 'TODOS' ? '' : '-' + s) + (q === 'AMBAS' ? '' : (q === 'M' ? '_Mensual' : '_Q' + q));
+};
+// Nota al pie de cada parafiscal
+const rhPfNotaLey = (id, pctInces) => {
+  if (id === 'inces') return `Aporte del trabajador: lo descontado en los pagos de Utilidades. Aporte patronal: la provisión de cada mes (${String(benNum(pctInces)).replace('.', ',')} % del salario normal de los recibos —todas las asignaciones menos Utilidades y Bono vacacional—), la misma base del Cierre de Mes; el INCES de la empresa se paga por trimestre (elige el trimestre en «Mes»). Se redondea por trabajador, así que puede diferir en centavos del Cierre de Mes.`;
+  const nombre = id === 'ivss' ? 'IVSS' : (id === 'rpe' ? 'Paro Forzoso (RPE)' : 'FAOV (BANAVIH)');
+  return `Aporte del trabajador y aporte patronal de ${nombre} tal como quedaron guardados en cada recibo de pago (el Bs. es el de cada pago, con su propia tasa).`;
+};
+
 // == RRHH - Cierre de mes: los asientos contables de la nómina del mes, cada tema por separado ==
 // «Cierre de Mes» (RRHH) arma, con lo que ya está guardado en los pagos del mes (rrhh_nominas + rrhh_nomina_detalles), los comprobantes de cierre de la nómina. Cada uno cuadra por sí solo (Debe = Haber):
 //   · Nóminas            → un comprobante por tipo de nómina (Nómina, Utilidades…): Debe lo que se asigna (la cuenta de cada concepto), Haber lo que se retiene al trabajador (IVSS, RPE, FAOV, su parte de HCM y de la Bolsa, otras deducciones) y el neto por pagar (la cuenta de pasivo del tipo).
@@ -1997,7 +2165,14 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const primero=Object.keys(mapa).find(k=>perms[mapa[k]]);
     if(primero) setRhTab(primero);
   },[appUser,rhTab]);
-  const [parafiscalSel,setParafiscalSel]=useState('ivss'); // 'ivss' | 'rpe' | 'faov' | 'inces'
+  const [parafiscalSel,setParafiscalSel]=useState('ivss'); // 'ivss' | 'rpe' | 'faov' | 'inces' | 'resumen' (solo en «Reportes»)
+  const [parafiscalVista,setParafiscalVista]=useState('config'); // 'config' (porcentajes y cuentas) | 'reportes' (la relación de aportes de cada parafiscal)
+  const [pfAnio,setPfAnio]=useState(String(new Date().getFullYear())); // filtros de «Reportes»
+  const [pfMes,setPfMes]=useState(String(new Date().getMonth()+1).padStart(2,'0')); // '01'..'12' (un mes) | 'T1'..'T4' (un trimestre) | 'TODOS' (todo el año)
+  const [pfQ,setPfQ]=useState('AMBAS'); // 'AMBAS' | '1' | '2' | 'M'
+  const [pfTipo,setPfTipo]=useState('TODOS'); // 'TODOS' | id del tipo de nómina | '__SIN__'
+  const [pfAgrupar,setPfAgrupar]=useState(true); // la relación por centro de costo (con su total) o una sola lista
+  const [exportandoPf,setExportandoPf]=useState(false);
   const [busqCuentaParafiscal,setBusqCuentaParafiscal]=useState('');
   const [centros,setCentros]=useState([]);
   const [departamentos,setDepartamentos]=useState([]);
@@ -4050,6 +4225,419 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       setExportandoInforme(false);
     }
   };
+  // ── Parafiscales → Reportes ──
+  // Una ventana por parafiscal (Seguro Social, Paro Forzoso, FAOV, INCES) y un Resumen, con la relación de cada trabajador: su aporte, el aporte patronal y el total, en $ y/o Bs., filtrada por mes (o trimestre o año).
+  // La pantalla, el PDF y el Excel salen de las MISMAS filas (rhPfFilas), así que siempre dicen lo mismo.
+  const pagosParafiscal = () => nominas.filter(n=>rhPfPagoEnFiltro(n, {anio:pfAnio, mes:pfMes, q:pfQ, tipo:pfTipo}))
+    .sort((a,b)=>(a.mes||'').localeCompare(b.mes||'')||(a.quincena||'').localeCompare(b.quincena||'')||String(a.fechaPago||'').localeCompare(String(b.fechaPago||'')));
+  const textoTipoPf = () => pfTipo==='TODOS' ? '' : (pfTipo==='__SIN__' ? 'Sin tipo (pagos anteriores)' : ((tiposNomina.find(t=>t.id===pfTipo)||{}).nombre||''));
+  const periodoParafiscal = () => rhPfTextoPeriodo({anio:pfAnio, mes:pfMes, q:pfQ, tipoTexto:textoTipoPf()});
+  const pctIncesPf = () => benNum(((configParafiscal||{}).inces||{}).pctPatronalTrimestral);
+  const datosParafiscal = (nominasSel) => rhPfDatos(
+    (nominasSel||[]).map(n=>({nomina:n, detalles:nominaDetalles.filter(d=>d.nominaId===n.id)})),
+    {centroDe:centroDeDetalleInf, fichaDe:(d)=>trabajadores.find(t=>t.id===d.trabajadorId)||null, pctInces:pctIncesPf()}
+  );
+  // Las 5 tarjetas de cada parafiscal (y del Resumen): [rótulo, número | null, 'trab'|'pat'|'tot' | null, subtítulo]
+  const kpisParafiscal = (L, D) => [
+    ['Pagos incluidos', D.pagos.length, null, `${D.nRecibos} recibo(s)`],
+    ['Trabajadores', L.nTrab, null, L.id==='resumen' ? 'con algún aporte' : 'con aporte en este parafiscal'],
+    ['Aporte trabajador', null, 'trab', 'lo descontado en los recibos'],
+    ['Aporte patronal', null, 'pat', L.id==='inces' ? 'provisión del mes (empresa)' : 'lo que paga la empresa'],
+    ['Total a pagar', null, 'tot', 'trabajador + patronal'],
+  ];
+  // Pie de cada parafiscal (y del Resumen): la nota de la ley, los descuentos escritos a mano y los pagos que siguen abiertos
+  const notasParafiscal = (L, D) => [
+    L.id==='resumen' ? 'Cada parafiscal con su aporte del trabajador, su aporte patronal y el total; el detalle por trabajador está en la ventana de cada uno. Las cifras son las guardadas en cada recibo de pago (el Bs. es el de cada pago, con su propia tasa).' : rhPfNotaLey(L.id, pctIncesPf()),
+    ...(L.id!=='resumen' && L.nManual>0 ? [`${L.nManual} trabajador(es) con el descuento escrito a mano en el recibo (sin aporte patronal): marcados «a mano».`] : []),
+    ...(D.abiertos>0 ? [`Incluye ${D.abiertos} pago(s) todavía abierto(s): sus cifras pueden cambiar hasta que se cierre.`] : []),
+  ];
+  const exportarParafiscalesPDF = (secciones, D, moneda) => {
+    if(!D || D.pagos.length===0) return alert('No hay trabajadores cargados en los pagos elegidos.');
+    const {empresa, rif, dir} = _empresaDatos();
+    const esc = _escRH;
+    const usd = rhVeUSD(moneda), bs = rhVeBS(moneda), nm = (usd?1:0)+(bs?1:0);
+    const periodo = periodoParafiscal();
+    const emitido = contDd(getTodayDate()) + ' ' + new Date().toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'});
+    const mU = (n)=>'$'+formatNum(n), mB = (n)=>formatNum(n);
+    const th3 = (t) => (usd?`<th>${t} $</th>`:'') + (bs?`<th>${t} Bs.</th>`:'');
+    const td = (t, g, cls) => (usd?`<td class="m ${cls||''}">${mU(t[g+'USD'])}</td>`:'') + (bs?`<td class="m ${cls||''}">${mB(t[g+'Bs'])}</td>`:'');
+    const montos = (t) => td(t,'trab') + td(t,'pat') + td(t,'tot','neto');
+    const vv = (t, g) => [usd?`<div>${mU(t[g+'USD'])}</div>`:'', bs?`<div>Bs. ${mB(t[g+'Bs'])}</div>`:''].join('');
+    const tarjetas = (L) => `<div class="kpis">${kpisParafiscal(L, D).map(([l,n,g,s],i)=>`<div class="kpi ${i===4?'t':''}"><div class="l">${esc(l)}</div><div class="v">${g?vv(L.tot,g):esc(n)}</div>${s?`<div class="s">${esc(s)}</div>`:''}</div>`).join('')}</div>`;
+    const notas = (L) => notasParafiscal(L, D).map(t=>`<p class="nota">${esc(t)}</p>`).join('');
+    const seccionLey = (L) => {
+      const filas = rhPfFilas(L, pfAgrupar);
+      const conNro = !!L.campo, conCentro = !pfAgrupar;
+      const nTxt = 4 + (conNro?1:0) + (conCentro?1:0), nCols = nTxt + 3*nm;
+      let cuerpo = '';
+      filas.forEach(r=>{
+        if(r.k==='barra') cuerpo += `<tr class="bar"><td colspan="${nCols}"><span>${esc(r.texto)}</span><span class="der">${esc(r.der||'')}</span></td></tr>`;
+        else if(r.k==='fila') cuerpo += `<tr><td class="c">${r.n}</td><td class="l">${esc(r.cedula)}</td><td class="l">${esc(r.nombre)}${r.aMano?' <span class="tag">a mano</span>':''}</td>${conNro?`<td class="l">${esc(r.nro)}</td>`:''}${conCentro?`<td class="l">${esc(r.centro)}</td>`:''}<td class="c">${r.pagos}</td>${montos(r.t)}</tr>`;
+        else cuerpo += `<tr class="${r.k==='sub'?'sub':'tot'}"><td class="l" colspan="${nTxt}">${esc(r.texto)}</td>${montos(r.t)}</tr>`;
+      });
+      const cab = `<thead><tr><th class="c">N°</th><th class="l">Cédula</th><th class="l">Trabajador</th>${conNro?`<th class="l">N° ${esc(L.corto)}</th>`:''}${conCentro?'<th class="l">Centro de costo</th>':''}<th class="c">Pagos</th>${th3('Aporte trabajador')}${th3('Aporte patronal')}${th3('Total')}</tr></thead>`;
+      return `<section class="sec"><h2 class="stit">${esc(L.nombre)} · Relación de aportes</h2><p class="smeta">${esc(periodo)} · ${L.nTrab} trabajador(es)</p>${tarjetas(L)}${filas.length>0 ? `<table>${cab}<tbody>${cuerpo}</tbody></table>` : `<p class="vacio">Ningún trabajador tiene aportes de ${esc(L.corto)} en estos pagos.</p>`}${notas(L)}</section>`;
+    };
+    const seccionResumen = () => {
+      const R = { id:'resumen', nTrab:D.conAporte, tot:D.tot, nManual:0 };
+      const fs = rhPfResumenFilas(D);
+      const cab = `<thead><tr><th class="l">Parafiscal</th><th class="c">Trabajadores</th>${th3('Aporte trabajador')}${th3('Aporte patronal')}${th3('Total')}</tr></thead>`;
+      const cuerpo = fs.map(r=>`<tr><td class="l">${esc(r.nombre)}</td><td class="c">${r.nTrab}</td>${montos(r.t)}</tr>`).join('') + `<tr class="tot"><td class="l">TOTAL PARAFISCALES</td><td class="c">${D.conAporte}</td>${montos(D.tot)}</tr>`;
+      const pagos = D.pagos.map((p,i)=>`<tr><td class="c">${i+1}</td><td class="l">${esc(rhTextoAlcance([p.nomina]))}</td><td class="l">${esc(contDd(p.nomina.fechaPago))}</td><td class="l">${esc(benTasasTexto(p.nomina))}</td><td class="c">${p.nRecibos}</td><td class="l">${esc(p.nomina.estado||'')}</td></tr>`).join('');
+      return `<section class="sec"><h2 class="stit">Resumen de parafiscales</h2><p class="smeta">${esc(periodo)} · ${D.conAporte} trabajador(es) con algún aporte</p>${tarjetas(R)}<table>${cab}<tbody>${cuerpo}</tbody></table><h3 class="sub3">Pagos incluidos</h3><table><thead><tr><th class="c">N°</th><th class="l">Pago</th><th class="l">Fecha de pago</th><th class="l">Tasa</th><th class="c">Recibos</th><th class="l">Estado</th></tr></thead><tbody>${pagos}</tbody></table>${notas(R)}</section>`;
+    };
+    const cuerpoDoc = secciones.map(id=>id==='resumen' ? seccionResumen() : seccionLey(D.leyes[id])).join('');
+    const titulo = secciones.length===1 ? `Relación de aportes · ${D.leyes[secciones[0]].nombre}` : 'Parafiscales · Resumen y relación de aportes';
+    const cssStr = (s) => '"' + String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/</g,'\\3C ').replace(/[\r\n]+/g,' ') + '"';
+    const horizontal = nm===2;
+    const css = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:16px;color:#0f172a;}.wrap{max-width:1120px;margin:0 auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.12);}.membrete{background:#ea580c;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;}.membrete h1{font-size:17px;text-transform:uppercase;letter-spacing:.3px;}.membrete p{font-size:9.5px;opacity:.92;margin-top:3px;}.membrete .tit{text-align:right;font-size:13px;font-weight:900;text-transform:uppercase;line-height:1.35;}.membrete .tit span{display:block;font-size:10px;font-weight:400;opacity:.95;text-transform:none;}.franja{height:4px;background:#0f172a;}.btn-print{display:block;margin:14px 24px;padding:11px 0;background:#0891b2;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:6px;text-align:center;width:calc(100% - 48px);}.contenido{padding:0 24px 22px;}.meta{display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#475569;padding:4px 0 10px;border-bottom:1px solid #e2e8f0;margin-bottom:6px;}.stit{font-size:14px;font-weight:900;text-transform:uppercase;color:#0f172a;margin-top:14px;}.smeta{font-size:10px;color:#64748b;margin:2px 0 10px;}.sub3{font-size:11px;font-weight:900;text-transform:uppercase;color:#334155;margin:16px 0 6px;}.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px;}.kpi{border:1px solid #e2e8f0;border-left:4px solid #0891b2;border-radius:6px;padding:7px 10px;background:#f8fafc;}.kpi.t{border-left-color:#ea580c;background:#fff7ed;}.kpi .l{font-size:8px;font-weight:900;text-transform:uppercase;color:#64748b;letter-spacing:.4px;}.kpi .v{font-size:13px;font-weight:900;margin-top:2px;white-space:nowrap;}.kpi .s{font-size:8.5px;color:#64748b;margin-top:1px;}table{width:100%;border-collapse:collapse;font-size:9.5px;}td.m{white-space:nowrap;}thead{display:table-header-group;}th{background:#f1f5f9;color:#475569;text-transform:uppercase;font-size:8px;padding:5px 6px;text-align:right;border-bottom:2px solid #cbd5e1;}th.l,td.l{text-align:left;}th.c,td.c{text-align:center;}td{padding:4px 6px;text-align:right;border-bottom:1px solid #eef2f7;font-variant-numeric:tabular-nums;vertical-align:top;}td.l{overflow-wrap:anywhere;}tr{break-inside:avoid;page-break-inside:avoid;}tr.bar td{background:#0e7490;color:#fff;font-weight:900;text-transform:uppercase;font-size:10px;text-align:left;border-bottom:none;padding:6px 8px;}tr.bar .der{float:right;font-weight:400;text-transform:none;font-size:9px;}tr.sub td{font-weight:900;background:#e0f2fe;border-top:1px solid #0f172a;border-bottom:none;}tr.tot td{font-weight:900;background:#0f172a;color:#fff;border-bottom:none;}td.neto{font-weight:900;}.tag{display:inline-block;font-size:7px;font-weight:900;text-transform:uppercase;background:#fef3c7;color:#b45309;border-radius:3px;padding:1px 4px;margin-left:4px;}.vacio{font-size:11px;color:#64748b;padding:18px 0;text-align:center;}.sec{page-break-before:always;break-before:page;}section.sec:first-of-type{page-break-before:auto;break-before:auto;}.firmas{display:flex;gap:40px;margin-top:34px;page-break-inside:avoid;break-inside:avoid;}.firmas div{flex:1;text-align:center;font-size:9px;color:#475569;border-top:1px solid #0f172a;padding-top:5px;}.nota{font-size:8.5px;color:#64748b;margin-top:10px;line-height:1.5;}@page{size:letter ${horizontal?'landscape':'portrait'};margin:9mm 9mm 13mm;@bottom-left{content:${cssStr(empresa+' · Parafiscales')};font:8px Arial,Helvetica,sans-serif;color:#64748b;}@bottom-right{content:"Página " counter(page) " de " counter(pages);font:8px Arial,Helvetica,sans-serif;color:#64748b;}}@media print{body{background:#fff;padding:0;}.wrap{box-shadow:none;max-width:100%;}.contenido{padding:0 2px 10px;}.membrete{padding:12px 14px;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}`;
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${esc(titulo)} - ${esc(periodo)}</title><style>${css}</style></head><body><div class="wrap">
+      <div class="membrete"><div><h1>${esc(empresa)}</h1><p>RIF: ${esc(rif)} · ${esc(dir)}</p></div><div class="tit">${esc(titulo)}<span>${esc(periodo)}</span></div></div>
+      <div class="franja"></div>
+      <button class="btn-print" onclick="window.print()">🖨️ IMPRIMIR / GUARDAR PDF</button>
+      <div class="contenido">
+        <div class="meta"><span>Moneda: <b>${esc(nombreMonedaInf(moneda))}</b> · ${D.pagos.length} pago(s) · ${D.nRecibos} recibo(s)</span><span>Emitido el ${esc(emitido)}</span></div>
+        ${cuerpoDoc}
+        <div class="firmas"><div>Elaborado por</div><div>Revisado por</div><div>Aprobado por</div></div>
+      </div>
+    </div></body></html>`;
+    const w = window.open('', '_blank');
+    if(w){ w.document.write(html); w.document.close(); }
+    else alert('El navegador bloqueó la ventana del PDF. Permite las ventanas emergentes para este sitio e inténtalo de nuevo.');
+  };
+  const exportarParafiscalesExcel = async (secciones, D, moneda) => {
+    if(exportandoPf) return;
+    if(!D || D.pagos.length===0) return alert('No hay trabajadores cargados en los pagos elegidos.');
+    setExportandoPf(true);
+    try{
+      const EJ = await ccLoadExcelJS();
+      const {empresa, rif, dir} = _empresaDatos();
+      const usd = rhVeUSD(moneda), bs = rhVeBS(moneda);
+      const monedas = [usd?'USD':null, bs?'Bs':null].filter(Boolean), nm = monedas.length;
+      const periodo = periodoParafiscal();
+      const hoy = contDd(getTodayDate());
+      const INK='FF0F172A', ORANGE='FFF97316', WHITE='FFFFFFFF', GRID='FFD1D5DB', MUTED='FF64748B', TEAL='FF0E7490', SKY='FFE0F2FE', ZEBRA='FFF8FAFC';
+      const NF = {USD:'"$"#,##0.00', Bs:'#,##0.00'};
+      const fill = a=>({type:'pattern', pattern:'solid', fgColor:{argb:a}});
+      const thin = {style:'thin', color:{argb:GRID}};
+      const bd = {top:thin, left:thin, bottom:thin, right:thin};
+      const letra = (n) => { let s=''; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; };
+      const wb = new EJ.Workbook();
+      wb.creator = String(empresa||''); wb.created = new Date();
+      const HR = 8;
+      // Hoja con el encabezado de siempre: empresa, RIF, dirección, título, período y moneda
+      const hoja = (nombreHoja, NC, anchos, titulo, color) => {
+        const ws = wb.addWorksheet(nombreHoja, {
+          properties:{tabColor:{argb:color}},
+          views:[{state:'frozen', ySplit:HR, showGridLines:false}],
+          pageSetup:{paperSize:1, orientation:NC>8?'landscape':'portrait', fitToPage:true, fitToWidth:1, fitToHeight:0, horizontalCentered:true, margins:{left:0.3, right:0.3, top:0.4, bottom:0.55, header:0.2, footer:0.25}, printTitlesRow:`${HR}:${HR}`},
+          headerFooter:{oddFooter:`&L&8&"Arial,Regular"${String(empresa||'').replace(/&/g,'&&')} - Parafiscales&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ${hoy}`},
+        });
+        anchos.forEach((w,i)=>{ ws.getColumn(i+1).width = w; });
+        const put = (r, c1, c2, val, font, al) => { if(c2>c1) ws.mergeCells(r,c1,r,c2); const cell=ws.getCell(r,c1); cell.value=val; cell.font=font; cell.alignment=al||{vertical:'middle', horizontal:'left', indent:1}; return cell; };
+        put(1,1,NC,String(empresa||''),{name:'Arial', size:15, bold:true, color:{argb:INK}});
+        put(2,1,NC,`RIF: ${rif||''}`,{name:'Arial', size:9, color:{argb:'FF475569'}});
+        put(3,1,NC,String(dir||''),{name:'Arial', size:8, color:{argb:MUTED}});
+        put(4,1,NC,titulo.toUpperCase(),{name:'Arial', size:17, bold:true, color:{argb:ORANGE}});
+        put(5,1,NC,periodo,{name:'Arial', size:10.5, bold:true, color:{argb:INK}});
+        put(6,1,NC,`Moneda: ${nombreMonedaInf(moneda)}  ·  ${D.pagos.length} pago(s)  ·  ${D.nRecibos} recibo(s)  ·  Emitido el ${hoy}`,{name:'Arial', size:9, color:{argb:MUTED}});
+        [22,14,13,27,18,15].forEach((h,k)=>{ ws.getRow(k+1).height = h; });
+        for(let c=1;c<=NC;c++) ws.getCell(7,c).fill = fill(ORANGE);
+        ws.getRow(7).height = 4;
+        return { ws, put };
+      };
+      const titulosFila = (ws, titulos) => {
+        titulos.forEach((t,i)=>{
+          const c = ws.getCell(HR,i+1); c.value = t;
+          c.font = {name:'Arial', size:9, bold:true, color:{argb:WHITE}}; c.fill = fill(INK);
+          c.alignment = {vertical:'middle', horizontal:'center', wrapText:true};
+          c.border = {left:{style:'thin',color:{argb:WHITE}}, right:{style:'thin',color:{argb:WHITE}}, bottom:{style:'medium',color:{argb:ORANGE}}};
+        });
+        ws.getRow(HR).height = 30;
+      };
+      const sumaFormula = (col, filas) => {
+        if(filas.length===0) return '0';
+        const L = letra(col);
+        const consecutivas = filas.every((x,i)=>i===0 || x===filas[i-1]+1);
+        if(consecutivas) return `SUM(${L}${filas[0]}:${L}${filas[filas.length-1]})`;
+        const trozos = []; for(let i=0;i<filas.length;i+=200) trozos.push(`SUM(${filas.slice(i,i+200).map(x=>L+x).join(',')})`);
+        return trozos.join('+');
+      };
+      const valorSuma = (col, filas, resultado) => { const fm = sumaFormula(col, filas); return (fm && fm.length <= 8000) ? {formula:fm, result:resultado} : resultado; };
+      const montoCell = (ws, r, col, valor, nf, font, bg) => { const cell = ws.getCell(r,col); cell.value = (valor==null) ? null : valor; cell.numFmt = nf; cell.font = font; cell.alignment = {horizontal:'right', vertical:'middle', indent:1}; if(bg) cell.fill = fill(bg); return cell; };
+      const notaFila = (ws, put, r, NC, textos) => {
+        textos.forEach((t,k)=>{
+          put(r+k,1,NC,t,{name:'Arial', size:8, italic:true, color:{argb:MUTED}},{vertical:'top', horizontal:'left', indent:1, wrapText:true});
+          ws.getRow(r+k).height = Math.max(14, Math.ceil(String(t).length/150)*11+4);
+        });
+      };
+      const tituloMoneda = (g) => monedas.map(m=>`${g} (${m==='USD'?'$':'Bs.'})`);
+      const hojaLey = (L) => {
+        const conNro = !!L.campo;
+        const T = 5 + (conNro?1:0);                     // columnas de texto: N°, Cédula, Trabajador, [N° de la ley], Centro de costo, Pagos
+        const NC = T + 3*nm;
+        const colM = (g, mi) => T + 1 + g*nm + mi;      // g: 0 aporte del trabajador, 1 aporte patronal, 2 total
+        const anchos = [6, 15, 38, ...(conNro?[18]:[]), 26, 8]; for(let g=0; g<3; g++) monedas.forEach(m=>anchos.push(m==='USD'?16:19));
+        const { ws, put } = hoja(L.corto, NC, anchos, `Relación de aportes · ${L.nombre}`, TEAL);
+        titulosFila(ws, ['N°','CÉDULA','TRABAJADOR', ...(conNro?['N° '+L.corto]:[]), 'CENTRO DE COSTO','PAGOS', ...tituloMoneda('APORTE TRABAJADOR'), ...tituloMoneda('APORTE PATRONAL'), ...tituloMoneda('TOTAL')]);
+        const rows = rhPfFilas(L, pfAgrupar);
+        let r = HR + 1;
+        if(rows.length===0){
+          put(r,1,NC,`Ningún trabajador tiene aportes de ${L.corto} en estos pagos.`,{name:'Arial', size:10, italic:true, color:{argb:MUTED}});
+          r += 2;
+        } else {
+          let zebra = 0, pendientes = [];
+          const subs = [];
+          rows.forEach(f=>{
+            if(f.k==='barra'){
+              put(r,1,NC,[f.texto, f.der].filter(Boolean).join('   ·   '),{name:'Arial', size:10, bold:true, color:{argb:WHITE}});
+              for(let k=1;k<=NC;k++) ws.getCell(r,k).fill = fill(TEAL);
+              ws.getRow(r).height = 19; zebra = 0; r++; return;
+            }
+            if(f.k==='fila'){
+              const bg = (zebra++)%2 ? ZEBRA : WHITE;
+              const base = {name:'Arial', size:9, color:{argb:'FF1F2937'}};
+              const vals = [f.n, f.cedula, f.nombre + (f.aMano ? ' (a mano)' : ''), ...(conNro?[f.nro]:[]), f.centro, f.pagos];
+              vals.forEach((v,i)=>{ const cell = ws.getCell(r,i+1); cell.value = (v===''||v==null)?null:v; cell.font = base; const centro = (i===0 || i===T-1); cell.alignment = {vertical:'middle', horizontal:centro?'center':'left', indent:centro?0:1}; });
+              monedas.forEach((m,mi)=>{
+                const s = m==='USD' ? 'USD' : 'Bs';
+                montoCell(ws, r, colM(0,mi), f.t['trab'+s], NF[m], base);
+                montoCell(ws, r, colM(1,mi), f.t['pat'+s], NF[m], base);
+                montoCell(ws, r, colM(2,mi), {formula:`${letra(colM(0,mi))}${r}+${letra(colM(1,mi))}${r}`, result:f.t['tot'+s]}, NF[m], {...base, bold:true});
+              });
+              for(let k=1;k<=NC;k++){ const cell = ws.getCell(r,k); cell.fill = fill(bg); cell.border = bd; }
+              ws.getRow(r).height = 17;
+              pendientes.push(r); r++; return;
+            }
+            // total de un centro de costo (sub) o total general (tot)
+            const oscuro = f.k==='tot';
+            const bg = oscuro ? INK : SKY, col = oscuro ? WHITE : INK;
+            ws.mergeCells(r,1,r,T);
+            const lb = ws.getCell(r,1); lb.value = f.texto; lb.font = {name:'Arial', size:oscuro?10:9.5, bold:true, color:{argb:col}}; lb.alignment = {horizontal:'left', vertical:'middle', indent:1};
+            for(let k=1;k<=NC;k++){ const cell = ws.getCell(r,k); cell.fill = fill(bg); cell.border = {top:{style:oscuro?'medium':'thin', color:{argb:oscuro?ORANGE:INK}}}; }
+            const fuente = (f.k==='sub' || subs.length===0) ? pendientes.slice() : subs.slice();
+            monedas.forEach((m,mi)=>{
+              const s = m==='USD' ? 'USD' : 'Bs';
+              const fontT = {name:'Arial', size:oscuro?10:9.5, bold:true, color:{argb:col}};
+              [['trab',0],['pat',1],['tot',2]].forEach(([g,gi])=>{ const c = colM(gi,mi); montoCell(ws, r, c, valorSuma(c, fuente, f.t[g+s]), NF[m], fontT, bg); });
+            });
+            for(let k=1;k<=NC;k++) ws.getCell(r,k).border = {top:{style:oscuro?'medium':'thin', color:{argb:oscuro?ORANGE:INK}}};
+            ws.getRow(r).height = oscuro ? 22 : 19;
+            if(f.k==='sub'){ subs.push(r); pendientes = []; }
+            zebra = 0; r++;
+          });
+          r++;
+        }
+        notaFila(ws, put, r, NC, notasParafiscal(L, D));
+      };
+      const hojaResumen = () => {
+        const T = 2;
+        const NC = T + 3*nm;
+        const colM = (g, mi) => T + 1 + g*nm + mi;
+        const anchos = [44, 14]; for(let g=0; g<3; g++) monedas.forEach(m=>anchos.push(m==='USD'?17:20));
+        const { ws, put } = hoja('Resumen', NC, anchos, 'Parafiscales · Resumen', ORANGE);
+        titulosFila(ws, ['PARAFISCAL','TRABAJADORES', ...tituloMoneda('APORTE TRABAJADOR'), ...tituloMoneda('APORTE PATRONAL'), ...tituloMoneda('TOTAL')]);
+        let r = HR + 1, zebra = 0;
+        const filasLey = [];
+        rhPfResumenFilas(D).forEach(f=>{
+          const bg = (zebra++)%2 ? ZEBRA : WHITE;
+          const base = {name:'Arial', size:9.5, color:{argb:'FF1F2937'}};
+          const c1 = ws.getCell(r,1); c1.value = f.nombre; c1.font = base; c1.alignment = {vertical:'middle', horizontal:'left', indent:1};
+          const c2 = ws.getCell(r,2); c2.value = f.nTrab; c2.font = base; c2.alignment = {vertical:'middle', horizontal:'center'};
+          monedas.forEach((m,mi)=>{
+            const s = m==='USD' ? 'USD' : 'Bs';
+            montoCell(ws, r, colM(0,mi), f.t['trab'+s], NF[m], base);
+            montoCell(ws, r, colM(1,mi), f.t['pat'+s], NF[m], base);
+            montoCell(ws, r, colM(2,mi), {formula:`${letra(colM(0,mi))}${r}+${letra(colM(1,mi))}${r}`, result:f.t['tot'+s]}, NF[m], {...base, bold:true});
+          });
+          for(let k=1;k<=NC;k++){ const cell = ws.getCell(r,k); cell.fill = fill(bg); cell.border = bd; }
+          ws.getRow(r).height = 18;
+          filasLey.push(r); r++;
+        });
+        const lb = ws.getCell(r,1); lb.value = 'TOTAL PARAFISCALES'; lb.font = {name:'Arial', size:10, bold:true, color:{argb:WHITE}}; lb.alignment = {horizontal:'left', vertical:'middle', indent:1};
+        for(let k=1;k<=NC;k++){ const cell = ws.getCell(r,k); cell.fill = fill(INK); cell.border = {top:{style:'medium', color:{argb:ORANGE}}}; }
+        const c2 = ws.getCell(r,2); c2.value = D.conAporte; c2.font = {name:'Arial', size:10, bold:true, color:{argb:WHITE}}; c2.alignment = {horizontal:'center', vertical:'middle'};
+        monedas.forEach((m,mi)=>{
+          const s = m==='USD' ? 'USD' : 'Bs';
+          [['trab',0],['pat',1],['tot',2]].forEach(([g,gi])=>{ const c = colM(gi,mi); montoCell(ws, r, c, valorSuma(c, filasLey, D.tot[g+s]), NF[m], {name:'Arial', size:10, bold:true, color:{argb:WHITE}}, INK); });
+        });
+        ws.getRow(r).height = 22;
+        r += 2;
+        // Pagos incluidos
+        put(r,1,NC,'PAGOS INCLUIDOS',{name:'Arial', size:10, bold:true, color:{argb:WHITE}});
+        for(let k=1;k<=NC;k++) ws.getCell(r,k).fill = fill(TEAL);
+        ws.getRow(r).height = 19; r++;
+        ['PAGO','RECIBOS','FECHA DE PAGO','TASA','ESTADO'].forEach((t,i)=>{ if(i+1>NC) return; const c = ws.getCell(r,i+1); c.value = t; c.font = {name:'Arial', size:9, bold:true, color:{argb:INK}}; c.fill = fill('FFE2E8F0'); c.alignment = {vertical:'middle', horizontal:i===0?'left':'center', indent:i===0?1:0}; });
+        r++;
+        D.pagos.forEach(p=>{
+          [rhTextoAlcance([p.nomina]), p.nRecibos, contDd(p.nomina.fechaPago), benTasasTexto(p.nomina), p.nomina.estado||''].forEach((v,i)=>{ if(i+1>NC) return; const c = ws.getCell(r,i+1); c.value = v; c.font = {name:'Arial', size:9, color:{argb:'FF1F2937'}}; c.alignment = {vertical:'middle', horizontal:i===0?'left':'center', indent:i===0?1:0, wrapText:i===0}; c.border = bd; });
+          ws.getRow(r).height = Math.max(17, Math.ceil(String(rhTextoAlcance([p.nomina])).length/48)*12.5+4);
+          r++;
+        });
+        notaFila(ws, put, r+1, NC, notasParafiscal({ id:'resumen', nTrab:D.conAporte, tot:D.tot, nManual:0 }, D));
+      };
+      secciones.forEach(id=>{ if(id==='resumen') hojaResumen(); else hojaLey(D.leyes[id]); });
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const etq = rhPfEtiquetaArchivo({anio:pfAnio, mes:pfMes, q:pfQ});
+      a.href = url; a.download = secciones.length>1 ? `Parafiscales_${etq}.xlsx` : `Parafiscal_${D.leyes[secciones[0]].corto}_${etq}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }catch(e){
+      alert('No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)));
+    }finally{
+      setExportandoPf(false);
+    }
+  };
+  // Pantalla: filtros, tarjetas y relación de la ventana elegida (Resumen o un parafiscal). Se llama como función (no como componente) para no perder el foco.
+  const reportePf = () => {
+    const usd = rhVeUSD(repMoneda), bs = rhVeBS(repMoneda);
+    const anioActual = new Date().getFullYear();
+    const anios = [...new Set([anioActual-1, anioActual, anioActual+1, ...nominas.map(n=>parseInt(String(n.mes||'').slice(0,4),10)).filter(y=>y>=2000 && y<=2100)])].sort((a,b)=>a-b);
+    const selPf = (etiqueta, valor, alCambiar, opciones, testid) => (
+      <div key={etiqueta}><label className="text-[9px] font-black text-gray-400 uppercase block mb-1">{etiqueta}</label>
+        <select data-testid={testid} value={valor} onChange={e=>alCambiar(e.target.value)} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 bg-white max-w-xs">
+          {opciones.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+        </select>
+      </div>
+    );
+    const enAlcance = pagosParafiscal();
+    const D = datosParafiscal(enAlcance);
+    const hayDatos = D.pagos.length>0;
+    const sinRecibos = enAlcance.length - D.pagos.length;
+    const esResumen = parafiscalSel==='resumen';
+    const L = esResumen ? null : (D.leyes[parafiscalSel] || D.leyes.ivss);
+    const secciones = esResumen ? ['resumen', ...RH_PF_LEYES.map(l=>l.id)] : [L.id];
+    const periodo = periodoParafiscal();
+    const th3 = (n) => [usd && <th key="u" className="text-right py-2 px-3 whitespace-nowrap">{n} $</th>, bs && <th key="b" className="text-right py-2 px-3 whitespace-nowrap">{n} Bs.</th>];
+    const montos = (t, cls) => ['trab','pat','tot'].flatMap(g=>[
+      usd && <td key={g+'u'} className={`py-1.5 px-3 text-right font-mono whitespace-nowrap ${g==='tot'?'font-black':''} ${cls||''}`}>${formatNum(t[g+'USD'])}</td>,
+      bs && <td key={g+'b'} className={`py-1.5 px-3 text-right font-mono whitespace-nowrap ${g==='tot'?'font-black':''} ${cls||''}`}>{formatNum(t[g+'Bs'])}</td>,
+    ]);
+    const tarjetas = (Lk) => (
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2" data-testid="pf-kpis">
+        {kpisParafiscal(Lk, D).map(([l,n,g,s],i)=>(
+          <div key={l} className={`rounded-xl border-2 p-3 ${i===4?'border-orange-200 bg-orange-50':'border-gray-200 bg-white'}`}>
+            <p className="text-[9px] font-black text-gray-400 uppercase">{l}</p>
+            <div className="font-black text-gray-800 mt-0.5 font-mono text-sm">{g ? (<>{usd && <span className="block">${formatNum(Lk.tot[g+'USD'])}</span>}{bs && <span className="block">Bs. {formatNum(Lk.tot[g+'Bs'])}</span>}</>) : n}</div>
+            {s && <p className="text-[9px] text-gray-400">{s}</p>}
+          </div>
+        ))}
+      </div>
+    );
+    const notas = (Lk) => (
+      <div className="space-y-1" data-testid="pf-notas">
+        {notasParafiscal(Lk, D).map((t,i)=><p key={i} className={`text-[10px] ${/abierto/.test(t)?'text-amber-600 font-bold':'text-gray-400'}`}>{t}</p>)}
+      </div>
+    );
+    const vistaLey = () => {
+      const filas = rhPfFilas(L, pfAgrupar);
+      const conNro = !!L.campo, conCentro = !pfAgrupar;
+      const nTxt = 4 + (conNro?1:0) + (conCentro?1:0), nCols = nTxt + 3*(usd?1:0) + 3*(bs?1:0);
+      return (<>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="font-black text-gray-800" data-testid="pf-titulo">{L.nombre} · Relación de aportes</p>
+          <p className="text-[10px] text-gray-400">Cada trabajador con su aporte, el aporte patronal y el total.{L.id==='inces' ? ' El aporte patronal es la provisión del mes (se paga por trimestre).' : ''}</p>
+        </div>
+        {tarjetas(L)}
+        {filas.length>0 ? (
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto" data-testid="pf-tabla">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+                <th className="text-center py-2 px-3 w-10">N°</th><th className="text-left py-2 px-3">Cédula</th><th className="text-left py-2 px-3">Trabajador</th>
+                {conNro && <th className="text-left py-2 px-3">N° {L.corto}</th>}{conCentro && <th className="text-left py-2 px-3">Centro de costo</th>}
+                <th className="text-center py-2 px-3 w-14">Pagos</th>
+                {th3('Aporte trabajador')}{th3('Aporte patronal')}{th3('Total')}
+              </tr></thead>
+              <tbody>
+                {filas.map((r,i)=>{
+                  if(r.k==='barra') return <tr key={i}><td colSpan={nCols} className="py-1.5 px-3 bg-cyan-700 text-white text-[10px]"><div className="flex justify-between gap-3"><span className="font-black uppercase">{r.texto}</span><span className="font-normal opacity-90 text-[9px]">{r.der}</span></div></td></tr>;
+                  if(r.k==='sub' || r.k==='tot') return <tr key={i} className={`font-black border-t border-gray-800 ${r.k==='tot'?'bg-gray-900 text-white':'bg-sky-100 text-gray-800'}`}><td colSpan={nTxt} className="py-1.5 px-3 uppercase text-[10px]">{r.texto}</td>{montos(r.t)}</tr>;
+                  return (
+                    <tr key={i} className={`border-t border-gray-100 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                      <td className="py-1.5 px-3 text-center text-gray-400">{r.n}</td>
+                      <td className="py-1.5 px-3 font-mono text-gray-600 whitespace-nowrap">{r.cedula}</td>
+                      <td className="py-1.5 px-3 font-bold">{r.nombre}{r.aMano && <span title="Descuento escrito a mano en el recibo (sin aporte patronal)" className="ml-1.5 text-[8px] font-black uppercase bg-amber-100 text-amber-700 rounded px-1 py-0.5">a mano</span>}</td>
+                      {conNro && <td className="py-1.5 px-3 font-mono text-gray-600 whitespace-nowrap">{r.nro}</td>}
+                      {conCentro && <td className="py-1.5 px-3 text-gray-500">{r.centro}</td>}
+                      <td className="py-1.5 px-3 text-center text-gray-600">{r.pagos}</td>
+                      {montos(r.t)}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-gray-200 py-10 text-center text-gray-400 text-sm" data-testid="pf-sin-aportes">Ningún trabajador tiene aportes de {L.corto} en estos pagos.</div>
+        )}
+        {notas(L)}
+      </>);
+    };
+    const vistaResumen = () => {
+      const R = { id:'resumen', nTrab:D.conAporte, tot:D.tot, nManual:0 };
+      return (<>
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <p className="font-black text-gray-800" data-testid="pf-titulo">Resumen de parafiscales</p>
+          <p className="text-[10px] text-gray-400">Lo que se descontó a los trabajadores, lo que aporta la empresa y el total de cada parafiscal. Toca una fila para ver la relación por trabajador.</p>
+        </div>
+        {tarjetas(R)}
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto" data-testid="pf-resumen-tabla">
+          <table className="w-full text-xs">
+            <thead><tr className="bg-gray-900 text-cyan-400 text-[9px] uppercase font-black">
+              <th className="text-left py-2 px-3">Parafiscal</th><th className="text-center py-2 px-3 w-24">Trabajadores</th>{th3('Aporte trabajador')}{th3('Aporte patronal')}{th3('Total')}
+            </tr></thead>
+            <tbody>
+              {rhPfResumenFilas(D).map((r,i)=>(
+                <tr key={r.id} data-testid={`pf-resumen-${r.id}`} onClick={()=>setParafiscalSel(r.id)} title="Ver la relación por trabajador" className={`border-t border-gray-100 cursor-pointer hover:bg-cyan-50 ${i%2===0?'bg-white':'bg-gray-50'}`}>
+                  <td className="py-1.5 px-3 font-bold">{r.nombre}</td><td className="py-1.5 px-3 text-center text-gray-600">{r.nTrab}</td>{montos(r.t)}
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr className="bg-gray-900 text-white font-black"><td className="py-2 px-3 uppercase text-[10px]">Total parafiscales</td><td className="py-2 px-3 text-center">{D.conAporte}</td>{montos(D.tot)}</tr></tfoot>
+          </table>
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto" data-testid="pf-pagos-incluidos">
+          <p className="text-[10px] font-black text-gray-500 uppercase px-3 pt-3">Pagos incluidos</p>
+          <table className="w-full text-xs">
+            <thead><tr className="text-[9px] text-gray-400 uppercase"><th className="text-center py-1.5 px-3 w-10">N°</th><th className="text-left py-1.5 px-3">Pago</th><th className="text-left py-1.5 px-3">Fecha de pago</th><th className="text-left py-1.5 px-3">Tasa</th><th className="text-center py-1.5 px-3">Recibos</th><th className="text-left py-1.5 px-3">Estado</th></tr></thead>
+            <tbody>
+              {D.pagos.map((p,i)=>(
+                <tr key={p.nomina.id||i} className="border-t border-gray-100"><td className="py-1.5 px-3 text-center text-gray-400">{i+1}</td><td className="py-1.5 px-3">{rhTextoAlcance([p.nomina])}</td><td className="py-1.5 px-3 whitespace-nowrap">{contDd(p.nomina.fechaPago)}</td><td className="py-1.5 px-3 whitespace-nowrap">{benTasasTexto(p.nomina)}</td><td className="py-1.5 px-3 text-center">{p.nRecibos}</td><td className="py-1.5 px-3">{p.nomina.estado||''}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {notas(R)}
+      </>);
+    };
+    return (
+      <div className="space-y-4 min-w-0" data-testid="pf-reportes">
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-wrap gap-2 items-end">
+          {selPf('Año', pfAnio, setPfAnio, anios.map(y=>[String(y),String(y)]), 'pf-filtro-anio')}
+          {selPf('Mes', pfMes, setPfMes, [['TODOS','Todo el año'], ...RH_MESES.map((m,i)=>[String(i+1).padStart(2,'0'),m]), ...RH_PF_TRIMESTRES.map((t,i)=>['T'+(i+1),t])], 'pf-filtro-mes')}
+          {selPf('Período', pfQ, setPfQ, [['AMBAS','Todos'],['1','Quincena 1'],['2','Quincena 2'],['M','Mensual']], 'pf-filtro-periodo')}
+          {selPf('Tipo de nómina', pfTipo, setPfTipo, [['TODOS','Todos'], ...tiposNomina.map(t=>[t.id, t.nombre+(t.activo===false?' (inactivo)':'')]), ...(nominas.some(n=>!n.tipoNominaId)?[['__SIN__','Sin tipo (pagos anteriores)']]:[])], 'pf-filtro-tipo')}
+          <label title={esResumen ? 'Define cómo salen los PDF y Excel de todos los parafiscales (la relación de cada uno, por centro de costo o en una sola lista)' : 'Muestra la relación por centro de costo, con su total, o en una sola lista'} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-600 pb-2.5 cursor-pointer"><input data-testid="pf-agrupar" type="checkbox" checked={pfAgrupar} onChange={e=>setPfAgrupar(e.target.checked)}/> Agrupar por centro de costo</label>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="font-black text-sm text-gray-800" data-testid="pf-alcance">{hayDatos ? periodo : 'Sin pagos con recibos para estos filtros'}</p>
+            {hayDatos && <p className="text-[10px] text-gray-400">{D.pagos.length} pago(s) · {D.nRecibos} recibo(s) · {D.personas} trabajador(es){sinRecibos>0?` · ${sinRecibos} pago(s) sin recibos no se incluyen`:''}</p>}
+          </div>
+          <div className="flex gap-2">
+            <button data-testid="btn-pf-pdf" disabled={!hayDatos} onClick={()=>exportarParafiscalesPDF(secciones, D, repMoneda)} className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-orange-100 disabled:opacity-40"><Printer size={13}/> {esResumen?'Imprimir / PDF (todos)':'Imprimir / PDF'}</button>
+            <button data-testid="btn-pf-excel" disabled={!hayDatos || exportandoPf} onClick={()=>exportarParafiscalesExcel(secciones, D, repMoneda)} className="flex items-center gap-1.5 bg-green-50 text-green-600 px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-green-100 disabled:opacity-40"><FileSpreadsheet size={13}/> {exportandoPf?'Generando...':(esResumen?'Excel (todos)':'Excel')}</button>
+          </div>
+        </div>
+        {hayDatos ? (esResumen ? vistaResumen() : vistaLey()) : (
+          <div className="bg-white rounded-2xl border border-gray-200 py-12 text-center text-gray-400 text-sm" data-testid="pf-sin-pagos">Sin recibos de pago para estos filtros. Cambia el año, el mes, el período o el tipo de nómina.</div>
+        )}
+      </div>
+    );
+  };
   const exportarTrabajadoresPDF = (lista) => {
     const empresa = settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.';
     const rif = settings?.empresaRif || settings?.empresaRIF || 'J-412309374';
@@ -5313,20 +5901,29 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
       {rhTab==='parafiscales' && (
       <div className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div className="flex gap-2">
+            <button data-testid="pf-vista-config" onClick={()=>{ setParafiscalVista('config'); if(parafiscalSel==='resumen') setParafiscalSel('ivss'); }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${parafiscalVista==='config'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>⚙️ Configurar</button>
+            <button data-testid="pf-vista-reportes" onClick={()=>setParafiscalVista('reportes')} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${parafiscalVista==='reportes'?'bg-cyan-600 text-white shadow-md':'bg-white text-gray-500 border-2 border-gray-200 hover:border-gray-300'}`}>📑 Reportes</button>
+          </div>
+          {parafiscalVista==='reportes' && selMoneda()}
+        </div>
         <div className="grid grid-cols-[200px_1fr] gap-4">
           <div className="flex flex-col gap-1.5">
             {[
+              ...(parafiscalVista==='reportes' ? [['resumen','Resumen',BarChart3]] : []),
               ['ivss','Seguro Social',ShieldCheck],
               ['rpe','Paro Forzoso',Ban],
               ['faov','FAOV',Home],
               ['inces','INCES',BookOpen],
             ].map(([id,label,Icon])=>(
-              <button key={id} onClick={()=>setParafiscalSel(id)} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-left ${parafiscalSel===id?'bg-cyan-600 text-white':'text-gray-600 hover:bg-gray-50'}`}>
+              <button key={id} data-testid={`pf-menu-${id}`} onClick={()=>setParafiscalSel(id)} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-left ${parafiscalSel===id?'bg-cyan-600 text-white':'text-gray-600 hover:bg-gray-50'}`}>
                 <Icon size={15}/> {label}
               </button>
             ))}
           </div>
 
+          {parafiscalVista==='reportes' ? reportePf() : (
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <div className="mb-4">
               <label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Salario Mínimo Vigente (Bs., compartido por todos)</label>
@@ -5413,6 +6010,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
             <button onClick={guardarConfigParafiscal} className="mt-5 bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700">Guardar Configuración</button>
           </div>
+          )}
         </div>
       </div>
       )}
