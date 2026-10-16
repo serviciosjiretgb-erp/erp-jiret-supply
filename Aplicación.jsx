@@ -20890,6 +20890,133 @@ const getSafeDate = (ts) => {
 };
 
 // ============================================================================
+// PRODUCCIÓN → INVENTARIO: enviar lo producido de un lote al almacén elegido (lógica pura).
+// La ventana, la escritura en Firestore y los botones viven en App (handleRecalcInventarioLote).
+// ============================================================================
+// == INICIO ENVIO PT ==
+const ENV_PT_EPS = 0.005; // tolerancia = media centésima (las cantidades se muestran con 2 decimales)
+// Clave del lote dentro de req.enviosInv (con letra para que sea un nombre de campo normal en Firestore)
+const envPtClaveLote = (loteIdx) => 'L' + Number(loteIdx);
+const envPtKey = (s) => String(s||'').toUpperCase().replace(/[^A-Z0-9ÑÁÉÍÓÚ]+/g,' ').trim().split(/\s+/).filter(Boolean).sort().join(' ');
+// Fases de la ruta del producto: misma búsqueda de fórmula que las pestañas de fase (categoría exacta; si no, por palabras).
+const envPtFases = (req, formulas) => {
+  const r = req || {}, fl = formulas || [];
+  const catU = String(r.categoria||'').toUpperCase();
+  let f = catU ? fl.find(x => x && x.categoria && String(x.categoria).toUpperCase() === catU) : null;
+  if (!f) {
+    const cand = [r.categoria, r.subcategoria, r.subCategoria, r.producto, r.product, r.nombreProducto].filter(Boolean).map(envPtKey);
+    f = fl.find(x => x && x.categoria && cand.includes(envPtKey(x.categoria)));
+  }
+  if (f && f.fases) return f.fases;
+  // Sin fórmula: el termoencogible solo tiene extrusión; lo demás, la ruta completa (igual que las pestañas)
+  return r.tipoProducto === 'TERMOENCOGIBLE' ? { extrusion:true, impresion:false, sellado:false } : { extrusion:true, impresion:true, sellado:true };
+};
+// Última fase de la ruta = la que entrega el producto terminado: bolsas → sellado; termoencogible → extrusión.
+const envPtUltimaFase = (req, formulas) => { const f = envPtFases(req, formulas) || {}; return f.sellado ? 'sellado' : f.impresion ? 'impresion' : 'extrusion'; };
+const envPtFaseNombre = (f) => ({ extrusion:'EXTRUSIÓN', impresion:'IMPRESIÓN', sellado:'SELLADO' }[f] || String(f||'').toUpperCase());
+const envPtEsReal = (b) => !!b && b.operator !== 'ALMACÉN (DESPACHO)';
+const envPtEsMill = (unit) => String(unit||'und').toLowerCase().startsWith('mill');
+const envPtCodigo = (d) => String((d && (d.displayId || String(d.id||'').split('___')[0])) || '').trim();
+const envPtNormAlm = (s) => String(s||'').toUpperCase().replace(/[-_\s]+/g,' ').trim();
+const envPtAlmDe = (d) => (d && (d.almacen || (String(d.id||'').split('___')[1]||'').replace(/-/g,' '))) || '';
+const envPtIdNuevoDoc = (codigo, almacen) => `${codigo}___${String(almacen).replace(/\s+/g,'-')}`;
+// Documento de inventario del producto destino de la OP (el elegido en Ventas; si no, cualquiera con su mismo código).
+const envPtProducto = (req, inventory) => {
+  const dest = String((req && req.productoDestinoId) || '').trim();
+  if (!dest) return null;
+  const code = dest.split('___')[0].trim();
+  const inv = inventory || [];
+  return inv.find(i => i.id === dest) || inv.find(i => (i.displayId && i.displayId === code) || String(i.id||'').split('___')[0] === code) || null;
+};
+// Todos los documentos del producto (uno por almacén).
+const envPtDocsProducto = (codigo, inventory) => { const c = String(codigo||'').trim().toUpperCase(); return c ? (inventory||[]).filter(i => envPtCodigo(i).toUpperCase() === c) : []; };
+// Documento del producto en el almacén elegido (sin importar mayúsculas, guiones ni espacios).
+const envPtDocDestino = (docs, almacen, codigo) => {
+  const n = envPtNormAlm(almacen); if (!n) return null;
+  const cand = (docs||[]).filter(d => envPtNormAlm(envPtAlmDe(d)) === n);
+  if (!cand.length) return null;
+  const canon = envPtIdNuevoDoc(codigo, almacen);
+  return cand.find(d => d.id === canon) || cand[0];
+};
+// Unidades que aporta un registro de la última fase: millares (si el producto va en millares) o KG.
+const envPtUnidBatch = (b, esMill, gramaje) => {
+  const kg = parseNum(b && b.producedKg);
+  if (!esMill) return kg;
+  const m = parseNum((b.techParams && b.techParams.millares) || b.millares || b.millaresProd || 0);
+  if (m > 0) return m;
+  return kg > 0 && gramaje > 0 ? kg / gramaje : 0;
+};
+// Registros reales de una fase pertenecientes a un lote.
+const envPtBatchesFase = (req, fase, loteIdx) => {
+  const ph = ((req && req.production) || {})[fase];
+  return ((ph && ph.batches) || []).filter(b => envPtEsReal(b) && Number(b.loteIndex ?? 0) === Number(loteIdx));
+};
+// Costo del lote = suma de los costos de los registros de TODAS las fases del lote.
+const envPtCostoLote = (req, loteIdx) => ['extrusion','impresion','sellado'].reduce((s,f) => s + envPtBatchesFase(req, f, loteIdx).reduce((ss,b) => ss + parseNum(b.cost||0), 0), 0);
+// Todo lo que hay que saber de un lote para enviarlo: unidades (SOLO de la última fase), costo por unidad,
+// lo ya enviado (req.enviosInv[lote].envios) y lo pendiente.
+const envPtInfo = (req, loteIdx, formulas, inventory) => {
+  const prod = envPtProducto(req, inventory);
+  if (!prod) return { ok:false };
+  const codigo = envPtCodigo(prod);
+  const unit = prod.unit || 'und';
+  const esMill = envPtEsMill(unit);
+  const ultimaFase = envPtUltimaFase(req, formulas);
+  const gramaje = parseNum(req.gramaje || req.gramajeFg || req.pesoMillar || 0);
+  const batches = envPtBatchesFase(req, ultimaFase, loteIdx).map(b => ({ id: String(b.id == null ? '' : b.id), kg: parseNum(b.producedKg), units: envPtUnidBatch(b, esMill, gramaje) }));
+  const unidsLote = batches.reduce((s,b) => s + b.units, 0);
+  const kgLote = batches.reduce((s,b) => s + b.kg, 0);
+  const costoLote = envPtCostoLote(req, loteIdx);
+  const costoUnit = unidsLote > 0 ? costoLote / unidsLote : 0;
+  const rec = (req.enviosInv || {})[envPtClaveLote(loteIdx)];
+  const cu = codigo.toUpperCase();
+  const envios = ((rec && Array.isArray(rec.envios)) ? rec.envios : []).filter(e => e && (!e.codigo || String(e.codigo).toUpperCase() === cu));
+  const enviado = envios.reduce((s,e) => s + parseNum(e.qty), 0);
+  const idsEnviados = new Set();
+  envios.forEach(e => (Array.isArray(e.batchIds) ? e.batchIds : []).forEach(id => idsEnviados.add(String(id))));
+  return { ok:true, prod, codigo, unit, esMill, ultimaFase, gramaje, batches, unidsLote, kgLote, costoLote, costoUnit, envios, enviado, idsEnviados, pendiente: unidsLote - enviado, ultimoEnvio: envios.length ? envios[envios.length-1] : null };
+};
+// 'sinprod' = nada que enviar · 'enviado' = ya salió todo lo producido · 'pendiente' = se puede enviar
+const envPtEstadoLote = (info) => (!info || !info.ok) ? 'pendiente' : (info.unidsLote <= ENV_PT_EPS ? 'sinprod' : (info.pendiente <= ENV_PT_EPS ? 'enviado' : 'pendiente'));
+const envPtEstadoBatch = (info, batchId) => {
+  if (!info || !info.ok) return 'pendiente';
+  const b = info.batches.find(x => x.id === String(batchId));
+  if (!b || b.units <= ENV_PT_EPS) return 'sinprod';
+  return (info.idsEnviados.has(b.id) || info.pendiente <= ENV_PT_EPS) ? 'enviado' : 'pendiente';
+};
+// Cantidad a enviar: una fila → lo de esa fila (sin pasarse de lo pendiente del lote); lote completo (batchId null) → todo lo pendiente.
+const envPtCantidad = (info, batchId) => {
+  if (!info || !info.ok) return 0;
+  if (batchId == null) return Math.max(0, info.pendiente);
+  const b = info.batches.find(x => x.id === String(batchId));
+  return (b && !info.idsEnviados.has(b.id)) ? Math.max(0, Math.min(b.units, info.pendiente)) : 0;
+};
+// Registros que quedan marcados como enviados con este envío.
+const envPtIdsAMarcar = (info, batchId) => batchId == null ? info.batches.filter(b => b.units > ENV_PT_EPS && !info.idsEnviados.has(b.id)).map(b => b.id) : [String(batchId)];
+const envPtKgEnvio = (info, qty) => info.unidsLote > 0 ? info.kgLote * qty / info.unidsLote : 0;
+// Regla de costo / existencia: si el producto ya tiene costo (o ya tiene existencia) SOLO se suma la existencia y el
+// costo del producto no se toca; si no tiene ni costo ni existencia en el inventario, se lleva también el costo del lote.
+const envPtPlan = (docs, destDoc, qty, costoUnit) => {
+  const dd = docs || [];
+  let costoProd = 0;
+  if (destDoc && parseNum(destDoc.cost) > 0) costoProd = parseNum(destDoc.cost);
+  else {
+    const conCosto = dd.filter(d => parseNum(d.cost) > 0).sort((a,b) => parseNum(b.stock) - parseNum(a.stock));
+    if (conCosto.length) costoProd = parseNum(conCosto[0].cost);
+  }
+  const stockTotal = dd.reduce((s,d) => s + Math.max(0, parseNum(d.stock)), 0);
+  const tieneCosto = costoProd > 0, tieneExistencia = stockTotal > ENV_PT_EPS;
+  const llevaCosto = !tieneCosto && !tieneExistencia;
+  const stockAntes = destDoc ? parseNum(destDoc.stock) : 0;
+  const costoAntes = destDoc ? parseNum(destDoc.cost) : 0;
+  // costoDoc = costo con el que queda el documento del almacén (solo cambia si se lleva costo; un almacén nuevo hereda el del producto)
+  const costoDoc = llevaCosto ? (costoUnit > 0 ? costoUnit : costoAntes) : (destDoc ? costoAntes : costoProd);
+  const costoMov = llevaCosto ? (costoUnit > 0 ? costoUnit : 0) : (costoProd > 0 ? costoProd : costoAntes);
+  return { tieneCosto, tieneExistencia, llevaCosto, costoProd, stockAntes, stockDespues: stockAntes + qty, costoAntes, costoDoc, costoMov, destExiste: !!destDoc };
+};
+// == FIN ENVIO PT ==
+
+// ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
 const ADMIN_PASSWORD = '1234';
@@ -28193,6 +28320,8 @@ function App() {
   const [showSimCostosPanel, setShowSimCostosPanel] = useState(false);
   const [showDiagOpReventa, setShowDiagOpReventa] = useState(false);
   const [showCierreOpModal, setShowCierreOpModal] = useState(null); // {req, fecha} — modal de cierre de OP con fecha elegible
+  const [envioInvModal, setEnvioInvModal] = useState(null); // {reqId, loteIdx, batchId, almacen, enviando} — ventana «Enviar al inventario» (elegir almacén)
+  const envioInvBusy = useRef(false); // evita el doble clic mientras se escribe el envío
   const [verFacturasProducto, setVerFacturasProducto] = useState(null);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('settings','simulacionCostosReales'),d=>setSimCostosLista(d.exists()?(d.data().items||[]):[]));
@@ -50895,7 +51024,7 @@ ${resumen}
                         const prod = (inventory||[]).find(i=>i.id===newReqForm.productoDestinoId);
                         return prod ? (
                           <p className="text-[10px] text-orange-700 mt-2 font-bold">
-                             ✅ Al cerrar cada lote (fase final) → stock sumará automáticamente a <strong>{prod.displayId||(prod.id||'').split('___')[0]}</strong> · Stock actual: {formatNum(prod.stock||0)} {prod.unit||'und'} · Costo unit: ${formatNum(prod.cost||0)}
+                             ✅ Lo producido en la última fase se envía a <strong>{prod.displayId||(prod.id||'').split('___')[0]}</strong> desde Producción Activa (botón 📦: eliges el almacén) · Stock actual: {formatNum(prod.stock||0)} {prod.unit||'und'} · Costo unit: ${formatNum(prod.cost||0)}
                           </p>
                         ) : null;
                       })()}
@@ -51996,43 +52125,95 @@ ${resumen}
     await cerrar();
   };
 
-  // ── Recalcular inventario retroactivamente para lotes ya cerrados ─────────────
-  const handleRecalcInventarioLote = async (req, loteIdx) => {
-    if(!req.productoDestinoId) return setDialog({title:'Sin producto destino',text:'Asigna un producto en la OP primero.',type:'alert'});
-    const _destId=String(req.productoDestinoId).split('___')[0].trim();
-    const prod=(inventory||[]).find(i=>i.id===req.productoDestinoId||(i.displayId&&i.displayId===_destId)||(i.id||'').split('___')[0]===_destId);
-    if(!prod) return setDialog({title:'Producto no encontrado',text:`ID buscado: "${req.productoDestinoId}". Verifica que existe en inventario.`,type:'alert'});
-    const fmla=(formulas||[]).find(f=>f.categoria&&req.categoria&&f.categoria.toUpperCase()===(req.categoria||'').toUpperCase());
-    const fasesActivas=fmla?.fases||{extrusion:true,impresion:false,sellado:false};
-    const ultimaFase=fasesActivas.sellado?'sellado':fasesActivas.impresion?'impresion':'extrusion';
-    const batchesLote=(req.production?.[ultimaFase]?.batches||[]).filter(b=>Number(b.loteIndex??0)===loteIdx);
-    const kgLote=batchesLote.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
-    const gramajeFg=parseNum(req.gramaje||req.gramajeFg||req.pesoMillar||0);
-    const millFromParams=['extrusion','impresion','sellado'].reduce((s,f)=>s+(req.production?.[f]?.batches||[]).filter(b=>Number(b.loteIndex??0)===loteIdx).reduce((ss,b)=>ss+parseNum(b.techParams?.millares||b.millares||b.millaresProd||0),0),0);
-    const kgTodas=['extrusion','impresion','sellado'].reduce((s,f)=>s+(req.production?.[f]?.batches||[]).filter(b=>Number(b.loteIndex??0)===loteIdx).reduce((ss,b)=>ss+parseNum(b.producedKg||0),0),0);
-    const millCalc=kgTodas>0&&gramajeFg>0?kgTodas/gramajeFg:0;
-    const millLote=millFromParams>0?millFromParams:millCalc;
-    const esMill=(prod.unit||'und').toLowerCase().startsWith('mill');
-    const unids=esMill?millLote:kgTodas;
-    if(unids<=0) return setDialog({title:'Sin producción',text:`Lote ${loteIdx+1}: no se detectaron unidades. Revisa que los batches tienen KG o millares registrados.\n\nFase revisada: ${ultimaFase.toUpperCase()}\nBatches encontrados: ${batchesLote.length}\nmillFromParams: ${millFromParams}\nkgTodas: ${kgTodas}\ngramaje: ${gramajeFg}`,type:'alert'});
-    const costoLote=['extrusion','impresion','sellado'].reduce((s,f)=>s+(req.production?.[f]?.batches||[]).filter(b=>Number(b.loteIndex??0)===loteIdx).reduce((ss,b)=>ss+parseNum(b.cost||0),0),0);
-    const stkAnt=parseNum(prod.stock||0); const costoAnt=parseNum(prod.cost||0);
-    const nuevoStock=stkAnt+unids;
-    const nuevoCostU=costoLote>0?costoLote/unids:0;
-    const costoProm=nuevoStock>0?(stkAnt*costoAnt+unids*nuevoCostU)/nuevoStock:costoAnt;
-    setDialog({title:`📦 Actualizar inventario — Lote ${loteIdx+1}`,
-      text:`Producto: ${prod.desc||prod.displayId||prod.id}\nUnidades del lote: ${formatNum(unids)} ${prod.unit||'und'}\nStock actual: ${formatNum(stkAnt)} → Nuevo: ${formatNum(nuevoStock)}\nCosto unit. actual: $${formatNum(costoAnt)} → Nuevo: $${formatNum(costoProm>0?costoProm:costoAnt)}\n\n¿Confirmar?`,
-      type:'confirm', onConfirm: async()=>{
-        try{
-          const fb=writeBatch(db);
-          fb.update(getDocRef('inventory',prod.id),{stock:nuevoStock,cost:costoProm>0?costoProm:costoAnt,updatedAt:getTodayDate()});
-          const movId=`PT-RECALC-${req.id}-L${loteIdx+1}-${Date.now()}`;
-          fb.set(getDocRef('inventoryMovements',movId),{id:movId,date:getTodayDate(),timestamp:Date.now(),itemId:prod.id,itemName:prod.desc||prod.displayId,type:'ENTRADA',qty:unids,cost:nuevoCostU,totalValue:unids*nuevoCostU,reference:req.id,notes:`Recálculo Lote ${loteIdx+1} · ${req.id}`});
-          await fb.commit();
-          setDialog({title:'✅ Inventario actualizado',text:`+${formatNum(unids)} ${prod.unit||'und'} → ${prod.desc||prod.id}\nStock nuevo: ${formatNum(nuevoStock)}`,type:'alert'});
-        }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+  // ── Enviar a inventario lo producido de un lote ───────────────────────────────
+  // Solo la ÚLTIMA fase de la ruta entrega producto terminado (bolsas → sellado; termoencogible → extrusión).
+  // El usuario elige el almacén. Si el producto ya tiene costo (o existencia) solo se suma la existencia; si no
+  // tiene ni costo ni existencia se lleva también el costo del lote. Lo producido se envía UNA sola vez: después
+  // el botón queda inhabilitado (registro en req.enviosInv.L<n>). Un solo camino: ventana → confirmarEnvioInv.
+  const handleRecalcInventarioLote = async (req, loteIdx, batchId) => {
+    if(!req||!req.productoDestinoId) return setDialog({title:'Sin producto destino',text:'Asigna un producto en la OP primero.',type:'alert'});
+    const info = envPtInfo(req, Number(loteIdx), formulas, inventory);
+    if(!info.ok) return setDialog({title:'Producto no encontrado',text:`ID buscado: "${req.productoDestinoId}". Verifica que existe en inventario.`,type:'alert'});
+    const bId = (batchId==null||batchId==='') ? null : String(batchId);
+    const estado = bId===null ? envPtEstadoLote(info) : envPtEstadoBatch(info, bId);
+    if(estado==='sinprod') return setDialog({title:'Sin producción',text:`Lote ${Number(loteIdx)+1}: no hay producción registrada en ${envPtFaseNombre(info.ultimaFase)} (última fase de este producto). Revisa que el registro tenga KG${info.esMill?' o millares':''}.`,type:'alert'});
+    if(estado==='enviado') return setDialog({title:'Ya enviado',text:`Lo producido en el Lote ${Number(loteIdx)+1} ya fue enviado al inventario${info.ultimoEnvio?` (${info.ultimoEnvio.fecha} → ${info.ultimoEnvio.almacen})`:''}.`,type:'alert'});
+    setEnvioInvModal({reqId:req.id, loteIdx:Number(loteIdx), batchId:bId, almacen:'', enviando:false});
+  };
+
+  const confirmarEnvioInv = async () => {
+    const m = envioInvModal;
+    if(!m || envioInvBusy.current) return;
+    const almacen = String(m.almacen||'').trim();
+    if(!almacen) return setDialog({title:'Falta el almacén',text:'Elige el almacén al que va la mercancía.',type:'alert'});
+    const req = (requirements||[]).find(r=>r.id===m.reqId);
+    const info = req ? envPtInfo(req, m.loteIdx, formulas, inventory) : null;
+    if(!info || !info.ok){ setEnvioInvModal(null); return setDialog({title:'Producto no encontrado',text:'No se encontró la OP o el producto destino. Verifica que existan.',type:'alert'}); }
+    const qty = envPtCantidad(info, m.batchId);
+    if(qty <= ENV_PT_EPS){ setEnvioInvModal(null); return setDialog({title:'Ya enviado',text:`Lo producido en el Lote ${m.loteIdx+1} ya fue enviado al inventario.`,type:'alert'}); }
+    envioInvBusy.current = true;
+    setEnvioInvModal(s=>s?{...s,enviando:true}:s);
+    try{
+      const docs = envPtDocsProducto(info.codigo, inventory);
+      const dest = envPtDocDestino(docs, almacen, info.codigo);
+      const plan = envPtPlan(docs, dest, qty, info.costoUnit);
+      const hoy = getTodayDate(), ahora = Date.now();
+      const destId = dest ? dest.id : envPtIdNuevoDoc(info.codigo, almacen);
+      if(!dest && (inventory||[]).some(i=>i.id===destId)) throw new Error(`Ya existe el documento "${destId}" con otro almacén asignado. Revísalo en Inventario antes de enviar.`);
+      const fb = writeBatch(db);
+      if(dest){
+        const upd = { stock: plan.stockDespues, updatedAt: hoy };
+        if(plan.llevaCosto && info.costoUnit > 0) upd.cost = info.costoUnit;
+        fb.update(getDocRef('inventory', dest.id), upd);
+      } else {
+        const ref = info.prod;
+        fb.set(getDocRef('inventory', destId), { id:destId, displayId:info.codigo, desc:ref.desc||'', category:ref.category||'Productos Terminados', subcategory:ref.subcategory||'', unit:ref.unit||'und', cost:plan.costoDoc, stock:plan.stockDespues, almacen, activo:true, timestamp:ahora, updatedAt:hoy });
       }
-    });
+      const faseNom = envPtFaseNombre(info.ultimaFase);
+      const movId = `PT-ENV-${req.id}-L${m.loteIdx+1}-${ahora}`;
+      const prevEnvios = ((req.enviosInv||{})[envPtClaveLote(m.loteIdx)]||{}).envios;
+      const enviosPrev = Array.isArray(prevEnvios) ? prevEnvios : [];
+      fb.set(getDocRef('inventoryMovements', movId), {
+        id:movId, date:hoy, timestamp:ahora, itemId:destId, itemName:info.prod.desc||info.codigo, type:'ENTRADA', qty,
+        cost:plan.costoMov, totalValue:qty*plan.costoMov, almacen, reference:req.id, opAsignada:req.id,
+        notes:`📦 Producción OP ${req.id} · Lote ${m.loteIdx+1} (${faseNom}) → ${almacen}${plan.llevaCosto?' · con costo':' · solo existencia'}${m.batchId?` · Reg. ${String(m.batchId).slice(-6)}`:''} · Envío ${enviosPrev.length+1}`,
+        user:appUser?.name||'Planta'
+      });
+      const envio = { fecha:hoy, ts:ahora, almacen, destId, codigo:info.codigo, qty, kg:envPtKgEnvio(info, qty), unit:info.unit, batchIds:envPtIdsAMarcar(info, m.batchId), soloExistencia:!plan.llevaCosto, costoUnit:plan.llevaCosto?info.costoUnit:0, user:appUser?.name||'Planta', movId };
+      fb.update(getDocRef('requirements', req.id), { [`enviosInv.${envPtClaveLote(m.loteIdx)}`]: { envios: [...enviosPrev, envio] } });
+      await fb.commit();
+      setEnvioInvModal(null);
+      setDialog({title:'✅ Enviado al inventario',text:`${formatNum(qty)} ${info.unit} → ${info.prod.desc||info.codigo}\nAlmacén: ${almacen}\nExistencia en ${almacen}: ${formatNum(plan.stockAntes)} → ${formatNum(plan.stockDespues)}\n${plan.llevaCosto?`Costo unitario cargado: $${formatNum(info.costoUnit)}`:'Solo existencia — el costo del producto no cambió.'}`,type:'alert'});
+    }catch(e){
+      setEnvioInvModal(null);
+      setDialog({title:'Error',text:e.message,type:'alert'});
+    }finally{
+      envioInvBusy.current = false;
+    }
+  };
+
+  // Botón 📦 (o "✓ Enviado" inhabilitado cuando ya salió lo producido). variante: 'fila' | 'lista' | 'reporte'
+  const renderBtnEnvioInv = (req, loteIdx, batchId, variante) => {
+    const info = envPtInfo(req, Number(loteIdx), formulas, inventory);
+    const bId = (batchId==null||batchId==='') ? null : String(batchId);
+    const estado = bId===null ? envPtEstadoLote(info) : envPtEstadoBatch(info, bId);
+    const est = {
+      fila:    { on:'p-1 bg-orange-50 text-orange-600 rounded hover:bg-orange-500 hover:text-white transition-all font-black text-[8px] px-2', off:'p-1 bg-gray-100 text-gray-400 rounded font-black text-[8px] px-2 cursor-not-allowed', txtOn:'📦', txtOff:'✓ Enviado', txtSin:'⚠' },
+      lista:   { on:'ml-auto bg-orange-100 border border-orange-300 text-orange-700 rounded-lg px-3 py-1 font-black uppercase hover:bg-orange-200 transition-all', off:'ml-auto bg-gray-100 border border-gray-300 text-gray-400 rounded-lg px-3 py-1 font-black uppercase cursor-not-allowed', txtOn:'📦 Enviar al inventario', txtOff:'✓ Enviado al inventario', txtSin:'⚠ Sin millares' },
+      reporte: { on:'mt-2 text-[8px] bg-orange-100 border border-orange-300 text-orange-700 rounded-lg px-2 py-1 font-black uppercase hover:bg-orange-200 transition-all whitespace-nowrap', off:'mt-2 text-[8px] bg-gray-100 border border-gray-300 text-gray-400 rounded-lg px-2 py-1 font-black uppercase whitespace-nowrap cursor-not-allowed', txtOn:'📦 Inv.', txtOff:'✓ Enviado', txtSin:'⚠ Sin mill.' },
+    }[variante] || { on:'', off:'', txtOn:'📦', txtOff:'✓ Enviado', txtSin:'⚠' };
+    if(estado==='sinprod'){
+      // nada producido en la última fase → sin botón; hay KG pero no se puede calcular la cantidad (producto en millares sin millares ni gramaje) → aviso inhabilitado
+      const kgAqui = bId===null ? info.kgLote : ((info.batches||[]).find(x=>x.id===bId)||{}).kg;
+      if(!(kgAqui > ENV_PT_EPS)) return null;
+      return <button type="button" disabled data-testid="btn-env-inv" data-estado="sinunid" title="No se puede calcular la cantidad: registra los millares de este lote (o el gramaje de la OP)" className={est.off}>{est.txtSin}</button>;
+    }
+    if(estado==='enviado'){
+      const e = info.ultimoEnvio;
+      const tip = e ? `Enviado al inventario el ${e.fecha} → ${e.almacen} (${formatNum(info.enviado)} ${info.unit})` : 'Ya enviado al inventario';
+      return <button type="button" disabled data-testid="btn-env-inv" data-estado="enviado" title={tip} className={est.off}>{est.txtOff}</button>;
+    }
+    return <button type="button" data-testid="btn-env-inv" data-estado="pendiente" onClick={()=>handleRecalcInventarioLote(req, loteIdx, bId)} title="Enviar al inventario lo producido en este lote (eliges el almacén)" className={est.on}>{est.txtOn}</button>;
   };
 
   const handleSavePhaseDirectly = async (req, isClose) => {
@@ -52777,12 +52958,7 @@ ${resumen}
                             {fi === 0 ? (
                               <td className="p-3 border-r text-center font-black text-orange-600 text-sm align-middle" rowSpan={fasesDelLote.length}>
                                 <div>{li+1}</div>
-                                {req.productoDestinoId&&getLotes(req)[li]?.cerrado&&(
-                                  <button onClick={()=>handleRecalcInventarioLote(req,li)}
-                                    className="mt-2 text-[8px] bg-orange-100 border border-orange-300 text-orange-700 rounded-lg px-2 py-1 font-black uppercase hover:bg-orange-200 transition-all whitespace-nowrap">
-                                    📦 Inv.
-                                  </button>
-                                )}
+                                {req.productoDestinoId&&getLotes(req)[li]?.cerrado&&renderBtnEnvioInv(req, li, null, 'reporte')}
                               </td>
                             ) : null}
                             <td className="p-3 border-r font-black">
@@ -55159,9 +55335,7 @@ ${resumen}
                               <span className={`font-black uppercase ${l.cerrado?'text-green-700':'text-orange-600'}`}>{l.cerrado?'✓':''} {lbl}{l.fechaCierre?` — ${l.fechaCierre}`:''}</span>
                               {(kgL>0||millL>0)&&<span className="text-gray-500 font-bold">{esTermo?`${formatNum(kgL)} KG`:(millL>0?`${formatNum(millL)} Mill.`:`${formatNum(kgL)} KG`)}</span>}
                               {!l.cerrado&&<span className="text-orange-500 font-bold">EN PROCESO</span>}
-                              {l.cerrado&&req.productoDestinoId&&(
-                                <button onClick={()=>handleRecalcInventarioLote(req,li)} className="ml-auto bg-orange-100 border border-orange-300 text-orange-700 rounded-lg px-3 py-1 font-black uppercase hover:bg-orange-200 transition-all">📦 Actualizar inventario</button>
-                              )}
+                              {l.cerrado&&req.productoDestinoId&&renderBtnEnvioInv(req, li, null, 'lista')}
                             </div>);
                           })}
                         </div>)}
@@ -55740,9 +55914,7 @@ ${resumen}
                                                 })()}
                                                 {!esTermo && b.techParams?.millares > 0 && <span className="font-bold text-blue-600">{formatNum(b.techParams.millares)} Mill.</span>}
                                                 <div className="flex gap-1 shrink-0 ml-auto">
-                                                  {req.productoDestinoId && (
-                                                    <button onClick={()=>handleRecalcInventarioLote(req, Number(b.loteIndex??0))} className="p-1 bg-orange-50 text-orange-600 rounded hover:bg-orange-500 hover:text-white transition-all font-black text-[8px] px-2" title="Actualizar inventario con producción de este lote">📦</button>
-                                                  )}
+                                                  {req.productoDestinoId && activePhaseTab === envPtUltimaFase(req, formulas) && renderBtnEnvioInv(req, Number(b.loteIndex??0), b.id, 'fila')}
                                                   <button onClick={()=>requireAdminPassword(()=>handleEditBatch(req.id, activePhaseTab, b.id),'Editar lote de producción')} className="p-1 bg-orange-50 text-orange-500 rounded hover:bg-orange-500 hover:text-white transition-all" title="Editar lote"><Edit size={10}/></button>
                                                   <button onClick={()=>requireAdminPassword(()=>handleDeleteBatch(req.id, activePhaseTab, b.id),'Eliminar lote de producción')} className="p-1 bg-red-50 text-red-400 rounded hover:bg-red-500 hover:text-white transition-all" title="Eliminar lote"><Trash2 size={10}/></button>
                                                 </div>
@@ -67487,6 +67659,52 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            {activeTab === 'auditoria' && (hasPerm('auditoria') || appUser?.role==='Master') && renderAuditoriaModule()}
            {activeTab === 'dispositivos' && appUser?.role==='Master' && renderDispositivosModule()}
         </main>
+
+        {/* ── MODAL: ENVIAR AL INVENTARIO LO PRODUCIDO (elegir almacén) ── */}
+        {envioInvModal && (() => {
+          const m = envioInvModal;
+          const rq = (requirements||[]).find(r=>r.id===m.reqId);
+          const info = rq ? envPtInfo(rq, m.loteIdx, formulas, inventory) : null;
+          if(!info || !info.ok) return null;
+          const qty = envPtCantidad(info, m.batchId);
+          const docs = envPtDocsProducto(info.codigo, inventory);
+          const almacenes = Array.from(new Set((depositos||[]).filter(Boolean)));
+          const dest = m.almacen ? envPtDocDestino(docs, m.almacen, info.codigo) : null;
+          const plan = m.almacen ? envPtPlan(docs, dest, qty, info.costoUnit) : null;
+          const kg = envPtKgEnvio(info, qty);
+          return (
+            <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[99980] p-4 print:hidden" onClick={()=>{ if(!m.enviando) setEnvioInvModal(null); }}>
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 border-t-8 border-orange-500" onClick={e=>e.stopPropagation()} data-testid="modal-env-inv">
+                <h3 className="font-black text-black uppercase tracking-widest text-lg">📦 Enviar al inventario</h3>
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-[11px] font-bold text-gray-700 space-y-1">
+                  <div><span className="text-gray-500">Producto:</span> <span className="font-black">{info.codigo}</span> — {info.prod.desc||''}</div>
+                  <div><span className="text-gray-500">Producción:</span> OP {rq.id} · Lote {m.loteIdx+1} · {envPtFaseNombre(info.ultimaFase)}</div>
+                  <div><span className="text-gray-500">Cantidad a enviar:</span> <span className="font-black text-green-700">{formatNum(qty)} {info.unit}</span>{info.esMill && kg>0 ? <span className="text-gray-500"> ({formatNum(kg)} KG)</span> : null}</div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">¿A qué almacén va?</label>
+                  <select data-testid="sel-env-inv-almacen" value={m.almacen} onChange={e=>{ const v=e.target.value; setEnvioInvModal(s=>s?{...s,almacen:v}:s); }} className="w-full border-2 border-orange-300 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500 bg-white">
+                    <option value="">— Seleccione almacén —</option>
+                    {almacenes.map(a=><option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+                {plan && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-[11px] font-bold text-gray-700 space-y-1" data-testid="env-inv-preview">
+                    <div>Existencia en {m.almacen}: {formatNum(plan.stockAntes)} → <span className="font-black text-green-700">{formatNum(plan.stockDespues)}</span> {info.unit}</div>
+                    {plan.llevaCosto
+                      ? <div className="text-blue-700">El producto no tiene costo ni existencia en el inventario: se carga la existencia y también el costo del lote (${formatNum(info.costoUnit)} por {info.unit}).</div>
+                      : <div className="text-gray-600">El producto ya tiene {plan.tieneCosto?'costo':'existencia'}: solo se suma la existencia; el costo no cambia{plan.destExiste?'':` (el almacén nuevo se crea con el costo actual del producto: $${formatNum(plan.costoDoc)})`}.</div>}
+                  </div>
+                )}
+                <p className="text-[10px] font-bold text-orange-600">Se envía una sola vez: después el botón queda inhabilitado.</p>
+                <div className="flex gap-3">
+                  <button type="button" data-testid="btn-env-inv-cancelar" disabled={m.enviando} onClick={()=>setEnvioInvModal(null)} className="flex-1 bg-gray-200 text-gray-800 font-black py-3 rounded-xl uppercase text-[10px] tracking-widest hover:bg-gray-300 transition-all disabled:opacity-50">Cancelar</button>
+                  <button type="button" data-testid="btn-env-inv-confirmar" disabled={!m.almacen || m.enviando} onClick={confirmarEnvioInv} className="flex-1 bg-black text-white font-black py-3 rounded-xl uppercase text-[10px] tracking-widest shadow-lg hover:bg-gray-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed">{m.enviando?'Enviando…':'Enviar'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {dialog && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center z-[99999] p-0 sm:p-4 print:hidden animate-in fade-in">
