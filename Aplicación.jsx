@@ -993,7 +993,7 @@ const rfPlanConversion = (conceptos, deps) => {
 // Arma las líneas Debe/Haber de una nómina, por departamento. Función pura: todo lo que necesita llega en `ctx`, para poder probarla sin pantalla.
 //   INCES por Pagar             → lo descontado al trabajador en un pago de Utilidades (0,5 % sobre las utilidades; clave 'inces'): la cuenta que el tipo de nómina le asignó al concepto INCES, si le asignó una; si no, la de «Parafiscales → INCES → Cuenta Contable (Pasivo)».
 //                                 «Cierre de Mes» también lo usa para el aporte de la empresa del mes. En los demás pagos el asiento no genera línea de INCES.
-//   IVSS / RPE / FAOV por Pagar → la cuenta de «Parafiscales → Cuenta Contable (Pasivo)»; si ahí no hay, la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador.
+//   IVSS / RPE / FAOV por Pagar → la cuenta de «Parafiscales → Cuenta Contable (Pasivo)»; si ahí no hay, la cuenta que tenga el concepto (IVSS, RPE o FAOV) para el centro de costo del trabajador. Si el tipo de nómina le asignó una cuenta al concepto FAOV / BANAVIH (el FAOV de Utilidades), esa manda.
 //   Nómina por Pagar (Banco)    → la cuenta de pasivo del tipo de nómina del pago («Configuración → Tipos de nómina»); los pagos anteriores, sin tipo, usan la cuenta general que ya tenían guardada.
 //   Aporte patronal (Debe)      → la cuenta del concepto «APORTE PATRONAL (IVSS)», «APORTE PATRONAL SPF» o «APORTE PATRONAL BANAVIH» (Conceptos) para el centro de costo del trabajador: una línea por aporte.
 //   Cargas Sociales Patronales  → solo el aporte cuyo concepto no tenga cuenta: la cuenta de respaldo que hubiera guardada (la del centro de costo del trabajador o, si no tiene, la general; si tampoco, la antigua del departamento en rrhh_cuentas_nomina); si no hay ninguna, sale «sin cuenta configurada».
@@ -1456,6 +1456,36 @@ const rhIncesDelPago = (pago, tipo, conceptos) => {
   return { auto, incluida:auto && !(carga && carga.solo && !item), esUtilidades, enLista:!!item, concepto:item ? item.concepto : (activos.find(rhEsConceptoInces) || null), cuenta:(item && item.cuenta) || null };
 };
 
+// == RRHH - FAOV (BANAVIH) del trabajador en los pagos sin «Días Trabajados» (Utilidades…) ==
+// Parafiscales → FAOV (1 % del trabajador y 2 % de la empresa) se calcula solo también en el pago de Utilidades —o en el de un tipo que tenga el concepto FAOV / BANAVIH en su lista como deducción— aunque no tenga «Días Trabajados»:
+//   Base = TODAS las asignaciones incluidas del pago (igual que el FAOV de la nómina de siempre: no excluye utilidades ni bono vacacional; el INCES, en cambio, usa solo las utilidades). IVSS y RPE no aplican a las utilidades.
+//   $ = base en $ × %; Bs. = base en Bs. (el de cada fila: lo escrito en Bs. tal cual) × %; cada uno a centavos. Sale con su aporte de la empresa: el asiento y el cierre de mes lo llevan a su cuenta.
+// El concepto de deducción FAOV (20030, el «… (BANAVIH)» de deducciones o el de vacaciones, o cualquiera que se llame FAOV / BANAVIH / Vivienda y Hábitat; no el «APORTE PATRONAL …»)
+const rhEsConceptoFaov = (c) => !!c && (c.tipo === 'D' || c.tipo === 'V') && (String(c.codigo == null ? '' : c.codigo).trim() === '20030' || (rhEsLeyFAOV(c.nombre) && !/patronal/i.test(String(c.nombre || ''))));
+// Base y montos del FAOV. incluidas = las asignaciones incluidas en el pago (con montoUSD / montoBs tal como están en pantalla); pct / pctPatronal = los % de Parafiscales → FAOV
+const rhFaovSobreAsignaciones = (incluidas, tasa, pct, pctPatronal) => {
+  const lista = (incluidas || []).filter(Boolean);
+  let usd = 0, bs = 0;
+  lista.forEach(a => { usd += benNum(a.montoUSD); bs += rhBsAsignacion(a, tasa); });
+  const p = Math.min(100, Math.max(0, benNum(pct))), pp = Math.min(100, Math.max(0, benNum(pctPatronal)));
+  return { baseUSD:benR2(usd), baseBs:benR2(bs), pct:p, pctPatronal:pp, montoUSD:benR2(usd * p / 100), montoBs:benR2(bs * p / 100), montoPatronalUSD:benR2(usd * pp / 100), montoPatronalBs:benR2(bs * pp / 100) };
+};
+// ¿El FAOV (BANAVIH) se calcula solo en este pago, aunque no tenga «Días Trabajados»? → { auto, incluida, esUtilidades, enLista, concepto, cuenta }
+//   auto     = el pago es de Utilidades o su tipo tiene un concepto FAOV / BANAVIH en su lista como deducción
+//   incluida = entra ya marcado: siempre, salvo en un tipo «solo los conceptos que yo elija» que no lo lista (ahí queda disponible en «Buscar concepto para agregar»)
+//   concepto = el concepto FAOV de Conceptos; cuenta = la cuenta que el tipo le asignó, si le asignó una
+const rhFaovDelPago = (pago, tipo, conceptos) => {
+  const activos = (conceptos || []).filter(c => c && c.activo !== false);
+  const carga = tipo ? rhCargaDeTipo(tipo) : null;
+  let item = null;
+  if (carga && carga.solo && carga.origen === 'tipo') {
+    item = rhResolverCargaConceptos(activos.filter(c => ['A', 'V', 'L', 'D'].includes(c.tipo)), carga.conceptos).encontrados.find(e => rhEsConceptoFaov(e.concepto) && e.lado === 'D') || null;
+  }
+  const esUtilidades = rhEsPagoUtilidades(pago, tipo);
+  const auto = esUtilidades || !!item;
+  return { auto, incluida:auto && !(carga && carga.solo && !item), esUtilidades, enLista:!!item, concepto:item ? item.concepto : (activos.find(c => c.tipo === 'D' && rhEsConceptoFaov(c)) || null), cuenta:(item && item.cuenta) || null };
+};
+
 // ═════ Informes de nómina: Nómina General de Pago · Resumen de Conceptos · Resumen por Centro de Costo (los del ERP, mejorados) ═════
 // Todo sale de lo ya guardado en cada pago (rrhh_nominas + rrhh_nomina_detalles): las mismas cifras del recibo, del reporte y del asiento.
 // Se omiten las filas en 0 (sin monto en $ ni en Bs.). Las deducciones salen en positivo, en su propia columna: Neto = Asignaciones − Deducciones.
@@ -1638,6 +1668,7 @@ const rhInformeFilas = (tipo, D, tasasTexto) => {
 // Las cifras salen del asiento de cada pago (rhAsientoPorDepartamento), repartidas en comprobantes por tema y sumadas por cuenta para todo el mes (con el Bs. guardado en cada pago, cada uno con su tasa). Lo del trabajador va en Nóminas y Beneficios; el aporte de la empresa va solo en su propio comprobante, así ningún monto se cuenta dos veces.
 // El INCES del mes (Parafiscales → INCES → % patronal, normalmente 2%) es la provisión mensual del aporte trimestral: se calcula sobre el salario normal del mes (asignaciones sin Utilidades ni Bono vacacional), la misma base de «INCES Trimestral»; los 3 meses del trimestre suman ese aporte.
 // El INCES que se descuenta al trabajador en un pago de Utilidades (0,5 % sobre las utilidades) va en el comprobante de ese tipo de nómina, contra el mismo «INCES por pagar»; no se mezcla con la provisión de la empresa.
+// El FAOV (BANAVIH) de un pago de Utilidades va como el de cualquier nómina: lo del trabajador en el comprobante de su tipo y el aporte de la empresa en «Aportes patronales», contra el mismo «FAOV por pagar».
 // Los comprobantes no pasan solos a la contabilidad: se guardan en «Cierre de Mes» (colección rrhh_cierres_mes, un documento por mes) y se pueden imprimir o bajar a Excel.
 const RH_CIERRE_CATEGORIAS = [
   { id:'nomina', label:'Nóminas', pref:'NOM', icono:'💰' },
@@ -3135,13 +3166,19 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       const crudoPatronalUSD = totalAsig*cfg.pctPatronal/100;
       return {concepto:'FAOV', montoUSD:parseFloat(crudoUSD.toFixed(2)), montoPatronalUSD:parseFloat(crudoPatronalUSD.toFixed(2)), montoBs:parseFloat((crudoUSD*tasa).toFixed(2)), montoPatronalBs:parseFloat((crudoPatronalUSD*tasa).toFixed(2)), codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
     };
+    // FAOV (BANAVIH) de un pago sin «Días Trabajados» (Utilidades…): el % de Parafiscales sobre TODAS las asignaciones incluidas, con su aporte de la empresa (ver rhFaovSobreAsignaciones)
+    const mkFaovPago = (cuenta) => {
+      const cfg = configParafiscal.faov || {};
+      const r = rhFaovSobreAsignaciones(incluidas, tasa, cfg.pctTrabajador, cfg.pctPatronal);
+      return {concepto:'FAOV', montoUSD:r.montoUSD, montoPatronalUSD:r.montoPatronalUSD, montoBs:r.montoBs, montoPatronalBs:r.montoPatronalBs, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'FAOV', esLegal:true};
+    };
     // INCES del trabajador: sin aporte patronal aquí (el de la empresa es trimestral y mensual en el cierre)
     const mkInces = (cuenta, codigo) => {
       const cfg = configParafiscal.inces || {};
       const r = rhIncesUtilidades(incluidas, tasa, cfg.pctTrabajadorUtilidades);
       return {concepto:'INCES', ...(codigo ? {codigo} : {}), montoUSD:r.montoUSD, montoPatronalUSD:0, montoBs:r.montoBs, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfg.nombrePasivo||'INCES', esLegal:true, claveLegal:'inces'};
     };
-    return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov, mkInces};
+    return {totalAsig, basico, hayBase, salarioNormal, lunes, esUtilidades, mkSemanal, mkFaov, mkFaovPago, mkInces};
   };
 
   const [cargarTrabModal,setCargarTrabModal]=useState(null); // {trabajador, asignaciones:[], deducciones:[]}
@@ -3171,17 +3208,24 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // Arma las 3 deducciones legales (IVSS, RPE, FAOV) ya con incluida:true — se usa al abrir un
   // trabajador, y también desde el botón "Recalcular" si cambia el Sueldo después.
   // En un pago de Utilidades (o de un tipo que lista el concepto INCES) agrega el INCES del trabajador: % de Parafiscales sobre las utilidades; con la cuenta que el tipo le asignó, si le asignó una.
+  // En un pago de Utilidades (o de un tipo que lista el concepto FAOV / BANAVIH como deducción) el FAOV también se calcula solo aunque no haya «Días Trabajados»: % de Parafiscales sobre todas las asignaciones, con su aporte de la empresa; IVSS y RPE no aplican a las utilidades.
   const recalcularDeduccionesLegales = (asignaciones, centroCostoId) => {
     const tasa = Number(nominaActiva?.tasa||0);
     const conceptosActivos = conceptos.filter(c=>c.activo!==false && c.tipo==='D');
     const cIVSSc = conceptosActivos.find(conceptoEsIVSS), cRPEc = conceptosActivos.find(conceptoEsRPE), cFAOVc = conceptosActivos.find(conceptoEsFAOV);
     const aCuenta = (c) => { const cu=c?cuentaDeConcepto(c,centroCostoId):null; return {codigoCuenta:cu?.codigo||'', nombreCuenta:cu?.nombre||''}; };
-    const {hayBase, mkSemanal, mkFaov, mkInces} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
+    const {hayBase, mkSemanal, mkFaov, mkFaovPago, mkInces} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
     const base = hayBase ? [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true})) : [];
-    const inc = rhIncesDelPago(nominaActiva, nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null, conceptos);
-    if(!inc.auto) return base;
+    const tipoPago = nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null;
+    // FAOV: con «Días Trabajados» es el de siempre (va con IVSS y RPE); sin ellos, en Utilidades (o en un tipo que lo lista) sale solo, con la cuenta del tipo si le asignó una (cuentaDeTipo manda sobre la de Parafiscales y la del concepto)
+    const fv = rhFaovDelPago(nominaActiva, tipoPago, conceptos);
+    const cuentaFaov = fv.cuenta ? {codigoCuenta:fv.cuenta.codigo, nombreCuenta:fv.cuenta.nombre} : aCuenta(cFAOVc);
+    const faovConCuentaDeTipo = (d) => (fv.cuenta && d.concepto==='FAOV') ? {...d, codigoCuenta:fv.cuenta.codigo, nombreCuenta:fv.cuenta.nombre, cuentaDeTipo:true} : d;
+    const legales = hayBase ? base.map(faovConCuentaDeTipo) : (fv.auto ? [{...faovConCuentaDeTipo(mkFaovPago(cuentaFaov)), incluida:fv.incluida}] : []);
+    const inc = rhIncesDelPago(nominaActiva, tipoPago, conceptos);
+    if(!inc.auto) return legales;
     const cuentaInces = inc.cuenta ? {codigoCuenta:inc.cuenta.codigo, nombreCuenta:inc.cuenta.nombre} : aCuenta(inc.concepto);
-    return [...base, {...mkInces(cuentaInces, inc.concepto ? inc.concepto.codigo : ''), ...(inc.cuenta ? {cuentaDeTipo:true} : {}), incluida:inc.incluida}];
+    return [...legales, {...mkInces(cuentaInces, inc.concepto ? inc.concepto.codigo : ''), ...(inc.cuenta ? {cuentaDeTipo:true} : {}), incluida:inc.incluida}];
   };
   const toggleDeduccionLegal = (idx) => setCargarTrabModal(m=>({...m, deduccionesLegales:m.deduccionesLegales.map((d,i)=>i===idx?{...d,incluida:!d.incluida}:d)}));
   const actualizarMontoDeduccionLegal = (idx, montoBsInput) => {
@@ -3196,12 +3240,14 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const recalcularLegalesAhora = () => setCargarTrabModal(m=>m?{...m, deduccionesLegales:recalcularDeduccionesLegales(m.asignaciones, m.trabajador.centroCostoId)}:m);
   // IVSS/RPE/FAOV siguen a las asignaciones: cada vez que cambia una asignación se recalculan con lo que hay en pantalla en ese momento
   // (la fila quitada sigue quitada y la editada a mano conserva su monto — ver rhLegalesAlDia). "Recalcular legales" las reinicia a mano.
-  // El INCES del trabajador (pagos de Utilidades) se pone al día aparte: así IVSS/RPE/FAOV siguen igual que siempre (sin Días Trabajados se dejan como están).
+  // El FAOV y el INCES del trabajador (pagos de Utilidades) se ponen al día cada uno por su lado: así IVSS y RPE siguen igual que siempre (sin Días Trabajados se dejan como están).
   const conLegalesAlDia = (m, asignaciones) => {
     const frescas = recalcularDeduccionesLegales(asignaciones, m.trabajador.centroCostoId);
     const previas = m.deduccionesLegales||[];
     const esInces = (d) => d.claveLegal==='inces';
-    return {...m, asignaciones, deduccionesLegales:[...rhLegalesAlDia(previas.filter(d=>!esInces(d)), frescas.filter(d=>!esInces(d))), ...rhLegalesAlDia(previas.filter(esInces), frescas.filter(esInces))]};
+    const esFaov = (d) => d.concepto==='FAOV';
+    const esSemanal = (d) => !esInces(d) && !esFaov(d); // IVSS y RPE
+    return {...m, asignaciones, deduccionesLegales:[...rhLegalesAlDia(previas.filter(esSemanal), frescas.filter(esSemanal)), ...rhLegalesAlDia(previas.filter(esFaov), frescas.filter(esFaov)), ...rhLegalesAlDia(previas.filter(esInces), frescas.filter(esInces))]};
   };
   const actualizarNovedadValor = (token, valor) => setCargarTrabModal(m=>m?{...m, novedadesValores:{...m.novedadesValores, [token]:valor}}:m);
   // Corre el motor de fórmulas (el mismo de "Probar un Trabajador") con los valores capturados en el
@@ -3275,10 +3321,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const cuentaCarga = (c) => { const it = itemCarga(c); return (it && it.cuenta) || cuentaDeConcepto(c, trabajador.centroCostoId); };
     // INCES del trabajador: en un pago de Utilidades (o de un tipo que lista el concepto INCES) sale de una fila calculada (Parafiscales → INCES → % trabajador), no del concepto escrito a mano
     const incesPago = rhIncesDelPago(nominaActiva, tipoDelPago, conceptos);
+    // FAOV (BANAVIH) del trabajador: en un pago de Utilidades (o de un tipo que lista el concepto FAOV / BANAVIH como deducción) sale de una fila calculada (Parafiscales → FAOV), aunque no haya «Días Trabajados»; no del concepto escrito a mano
+    const faovPago = rhFaovDelPago(nominaActiva, tipoDelPago, conceptos);
     // Disponibles para "+Agregar" a mano: Asignación, Vacaciones y Prestaciones (son montos que se le
     // pagan al trabajador). Patronal y Resultado quedan fuera — son costo de la empresa o totales
     // calculados, no líneas que se agreguen sueltas a un recibo. Lo que el tipo carga como deducción sale en las deducciones (y al revés).
-    const asignacionesCfg = conceptosActivos.filter(c=>(['A','V','L'].includes(c.tipo) && ladoCarga(c)!=='D') || (c.tipo==='D' && ladoCarga(c)==='A'));
+    const asignacionesCfg = conceptosActivos.filter(c=>((['A','V','L'].includes(c.tipo) && ladoCarga(c)!=='D') || (c.tipo==='D' && ladoCarga(c)==='A')) && !(faovPago.auto && rhEsConceptoFaov(c) && ladoCarga(c)!=='A'));
     // HCM y Bolsa de alimentos se calculan solos (se configuran en Configuración → HCM / Bolsa de alimentos) para quien los tiene marcados en la ficha:
     // su concepto no sale como fila manual para no duplicarlo. Lo guardado a mano antes se conserva (benConstruirLineas).
     // Tampoco sale como fila manual el concepto de una línea automática que ya está guardada en este pago.
@@ -3290,9 +3338,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       ...((_detBenGuardado?.deducciones||[]).filter(d=>d.esBeneficio).map(d=>d.codigo)),
     ].filter(Boolean);
     // Deducciones a mano: las de tipo D (menos IVSS, RPE y FAOV, que se calculan solos, y HCM / Bolsa automáticos) y las que el tipo carga como deducción (aunque sean de otro tipo: ahí el monto se escribe a mano).
-    // El INCES sale de su fila calculada cuando el pago lo calcula solo.
+    // El INCES y el FAOV (BANAVIH) salen de su fila calculada cuando el pago los calcula solos.
     const deduccionesCfgManual = conceptosActivos.filter(c=>{
       if(incesPago.auto && rhEsConceptoInces(c)) return false;
+      if(faovPago.auto && rhEsConceptoFaov(c)) return false;
       if(codigosAutoBen.includes(c.codigo)) return false;
       const lado = ladoCarga(c);
       if(lado==='D') return true;
@@ -3351,8 +3400,15 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       return {concepto:c.nombre, codigo:c.codigo, incluida:cargaResuelta?ladoCarga(c)==='D':CODIGOS_PREDETERMINADOS.includes(c.codigo), montoUSD:0, montoBs:0, codigoCuenta:cuenta?.codigo||'', nombreCuenta:cuenta?.nombre||'', tieneFormula, token, _formula:c.formula||c.formato, cantidad:0};
     });
     // Igual para las deducciones manuales guardadas. No cuentan: las legales (IVSS/RPE/FAOV, aunque se hayan guardado sin marca), las de HCM/Bolsa (van por su propio camino) ni las que ya salen en la lista.
+    // BANAVIH escrito a mano en un pago ya guardado (de cuando el FAOV de Utilidades no se calculaba solo): si el pago no tiene el FAOV calculado guardado, pasa a la fila FAOV (con el monto que tenía, o calculada si estaba en cero);
+    // si ya tenía los dos, se conservan las dos filas tal como estaban (nada guardado se pierde ni se cambia solo).
+    const faovManualGuardado = (faovPago.auto && detalleExistente) ? ((detalleExistente.deducciones||[]).find(g=>!g.esLegal && !g.esBeneficio && !g.tipoBeneficio && rhEsConceptoFaov({tipo:'D', codigo:g.codigo, nombre:g.concepto})) || null) : null;
+    const faovLegalGuardado = !!detalleExistente && (detalleExistente.deducciones||[]).some(g=>g.esLegal && g.concepto==='FAOV');
+    const faovManualBs = faovManualGuardado ? rhBsFila(faovManualGuardado, 'montoBs', 'montoUSD', tasaPago) : 0;
+    const faovManualConMonto = !!faovManualGuardado && (benNum(faovManualGuardado.montoUSD) > 0 || faovManualBs > 0);
+    const faovManualJunto = (faovManualGuardado && faovLegalGuardado) ? faovManualGuardado : null;
     const esDeLeyGuardada = (g) => { const c0 = {codigo:g.codigo, nombre:g.concepto}, cat = conceptosActivos.find(c=>c.codigo===g.codigo); return [conceptoEsIVSS, conceptoEsRPE, conceptoEsFAOV].some(es=>es(c0) || (cat && es(cat))); };
-    const deduccionesHuerfanas = (detalleExistente?.deducciones||[]).filter(g=>!g.esLegal && !g.esBeneficio && !g.tipoBeneficio && !codigosAutoBen.includes(g.codigo) && !esDeLeyGuardada(g) && !deduccionesManualCat.some(d=>d.codigo===g.codigo)).map(({montoBsTexto,...g})=>({...g, incluida:true}));
+    const deduccionesHuerfanas = (detalleExistente?.deducciones||[]).filter(g=>!g.esLegal && !g.esBeneficio && !g.tipoBeneficio && !codigosAutoBen.includes(g.codigo) && (!esDeLeyGuardada(g) || g===faovManualJunto) && !deduccionesManualCat.some(d=>d.codigo===g.codigo)).map(({montoBsTexto,...g})=>({...g, incluida:true}));
     const deduccionesManual = [...deduccionesManualCat, ...deduccionesHuerfanas];
     // Deducciones legales (IVSS, RPE, FAOV): se recalculan SOLAS cada vez que se abre el trabajador —
     // así, si se corrige la fórmula o la configuración, se refleja de inmediato sin tener que darle a
@@ -3364,12 +3420,20 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const deduccionesLegales = legalesFrescas.map(fresca=>{
       const guardada = legalesGuardadas?.find(g=>g.concepto===fresca.concepto);
       if(guardada?.editadoManual) return {...guardada, incluida:true, montoPatronalUSD:fresca.montoPatronalUSD, montoPatronalBs:fresca.montoPatronalBs}; // el monto del trabajador se respeta; el aporte patronal siempre sigue a las asignaciones
+      if(fresca.concepto==='FAOV' && !guardada && faovManualGuardado && !faovManualJunto) return faovManualConMonto ? {...fresca, montoUSD:benR2(faovManualGuardado.montoUSD), montoBs:benR2(faovManualBs), editadoManual:true, incluida:true} : fresca; // el BANAVIH que escribió a mano pasa a la fila FAOV
       if(legalesGuardadas && !guardada) return {...fresca, incluida:false}; // la había quitado
       return fresca; // recalculada sola, sin editar a mano
     });
     // INCES del trabajador en un pago que ya estaba guardado sin él (de antes de este cálculo): queda sin marcar y se avisa; no se agrega solo a un recibo ya hecho
     const incesCalc = deduccionesLegales.find(d=>d.claveLegal==='inces');
     if(incesCalc && incesCalc.incluida===false && incesPago.incluida && legalesGuardadas && !(detalleExistente?.deducciones||[]).some(g=>!g.esBeneficio && rhEsConceptoInces({tipo:'D', codigo:g.codigo, nombre:g.concepto}))) avisosCarga.push(`El INCES de ${trabajador.nombre} (${String(configParafiscal.inces.pctTrabajadorUtilidades).replace('.',',')} % sobre las utilidades) no estaba en este pago guardado: queda sin marcar. Si debe descontarse, búscalo en «Buscar concepto para agregar».`);
+    // FAOV (BANAVIH) en un pago que ya estaba guardado: sin él → queda sin marcar y se avisa (no se agrega solo a un recibo ya hecho); con el BANAVIH escrito a mano → se conserva y se avisa
+    const faovCalc = deduccionesLegales.find(d=>d.concepto==='FAOV');
+    const pctFaov = String((configParafiscal.faov||{}).pctTrabajador).replace('.',',');
+    const hayDiasTrabajados = asignaciones.some(a=>a.incluida && a.codigo==='00001');
+    if(faovCalc && faovCalc.incluida===false && faovPago.incluida && !hayDiasTrabajados && legalesGuardadas && !faovManualGuardado) avisosCarga.push(`El FAOV (BANAVIH) de ${trabajador.nombre} (${pctFaov} % sobre las asignaciones) no estaba en este pago guardado: queda sin marcar. Si debe descontarse, búscalo en «Buscar concepto para agregar».`);
+    if(faovManualConMonto && !faovManualJunto) avisosCarga.push(`El BANAVIH de ${trabajador.nombre} que escribiste a mano (Bs.${formatNum(faovManualBs)}) se conserva en la fila FAOV. Si debe calcularse solo (${pctFaov} % sobre las asignaciones), pulsa «Recalcular legales».`);
+    if(faovManualJunto) avisosCarga.push(`${trabajador.nombre} tiene en este pago guardado el BANAVIH escrito a mano y el FAOV calculado: se conservan las dos filas. Si es el mismo descuento, quita una de las dos.`);
     const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
     setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null, avisosCarga, difFicha});
   };
@@ -4831,12 +4895,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 {modoCarga==='solo' && (
                   <div className="space-y-2">
                     <p className="text-[10px] text-gray-500">Solo estos conceptos entran ya incluidos al abrir al trabajador (sin Días Trabajados ni predeterminados); el resto sigue disponible en «Buscar concepto para agregar».</p>
-                    <p data-testid="tipo-carga-ayuda-lado" className="text-[10px] text-gray-500">Cada concepto se carga como <b>Asignación</b> (suma al pago) o como <b>Deducción</b> (se resta), y puedes asignarle su cuenta contable: Debe en las asignaciones, Haber en las deducciones. El <b>INCES</b> se calcula solo en los pagos de Utilidades (% «Trabajador (solo utilidades)» de Parafiscales sobre las utilidades).</p>
+                    <p data-testid="tipo-carga-ayuda-lado" className="text-[10px] text-gray-500">Cada concepto se carga como <b>Asignación</b> (suma al pago) o como <b>Deducción</b> (se resta), y puedes asignarle su cuenta contable: Debe en las asignaciones, Haber en las deducciones. El <b>INCES</b> se calcula solo en los pagos de Utilidades (% «Trabajador (solo utilidades)» de Parafiscales sobre las utilidades) y el <b>BANAVIH (FAOV)</b> también (% «Trabajador» de Parafiscales → FAOV sobre las asignaciones del pago, con el aporte de la empresa).</p>
                     <div className="space-y-1.5" data-testid="tipo-carga-lista">
                       {listaCarga.map(x=>{
                         const c = conceptoDeCodigo(x.codigo);
                         const lado = rhLadoCarga(x, c);
                         const esIncesItem = lado==='D' && rhEsConceptoInces(c);
+                        const esFaovItem = lado==='D' && rhEsConceptoFaov(c);
                         // Un concepto de vacaciones / prestaciones que por su nombre es una deducción (BANAVIH, retención, póliza…) y está como asignación: se avisa (no se cambia solo; lo elige el usuario)
                         const pareceDeduccion = !!c && c.tipo!=='D' && lado==='A' && /REGIMEN PRESTACIONAL|RETENCION|DEDUC|DESCUENTO|POLIZA|BANAVIH|IVSS|PARO FORZ|INCES/.test(rhNormalizarNombre(c.nombre));
                         return (
@@ -4859,10 +4924,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                               </span>
                             </div>
                             {esIncesItem && <p data-testid="carga-inces-nota" className="text-[10px] text-gray-500">Se calcula solo: el «% Trabajador (solo utilidades)» de Parafiscales → INCES sobre las utilidades del pago ({String(configParafiscal.inces.pctTrabajadorUtilidades).replace('.',',')} %).</p>}
+                            {esFaovItem && <p data-testid="carga-faov-nota" className="text-[10px] text-gray-500">Se calcula solo: el «% Trabajador» de Parafiscales → FAOV ({String((configParafiscal.faov||{}).pctTrabajador).replace('.',',')} %) sobre las asignaciones del pago, más el aporte de la empresa ({String((configParafiscal.faov||{}).pctPatronal).replace('.',',')} %).</p>}
                             {pareceDeduccion && <p data-testid="carga-parece-deduccion" className="text-[10px] font-black text-amber-600">⚠ Por su nombre parece una deducción y está como asignación (suma al pago): si debe restarse, elige «Deducción».</p>}
                             <div>
                               {selectorCuenta('tipoCuenta:'+x.codigo, lado==='D' ? 'Cuenta de deducción (Haber)' : 'Cuenta de asignación (Debe)', x.codigoCuenta||'', x.nombreCuenta||'', (cu)=>asignarCuentaCarga(x.codigo,cu), ()=>asignarCuentaCarga(x.codigo,null))}
-                              {!x.codigoCuenta && <p data-testid="carga-cuenta-ayuda" className="text-[9px] text-gray-400 mt-1">{esIncesItem ? 'Sin cuenta aquí: se usa la cuenta de pasivo de Parafiscales → INCES.' : 'Sin cuenta aquí: se usa la cuenta del concepto en el centro de costo del trabajador (Conceptos).'}</p>}
+                              {!x.codigoCuenta && <p data-testid="carga-cuenta-ayuda" className="text-[9px] text-gray-400 mt-1">{esIncesItem ? 'Sin cuenta aquí: se usa la cuenta de pasivo de Parafiscales → INCES.' : (esFaovItem ? 'Sin cuenta aquí: se usa la cuenta de pasivo de Parafiscales → FAOV; si no tiene, la del concepto en el centro de costo del trabajador (Conceptos).' : 'Sin cuenta aquí: se usa la cuenta del concepto en el centro de costo del trabajador (Conceptos).')}</p>}
                             </div>
                           </div>
                         );
@@ -5320,7 +5386,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               return (
               <>
                 <p className="font-black text-gray-800 mb-1">FAOV — Fondo de Ahorro Obligatorio para la Vivienda</p>
-                <p className="text-[10px] text-gray-400 mb-4">Base: Total de asignaciones del pago (lo que se le paga al trabajador) · % directo, sin fórmula de semanas · Sin tope · El % Patronal se aplica sobre ese mismo total</p>
+                <p className="text-[10px] text-gray-400 mb-4">Base: Total de asignaciones del pago (lo que se le paga al trabajador) · % directo, sin fórmula de semanas · Sin tope · El % Patronal se aplica sobre ese mismo total · El pago de Utilidades (o el de un tipo de nómina que lleve el concepto BANAVIH como deducción) también lo calcula solo, aunque no tenga Días Trabajados</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador</label><input type="number" step="0.1" value={cfg.pctTrabajador} onChange={e=>set({pctTrabajador:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal</label><input type="number" step="0.1" value={cfg.pctPatronal} onChange={e=>set({pctPatronal:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
@@ -6364,6 +6430,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <tr key={'leg'+d._idx} className="border-t border-gray-100 bg-green-50/50">
                       <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span>
                         {d.claveLegal==='inces' && (()=>{ const r = rhIncesUtilidades(asigIncluidas, tasa, configParafiscal.inces.pctTrabajadorUtilidades); return <div data-testid="inces-detalle" className="text-[9px] font-normal text-green-600">{String(r.pct).replace('.',',')} % sobre {r.usaTodas?'las asignaciones del pago':'las utilidades'}: Bs.{formatNum(r.baseBs)} (${formatNum(r.baseUSD)})</div>; })()}
+                        {d.concepto==='FAOV' && !asigIncluidas.some(a=>a.codigo==='00001') && (()=>{ const cf = configParafiscal.faov||{}; const r = rhFaovSobreAsignaciones(asigIncluidas, tasa, cf.pctTrabajador, cf.pctPatronal); const patBs = rhBsFila(d,'montoPatronalBs','montoPatronalUSD',tasa); return <div data-testid="faov-detalle" className="text-[9px] font-normal text-green-600">BANAVIH · {String(r.pct).replace('.',',')} % sobre las asignaciones del pago: Bs.{formatNum(r.baseBs)} (${formatNum(r.baseUSD)}){patBs>0 ? ` · aporte de la empresa (${String(r.pctPatronal).replace('.',',')} %): Bs.${formatNum(patBs)}` : ''}</div>; })()}
                       </td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
@@ -6423,7 +6490,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </table>
               {(asigDisponibles.length>0 || dedDisponibles.length>0 || legalesDisponibles.length>0 || legalesIncluidas.length>0 || benDisponibles.length>0 || benIncluidas.length>0) && (()=>{
                 const todosDisponibles = [...asigDisponibles.map(a=>({...a,_grupo:'asig'})), ...legalesDisponibles.map(d=>({...d,_grupo:'leg'})), ...dedDisponibles.map(d=>({...d,_grupo:'ded'})), ...benDisponibles.map(d=>({...d,_grupo:'ben'}))];
-                const coincidencias = agregarConceptoBusq.trim() ? todosDisponibles.filter(c=>c.concepto.toUpperCase().includes(agregarConceptoBusq.toUpperCase())).slice(0,8) : [];
+                const coincidencias = agregarConceptoBusq.trim() ? todosDisponibles.filter(c=>(c.concepto+(c._grupo==='leg' && c.concepto==='FAOV' ? ' BANAVIH' : '')).toUpperCase().includes(agregarConceptoBusq.toUpperCase())).slice(0,8) : [];
                 const agregarYLimpiar = (c) => {
                   if(c._grupo==='asig') toggleAsignacion(c._idx);
                   else if(c._grupo==='leg') toggleDeduccionLegal(c._idx);
@@ -6438,7 +6505,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400"/>
                       <input value={agregarConceptoBusq} onChange={e=>setAgregarConceptoBusq(e.target.value)} placeholder={`Buscar concepto para agregar... (${todosDisponibles.length} disponibles)`} className="w-full pl-8 pr-3 py-1.5 border-2 border-gray-200 rounded-lg text-xs font-bold outline-none focus:border-cyan-500"/>
                     </div>
-                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV (y el INCES en los pagos de Utilidades) desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>{benTodos.length>0 && <button onClick={recalcularBeneficiosAhora} title="Vuelve a calcular HCM y Bolsa de alimentos desde cero según la ficha y la configuración" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex-shrink-0"><RefreshCw size={11}/>Recalcular HCM/Bolsa</button>}
+                    <button onClick={recalcularLegalesAhora} title="Vuelve a calcular IVSS/RPE/FAOV (y el FAOV y el INCES en los pagos de Utilidades) desde cero según el sueldo actual" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold ml-auto flex-shrink-0"><RefreshCw size={11}/>Recalcular legales</button>{benTodos.length>0 && <button onClick={recalcularBeneficiosAhora} title="Vuelve a calcular HCM y Bolsa de alimentos desde cero según la ficha y la configuración" className="flex items-center gap-1 bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex-shrink-0"><RefreshCw size={11}/>Recalcular HCM/Bolsa</button>}
                   </div>
                   {agregarConceptoBusq.trim() && (
                     <div className="mt-1.5 border-2 border-gray-100 rounded-xl max-h-48 overflow-y-auto max-w-sm">
