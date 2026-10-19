@@ -11350,6 +11350,216 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   ];
 };
 
+// == INICIO OP POR ARTICULO ==
+// Cada artículo de una Nota de Entrega lleva su propia clasificación, y de ahí pasa a la factura:
+//   tipoVenta 'OP'        → venta de planta: el artículo pertenece a una OP (opId)
+//   tipoVenta 'MERCANCIA' → sin OP · mercancía de reventa
+//   tipoVenta 'PRODUCTO'  → sin OP · producto propio vendido de existencia
+// «Mercancía» y «Producto» llevan el tratamiento contable de siempre para ventas sin OP (cuentas «Sin OP»);
+// solo cambia la etiqueta en los reportes. Las NE y facturas ANTERIORES no traen esa marca por artículo:
+// se siguen tratando como antes (la OP de la NE / de la factura completa).
+const OPA_TIPOS = ['OP','MERCANCIA','PRODUCTO'];
+const OPA_ESTADOS_OP_CERRADOS = ['COMPLETADO','COMPLETADA','ANULADA','ANULADO','CANCELADA','CANCELADO','RECHAZADA','RECHAZADO'];
+const opaNum = (val) => {
+  if (!val) return 0;
+  if (typeof val === 'number') return val;
+  let str = String(val).trim();
+  if (str.includes('.') && str.includes(',')) str = str.replace(/\./g, '').replace(',', '.');
+  else if (str.includes(',')) str = str.replace(',', '.');
+  const p = parseFloat(str);
+  return isNaN(p) ? 0 : p;
+};
+const opaTraeTipo = (it) => !!it && OPA_TIPOS.indexOf(it.tipoVenta) >= 0;
+const opaEtiqueta = (t) => t === 'OP' ? 'Con OP' : t === 'MERCANCIA' ? 'Mercancía' : t === 'PRODUCTO' ? 'Producto' : '';
+const opaIdTxt = (v) => String(v == null ? '' : v).trim();
+const opaFmtOp = (op) => '#' + String(op).replace('OP-', '').padStart(5, '0');
+// OP de la NE como se guardaba antes (un solo campo para toda la NE)
+const opaNeOpLegacy = (ne) => opaIdTxt(ne && (ne.opRelacionada || ne.opId || ne.opAsignada));
+// ¿Producto propio (bolsas / termoencogible)? Misma regla de categorías que ya usa Productos Vendidos.
+const opaEsProductoPropio = (cod, desc, tp) => {
+  const c = String(cod || '').toUpperCase(), d = String(desc || '').toUpperCase(), t = String(tp || '').toUpperCase();
+  if (t === 'TERMOENCOGIBLE' || /TERMO|THERMO|SHRINK|ENCOG/.test(c) || /TERMO|THERMO|ENCOG/.test(d)) return true;
+  if (/STRETCH|STRECTH|STRECH/.test(c) || /STRETCH/.test(d)) return false;
+  if (/CINTA/.test(c) || /CINTA/.test(d)) return false;
+  if (/KRAFT/.test(c) || /KRAFT/.test(d)) return false;
+  if (/DISPEN/.test(c) || /DISPENSADOR/.test(d)) return false;
+  if (/FLEJE/.test(c) || /FLEJE/.test(d)) return false;
+  return t === 'BOLSAS' || /BOL-|FG-[A-Z]/.test(c) || /BOLSA/.test(d);
+};
+const opaSugerirTipoSinOp = (cod, desc, tp) => opaEsProductoPropio(cod, desc, tp) ? 'PRODUCTO' : 'MERCANCIA';
+// Clasificación de un artículo de NE: su propia marca; si no la trae (NE anterior) hereda la OP de la NE completa.
+const opaClasificarItemNE = (it, ne) => {
+  if (opaTraeTipo(it)) {
+    const esOp = it.tipoVenta === 'OP';
+    return { esOp, opId: esOp ? opaIdTxt(it.opId) : '', tipo: it.tipoVenta, marcado: true };
+  }
+  const op = (ne && ne.ventaPorArticulo) ? '' : opaNeOpLegacy(ne);
+  return { esOp: !!op, opId: op, tipo: op ? 'OP' : '', marcado: false };
+};
+// Resumen de una NE completa: ¿tiene artículos con OP?, ¿es mixta?, ¿qué OP(s)?
+const opaResumenNE = (ne) => {
+  const items = (ne && Array.isArray(ne.items)) ? ne.items : [];
+  const cls = items.map(it => opaClasificarItemNE(it, ne));
+  const ops = [], tiposSin = [];
+  cls.forEach(c => {
+    if (c.esOp) { if (c.opId && ops.indexOf(c.opId) < 0) ops.push(c.opId); }
+    else if (c.tipo && tiposSin.indexOf(c.tipo) < 0) tiposSin.push(c.tipo);
+  });
+  const nOp = cls.filter(c => c.esOp).length;
+  if (items.length === 0) {
+    const op = (ne && ne.ventaPorArticulo) ? '' : opaNeOpLegacy(ne);
+    return { tieneOp: !!op, mixta: false, ops: op ? [op] : [], nOp: op ? 1 : 0, nSin: 0, tiposSin: [] };
+  }
+  return { tieneOp: nOp > 0, mixta: nOp > 0 && nOp < items.length, ops, nOp, nSin: items.length - nOp, tiposSin };
+};
+// Texto corto para listas y reportes: OP(s) de la NE, o Mercancía / Producto cuando no tiene OP
+const opaTextoNE = (ne) => {
+  const r = opaResumenNE(ne);
+  if (r.tieneOp) return (r.ops.join(', ') + (r.mixta ? ' + sin OP' : '')) || '—';
+  if (r.tiposSin.length === 1) return opaEtiqueta(r.tiposSin[0]);
+  if (r.tiposSin.length > 1) return 'Mercancía / Producto';
+  return '—';
+};
+// Valor efectivo de un artículo en el formulario de la NE: su marca si la trae; en una NE guardada antes (sin marca por
+// artículo) hereda la OP que tenía la NE completa; si no, se sugiere Producto o Mercancía según el artículo.
+const opaItemEfectivo = (it, form, tp) => {
+  if (opaTraeTipo(it)) return { tipoVenta: it.tipoVenta, opId: it.tipoVenta === 'OP' ? opaIdTxt(it.opId) : '' };
+  const op = (form && form.ventaPorArticulo) ? '' : opaNeOpLegacy(form);
+  if (op) return { tipoVenta: 'OP', opId: op };
+  const cod = String((it && it.invCode) || '').split('___')[0];
+  return { tipoVenta: opaSugerirTipoSinOp(cod, it && it.desc, tp || (it && it.tipoProducto)), opId: '' };
+};
+const opaNormalizarItemsNE = (items, form, getTp) => (items || []).map(it => {
+  const ef = opaItemEfectivo(it, form, getTp ? getTp(it) : '');
+  return { ...it, tipoVenta: ef.tipoVenta, opId: ef.opId };
+});
+// Datos de la NE que se derivan de sus artículos (compatibilidad con listas, PDF y reportes que leen opRelacionada)
+const opaDerivadosNE = (items) => {
+  const ops = [];
+  (items || []).forEach(it => { if (it && it.tipoVenta === 'OP') { const o = opaIdTxt(it.opId); if (o && ops.indexOf(o) < 0) ops.push(o); } });
+  return { opRelacionada: ops[0] || '', opsRelacionadas: ops, ventaPorArticulo: true };
+};
+// Texto del resumen en el formulario de la NE, a partir de los valores efectivos de cada artículo
+const opaResumenTexto = (efectivos) => {
+  const ef = efectivos || [];
+  if (ef.length === 0) return 'Agrega artículos';
+  const ops = [];
+  ef.forEach(x => { if (x.tipoVenta === 'OP' && x.opId && ops.indexOf(x.opId) < 0) ops.push(x.opId); });
+  const nOp = ef.filter(x => x.tipoVenta === 'OP').length;
+  const nM = ef.filter(x => x.tipoVenta === 'MERCANCIA').length;
+  const nP = ef.filter(x => x.tipoVenta === 'PRODUCTO').length;
+  const partes = [];
+  if (nOp) partes.push(nOp + ' con OP' + (ops.length ? ' (' + ops.join(', ') + ')' : ''));
+  if (nM) partes.push(nM + ' mercancía');
+  if (nP) partes.push(nP + ' producto' + (nP > 1 ? 's' : ''));
+  return partes.join(' · ');
+};
+// OPs que se pueden elegir en una NE: las activas (pendientes o en proceso). Si el artículo ya trae una OP que dejó
+// de estar activa (completada, anulada...), se conserva en la lista para no perderla al editar.
+const opaOpsActivas = (requirements, opActual) => {
+  const act = (requirements || []).filter(r => r && r.id && OPA_ESTADOS_OP_CERRADOS.indexOf(String(r.status || '').toUpperCase()) < 0);
+  const sel = opaIdTxt(opActual);
+  if (sel && !act.some(r => r.id === sel)) {
+    const r0 = (requirements || []).find(r => r && r.id === sel);
+    act.push(r0 || { id: sel, desc: '', status: '' });
+  }
+  return act.slice().sort((a, b) => String(b.id).localeCompare(String(a.id)));
+};
+// Datos por artículo que viajan de la NE al carrito de la factura. Una NE anterior (sin marca) pasa su OP a todos sus
+// artículos; los que no tienen OP se marcan Producto / Mercancía según el artículo.
+const opaCamposLineaFactura = (it, ne) => {
+  const c = opaClasificarItemNE(it, ne);
+  const tipo = opaTraeTipo(it) ? it.tipoVenta : (c.esOp ? 'OP' : opaSugerirTipoSinOp(it && (it.invCode || it.fgId), it && it.desc, it && it.tipoProducto));
+  return { tipoVenta: tipo, opId: tipo === 'OP' ? c.opId : '', _neOrigenItem: ne && ne.id };
+};
+// Al editar una factura guardada: recuperar la marca por artículo
+const opaCamposRestaurar = (it) => {
+  const r = {};
+  if (opaTraeTipo(it)) { r.tipoVenta = it.tipoVenta; r.opId = it.tipoVenta === 'OP' ? opaIdTxt(it.opId) : ''; }
+  if (it && it._neOrigenItem) r._neOrigenItem = it._neOrigenItem;
+  return r;
+};
+// Datos de la factura que se derivan de sus artículos (null = ningún artículo trae marca: se deja como está)
+const opaDerivadosFactura = (items) => {
+  const marcados = (items || []).filter(opaTraeTipo);
+  if (!marcados.length) return null;
+  const ops = [];
+  marcados.forEach(it => { if (it.tipoVenta === 'OP') { const o = opaIdTxt(it.opId); if (o && ops.indexOf(o) < 0) ops.push(o); } });
+  return { opAsignada: ops[0] || '', opsAsignadas: ops };
+};
+// Fracción (0..1) del valor facturado que corresponde a artículos con OP. null = la factura no trae marca por artículo
+// (factura anterior): ahí manda el criterio de siempre. En una factura con marcas, lo que no trae marca es venta sin OP.
+const opaFraccionOpFactura = (f) => {
+  const items = (f && f.itemsFacturados) || [];
+  if (!items.some(opaTraeTipo)) return null;
+  let vOp = 0, vTot = 0;
+  items.forEach(it => {
+    const v = opaNum(it.precioUnit) * opaNum(it.cantidad);
+    vTot += v;
+    if (it.tipoVenta === 'OP') vOp += v;
+  });
+  return vTot > 0.005 ? vOp / vTot : null;
+};
+// ¿Este artículo de la factura es venta con OP?
+const opaEsLineaOp = (it, inv) => {
+  if (opaTraeTipo(it)) return it.tipoVenta === 'OP';
+  if (((inv && inv.itemsFacturados) || []).some(opaTraeTipo)) return false;
+  return !!(inv && (inv.opAsignada || (inv.opsAsignadas && inv.opsAsignadas.length > 0)));
+};
+// Columna «OP» de un artículo en los reportes de ventas
+const opaFmtOpLinea = (it, inv) => {
+  if (opaTraeTipo(it)) {
+    if (it.tipoVenta === 'OP') return opaIdTxt(it.opId) ? opaFmtOp(it.opId) : '';
+    return opaEtiqueta(it.tipoVenta);
+  }
+  if (((inv && inv.itemsFacturados) || []).some(opaTraeTipo)) return '';
+  return inv && inv.opAsignada ? opaFmtOp(inv.opAsignada) : '';
+};
+// OP(s) de una factura para listas
+const opaTextoFactura = (inv) => {
+  const items = (inv && inv.itemsFacturados) || [];
+  if (items.some(opaTraeTipo)) {
+    const ops = []; let nSin = 0;
+    items.forEach(it => {
+      if (it.tipoVenta === 'OP') { const o = opaIdTxt(it.opId); if (o && ops.indexOf(o) < 0) ops.push(o); }
+      else nSin++;
+    });
+    if (!ops.length) return '—';
+    return ops.join(', ') + (nSin ? ' + sin OP' : '');
+  }
+  return (inv && inv.opAsignada) || '—';
+};
+// Parte de una factura que corresponde a UNA OP. Con marca por artículo se reparte por artículo (valor de sus artículos
+// de esa OP / valor de todos); sin marca, todo o nada según opAsignada (como siempre).
+const opaPartesFacturaOp = (inv, opId) => {
+  const id = opaIdTxt(opId);
+  const base = opaNum(inv && inv.montoBase);
+  const total = opaNum(inv && inv.total); // igual que antes: el total guardado de la factura
+  const items = (inv && inv.itemsFacturados) || [];
+  let frac;
+  if (items.some(opaTraeTipo)) {
+    let vOp = 0, vTot = 0;
+    items.forEach(it => {
+      const v = opaNum(it.precioUnit) * opaNum(it.cantidad);
+      vTot += v;
+      if (it.tipoVenta === 'OP' && opaIdTxt(it.opId) === id) vOp += v;
+    });
+    frac = vTot > 0.005 ? vOp / vTot : 0;
+  } else {
+    frac = (inv && id && inv.opAsignada === id) ? 1 : 0;
+  }
+  return { frac, base: base * frac, total: total * frac, toca: frac > 0.0001 };
+};
+const opaFacturaTocaOp = (inv, opId) => opaPartesFacturaOp(inv, opId).toca;
+// ¿La factura es SOLO de esa OP? (para el borrado de una OP completa: una factura mixta no se borra)
+const opaFacturaExclusivaDeOp = (inv, opId) => {
+  const id = opaIdTxt(opId);
+  const items = (inv && inv.itemsFacturados) || [];
+  if (!items.some(opaTraeTipo)) return !!inv && inv.opAsignada === id;
+  return items.every(it => it.tipoVenta === 'OP' && opaIdTxt(it.opId) === id);
+};
+// == FIN OP POR ARTICULO ==
+
 // Determina las líneas contables del Costo de Producción para UNA factura — usada tanto por
 // Comprobantes Contables como por el motor central. Antes eran dos copias: una que OMITÍA en
 // silencio la factura si faltaba alguna cuenta configurada, y otra que la mostraba con un aviso
@@ -11380,6 +11590,8 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   const _neTieneOp = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
   const _neTieneOpDoc = new Map((notasEntrega||[]).map(ne=>[ne.documento, !!(ne.opId||ne.opRelacionada)]));
   const hayInfoPorNE = notasEntrega && (f.neOrigen||(f.nesAdicionales||[]).length>0);
+  // OP por artículo: si la factura trae la marca de cada artículo (tipoVenta), manda esa marca; lo que no la trae es venta sin OP
+  const _costoPorLinea = (f.itemsFacturados||[]).some(opaTraeTipo);
   let totalMP=0, totalCons=0, totalTerm=0; // acumulado sin OP (o total, si no hay info por NE)
   let totalMPop=0, totalConsOp=0, totalTermOp=0; // acumulado con OP
   (f.itemsFacturados||[]).forEach(it=>{
@@ -11395,7 +11607,9 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
     const balde = CATEGORIA_A_BALDE_SHARED[invItem?.category] || 'MATERIA_PRIMA';
     // ¿Esta línea específica tiene OP? Se mira la NE de la que vino (_neOrigenItem, ya guardado al
     // armar la factura) — si no hay esa info, se usa el estado de toda la factura como antes.
-    const esOpLinea = hayInfoPorNE && it._neOrigenItem
+    const esOpLinea = _costoPorLinea
+      ? it.tipoVenta==='OP'
+      : hayInfoPorNE && it._neOrigenItem
       ? (_neTieneOp.has(it._neOrigenItem) ? _neTieneOp.get(it._neOrigenItem) : (_neTieneOpDoc.get(it._neOrigenItem)||false))
       : !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
     if (esOpLinea){
@@ -11405,7 +11619,7 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
     }
   });
   if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005 && totalMPop<=0.005 && totalConsOp<=0.005 && totalTermOp<=0.005) return null;
-  const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+  const tieneOp = _costoPorLinea ? (totalMPop+totalConsOp+totalTermOp)>0.005 : !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
   const tasa = (tasasManuales||{})[f.id] || Number(settingsTasa||0) || 1;
   const [codDebOp,nomDebOp] = partirCuenta(cfg.costoVentaProduccionNombre);
   const [codDebSin,nomDebSin] = partirCuenta(cfg.costoVentaMercanciaNombre);
@@ -11914,7 +12128,10 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg,nota
   // Si hay esa info por línea, se parte el ingreso proporcional en vez de meterlo todo en un lado.
   const _neTieneOpV = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
   let propOp = tieneOp?1:0; // fracción del monto que corresponde a líneas con OP
-  if (notasEntrega && (f.itemsFacturados||[]).length>0 && (f.itemsFacturados||[]).some(it=>it._neOrigenItem)){
+  // OP por artículo: si la factura trae la marca de cada artículo, el ingreso se reparte por artículo (aunque no llegue notasEntrega)
+  const _fracOpLinea = opaFraccionOpFactura(f);
+  if (_fracOpLinea!==null){ propOp = _fracOpLinea; }
+  else if (notasEntrega && (f.itemsFacturados||[]).length>0 && (f.itemsFacturados||[]).some(it=>it._neOrigenItem)){
     let valOp=0, valTot=0;
     (f.itemsFacturados||[]).forEach(it=>{
       const v=pNum(it.precioUnit||0)*pNum(it.cantidad||0);
@@ -11933,7 +12150,7 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg,nota
       montoUSD:montoBase*frac,montoBs:ingresoBs*frac});
   };
   if (hayMixto){ pushIngreso(propOp,true); pushIngreso(1-propOp,false); }
-  else pushIngreso(1,tieneOp);
+  else pushIngreso(1,_fracOpLinea!==null?propOp>=0.999:tieneOp);
   if(iva>0){
     lineas.push({tipo:'CREDITO',cuenta:'2.1.04.02.001 — I.V.A. DÉBITO FISCAL (VENTAS)',
       concepto:`IVA 16% repercutido · Fact. ${f.nroFiscal||f.documento||'—'}`,
@@ -11948,7 +12165,7 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg,nota
   const totDeb=lineas.filter(l=>l.tipo==='DEBITO').reduce((s,l)=>s+l.montoUSD,0);
   const totCred=lineas.filter(l=>l.tipo==='CREDITO').reduce((s,l)=>s+l.montoUSD,0);
   const cuadrado=Math.abs(totDeb-totCred)<0.02;
-  return{lineas,totDeb,totCred,cuadrado,tieneOp};
+  return{lineas,totDeb,totCred,cuadrado,tieneOp:(_fracOpLinea!==null?propOp>0.001:tieneOp),propOp};
 };
 const pCtaNombre=(cat)=>{const c=P_CUENTA_MAP[cat];return c?`${c.codigo} — ${c.nombre}`:''};
 
@@ -22520,7 +22737,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         dBs: l.tipo==='DEBITO'?l.montoBs:0, hBs: l.tipo==='CREDITO'?l.montoBs:0,
         dUSD: l.tipo==='DEBITO'?l.montoUSD:0, hUSD: l.tipo==='CREDITO'?l.montoUSD:0,
       }));
-      return { id: f.id, comprobante: f.clientName||'—', fecha: f.fecha, doc: f.nroFiscal||f.documento||'—', conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'} (${asiento.tieneOp?'con OP':'sin OP'})`, tasa: Number(f.tasa||0), lineas, cuadrado: asiento.cuadrado };
+      return { id: f.id, comprobante: f.clientName||'—', fecha: f.fecha, doc: f.nroFiscal||f.documento||'—', conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'} (${asiento.tieneOp?(asiento.propOp!=null&&asiento.propOp<0.999?'con OP y sin OP':'con OP'):'sin OP'})`, tasa: Number(f.tasa||0), lineas, cuadrado: asiento.cuadrado };
     });
   };
 
@@ -22561,12 +22778,23 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       const totalBs = Number(n.totalBs||0) || (baseBs+ivaBs);
       const cv=(bs)=>tasa>1?parseFloat((bs/tasa).toFixed(2)):0;
       // Contrapartida de ingresos: para NC se prefiere la cuenta de Devoluciones si existe
-      const tieneOp=!!(facAfect?.opAsignada||(facAfect?.opsAsignadas&&facAfect.opsAsignadas.length>0));
+      // OP por artículo: si la factura trae la marca de cada artículo, la nota sigue su proporción Con OP / Sin OP
+      const _fracOpNota=opaFraccionOpFactura(facAfect);
+      const tieneOp=_fracOpNota!==null?_fracOpNota>=0.999:!!(facAfect?.opAsignada||(facAfect?.opsAsignadas&&facAfect.opsAsignadas.length>0));
       const cfgIng=tieneOp?cuentasIngresoCfgC?.conOpNombre:cuentasIngresoCfgC?.sinOpNombre;
       const ingFallback=tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)';
       const [codIngD,nomIngD]=(cfgIng||ingFallback).split('—').map(x=>x.trim());
       const ctaDev = esNC ? ctaPlan(/devoluci\w*|rebaja\w*\s+en\s+vent|descuent\w*\s+en\s+vent/i) : null;
       const ctaIng = ctaDev ? {codigo:ctaDev.codigo,nombre:ctaDev.nombre} : {codigo:codIngD,nombre:nomIngD};
+      const _mixtaNota = _fracOpNota!==null && !ctaDev && _fracOpNota>0.001 && _fracOpNota<0.999;
+      const _ctaPartes = (lado) => {
+        const dd = lado==='D';
+        if(!_mixtaNota) return [{codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:lado,dBs:dd?baseBs:0,hBs:dd?0:baseBs,dUSD:dd?cv(baseBs):0,hUSD:dd?0:cv(baseBs)}];
+        const [cO,...rO]=(cuentasIngresoCfgC?.conOpNombre||'4.1.01.01.001 — Ingresos por Ventas (Con OP)').split('—').map(x=>x.trim());
+        const [cS,...rS]=(cuentasIngresoCfgC?.sinOpNombre||'4.1.01.02.001 — Ingresos por Ventas (Sin OP)').split('—').map(x=>x.trim());
+        const bsOp=parseFloat((baseBs*_fracOpNota).toFixed(2)), bsSin=parseFloat((baseBs-bsOp).toFixed(2));
+        return [{codigo:cO,cuenta:rO.join('—'),bs:bsOp},{codigo:cS,cuenta:rS.join('—'),bs:bsSin}].map(p=>({codigo:p.codigo,cuenta:p.cuenta,tipo:lado,dBs:dd?p.bs:0,hBs:dd?0:p.bs,dUSD:dd?cv(p.bs):0,hUSD:dd?0:cv(p.bs)}));
+      };
       const ctaIvaObj=ctaPlan(/iva\s+d[eé]bito/i)||{codigo:'2.1.02.01.001',nombre:'IVA Débito Fiscal'};
 
       const esFiscalNota = n.naturaleza==='FISCAL';
@@ -22584,13 +22812,13 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
         ];
       } else if(esNC){
         lineas=[];
-        lineas.push({codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:'D',dBs:baseBs,hBs:0,dUSD:cv(baseBs),hUSD:0});
+        lineas.push(..._ctaPartes('D'));
         if(ivaBs>0) lineas.push({codigo:ctaIvaObj.codigo,cuenta:ctaIvaObj.nombre,tipo:'D',dBs:ivaBs,hBs:0,dUSD:cv(ivaBs),hUSD:0});
         lineas.push({codigo:codCli,cuenta:nomCli,tipo:'H',dBs:0,hBs:totalBs,dUSD:0,hUSD:cv(totalBs)});
       }else{
         lineas=[];
         lineas.push({codigo:codCli,cuenta:nomCli,tipo:'D',dBs:totalBs,hBs:0,dUSD:cv(totalBs),hUSD:0});
-        lineas.push({codigo:ctaIng.codigo,cuenta:ctaIng.nombre,tipo:'H',dBs:0,hBs:baseBs,dUSD:0,hUSD:cv(baseBs)});
+        lineas.push(..._ctaPartes('H'));
         if(ivaBs>0) lineas.push({codigo:ctaIvaObj.codigo,cuenta:ctaIvaObj.nombre,tipo:'H',dBs:0,hBs:ivaBs,dUSD:0,hUSD:cv(ivaBs)});
       }
       const etq=esNC?'NC':'ND';
@@ -22872,7 +23100,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       if(!r) return null;
       return {
         id: f.id, comprobante: f.nroFiscal||f.documento||f.id, fecha: f.fecha||'', doc: f.nroFiscal||f.documento||'—',
-        tasa: r.tasa, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?' · OP:'+(f.opAsignada||f.opsAsignadas[0]):' · Sin OP'}`, _raw:f,
+        tasa: r.tasa, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?' · OP:'+((f.itemsFacturados||[]).some(opaTraeTipo)?opaTextoFactura(f):(f.opAsignada||f.opsAsignadas[0])):' · Sin OP'}`, _raw:f,
         lineas: r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD, detalle:l.detalle})),
       };
     }).filter(Boolean);
@@ -28526,7 +28754,7 @@ function App() {
       try{
         const asiento=generarAsientoVenta(f,cuentasIngresoCfg,planDeCuentas,clients,notasEntrega);
         const nesRef = [f.neOrigen, ...(f.nesAdicionales||[])].filter(Boolean);
-        const opsRef = [f.opAsignada, ...(f.opsAsignadas||[])].filter(Boolean);
+        const opsRef = [...new Set([f.opAsignada, ...(f.opsAsignadas||[])].filter(Boolean))];
         const refExtra = [
           nesRef.length ? `NE: ${nesRef.join(', ')}` : '',
           opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
@@ -28548,7 +28776,9 @@ function App() {
         const montoUSD=tasa?montoBs/tasa:0;
         const esNC=n.tipo==='NC';
         const facturaRef=n.facturaId?(invoices||[]).find(f=>f.id===n.facturaId):null;
-        const tieneOp=!!(facturaRef?.opAsignada||(facturaRef?.opsAsignadas&&facturaRef.opsAsignadas.length>0));
+        // OP por artículo: si la factura trae la marca de cada artículo, la nota sigue su proporción Con OP / Sin OP
+        const _fracOpNota=opaFraccionOpFactura(facturaRef);
+        const tieneOp=_fracOpNota!==null?_fracOpNota>=0.999:!!(facturaRef?.opAsignada||(facturaRef?.opsAsignadas&&facturaRef.opsAsignadas.length>0));
         const cfgIngresoTxt=tieneOp?cuentasIngresoCfg?.conOpNombre:cuentasIngresoCfg?.sinOpNombre;
         const [codIng,...restIng]=(cfgIngresoTxt||(tieneOp?'4.1.01.01.001 — Ingresos por Ventas (Con OP)':'4.1.01.02.001 — Ingresos por Ventas (Sin OP)')).split('—');
         const nomIng=restIng.join('—').trim();
@@ -28563,17 +28793,36 @@ function App() {
         // factura — usa EXACTAMENTE esa misma clave aquí, o una reclasificación hecha ahí (en vez
         // de en la pestaña de la factura) se guardaba bajo una clave que este motor no leía.
         const compIdNota = `NOTA-${n.id}`;
-        const lin0=aplicarReclasLinea('ventas',compIdNota,0,codCli.trim(),nomCli);
+        // Factura mixta (artículos con y sin OP): la nota reparte el ingreso en la misma proporción
+        const _mixtaNota=_fracOpNota!==null&&_fracOpNota>0.001&&_fracOpNota<0.999;
+        // En una nota mixta las líneas cambian de posición y la clave de reclasificación va por posición (igual que en Comprobantes Contables):
+        //   NC → Con OP 0 · Sin OP 1 · IVA 2 · Cliente 3 (2 sin IVA)     ND → Cliente 0 · Con OP 1 · Sin OP 2 · IVA 3
+        const _kCli=_mixtaNota&&esNC?(conIva?3:2):0, _kIva=_mixtaNota&&!esNC?3:2;
+        const lin0=aplicarReclasLinea('ventas',compIdNota,_kCli,codCli.trim(),nomCli);
         const lin1=aplicarReclasLinea('ventas',compIdNota,1,codIng.trim(),nomIng);
-        const lin2=conIva?aplicarReclasLinea('ventas',compIdNota,2,'2.1.04.02.001','I.V.A. DÉBITO FISCAL (VENTAS)'):null;
+        const lin2=conIva?aplicarReclasLinea('ventas',compIdNota,_kIva,'2.1.04.02.001','I.V.A. DÉBITO FISCAL (VENTAS)'):null;
         const totalBs=montoBs+ivaBs, totalUSD=montoUSD+ivaUSD;
+        // Factura mixta (artículos con y sin OP): la nota reparte el ingreso en la misma proporción
+        const _partesIng=(lado)=>{
+          const d=lado==='D';
+          if(!_mixtaNota) return [{codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:d?montoBs:0, haberBs:d?0:montoBs, debeUSD:d?montoUSD:0, haberUSD:d?0:montoUSD}];
+          const [cO,...rO]=(cuentasIngresoCfg?.conOpNombre||'4.1.01.01.001 — Ingresos por Ventas (Con OP)').split('—');
+          const [cS,...rS]=(cuentasIngresoCfg?.sinOpNombre||'4.1.01.02.001 — Ingresos por Ventas (Sin OP)').split('—');
+          const mOp=parseFloat((montoBs*_fracOpNota).toFixed(2)), mSin=parseFloat((montoBs-mOp).toFixed(2));
+          const uOp=montoUSD*_fracOpNota, uSin=montoUSD-uOp;
+          const iO=d?0:1, iS=d?1:2; // posición de las dos líneas de ingreso en la nota (NC: 0 y 1 · ND: 1 y 2)
+          const l1=aplicarReclasLinea('ventas',compIdNota,iO,cO.trim(),rO.join('—').trim());
+          const l3=aplicarReclasLinea('ventas',compIdNota,iS,cS.trim(),rS.join('—').trim());
+          return [{codigo:l1.codigo, cuenta:l1.cuenta, debeBs:d?mOp:0, haberBs:d?0:mOp, debeUSD:d?uOp:0, haberUSD:d?0:uOp},
+                  {codigo:l3.codigo, cuenta:l3.cuenta, debeBs:d?mSin:0, haberBs:d?0:mSin, debeUSD:d?uSin:0, haberUSD:d?0:uSin}];
+        };
         const lineas = esNC ? [
-          {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
+          ..._partesIng('D'),
           ...(conIva?[{codigo:lin2.codigo, cuenta:lin2.cuenta, debeBs:ivaBs, haberBs:0, debeUSD:ivaUSD, haberUSD:0}]:[]),
           {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:0, haberBs:totalBs, debeUSD:0, haberUSD:totalUSD},
         ] : [
           {codigo:lin0.codigo, cuenta:lin0.cuenta, debeBs:totalBs, haberBs:0, debeUSD:totalUSD, haberUSD:0},
-          {codigo:lin1.codigo, cuenta:lin1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
+          ..._partesIng('H'),
           ...(conIva?[{codigo:lin2.codigo, cuenta:lin2.cuenta, debeBs:0, haberBs:ivaBs, debeUSD:0, haberUSD:ivaUSD}]:[]),
         ];
         out.push({fecha:facturaRef?.fechaFactura||n.fecha||'', comprobante:n.nroDocumento||n.id, modulo:'Ventas', concepto:`${n.tipo} ${n.nroDocumento||''} — ${n.clientName||'—'}`, lineas});
@@ -32195,7 +32444,10 @@ function App() {
         esTermo,
         precioUnit: precioUnitVenta,
         costoUnit: costoCapturado,
-        costoTotal: parseNum(it.cantidad) * costoCapturado
+        costoTotal: parseNum(it.cantidad) * costoCapturado,
+        // OP por artículo (viene de la NE): cada línea queda marcada Con OP (y cuál) / Mercancía / Producto
+        ...(opaTraeTipo(it)?{tipoVenta:it.tipoVenta,opId:it.tipoVenta==='OP'?opaIdTxt(it.opId):''}:{}),
+        ...(it._neOrigenItem?{_neOrigenItem:it._neOrigenItem}:{})
       };
     });
 
@@ -32223,6 +32475,7 @@ function App() {
         timestamp: editingInvoiceId ? (newInvoiceForm.timestamp || Date.now()) : Date.now(),
         user: appUser?.name,
         itemsFacturados: itemsFacturadosSave,
+        ...(opaDerivadosFactura(itemsFacturadosSave)||{}),
         fgId: fgItems[0]?.fgId||newInvoiceForm.fgId||'',
         fgCantidad: fgItems[0]?.cantidad||0
       });
@@ -32414,7 +32667,8 @@ function App() {
             desc: it.desc || formatFGLabel(fg)||fg.producto||fg.id,
             unidad: it.unidad||(esTermo?'KG':'Mill.'),
             maxCant: parseNum(it.cantidad||0) + currentStock,
-            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false, _origCantidad: parseNum(it.cantidad||0)
+            esTermo, grpLotes: [fg], _savedItem: true, _isInvPT: false, _origCantidad: parseNum(it.cantidad||0),
+            ...opaCamposRestaurar(it)
           });
         } else {
           // From inventory PT (non-FG items)
@@ -32428,7 +32682,8 @@ function App() {
             desc: it.desc || invItem?.desc || it.invCode || '—',
             unidad: it.unidad||invItem?.unit||'und',
             maxCant: parseNum(it.cantidad||0)+(parseNum(invItem?.stock||0)),
-            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true, _origCantidad: parseNum(it.cantidad||0)
+            esTermo: false, grpLotes: [], _savedItem: true, _isInvPT: true, _origCantidad: parseNum(it.cantidad||0),
+            ...opaCamposRestaurar(it)
           });
         }
       });
@@ -39434,7 +39689,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               {inv.nroFiscal && <p className="text-xs font-bold text-gray-600 mt-1">NRO. FISCAL: <span className="text-black">{inv.nroFiscal}</span></p>}
               {parseNum(inv.tasa)>0 && <p className="text-xs font-bold text-gray-600 mt-1">TASA Bs/$: <span className="text-black">{formatTasa(inv.tasa)}</span></p>}
               <p className="text-xs font-bold text-gray-600 mt-1">VENDEDOR: {inv.vendedor || 'N/A'}</p>
-              {inv.opAsignada && <p className="text-[10px] text-orange-600 font-black mt-1">OP RELACIONADA: #{String(inv.opAsignada).replace('OP-','').padStart(5,'0')}</p>}
+              {inv.opAsignada && <p className="text-[10px] text-orange-600 font-black mt-1">OP RELACIONADA{(inv.itemsFacturados||[]).some(opaTraeTipo)&&(inv.opsAsignadas||[]).length>1?'S':''}: {(inv.itemsFacturados||[]).some(opaTraeTipo)&&(inv.opsAsignadas||[]).length>1?inv.opsAsignadas.map(o=>opaFmtOp(o)).join(', '):'#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')}</p>}
             </div>
           </div>
 
@@ -39632,6 +39887,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 return 'Otros';
               };
               const categoria = getCategoria();
+              const _cl = opaClasificarItemNE(it, ne); // OP por artículo
               const wqty = it.warehouseQtys && Object.keys(it.warehouseQtys).length>0
                 ? it.warehouseQtys
                 : null;
@@ -39651,7 +39907,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     totalCosto: cantidad*costoUnit,
                     precioVenta: precioUnit,
                     totalVenta: cantidad*precioUnit,
-                    opId: ne.opId||ne.opRelacionada||'—',
+                    opId: _cl.esOp&&_cl.opId?_cl.opId:'—',
+                    tipoVenta: _cl.tipo,
                     almacen: almacen.trim()||'ALMACEN ZI',
                     categoria,
                   });
@@ -39672,7 +39929,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   totalCosto: cantidad*costoUnit,
                   precioVenta: precioUnit,
                   totalVenta: cantidad*precioUnit,
-                  opId: ne.opId||ne.opRelacionada||'—',
+                  opId: _cl.esOp&&_cl.opId?_cl.opId:'—',
+                  tipoVenta: _cl.tipo,
                   almacen,
                   categoria,
                 });
@@ -39793,7 +40051,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
                     const fmtOp = (op)=>op&&op!=='—'?('#'+String(op).replace('OP-','').padStart(5,'0')):'—';
                     const thead=['Factura','Nro. Fiscal','OP Relacionada','Fecha','Vendedor','Cliente','Producto','Medida','Cantidad','Costo Unit. USD','Costo Total USD'];
-                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',fmtOp(s.opId),s.fecha,s.vendedor||'—',s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
+                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',(s.opId&&s.opId!=='—')?fmtOp(s.opId):(s.tipoVenta?opaEtiqueta(s.tipoVenta):'—'),s.fecha,s.vendedor||'—',s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
                     const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=8?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');
                     const totCant=pvFiltered.reduce((a,r)=>a+r.cantidad,0);
                     const totCosto=pvFiltered.reduce((a,r)=>a+r.cantidad*r.costoUnd,0);
@@ -39839,7 +40097,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <tr key={pgPV*PAGE_SIZE_DEFAULT+i} className="hover:bg-gray-50">
                         <td className="py-3 px-4 border-r font-black text-orange-600">{s.factura}</td>
                         <td className="py-3 px-4 border-r font-bold text-gray-600 text-[10px]">{s.nroFiscal||'—'}</td>
-                        <td className="py-3 px-4 border-r text-center font-black text-orange-600 text-[10px]">{s.opId&&s.opId!=='—'?('#'+String(s.opId).replace('OP-','').padStart(5,'0')):'—'}</td>
+                        <td className="py-3 px-4 border-r text-center font-black text-orange-600 text-[10px]">{s.opId&&s.opId!=='—'?('#'+String(s.opId).replace('OP-','').padStart(5,'0')):(s.tipoVenta?opaEtiqueta(s.tipoVenta):'—')}</td>
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
                         <td className="py-3 px-4 border-r text-center font-black text-blue-700 text-[10px] uppercase">{s.vendedor||'—'}</td>
                         <td className="py-3 px-4 border-r font-black text-[10px]">{s.cliente}</td>
@@ -40667,9 +40925,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(invFiltMes && _fechaMostrada.substring(5,7)!==invFiltMes) return false;
             if(pvFiltCliente){ const cli=(inv.clientName||inv.client||'').toUpperCase(); const rif=(inv.clientRif||'').toUpperCase(); if(!cli.includes(pvFiltCliente.toUpperCase())&&!rif.includes(pvFiltCliente.toUpperCase())) return false; }
             if(pvFiltDoc){ const doc=(inv.documento||'').toUpperCase(); const fisc=(inv.nroFiscal||'').toUpperCase(); if(!doc.includes(pvFiltDoc.toUpperCase())&&!fisc.includes(pvFiltDoc.toUpperCase())) return false; }
-            const _tieneOp=!!(inv.opAsignada||(inv.opsAsignadas&&inv.opsAsignadas.length>0));
+            // OP por artículo: una factura mixta (artículos con y sin OP) entra en «Con OP» y en «Sin OP»; sus filas y montos se reparten por artículo
+            const _fracOpInv=opaFraccionOpFactura(inv);
+            const _tieneOp=_fracOpInv!==null?_fracOpInv>0.0001:!!(inv.opAsignada||(inv.opsAsignadas&&inv.opsAsignadas.length>0));
+            const _tieneSinOp=_fracOpInv!==null?_fracOpInv<0.9999:!_tieneOp;
             if(pvFiltOp==='con' && !_tieneOp) return false;
-            if(pvFiltOp==='sin' && _tieneOp) return false;
+            if(pvFiltOp==='sin' && !_tieneSinOp) return false;
             if(pvFiltProd){ const q=pvFiltProd.toUpperCase(); if(!(inv.itemsFacturados||[]).some(it=>((it.desc||'')+' '+(it.invCode||'')+' '+(it.fgId||'')).toUpperCase().includes(q))) return false; }
             return true;
           }).sort((a,b)=>((b.fechaFactura||b.fecha||'')).localeCompare(a.fechaFactura||a.fecha||''));
@@ -40814,12 +41075,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
                   const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
                   return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
-                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:inv.opAsignada?('#'+String(inv.opAsignada).replace('OP-','').padStart(5,'0')):'',cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:opaFmtOpLinea(it,inv),_opaMarcada:(inv.itemsFacturados||[]).some(opaTraeTipo),_opaEsOp:opaEsLineaOp(it,inv),cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
               });
             }
           });
+          // OP por artículo: fracción de la factura que corresponde al filtro Con OP / Sin OP activo (1 = toda; las facturas anteriores, sin marca por artículo, no se parten)
+          const _fracFiltOp = (inv) => { const fr=opaFraccionOpFactura(inv); if(fr===null||pvFiltOp==='todos') return 1; return pvFiltOp==='con'?fr:1-fr; };
           // ── Filtrar filas sin Nro. Fiscal ──
-          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—' && (!pvFiltProd || ((r.producto||'')+' '+(r.codigo||'')).toUpperCase().includes(pvFiltProd.toUpperCase())));
+          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—' && (!pvFiltProd || ((r.producto||'')+' '+(r.codigo||'')).toUpperCase().includes(pvFiltProd.toUpperCase())) && (pvFiltOp==='todos' || !r._opaMarcada || (pvFiltOp==='con'?r._opaEsOp:!r._opaEsOp)));
           
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
@@ -40846,16 +41109,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(invFiltAnio&&!fechaNC.startsWith(invFiltAnio)&&!fechaFactVinc.startsWith(invFiltAnio)) return false;
             if(invFiltMes&&fechaNC.substring(5,7)!==invFiltMes&&fechaFactVinc.substring(5,7)!==invFiltMes) return false;
             if(pvFiltDoc){const d=nc.nroDocumento||'';const f=inv?.nroFiscal||'';if(!d.toUpperCase().includes(pvFiltDoc.toUpperCase())&&!f.toUpperCase().includes(pvFiltDoc.toUpperCase()))return false;}
-            const _tieneOpNC=!!(inv?.opAsignada||(inv?.opsAsignadas&&inv.opsAsignadas.length>0));
+            const _fracOpNC=opaFraccionOpFactura(inv);
+            const _tieneOpNC=_fracOpNC!==null?_fracOpNC>0.0001:!!(inv?.opAsignada||(inv?.opsAsignadas&&inv.opsAsignadas.length>0));
+            const _tieneSinOpNC=_fracOpNC!==null?_fracOpNC<0.9999:!_tieneOpNC;
             if(pvFiltOp==='con' && !_tieneOpNC) return false;
-            if(pvFiltOp==='sin' && _tieneOpNC) return false;
+            if(pvFiltOp==='sin' && !_tieneSinOpNC) return false;
             return true;
           }).map(nc=>{
             const inv=(invoices||[]).find(i=>i.id===nc.facturaId);
             const tasaN=parseNum(nc.tasaFactura||inv?.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-            const baseUsd=parseFloat((parseNum(nc.monto||0)/tasaN).toFixed(2));
+            const baseUsd=parseFloat(((parseNum(nc.monto||0)/tasaN)*_fracFiltOp(inv)).toFixed(2));
             const signo=nc.tipo==='NC'?-1:1;
-            const ivaBsFiscal=nc.naturaleza==='FISCAL'?(parseNum(nc.ivaBs||0)||parseFloat((parseNum(nc.monto||0)*0.16).toFixed(2)))*signo:0;
+            const ivaBsFiscal=nc.naturaleza==='FISCAL'?(parseNum(nc.ivaBs||0)||parseFloat((parseNum(nc.monto||0)*0.16).toFixed(2)))*signo*_fracFiltOp(inv):0;
             return {
               fecha:nc.fecha, doc:nc.nroDocumento||nc.tipo, nroFiscal:inv?.nroFiscal||'',
               vendedor:inv?.vendedor||'', op:'', cliente:inv?.clientName||nc.clientName||'',
@@ -40872,7 +41137,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           filtInvs.forEach(inv=>{
             const _tasaInv=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const _baseInv=parseNum(inv.montoBase||0);
-            _baseBsFacturas+=parseNum(inv.baseGravableBs||0)>0?parseNum(inv.baseGravableBs):_baseInv*_tasaInv;
+            _baseBsFacturas+=(parseNum(inv.baseGravableBs||0)>0?parseNum(inv.baseGravableBs):_baseInv*_tasaInv)*_fracFiltOp(inv);
           });
           const _baseBsNCND=ncndRows.reduce((s,r)=>s+r.total*(parseNum(r.tasa||0)||0),0);
           const totalVentasBs=_baseBsFacturas+_baseBsNCND;
@@ -40882,7 +41147,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const _tasaInv=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const _baseInv=parseNum(inv.montoBase||0);
             const _ivaAmt=parseNum(inv.iva||0)||parseFloat((_baseInv*0.16).toFixed(2));
-            _ivaTotalBsRep+=parseNum(inv.ivaBs||0)||_ivaAmt*_tasaInv;
+            _ivaTotalBsRep+=(parseNum(inv.ivaBs||0)||_ivaAmt*_tasaInv)*_fracFiltOp(inv);
           });
           const _ivaTotalBsNCND=ncndRows.reduce((s,r)=>s+(r.ivaBsFiscal||0),0);
           const totalVentasConIvaBs=totalVentasBs+_ivaTotalBsRep+_ivaTotalBsNCND;
@@ -42505,14 +42770,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 }
                 return null;
               };
-              const itemsConCosto = form.items.map(it=>{
+              // ── OP por artículo: cada artículo queda con su clasificación (OP / Mercancía / Producto) ──
+              const _opaItems = opaNormalizarItemsNE(form.items, form, (it)=>{ const cd=(it.invCode||'').split('___')[0]; const r=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===cd); return r?.tipoProducto||''; });
+              const _opaFaltaOp = _opaItems.filter(it=>it.tipoVenta==='OP' && !opaIdTxt(it.opId));
+              if(_opaFaltaOp.length>0){
+                setDialog({title:'Falta la OP',text:`Hay ${_opaFaltaOp.length} artículo${_opaFaltaOp.length>1?'s':''} con «¿Aplica OP? Sí» sin OP elegida: ${_opaFaltaOp.map(it=>it.desc||it.invCode||'—').join(', ')}. Elige la OP en proceso o cámbialo a «No».`,type:'alert'});
+                return;
+              }
+              const itemsConCosto = _opaItems.map(it=>{
                 const costoPT = _buscarCostoPT(it);
                 return costoPT!==null ? {...it, costoUnit:costoPT} : it;
               });
               const base = itemsConCosto.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
               const ivaAmt = form.aplicaIva==='SI' ? parseFloat((base*0.16).toFixed(2)) : 0;
               const costoTotal = itemsConCosto.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.costoUnit||0),0);
-              const data = { ...form, items:itemsConCosto, id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
+              const _opaDer = opaDerivadosNE(itemsConCosto);
+              const data = { ...form, items:itemsConCosto, ..._opaDer,
+                ...(form.opId!==undefined?{opId:_opaDer.opRelacionada}:{}), ...(form.opAsignada!==undefined?{opAsignada:_opaDer.opRelacionada}:{}),
+                id, montoBase:base, ivaAmt, total:parseFloat((base+ivaAmt).toFixed(2)), costoTotal,
                 tasa: form.esExtraContable?parseNum(form.tasa||0):(form.tasa||''),
                 totalBs: form.esExtraContable&&parseNum(form.tasa)>0?parseFloat(((base+ivaAmt)*parseNum(form.tasa)).toFixed(2)):(form.totalBs||0),
                 diasCredito: parseInt(form.diasCredito||0),
@@ -42680,10 +42955,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             },'Corregir Vinculación Errónea de NE');
           };
           const handleConvertirFactura = (ne) => {
-            setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true})));
+            setFgItems((ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad,precioUnit:it.precioUnit,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true,...opaCamposLineaFactura(it, ne)})));
             // IMPORTANTE: la fecha de la factura es HOY (fecha de emisión de la factura),
             // NO la fecha de la NE. La NE conserva su fecha original intacta.
-            setNewInvoiceForm(f=>({...f,fecha:ne.fecha||getTodayDate(),fechaFactura:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:ne.opId||ne.opRelacionada||'',ncAsignada:'',neOrigen:ne.id}));
+            setNewInvoiceForm(f=>({...f,fecha:ne.fecha||getTodayDate(),fechaFactura:getTodayDate(),clientRif:ne.clientRif,clientName:ne.clientName,clientAddress:ne.clientAddress||'',vendedor:ne.vendedor||'',aplicaIva:ne.aplicaIva,opAsignada:opaResumenNE(ne).ops[0]||'',opsAsignadas:opaResumenNE(ne).ops,ncAsignada:'',neOrigen:ne.id}));
             setVentasView('facturacion');
           };
           const neAnios=[...new Set((notasEntrega||[]).map(ne=>(ne.fecha||'').substring(0,4)).filter(Boolean))].sort().reverse();
@@ -42694,7 +42969,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const matchAnio=!neFiltAnio||(ne.fecha||'').startsWith(neFiltAnio);
             const matchMes=!neFiltMes||(ne.fecha||'').substring(5,7)===neFiltMes;
             const matchVendedor=neFiltVendedor==='TODOS'||(ne.vendedor||'').trim().toUpperCase()===neFiltVendedor.toUpperCase();
-            const tieneOpNE=!!(ne.opRelacionada||ne.opId||ne.opAsignada);
+            const tieneOpNE=opaResumenNE(ne).tieneOp;
             const matchOp=neFiltOp==='todos'||(neFiltOp==='con'?tieneOpNE:!tieneOpNE);
             return matchSearch&&matchStatus&&matchAnio&&matchMes&&matchVendedor&&matchOp;
           }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
@@ -42728,6 +43003,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const clientResults=(form.neClientSearch||'').length>1?(clients||[]).filter(c=>(c.name||c.nombre||'').toUpperCase().includes((form.neClientSearch||'').toUpperCase())||(c.rif||'').includes(form.neClientSearch)).slice(0,8):[];
             const base=form.items.reduce((s,it)=>s+parseNum(it.cantidad)*parseNum(it.precioUnit),0);
             const ivaAmt=form.aplicaIva==='SI'?parseFloat((base*0.16).toFixed(2)):0;
+            // OP por artículo: valor efectivo de cada artículo (su marca; en una NE anterior hereda la OP de la NE; si no, Producto / Mercancía sugerido)
+            const _opaTpDe = (it) => { const cd=(it.invCode||'').split('___')[0]; const r=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===cd); return r?.tipoProducto||''; };
+            const opaEfectivos = form.items.map(it=>opaItemEfectivo(it, form, _opaTpDe(it)));
             return(
               <div className="p-6 space-y-5 max-w-5xl mx-auto">
                 <div className="flex items-center gap-3">
@@ -42766,11 +43044,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <option value="">— Estado —</option>
                         {ESTADOS_VE.map(e=><option key={e} value={e}>{e}</option>)}
                       </select></div>
-                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">OP Relacionada</label>
-                      <select value={form.opRelacionada||''} onChange={e=>setForm(f=>({...f,opRelacionada:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
-                        <option value="">— Sin OP —</option>
-                        {(requirements||[]).filter(r=>r.status!=='CANCELADA').map(r=><option key={r.id} value={r.id}>{r.id} — {r.desc||r.categoria||''}</option>)}
-                      </select></div>
+                    <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">OP por artículo</label>
+                      <div data-testid="ne-resumen-op" className="w-full border-2 border-orange-100 bg-orange-50 rounded-xl p-2.5 text-[10px] font-black text-orange-700 min-h-[38px] leading-tight">{opaResumenTexto(opaEfectivos)}</div>
+                      {form.facturaId&&<div className="text-[8px] text-amber-700 font-bold mt-1 leading-tight">Ya facturada: la factura conserva su propia distribución.</div>}</div>
                     <div><label className="text-[10px] font-black text-orange-600 uppercase block mb-1">Canal de Lista</label>
                       <select value={form.canal||'TRADICIONAL'} onChange={e=>setForm(f=>({...f,canal:e.target.value}))} className="w-full border-2 border-orange-200 rounded-xl p-2.5 text-xs font-black outline-none focus:border-orange-500">
                         <option value="TRADICIONAL">📋 TRADICIONAL</option>
@@ -42820,7 +43096,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             const allAlm2=(inventory||[]).filter(inv=>(inv.displayId||(inv.id||'').split('___')[0])===code);
                             const wqty={};
                             allAlm2.forEach(a=>{ wqty[a.almacen||'ALMACEN ZI']=0; });
-                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:0,precioUnit:0,costoUnit:parseNum(i.cost||0),unit:i.unit||'und',warehouseQtys:wqty}]}));
+                            setForm(f=>({...f,items:[...f.items,{invCode:code,desc:i.desc||'',cantidad:0,precioUnit:0,costoUnit:parseNum(i.cost||0),unit:i.unit||'und',warehouseQtys:wqty,...opaItemEfectivo({invCode:code,desc:i.desc||''},f,i.tipoProducto)}]}));
                             setNeInvSearch('');setNeShowInvDrop(false);
                           }} className="w-full text-left px-3 py-2.5 hover:bg-orange-50 text-xs border-b last:border-0 transition-colors">
                             <div><span className="font-black text-orange-600">{code}</span> <span className="text-gray-800 font-bold">— {i.desc}</span></div>
@@ -42860,6 +43136,32 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 <button onClick={()=>{const ni=form.items.filter((_,i2)=>i2!==idx);setForm(f=>({...f,items:ni}));}} className="text-red-400 hover:text-red-600"><X size={11}/></button>
                               </div>
                             </div>
+                            {/* Sub-fila: OP por artículo */}
+                            {(()=>{
+                              const ef=opaEfectivos[idx]||{tipoVenta:'MERCANCIA',opId:''};
+                              const esOp=ef.tipoVenta==='OP';
+                              const setItem=(patch)=>setForm(f=>({...f,items:f.items.map((x,i2)=>i2===idx?{...x,...patch}:x)}));
+                              const opsAct=opaOpsActivas(requirements, ef.opId);
+                              const btnCls=(on,tono)=>`px-2.5 py-1 rounded-lg border text-[9px] font-black uppercase transition-all ${on?tono:'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'}`;
+                              return(
+                              <div className="px-3 py-2 bg-white border-t border-orange-100 flex flex-wrap gap-2 items-center" data-testid={`ne-op-fila-${idx}`}>
+                                <span className="text-[9px] font-black text-orange-700 uppercase">¿Aplica OP?</span>
+                                <button type="button" data-testid={`ne-op-si-${idx}`} onClick={()=>setItem({tipoVenta:'OP',opId:esOp?ef.opId:''})} className={btnCls(esOp,'bg-orange-500 border-orange-500 text-white')}>Sí</button>
+                                <button type="button" data-testid={`ne-op-no-${idx}`} onClick={()=>setItem({tipoVenta:esOp?opaSugerirTipoSinOp(code,it.desc,_opaTpDe(it)):ef.tipoVenta,opId:''})} className={btnCls(!esOp,'bg-gray-700 border-gray-700 text-white')}>No</button>
+                                {esOp ? (
+                                  <select data-testid={`ne-op-sel-${idx}`} value={ef.opId||''} onChange={e=>setItem({tipoVenta:'OP',opId:e.target.value})} className={`border-2 rounded-lg px-2 py-1 text-[10px] font-black outline-none max-w-[320px] ${ef.opId?'border-orange-300':'border-red-400 bg-red-50'}`}>
+                                    <option value="">— Elegir OP en proceso —</option>
+                                    {opsAct.map(r=><option key={r.id} value={r.id}>{r.id} — {r.desc||r.categoria||''}{OPA_ESTADOS_OP_CERRADOS.indexOf(String(r.status||'').toUpperCase())>=0?' (cerrada)':''}</option>)}
+                                  </select>
+                                ) : (
+                                  <>
+                                    <button type="button" data-testid={`ne-op-merc-${idx}`} onClick={()=>setItem({tipoVenta:'MERCANCIA',opId:''})} className={btnCls(ef.tipoVenta==='MERCANCIA','bg-indigo-600 border-indigo-600 text-white')}>Mercancía</button>
+                                    <button type="button" data-testid={`ne-op-prod-${idx}`} onClick={()=>setItem({tipoVenta:'PRODUCTO',opId:''})} className={btnCls(ef.tipoVenta==='PRODUCTO','bg-emerald-600 border-emerald-600 text-white')}>Producto</button>
+                                  </>
+                                )}
+                                <button type="button" data-testid={`ne-op-todos-${idx}`} disabled={esOp&&!ef.opId} title="Aplica esta misma selección a todos los artículos de la NE" onClick={()=>setForm(f=>({...f,items:f.items.map(x=>({...x,tipoVenta:ef.tipoVenta,opId:ef.tipoVenta==='OP'?ef.opId:''}))}))} className="ml-auto px-2.5 py-1 rounded-lg border border-orange-300 text-[9px] font-black uppercase text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed">Aplicar a todos</button>
+                              </div>);
+                            })()}
                             {/* Sub-fila: cantidad por almacén */}
                             <div className="px-3 py-2 bg-orange-50 border-t border-orange-100 flex flex-wrap gap-3 items-center">
                               <span className="text-[9px] font-black text-orange-700 uppercase">Cantidades por almacén:</span>
@@ -42929,7 +43231,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 <td style="font-size:9px;color:#6b7280">${ne.clientRif||'—'}</td>
 <td>${ne.territorio||'—'}</td>
 <td>${ne.vendedor||'—'}</td>
-<td style="font-size:9px">${ne.opRelacionada||'—'}</td>
+<td style="font-size:9px">${opaTextoNE(ne)}</td>
 <td style="text-align:right">$${formatNum(ne.montoBase||0)}</td>
 <td style="text-align:right">$${formatNum(ne.ivaAmt||0)}</td>
 <td style="text-align:right;font-weight:700">$${formatNum(ne.total||0)}</td>
@@ -43072,7 +43374,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           const exportarNEExcel=()=>{
             const headers=['NE#','Fecha','Cliente','RIF','Territorio','Vendedor','OP','Monto','IVA','Total','Estatus','Factura'];
-            const dataRows=neFiltradas.map(ne=>[ne.id,ne.fecha||'',ne.clientName||'',ne.clientRif||'',ne.territorio||'',ne.vendedor||'',ne.opRelacionada||'',formatNum(ne.montoBase||0),formatNum(ne.ivaAmt||0),formatNum(ne.total||0),neEstatusLabel(ne.status),ne.facturaId||'']);
+            const dataRows=neFiltradas.map(ne=>[ne.id,ne.fecha||'',ne.clientName||'',ne.clientRif||'',ne.territorio||'',ne.vendedor||'',opaTextoNE(ne),formatNum(ne.montoBase||0),formatNum(ne.ivaAmt||0),formatNum(ne.total||0),neEstatusLabel(ne.status),ne.facturaId||'']);
             dataRows.push(['','','','','','','TOTALES',formatNum(totalNEbase),formatNum(totalNEiva),formatNum(totalNEtotal),'','']);
             handleExportExcel(dataRows,'Notas_de_Entrega',headers);
           };
@@ -43183,7 +43485,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-3 px-3 text-gray-500 text-[10px]">{ne.clientRif}</td>
                           <td className="py-3 px-3 text-purple-700 font-bold text-[10px] whitespace-nowrap">{ne.territorio||'—'}</td>
                           <td className="py-3 px-3 text-blue-700 font-bold whitespace-nowrap">{ne.vendedor||'—'}</td>
-                          <td className="py-3 px-3 text-gray-500 text-[10px] whitespace-nowrap">{ne.opRelacionada||'—'}</td>
+                          <td data-testid="ne-lista-op" className="py-3 px-3 text-gray-500 text-[10px] whitespace-nowrap">{opaTextoNE(ne)}</td>
                           <td className="py-3 px-3 text-right font-black">${formatNum(ne.montoBase||0)}</td>
                           <td className="py-3 px-3 text-right text-gray-500">${formatNum(ne.ivaAmt||0)}</td>
                           <td className="py-3 px-3 text-right font-black text-green-700">${formatNum(ne.total||0)}</td>
@@ -43226,7 +43528,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         ${neVenc?`<tr><td style="padding:2px 6px;color:#888;text-align:right">FECHA VENCIMIENTO:</td><td style="font-weight:900;padding:2px 0;color:${ne.diasCredito>0?'#dc2626':'#16a34a'}">${neVenc} ${ne.diasCredito>0?`(${ne.diasCredito} días)`:''}</td></tr>`:''}
         ${ne.vendedor?`<tr><td style="padding:2px 6px;color:#888;text-align:right">VENDEDOR:</td><td style="font-weight:700;padding:2px 0">${ne.vendedor}</td></tr>`:''}
         ${ne.facturaId?`<tr><td style="padding:2px 6px;color:#888;text-align:right">FACTURA:</td><td style="font-weight:900;padding:2px 0;color:#f97316">${ne.facturaId}</td></tr>`:''}
-        ${ne.opRelacionada?`<tr><td style="padding:2px 6px;color:#888;text-align:right">OP RELACIONADA:</td><td style="font-weight:900;padding:2px 0;color:#f97316">${ne.opRelacionada}</td></tr>`:''}
+        ${opaResumenNE(ne).ops.length>0?`<tr><td style="padding:2px 6px;color:#888;text-align:right">OP RELACIONADA${opaResumenNE(ne).ops.length>1?'S':''}:</td><td style="font-weight:900;padding:2px 0;color:#f97316">${opaResumenNE(ne).ops.join(', ')}</td></tr>`:''}
       </table>
     </div>
   </div>
@@ -43303,7 +43605,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const doc=ne.id+(ne.status==='PROCESADA'?'P':'T');
             if(tvBuscarDoc && !doc.toUpperCase().includes(tvBuscarDoc.toUpperCase())) return;
             if(tvBuscarDesc && !(ne.clientName||'').toUpperCase().includes(tvBuscarDesc.toUpperCase())) return;
-            const opNE = ne.opRelacionada||ne.opId||ne.opAsignada||'';
+            const _opaR = opaResumenNE(ne);
+            const opNE = _opaR.tieneOp ? (_opaR.ops.join(', ')||'OP') : '';
             if(tvFiltOp==='con' && !opNE) return;
             if(tvFiltOp==='sin' && opNE) return;
             const costo=parseNum(ne.costoTotal||0)||(ne.items||[]).reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.costoUnit||0),0);
@@ -43746,13 +44049,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           setFgItems([]);
                           return;
                         }
-                        const items = nesObj.flatMap(ne=>(ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true,_neOrigenItem:ne.id})));
+                        const items = nesObj.flatMap(ne=>(ne.items||[]).map(it=>({invCode:it.invCode||'',desc:it.desc||'',cantidad:it.cantidad||0,precioUnit:it.precioUnit||0,unit:it.unit||'und',costoUnit:it.costoUnit||0,fgId:'',_isInvPT:true,...opaCamposLineaFactura(it, ne)})));
                         setFgItems(items);
                         const primera = nesObj[0];
-                        const opsUnicas = [...new Set(nesObj.map(ne=>ne.opId||ne.opRelacionada).filter(Boolean))];
+                        const opsUnicas = [...new Set(nesObj.flatMap(ne=>opaResumenNE(ne).ops).filter(Boolean))];
                         setNewInvoiceForm(f=>({...f,neOrigen:idsSeleccionados[0]||'',nesAdicionales:idsSeleccionados.slice(1),
                           fecha:primera.fecha||f.fecha,clientRif:primera.clientRif||'',clientName:primera.clientName||'',clientAddress:primera.clientAddress||'',
-                          vendedor:primera.vendedor||'',opAsignada:primera.opId||primera.opRelacionada||'',opsAsignadas:opsUnicas,aplicaIva:primera.aplicaIva||'SI'}));
+                          vendedor:primera.vendedor||'',opAsignada:opsUnicas[0]||'',opsAsignadas:opsUnicas,aplicaIva:primera.aplicaIva||'SI'}));
                       };
                       const toggleNE = (neId) => {
                         const ne = (notasEntrega||[]).find(n=>n.id===neId);
@@ -43771,7 +44074,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         .filter(ne=>nesSeleccionadas.includes(ne.id)||!ne.facturaId&&(ne.status==='TRANSITO'||ne.status==='TRÁNSITO'||!ne.status)||ne.facturaId===newInvoiceForm.documento)
                         .filter(ne=>!neBuscarTexto||`${ne.id} ${ne.clientName}`.toUpperCase().includes(neBuscarTexto.toUpperCase()))
                         .sort((a,b)=>b.id.localeCompare(a.id));
-                      const opsDistintas = new Set(nesSeleccionadas.map(id=>(notasEntrega||[]).find(n=>n.id===id)?.opRelacionada).filter(Boolean));
+                      const opsDistintas = new Set(nesSeleccionadas.flatMap(id=>opaResumenNE((notasEntrega||[]).find(n=>n.id===id)).ops).filter(Boolean));
                       return (
                     <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-2">
                       <label className="text-[10px] font-black text-blue-700 uppercase block mb-2 tracking-widest">📋 Seleccionar Nota(s) de Entrega a Facturar</label>
@@ -43787,7 +44090,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       )}
                       {opsDistintas.size>1 && (
                         <div className="text-[9px] text-amber-700 bg-amber-100 rounded-lg px-2.5 py-1.5 mb-2 font-bold">
-                          ⚠ Estas NE vienen de {opsDistintas.size} OP distintas: {[...opsDistintas].join(', ')}
+                          ℹ Los artículos vienen de {opsDistintas.size} OP distintas: {[...opsDistintas].join(', ')} — cada artículo conserva su OP y el ingreso / costo se reparte por artículo
                         </div>
                       )}
                       <div className="flex gap-3 items-end">
@@ -43944,11 +44247,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             })}
                           </div>
                         ):(
-                        <select value={newInvoiceForm.opAsignada} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
+                        <select value={newInvoiceForm.opAsignada} disabled={fgItems.some(opaTraeTipo)} style={fgItems.some(opaTraeTipo)?{opacity:.6}:undefined} onChange={e=>handleInvoiceFormChange('opAsignada', e.target.value)} className="w-full bg-gray-100/70 border-2 border-transparent rounded-2xl p-4 font-black text-xs outline-none focus:bg-white focus:border-orange-500 text-black">
                           <option value="">— No aplica —</option>
                           {(requirements || []).map(r=><option key={r.id} value={r.id}>#{String(r.id).replace('OP-','').padStart(5,'0')} — {r.client} | {r.desc}</option>)}
                         </select>
                         )}
+                        {fgItems.some(opaTraeTipo)&&<div data-testid="inv-op-por-articulo" className="text-[9px] text-blue-700 font-bold mt-1 leading-tight">La OP va por artículo (viene de la NE): {opaTextoFactura({itemsFacturados:fgItems})}</div>}
                       </div>
 
                       {/* Preview de datos OP */}
@@ -43999,7 +44303,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     <td className="py-1.5 px-1 text-center w-16"><button type="button" onClick={()=>setEditingFgIdx(null)} className="bg-green-100 hover:bg-green-500 text-green-600 hover:text-white p-1 rounded-lg transition-all" title="OK"><CheckCircle size={13}/></button></td>
                                   </>) : (<>
                                     <td className="py-2 px-2 font-black text-orange-600 text-[9px] whitespace-nowrap w-28">{item.invCode?cleanFGCode(item.invCode):cleanFGCode(item.fgId||'').replace(/^FG-\d{10,}$/,'')}</td>
-                                    <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:'break-word',lineHeight:1.3}}>{item.desc}</td>
+                                    <td className="py-2 px-2 font-bold text-gray-800 text-[10px]" style={{wordBreak:'break-word',lineHeight:1.3}}>{item.desc}{opaTraeTipo(item)&&<span data-testid="inv-linea-tipo" className={`inline-block ml-1.5 px-1.5 py-0.5 rounded text-[8px] font-black uppercase align-middle ${item.tipoVenta==='OP'?'bg-orange-100 text-orange-700':item.tipoVenta==='PRODUCTO'?'bg-emerald-100 text-emerald-700':'bg-indigo-100 text-indigo-700'}`}>{item.tipoVenta==='OP'?(item.opId?opaFmtOp(item.opId):'Con OP'):opaEtiqueta(item.tipoVenta)}</span>}</td>
                                     <td className="py-2 px-2 text-center font-black text-[10px] w-20">{formatNum(item.cantidad)}<div className="text-[7px] text-gray-400">{item.unidad}</div></td>
                                     <td className="py-2 px-2 text-right font-black text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit)}`:'—'}</td>
                                     <td className="py-2 px-2 text-right font-black text-green-700 text-[10px] w-24">{item.precioUnit>0?`$${formatNum(item.precioUnit*item.cantidad)}`:'—'}</td>
@@ -44126,7 +44430,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const dv=parseNum(descuentoVal||0);const da=descuentoTipo==='pct'?baseCalc*(dv/100):dv;const subCalc=Math.max(0,baseCalc-da);
                         const ivaCalc=newInvoiceForm.aplicaIva==='SI'?parseFloat((subCalc*0.16).toFixed(2)):0;
                         const totalCalc=parseFloat((subCalc+ivaCalc).toFixed(2));
-                        const fPreview={...newInvoiceForm,montoBase:subCalc,iva:ivaCalc,total:totalCalc};
+                        const fPreview={...newInvoiceForm,montoBase:subCalc,iva:ivaCalc,total:totalCalc,
+                          // OP por artículo: misma marca por línea que se guardará en la factura
+                          itemsFacturados:fgItems.map(it=>({precioUnit:it.precioUnit,cantidad:it.cantidad,...(opaTraeTipo(it)?{tipoVenta:it.tipoVenta,opId:it.tipoVenta==='OP'?opaIdTxt(it.opId):''}:{}),...(it._neOrigenItem?{_neOrigenItem:it._neOrigenItem}:{})}))};
                         const asientoV=generarAsientoVenta(fPreview,cuentasIngresoCfg,planDeCuentas,clients,notasEntrega);
                         return (
                           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
@@ -44196,7 +44502,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                <div className="overflow-x-auto"><table className="w-full text-left whitespace-nowrap"><thead className="bg-white border-b-2 border-gray-100"><tr className="uppercase font-black text-[10px] text-gray-400 tracking-widest"><th className="py-4 px-4 text-black">Doc / Fecha</th><th className="py-4 px-4 text-black">OP N°</th><th className="py-4 px-4 text-black">NE</th><th className="py-4 px-4 text-black">Cliente / Producto</th><th className="py-4 px-4 text-right text-black w-32">Total USD</th><th className="py-4 px-4 text-center text-black">Acciones</th></tr></thead><tbody className="divide-y">{pageInv.map(inv=>(
                <tr key={inv?.id} className="hover:bg-gray-50">
                  <td className="py-4 px-4 font-black text-sm">{inv?.documento}<br/><span className="text-[9px] text-gray-400 font-bold">{inv?.fecha}</span></td>
-                 <td className="py-4 px-4 font-black text-xs text-orange-600">{inv?.opAsignada||'—'}</td>
+                 <td data-testid="fac-lista-op" className="py-4 px-4 font-black text-xs text-orange-600">{opaTextoFactura(inv)}</td>
                  <td className="py-4 px-4 text-[10px] font-black text-blue-600">{inv?.neOrigen||'—'}</td>
                  <td className="py-4 px-4 font-bold text-gray-700 uppercase">{inv?.clientName}<br/><span className="text-[9px] font-black text-orange-500 block max-w-xs truncate">{inv?.productoMaquilado||'S/D'}</span></td>
                  <td className="py-4 px-4 text-right font-black text-green-600 text-lg w-32">${formatNum((()=>{const t=parseNum(inv?.total||0);if(t>0)return t;const items=inv?.itemsFacturados||[];const b=items.reduce((s,it)=>s+parseNum(it.precioUnit||0)*parseNum(it.cantidad||0),0);return inv?.aplicaIva==='SI'?b*1.16:b;})())}</td>
@@ -52411,8 +52717,8 @@ ${resumen}
     const costoMP = allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
     const costoXkg = kgFinal>0?costoMP/kgFinal:0;
     const costoXmill = millFinal>0?costoMP/millFinal:0;
-    const relInv = (invoices||[]).filter(i=>i.opAsignada===req.id);
-    const ingresos = relInv.reduce((s,i)=>s+parseNum(i.total),0);
+    const relInv = (invoices||[]).filter(i=>opaFacturaTocaOp(i, req.id));
+    const ingresos = relInv.reduce((s,i)=>s+opaPartesFacturaOp(i, req.id).total,0);
     const utilidad = ingresos - costoMP;
     const margen = ingresos>0?(utilidad/ingresos*100).toFixed(1):'0.0';
     const esTermo = req.tipoProducto==='TERMOENCOGIBLE';
@@ -52518,8 +52824,8 @@ ${resumen}
                   <tr key={inv.id} className="hover:bg-gray-50">
                     <td className="p-2 border-r font-black text-orange-600">{(inv.documento||'').replace(/^FAC-/,'INVO-')}</td>
                     <td className="p-2 border-r text-center font-bold">{inv.fecha}</td>
-                    <td className="p-2 border-r text-right font-bold">${formatNum(inv.montoBase)}</td>
-                    <td className="p-2 text-right font-black text-green-600">${formatNum(inv.total)}</td>
+                    <td className="p-2 border-r text-right font-bold">${formatNum(opaPartesFacturaOp(inv, req.id).base)}</td>
+                    <td className="p-2 text-right font-black text-green-600">${formatNum(opaPartesFacturaOp(inv, req.id).total)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -52644,8 +52950,8 @@ ${resumen}
       || extBatches.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
 
     const costoPorMillar = totalMillares > 0 ? totalCostoMP / totalMillares : 0;
-    const relatedInvoices = invoices.filter(i => i.opAsignada === req.id);
-    const totalIngresos  = relatedInvoices.reduce((s,i)=>s+parseNum(i.total),0);
+    const relatedInvoices = invoices.filter(i => opaFacturaTocaOp(i, req.id));
+    const totalIngresos  = relatedInvoices.reduce((s,i)=>s+opaPartesFacturaOp(i, req.id).total,0);
     const ganancia = totalIngresos - totalCostoMP;
     const margenNeto = totalIngresos > 0 ? (ganancia / totalIngresos * 100) : 0;
     const costoNetoPorKg = kgProducidosFinales > 0 ? totalCostoMP / kgProducidosFinales : 0;
@@ -56491,8 +56797,8 @@ ${resumen}
       const prod = req.production || {};
       let costoMP = 0;
       [...(prod.extrusion?.batches||[]), ...(prod.impresion?.batches||[]), ...(prod.sellado?.batches||[])].forEach(b => { costoMP += parseNum(b.cost||0); });
-      const relatedInvoices = invoices.filter(i => i.opAsignada === req.id);
-      const ingresos = relatedInvoices.reduce((s,i) => s + parseNum(i.total), 0);
+      const relatedInvoices = invoices.filter(i => opaFacturaTocaOp(i, req.id));
+      const ingresos = relatedInvoices.reduce((s,i) => s + opaPartesFacturaOp(i, req.id).total, 0);
       const totalMillares = (prod.sellado?.batches||[]).reduce((s,b) => s + parseNum(b.techParams?.millares||b.millaresProd||0), 0);
       return { costoMP, ingresos, utilidad: ingresos - costoMP, millares: totalMillares };
     };
@@ -57194,7 +57500,7 @@ ${resumen}
                 const merma=allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
                 const mill=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                 const costoMP=allB.reduce((s,b)=>s+parseNum(b.cost||0),0);
-                const ingresos=(invoices||[]).filter(i=>i.opAsignada===req.id).reduce((s,i)=>s+parseNum(i.total),0);
+                const ingresos=(invoices||[]).filter(i=>opaFacturaTocaOp(i,req.id)).reduce((s,i)=>s+opaPartesFacturaOp(i,req.id).total,0);
                 const pctMerma=mpKg>0?((merma/mpKg)*100).toFixed(1):'0.0';
                 const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
                 totMpKg+=mpKg; totProdKg+=kgProd; totMermaKg+=merma; totMillares+=mill; totCostoMP+=costoMP; totIngresos+=ingresos;
@@ -58574,9 +58880,10 @@ ${resumen}
         if(cu<=0&&fgRec)cu=parseNum(fgRec.costoUnitario||fgRec.costoUnitarioMillar||0);
         const ct=cu*cant;
         totalCostoProd+=ct;
+        const _clE = opaClasificarItemNE(it, ne); // OP por artículo
         cogsRows.push({
-          opId:ne.opRelacionada||ne.opId||ne.opAsignada||'—',
-          opNum:String(ne.opRelacionada||ne.opId||'').replace('OP-','').padStart(5,'0'),
+          opId:(_clE.esOp&&_clE.opId)?_clE.opId:'—',
+          opNum:String(_clE.esOp?_clE.opId:'').replace('OP-','').padStart(5,'0'),
           producto:desc||code, cliente:ne.clientName||ne.clientRif||'',
           cantVendida:cant, unidad:it.unidad||it.unit||'und',
           precioUnit:precioUnit, subIngreso:sub,
@@ -60705,11 +61012,12 @@ ${resumen}
                   if (contFiltDesde && (f.fecha||'')<contFiltDesde) return;
                   if (contFiltHasta && (f.fecha||'')>contFiltHasta) return;
                   (f.itemsFacturados||[]).forEach(it=>{
+                    if(!opaEsLineaOp(it, f)) return; // OP por artículo: solo los artículos con OP
                     const nombreIt = (it.desc||it.descripcion||'').trim().toUpperCase();
                     const invItem = nombreIt ? (inventory||[]).find(i=>(i.desc||i.descripcion||'').trim().toUpperCase()===nombreIt) : null;
                     hallazgos.push({
                       factura: f.nroFiscal||f.documento||f.id, fecha: f.fecha, cliente: f.clientName||'—',
-                      op: f.opAsignada||(f.opsAsignadas&&f.opsAsignadas[0])||'', producto: it.desc||it.descripcion||'—',
+                      op: opaTraeTipo(it)?opaIdTxt(it.opId):(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas[0])||''), producto: it.desc||it.descripcion||'—',
                       categoria: invItem?.category||'(sin categoría / no encontrado en inventario)', cantidad: it.cantidad||0,
                     });
                   });
@@ -60804,7 +61112,7 @@ ${resumen}
                             const cant = Number(it.cantidad||0);
                             const costoOrig = Number(it.costoTotal||0) || Number(it.costoUnit||0)*cant;
                             cantTotal += cant; costoTotalOriginal += costoOrig;
-                            const op = f.opAsignada || (f.opsAsignadas&&f.opsAsignadas[0]) || '';
+                            const op = opaTraeTipo(it) ? (it.tipoVenta==='OP'?opaIdTxt(it.opId):'') : (f.opAsignada || (f.opsAsignadas&&f.opsAsignadas[0]) || '');
                             facturasDetalle.push({factura:f.nroFiscal||f.documento||f.id, fecha:_fSim, op, cant, costoOrig});
                           });
                         });
@@ -64086,14 +64394,16 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                         // 3. Eliminar requisiciones
                         for (const r of (invRequisitions||[]).filter(r=>r.opId===selectedOP.id))
                           await deleteDoc(getDocRef('invRequisitions', r.id));
-                        // 4. Eliminar facturas asociadas
-                        for (const inv of (invoices||[]).filter(i=>i.opAsignada===selectedOP.id)){
+                        // 4. Eliminar facturas asociadas (OP por artículo: una factura con artículos de otras OP o sin OP NO se elimina)
+                        let _opaConservadas = 0;
+                        for (const inv of (invoices||[]).filter(i=>i.opAsignada===selectedOP.id||opaFacturaTocaOp(i,selectedOP.id))){
+                          if(!opaFacturaExclusivaDeOp(inv, selectedOP.id)){ _opaConservadas++; continue; }
                           await archivarEnPapelera('maquilaInvoices', inv.id, inv, `Factura ${inv.documento||inv.id} (de OP #${selectedOP.id})`, appUser);
                           await deleteDoc(getDocRef('maquilaInvoices', inv.id));
                         }
                         logAuditoria(appUser,'Ventas','ELIMINACIÓN',`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} ELIMINADA completa (incluye sus facturas asociadas)`);
                         setSelectedOpId('');
-                        setDialog({title:'✅ Eliminada', text:`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} eliminada completamente.`, type:'alert'});
+                        setDialog({title:'✅ Eliminada', text:`OP #${String(selectedOP.id).replace('OP-','').padStart(5,'0')} eliminada completamente.${_opaConservadas>0?` Se conservaron ${_opaConservadas} factura(s) con artículos de otras OP o sin OP: revísalas en Facturación.`:''}`, type:'alert'});
                       }, 'ELIMINAR OP COMPLETA — ACCIÓN IRREVERSIBLE')}
                         className="bg-red-600 text-white p-4 rounded-xl font-black text-xs uppercase hover:bg-red-700 flex flex-col items-center gap-2 text-center transition-all">
                         <Trash2 size={20}/>
