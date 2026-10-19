@@ -18798,7 +18798,7 @@ const EstadoCuentaProvView = ({
   // se cuenta vía pagosCxP.
   const _ajustesCxpPorProv = useMemo(()=>{
     const m = new Map();
-    [..._ajustesBanco, ..._ajustesCaja].filter(a=>a.tipoTercero==='Proveedor' && a.terceroId).forEach(a=>{
+    [..._ajustesBanco, ..._ajustesCaja].filter(a=>a.tipoTercero==='Proveedor' && a.terceroId && (!ecHasta||(a.fecha||'')<=ecHasta)).forEach(a=>{
       const key = a.terceroId;
       if(!m.has(key)) m.set(key,[]);
       const esIngreso = a.tipo==='Ingreso';
@@ -18809,7 +18809,7 @@ const EstadoCuentaProvView = ({
       m.get(key).push({...a, _montoUSD:montoUSD});
     });
     return m;
-  },[_ajustesBanco,_ajustesCaja]);
+  },[_ajustesBanco,_ajustesCaja,ecHasta]);
   const getAjustesCxpProv = (g) => (_ajustesCxpPorProv.get(g.provId)||_ajustesCxpPorProv.get(g.rif)||[]);
   const getAjustesCxpProvTotal = (g) => getAjustesCxpProv(g).reduce((s,a)=>s+a._montoUSD,0);
 
@@ -18819,10 +18819,11 @@ const EstadoCuentaProvView = ({
   const hoy = getTodayDate();
 
   // Maps
-  const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP]);
-  const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra]);
-  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{let r=(n.provRif||'').trim();if(!r&&n.facturaId){const fc=(facturasCompra||[]).find(f=>f.id===n.facturaId);r=(fc?.rif||'').trim();}if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD, facturasCompra]);
-  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD]);
+  // «Estado de Cuenta AL CORTE»: con una fecha «Hasta» no entra nada posterior (pagos, retenciones, notas, anticipos ni ajustes), ni se suma en los totales.
+  const _pagosPorFact = useMemo(()=>{ const m=new Map(); (pagosCxP||[]).filter(p=>!ecHasta||(p.fecha||'')<=ecHasta).forEach(p=>{if(!m.has(p.facturaId))m.set(p.facturaId,[]);m.get(p.facturaId).push(p);}); return m; },[pagosCxP,ecHasta]);
+  const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).filter(r=>!ecHasta||(r.fecha||'')<=ecHasta).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra,ecHasta]);
+  const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).forEach(n=>{let r=(n.provRif||'').trim();if(!r&&n.facturaId){const fc=(facturasCompra||[]).find(f=>f.id===n.facturaId);r=(fc?.rif||'').trim();}if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD, facturasCompra, ecHasta]);
+  const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD,ecHasta]);
   const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
     const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
     const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
@@ -18849,7 +18850,8 @@ const EstadoCuentaProvView = ({
 
   const _anticiposPorProv = useMemo(()=>{
     const m = new Map();
-    for(const a of (pagosCxP||[]).filter(p=>p.esAnticipo)){
+    // al aplicar un anticipo, el pago a la factura toma la fecha del anticipo: un anticipo posterior al corte no existía todavía
+    for(const a of (pagosCxP||[]).filter(p=>p.esAnticipo&&(!ecHasta||(p.fecha||'')<=ecHasta))){
       const rif=(a.proveedorId||a.proveedor||'').trim();
       if(!rif) continue;
       const aplicado=parseNum(a.montoAplicado||0);
@@ -18859,7 +18861,7 @@ const EstadoCuentaProvView = ({
       m.get(rif).push({...a,_saldoAnt:saldoAnt});
     }
     return m;
-  },[pagosCxP]);
+  },[pagosCxP,ecHasta]);
 
   const porProveedor = useMemo(()=>{
     const m = {};
@@ -22434,7 +22436,7 @@ const ecbAbrirPdf = (m, alertFn) => {
   } catch (e) { (alertFn || window.alert)('Error PDF: ' + e.message); }
 };
 
-// ── Excel profesional (ExcelJS): hojas «Resumen», «Estado de Cuenta» (por tercero, imprimible) y «Datos» (plana, con filtros) ──
+// ── Excel profesional (ExcelJS): hojas «Estado de Cuenta» (por tercero, imprimible), «Resumen» y «Datos» (plana, con filtros) ──
 const ecbExportXLSX = async (m) => {
   const EJ = await ccLoadExcelJS();
   const bs = m.mon === 'BS';
@@ -22485,7 +22487,113 @@ const ecbExportXLSX = async (m) => {
   const colTer = m.terVendedor ? 'Vendedor' : null;
   const lblCargo = m.lblCargo || 'Facturado', lblAbono = m.lblAbono || 'Cobrado';
 
-  // ═══════════ Hoja 1: Resumen por tercero ═══════════
+  // ═══════════ Hoja 1: Estado de Cuenta por tercero (imprimible, separado por cliente) ═══════════
+  {
+    const ws = wb.addWorksheet('Estado de Cuenta', {
+      // Sin «outlineProperties»: con fitToPage ExcelJS escribiría <pageSetUpPr> antes de <outlinePr>, orden que Excel rechaza (descarta la hoja entera al abrir el archivo).
+      properties: { tabColor: { argb: DARK } },
+      views: [{ state: 'frozen', ySplit: 7, showGridLines: false }],
+      pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: '7:7' },
+      headerFooter: pie('Estado de Cuenta ' + (m.ent === 'CXP' ? 'Proveedores' : 'Clientes') + ' — ' + (bs ? 'Bs.' : 'USD')),
+    });
+    // A Documento · B Fecha · C Vence · D Tipo · E Detalle · [F Tasa] · Cargo · NC/Ret · Abono · Saldo · [Saldo USD] · Estado
+    const heads = ['Documento', 'Fecha', 'Vence', 'Tipo', 'Detalle'];
+    const widths = [20, 11, 11, 17, 58];
+    if (bs) { heads.push('Tasa Bs/$'); widths.push(10); }
+    heads.push('Cargo ' + (bs ? 'Bs.' : 'USD'), 'NC / Ret. ' + (bs ? 'Bs.' : 'USD'), 'Abono ' + (bs ? 'Bs.' : 'USD'), 'Saldo ' + (bs ? 'Bs.' : 'USD')); widths.push(16, 16, 16, 17);
+    if (bs) { heads.push('Saldo USD (ref.)'); widths.push(15); }
+    heads.push('Estado'); widths.push(11);
+    const NCOL = heads.length;
+    widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    const cTasa = bs ? 6 : 0, cCargo = bs ? 7 : 6, cNC = cCargo + 1, cAb = cCargo + 2, cSal = cCargo + 3, cUsd = bs ? cCargo + 4 : 0, cEst = NCOL;
+    membrete(ws, NCOL, m.titulo, Math.max(2, NCOL - 4));
+    put(ws, 6, 1, NCOL, m.terceros.length + ' ' + m.terPlural + '  ·  ' + m.nDocs + ' documentos  ·  Emitido el ' + hoy, F({ italic: true, color: { argb: 'FF64748B' } }));
+    ws.getRow(6).height = 18;
+    encabezado(ws, 7, heads);
+    const L = (c) => ws.getColumn(c).letter;
+    let r = 8;
+    const subtotalRows = [];
+    m.terceros.forEach((t) => {
+      // Banda del tercero
+      const bandaTxt = t.nombre + (t.rif ? '   ·   ' + t.rif : '') + (t.vendedor && m.terVendedor ? '   ·   ' + t.vendedor : '') + '   ·   ' + t.nDocs + ' documento' + (t.nDocs === 1 ? '' : 's') + (bs && t.sinFactura ? '   ·   ' + t.sinFactura.n + ' ' + (m.lblSinBs || 'NE sin factura') + ' (solo USD)' : '');
+      ws.mergeCells(r, 1, r, NCOL);
+      const bc = ws.getCell(r, 1); bc.value = bandaTxt; bc.font = F({ size: 10, bold: true, color: { argb: WHITE } }); bc.fill = fill(DARK);
+      bc.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      for (let c = 1; c <= NCOL; c++) ws.getCell(r, c).fill = fill(DARK);
+      ws.getRow(r).height = 20;
+      r++;
+      const iniT = r;
+      t.rows.forEach((row, i) => {
+        const tn = ECB_TONOS[row.tono] || ECB_TONOS.doc;
+        const sub = row.nivel > 0;
+        const bg = (row.tono === 'doc' && i % 2) ? ZEBRA : tn.x;
+        const vals = [(sub ? '   ↳ ' : '') + (row.doc || ''), fechaCell(row.fecha), fechaCell(row.vence), row.tipoTxt || '', (row.detalle || '') + (row.aviso ? '  ' + row.aviso : '')];
+        if (bs) vals.push(row.tasa > 0 ? ecbR2(row.tasa * 10000) / 10000 : null);
+        vals.push(row.cargo == null ? null : row.cargo, row.ncret == null ? null : row.ncret, row.abono == null ? null : row.abono, (row.nivel === 0 && row.saldo != null) ? row.saldo : null);
+        if (bs) vals.push((row.nivel === 0 && row.saldoUsd != null) ? row.saldoUsd : null);
+        vals.push(row.nivel === 0 ? (ECB_ESTADO_TXT[row.estado] || '') : '');
+        vals.forEach((v, ci) => {
+          const col = ci + 1;
+          const c = ws.getCell(r, col);
+          c.value = (v === '' ? null : v);
+          let color = sub ? tn.xf : INK, bold = !sub;
+          if (col === 1) { color = sub ? tn.xf : 'FFEA580C'; bold = true; }
+          if (col === 5) { bold = false; color = sub ? tn.xf : 'FF475569'; }
+          if (col === 4) { color = tn.xb; bold = true; }
+          if (col === cNC) { color = 'FFDC2626'; bold = true; }
+          if (col === cAb) { color = 'FF15803D'; bold = true; }
+          if (col === cSal && row.saldo != null) { color = row.saldo < -0.01 ? 'FF0F766E' : row.saldo < 0.01 ? 'FF15803D' : 'FFDC2626'; bold = true; }
+          if (cUsd && col === cUsd) { color = 'FF64748B'; bold = false; }
+          if (col === cEst) { color = row.estado === 'PENDIENTE' ? 'FFDC2626' : row.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D'; bold = true; }
+          c.font = F({ size: sub ? 8 : 9, bold, color: { argb: color } });
+          c.fill = fill(bg); c.border = bd;
+          const al = (col === 2 || col === 3 || col === 4 || col === cEst || (cTasa && col === cTasa)) ? 'center' : (col >= cCargo && col <= (cUsd || cSal)) ? 'right' : 'left';
+          c.alignment = { vertical: 'middle', horizontal: al, wrapText: col === 5, indent: (col === 1 || col === 5) ? 1 : 0 };
+          if (col === 2 || col === 3) c.numFmt = 'dd/mm/yyyy';
+          if (cTasa && col === cTasa) c.numFmt = '#,##0.00##';
+          if (col === cCargo || col === cNC || col === cAb) c.numFmt = NF;
+          if (col === cSal) c.numFmt = NF_SAL;
+          if (cUsd && col === cUsd) c.numFmt = NF_USD_SAL;
+        });
+        ws.getRow(r).height = (row.detalle || '').length > 95 ? 24 : 16;
+        r++;
+      });
+      const finT = r - 1;
+      // Subtotal del tercero (con fórmulas)
+      for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(r, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'thin', color: { argb: ORANGE } }, bottom: { style: 'medium', color: { argb: ORANGE } } }; }
+      ws.mergeCells(r, 1, r, 3);
+      const sl = ws.getCell(r, 1); sl.value = 'SUBTOTAL — ' + t.nombre; sl.font = F({ size: 9, bold: true }); sl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      const st = ws.getCell(r, 4); st.value = 'SUBTOTAL'; st.font = F({ size: 8, bold: true, color: { argb: 'FF64748B' } }); st.alignment = { horizontal: 'center', vertical: 'middle' };
+      [[cCargo, t.sum.cargo, NF], [cNC, t.sum.ncret, NF], [cAb, t.sum.abono, NF], [cSal, t.sum.saldo, NF_SAL], [cUsd, t.sum.saldoUsd, NF_USD_SAL]].forEach(([c, res, nf]) => {
+        if (!c) return;
+        const cell = ws.getCell(r, c);
+        cell.value = { formula: 'SUM(' + L(c) + iniT + ':' + L(c) + finT + ')', result: res };
+        cell.numFmt = nf; cell.font = F({ size: 9, bold: true }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      });
+      const ce = ws.getCell(r, cEst); ce.value = ECB_ESTADO_TXT[t.estado] || ''; ce.font = F({ size: 9, bold: true, color: { argb: t.estado === 'PENDIENTE' ? 'FFDC2626' : t.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D' } }); ce.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getRow(r).height = 20;
+      subtotalRows.push(r);
+      r += 2; // fila en blanco entre terceros
+    });
+    // Total general: suma de los subtotales (SUMIF por la marca «SUBTOTAL» de la columna Tipo)
+    const FIRSTD = 8, LASTD = r - 2;
+    for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(r, c); cell.fill = fill(DARK); cell.border = { top: { style: 'medium', color: { argb: ORANGE } } }; }
+    ws.mergeCells(r, 1, r, 3);
+    const gl = ws.getCell(r, 1); gl.value = 'TOTAL GENERAL — ' + m.terceros.length + ' ' + m.terPlural; gl.font = F({ size: 10, bold: true, color: { argb: WHITE } }); gl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    [[cCargo, m.tot.cargo, NF], [cNC, m.tot.ncret, NF], [cAb, m.tot.abono, NF], [cSal, m.tot.saldo, NF_SAL], [cUsd, m.tot.saldoUsd, NF_USD_SAL]].forEach(([c, res, nf]) => {
+      if (!c) return;
+      const cell = ws.getCell(r, c);
+      cell.value = { formula: 'SUMIF($D$' + FIRSTD + ':$D$' + LASTD + ',"SUBTOTAL",' + L(c) + FIRSTD + ':' + L(c) + LASTD + ')', result: res };
+      cell.numFmt = nf; cell.font = F({ size: 10, bold: true, color: { argb: 'FFFDBA74' } }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+    ws.getRow(r).height = 24;
+    r += 2;
+    put(ws, r, 1, NCOL, 'NOTAS DEL REPORTE', F({ size: 10, bold: true })); ws.getRow(r).height = 18; r++;
+    (m.notas || []).forEach((x) => { put(ws, r, 1, NCOL, '•  ' + x, F({ size: 8, color: { argb: 'FF475569' } }), { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 }); ws.getRow(r).height = x.length > 190 ? 24 : 14; r++; });
+    ws.pageSetup.printArea = 'A1:' + L(NCOL) + r;
+  }
+
+  // ═══════════ Hoja 2: Resumen por tercero ═══════════
   {
     const ws = wb.addWorksheet('Resumen', {
       properties: { tabColor: { argb: ORANGE } },
@@ -22551,112 +22659,6 @@ const ecbExportXLSX = async (m) => {
     put(ws, rr, 1, NCOL, 'NOTAS DEL REPORTE', F({ size: 10, bold: true })); ws.getRow(rr).height = 18; rr++;
     (m.notas || []).forEach((x) => { put(ws, rr, 1, NCOL, '•  ' + x, F({ size: 8, color: { argb: 'FF475569' } }), { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 }); ws.getRow(rr).height = x.length > 170 ? 24 : 14; rr++; });
     ws.pageSetup.printArea = 'A1:' + ws.getColumn(NCOL).letter + rr;
-  }
-
-  // ═══════════ Hoja 2: Estado de Cuenta por tercero (imprimible) ═══════════
-  {
-    const ws = wb.addWorksheet('Estado de Cuenta', {
-      properties: { tabColor: { argb: DARK }, outlineProperties: { summaryBelow: false } },
-      views: [{ state: 'frozen', ySplit: 7, showGridLines: false }],
-      pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: '7:7' },
-      headerFooter: pie('Estado de Cuenta ' + (m.ent === 'CXP' ? 'Proveedores' : 'Clientes') + ' — ' + (bs ? 'Bs.' : 'USD')),
-    });
-    // A Documento · B Fecha · C Vence · D Tipo · E Detalle · [F Tasa] · Cargo · NC/Ret · Abono · Saldo · [Saldo USD] · Estado
-    const heads = ['Documento', 'Fecha', 'Vence', 'Tipo', 'Detalle'];
-    const widths = [20, 11, 11, 17, 58];
-    if (bs) { heads.push('Tasa Bs/$'); widths.push(10); }
-    heads.push('Cargo ' + (bs ? 'Bs.' : 'USD'), 'NC / Ret. ' + (bs ? 'Bs.' : 'USD'), 'Abono ' + (bs ? 'Bs.' : 'USD'), 'Saldo ' + (bs ? 'Bs.' : 'USD')); widths.push(16, 16, 16, 17);
-    if (bs) { heads.push('Saldo USD (ref.)'); widths.push(15); }
-    heads.push('Estado'); widths.push(11);
-    const NCOL = heads.length;
-    widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-    const cTasa = bs ? 6 : 0, cCargo = bs ? 7 : 6, cNC = cCargo + 1, cAb = cCargo + 2, cSal = cCargo + 3, cUsd = bs ? cCargo + 4 : 0, cEst = NCOL;
-    membrete(ws, NCOL, m.titulo, Math.max(2, NCOL - 4));
-    put(ws, 6, 1, NCOL, m.terceros.length + ' ' + m.terPlural + '  ·  ' + m.nDocs + ' documentos  ·  Emitido el ' + hoy, F({ italic: true, color: { argb: 'FF64748B' } }));
-    ws.getRow(6).height = 18;
-    encabezado(ws, 7, heads);
-    const L = (c) => ws.getColumn(c).letter;
-    let r = 8;
-    const subtotalRows = [];
-    m.terceros.forEach((t) => {
-      // Banda del tercero
-      const bandaTxt = t.nombre + (t.rif ? '   ·   ' + t.rif : '') + (t.vendedor && m.terVendedor ? '   ·   ' + t.vendedor : '') + '   ·   ' + t.nDocs + ' documento' + (t.nDocs === 1 ? '' : 's') + (bs && t.sinFactura ? '   ·   ' + t.sinFactura.n + ' ' + (m.lblSinBs || 'NE sin factura') + ' (solo USD)' : '');
-      ws.mergeCells(r, 1, r, NCOL);
-      const bc = ws.getCell(r, 1); bc.value = bandaTxt; bc.font = F({ size: 10, bold: true, color: { argb: WHITE } }); bc.fill = fill(DARK);
-      bc.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      for (let c = 1; c <= NCOL; c++) ws.getCell(r, c).fill = fill(DARK);
-      ws.getRow(r).height = 20;
-      r++;
-      const iniT = r;
-      t.rows.forEach((row, i) => {
-        const tn = ECB_TONOS[row.tono] || ECB_TONOS.doc;
-        const sub = row.nivel > 0;
-        const bg = (row.tono === 'doc' && i % 2) ? ZEBRA : tn.x;
-        const vals = [(sub ? '   ↳ ' : '') + (row.doc || ''), fechaCell(row.fecha), fechaCell(row.vence), row.tipoTxt || '', (row.detalle || '') + (row.aviso ? '  ' + row.aviso : '')];
-        if (bs) vals.push(row.tasa > 0 ? ecbR2(row.tasa * 10000) / 10000 : null);
-        vals.push(row.cargo == null ? null : row.cargo, row.ncret == null ? null : row.ncret, row.abono == null ? null : row.abono, (row.nivel === 0 && row.saldo != null) ? row.saldo : null);
-        if (bs) vals.push((row.nivel === 0 && row.saldoUsd != null) ? row.saldoUsd : null);
-        vals.push(row.nivel === 0 ? (ECB_ESTADO_TXT[row.estado] || '') : '');
-        vals.forEach((v, ci) => {
-          const col = ci + 1;
-          const c = ws.getCell(r, col);
-          c.value = (v === '' ? null : v);
-          let color = sub ? tn.xf : INK, bold = !sub;
-          if (col === 1) { color = sub ? tn.xf : 'FFEA580C'; bold = true; }
-          if (col === 5) { bold = false; color = sub ? tn.xf : 'FF475569'; }
-          if (col === 4) { color = tn.xb; bold = true; }
-          if (col === cNC) { color = 'FFDC2626'; bold = true; }
-          if (col === cAb) { color = 'FF15803D'; bold = true; }
-          if (col === cSal && row.saldo != null) { color = row.saldo < -0.01 ? 'FF0F766E' : row.saldo < 0.01 ? 'FF15803D' : 'FFDC2626'; bold = true; }
-          if (cUsd && col === cUsd) { color = 'FF64748B'; bold = false; }
-          if (col === cEst) { color = row.estado === 'PENDIENTE' ? 'FFDC2626' : row.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D'; bold = true; }
-          c.font = F({ size: sub ? 8 : 9, bold, color: { argb: color } });
-          c.fill = fill(bg); c.border = bd;
-          const al = (col === 2 || col === 3 || col === 4 || col === cEst || (cTasa && col === cTasa)) ? 'center' : (col >= cCargo && col <= (cUsd || cSal)) ? 'right' : 'left';
-          c.alignment = { vertical: 'middle', horizontal: al, wrapText: col === 5, indent: (col === 1 || col === 5) ? 1 : 0 };
-          if (col === 2 || col === 3) c.numFmt = 'dd/mm/yyyy';
-          if (cTasa && col === cTasa) c.numFmt = '#,##0.00##';
-          if (col === cCargo || col === cNC || col === cAb) c.numFmt = NF;
-          if (col === cSal) c.numFmt = NF_SAL;
-          if (cUsd && col === cUsd) c.numFmt = NF_USD_SAL;
-        });
-        ws.getRow(r).height = (row.detalle || '').length > 95 ? 24 : 16;
-        if (sub) ws.getRow(r).outlineLevel = 1;
-        r++;
-      });
-      const finT = r - 1;
-      // Subtotal del tercero (con fórmulas)
-      for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(r, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'thin', color: { argb: ORANGE } }, bottom: { style: 'medium', color: { argb: ORANGE } } }; }
-      ws.mergeCells(r, 1, r, 3);
-      const sl = ws.getCell(r, 1); sl.value = 'SUBTOTAL — ' + t.nombre; sl.font = F({ size: 9, bold: true }); sl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
-      const st = ws.getCell(r, 4); st.value = 'SUBTOTAL'; st.font = F({ size: 8, bold: true, color: { argb: 'FF64748B' } }); st.alignment = { horizontal: 'center', vertical: 'middle' };
-      [[cCargo, t.sum.cargo, NF], [cNC, t.sum.ncret, NF], [cAb, t.sum.abono, NF], [cSal, t.sum.saldo, NF_SAL], [cUsd, t.sum.saldoUsd, NF_USD_SAL]].forEach(([c, res, nf]) => {
-        if (!c) return;
-        const cell = ws.getCell(r, c);
-        cell.value = { formula: 'SUM(' + L(c) + iniT + ':' + L(c) + finT + ')', result: res };
-        cell.numFmt = nf; cell.font = F({ size: 9, bold: true }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
-      });
-      const ce = ws.getCell(r, cEst); ce.value = ECB_ESTADO_TXT[t.estado] || ''; ce.font = F({ size: 9, bold: true, color: { argb: t.estado === 'PENDIENTE' ? 'FFDC2626' : t.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D' } }); ce.alignment = { horizontal: 'center', vertical: 'middle' };
-      ws.getRow(r).height = 20;
-      subtotalRows.push(r);
-      r += 2; // fila en blanco entre terceros
-    });
-    // Total general: suma de los subtotales (SUMIF por la marca «SUBTOTAL» de la columna Tipo)
-    const FIRSTD = 8, LASTD = r - 2;
-    for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(r, c); cell.fill = fill(DARK); cell.border = { top: { style: 'medium', color: { argb: ORANGE } } }; }
-    ws.mergeCells(r, 1, r, 3);
-    const gl = ws.getCell(r, 1); gl.value = 'TOTAL GENERAL — ' + m.terceros.length + ' ' + m.terPlural; gl.font = F({ size: 10, bold: true, color: { argb: WHITE } }); gl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
-    [[cCargo, m.tot.cargo, NF], [cNC, m.tot.ncret, NF], [cAb, m.tot.abono, NF], [cSal, m.tot.saldo, NF_SAL], [cUsd, m.tot.saldoUsd, NF_USD_SAL]].forEach(([c, res, nf]) => {
-      if (!c) return;
-      const cell = ws.getCell(r, c);
-      cell.value = { formula: 'SUMIF($D$' + FIRSTD + ':$D$' + LASTD + ',"SUBTOTAL",' + L(c) + FIRSTD + ':' + L(c) + LASTD + ')', result: res };
-      cell.numFmt = nf; cell.font = F({ size: 10, bold: true, color: { argb: 'FFFDBA74' } }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
-    });
-    ws.getRow(r).height = 24;
-    r += 2;
-    put(ws, r, 1, NCOL, 'NOTAS DEL REPORTE', F({ size: 10, bold: true })); ws.getRow(r).height = 18; r++;
-    (m.notas || []).forEach((x) => { put(ws, r, 1, NCOL, '•  ' + x, F({ size: 8, color: { argb: 'FF475569' } }), { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 }); ws.getRow(r).height = x.length > 190 ? 24 : 14; r++; });
-    ws.pageSetup.printArea = 'A1:' + L(NCOL) + r;
   }
 
   // ═══════════ Hoja 3: Datos (tabla plana, con filtros de Excel) ═══════════
@@ -49078,9 +49080,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
           }
           const _neByFiscalEc = new Map([..._nesByFiscalEc].map(([k,v])=>[k,{ne:v.nes[0],inv:v.inv}])); // compat
+          // «Estado de Cuenta AL CORTE»: con una fecha «Hasta» no entra NADA posterior (retenciones, IGTF, notas, anticipos, ajustes, facturas) ni afecta el saldo.
+          const despuesDelCorteEc=(f)=>!!ecHasta&&String(f||'').substring(0,10)>ecHasta;
+          const fechaRetEc=(r)=>String(r.fechaComprobante||r.fecha||'').substring(0,10);
           const _retsPorNEec = new Map();
           for(const r of (retenciones||[])){
             if((r.facturaId||'').startsWith('MANUAL-')) continue;
+            if(despuesDelCorteEc(fechaRetEc(r))) continue; // comprobante de retención (o IGTF) posterior al corte
             let hit = _nesByFiscalEc.get(r.nroFactura)
                      || _nesByFiscalEc.get(r.nroControl)
                      || _nesByFiscalEc.get(r.facturaId);
@@ -49186,6 +49192,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const r=findInvForNEec(ne)||(invoices||[]).find(i=>!i.esAnulacionFiscal&&[i.neOrigen,...(i.nesAdicionales||[])].filter(Boolean).some(x=>x===ne.id||x===ne.documento)&&(!(ne.clientRif||'').trim()||!(i.clientRif||'').trim()||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||null;
             _cacheInvNEec.set(ne.id,r); return r;
           };
+          // La factura de una NE AL CORTE: si se emitió después de la fecha «Hasta», ese día la NE todavía no tenía factura (sin fecha de corte es siempre la misma factura de siempre).
+          const invAlCorteEc=(ne)=>{ const iv=invDeNEec(ne); if(!iv) return null; return despuesDelCorteEc(iv.fechaFactura||iv.fecha||ne.fecha)?null:iv; };
           // NE que cubre UN documento de factura (neOrigen + nesAdicionales + las NE que apuntan a esa factura con su facturaId)
           const _cacheNesInvEc=new Map(); // por factura, solo durante este armado de la pantalla
           const nesDeInvEc=(inv)=>{
@@ -49201,10 +49209,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Grupo de NE que comparten una misma factura fiscal consolidada — mismo criterio que en CxC.
           const getGrupoInvoiceNEsEc=(ne)=>{
             const inv=findInvForNEec(ne);
-            if(!inv) return [ne];
+            if(!inv||!invAlCorteEc(ne)) return [ne]; // sin factura al corte: cada NE va por su lado
             const hit=_nesByFiscalEc.get(inv.nroFiscal)||_nesByFiscalEc.get(inv.documento)||_nesByFiscalEc.get(inv.id);
             if(!hit||hit.nes.length<=1) return [ne];
-            return hit.nes;
+            if(!ecHasta) return hit.nes;
+            const gr=hit.nes.filter(n=>n.id===ne.id||!despuesDelCorteEc(n.fecha)); // al corte solo cuentan las NE de ese día o anteriores
+            return gr.length>1?gr:[ne];
           };
           const _saldoDirectoNEec=(ne)=>{
             // tipo!=='IGTF': cargo aparte (3% adicional, no un pago del propio total) — se excluye
@@ -49251,8 +49261,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           const allNEs=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
-            if(ecNeFiltro==='CON_FACTURA'&&!invDeNEec(ne)) return false;
-            if(ecNeFiltro==='SIN_FACTURA'&&invDeNEec(ne)) return false;
+            if(ecNeFiltro==='CON_FACTURA'&&!invAlCorteEc(ne)) return false;
+            if(ecNeFiltro==='SIN_FACTURA'&&invAlCorteEc(ne)) return false;
             const fCxc=fechaCxcEc(ne);
             if(ecDesde&&fCxc<ecDesde) return false;
             if(ecHasta&&fCxc>ecHasta) return false;
@@ -49261,6 +49271,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Retenciones MANUALES (factura no registrada en el sistema) ──────────
           const _manualRetsPorClienteEc = new Map();
           for(const r of (retenciones||[])){
+            if(despuesDelCorteEc(fechaRetEc(r))) continue; // retención posterior al corte
             const esManualEc=(r.facturaId||'').startsWith('MANUAL-');
             if(esManualEc){
               // Misma razón que en CxC: si esta retención cerró una ND, no se cuenta también aquí.
@@ -49293,6 +49304,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _manualNCPorClienteEc = new Map();
           for(const n of (notasVentaCD||[])){
             if(!n._clienteDirecto) continue;
+            if(despuesDelCorteEc(n.fecha)) continue; // nota directa posterior al corte
             const rif=(n.clientRif||'').trim();
             if(!rif) continue;
             const tasa=parseNum(n.tasaFactura||0)||tasaBCVec;
@@ -49321,14 +49333,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             _anticiposPorClienteEc.get(rif).push({...a,_saldoAnt:saldoAnt,_aplicadoHasta:aplicadoHasta,_reintegrado:reintegrado});
           }
           // Con un filtro de CxC solo se muestran documentos de CxC: los anticipos y las retenciones manuales no pertenecen a una NE ni a una factura.
-          // Las NC/ND de clientes directos (sin NE) sí: las FISCALES salen en «CxC fiscal» y las NO fiscales en «CxC sin factura»,
+          // Las NC/ND de clientes directos (sin NE) sí: en «CxC fiscal» salen las fiscales y las NO fiscales (cada una con su tasa para llevar sus Bs.); en «CxC sin factura» solo las NO fiscales,
           // y el rango de fechas se aplica a la fecha de cada nota.
           if(ecNeFiltro!=='TODAS'){
             _anticiposPorClienteEc.clear(); _manualRetsPorClienteEc.clear();
             for(const [rifD,arrD] of [..._manualNCPorClienteEc]){
               const okD=arrD.filter(n=>{
                 const esFiscalD=(n.naturaleza||'FISCAL')==='FISCAL';
-                if(ecNeFiltro==='CON_FACTURA'?!esFiscalD:esFiscalD) return false;
+                if(ecNeFiltro==='SIN_FACTURA'&&esFiscalD) return false;
                 const fechaD=n.fecha||'';
                 if(ecDesde&&fechaD<ecDesde) return false;
                 if(ecHasta&&fechaD>ecHasta) return false;
@@ -49370,7 +49382,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // Los ajustes vinculados a un anticipo (anticipoVinculadoId) NO se cuentan aquí aparte —
             // ya están reflejados al reducir el saldo disponible de ese anticipo (mismo mecanismo que
             // aplicar un anticipo a una factura). Contarlos también aquí duplicaría el crédito.
-            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId && !a.anticipoVinculadoId).forEach(a=>{
+            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId && !a.anticipoVinculadoId && !despuesDelCorteEc(a.fecha)).forEach(a=>{
               // terceroId es el id de Firestore del cliente — se resuelve a su RIF, que es como
               // este Estado de Cuenta agrupa a los clientes.
               const rifCliente=(clients.find(c=>c.id===a.terceroId)?.rif||a.terceroNombre||'').trim();
@@ -49414,7 +49426,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let sinFacN=0, sinFacUsd=0;
               [...cl.nes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne)=>{
                 const sNE=getSaldoNE(ne);
-                const inv=invDeNEec(ne);
+                const inv=invAlCorteEc(ne);
                 const descNE=(ne.items||[])[0]?.desc||ne.descripcion||'';
                 const docBase={nivel:0,esDoc:true,doc:ne.documento||ne.id,fecha:ne.fecha||'',vence:venceDe(ne),saldoUsd:ecbNum(sNE),estado:ecbEstadoDe(sNE)};
                 if(bs&&!inv){
@@ -49443,7 +49455,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   else { const u=usdNotaEc(n); if(u==null){ v=null; aviso='⚠ Sin tasa'; } else v=R(u*pn); }
                   sub.push({nivel:1,tono:'nc',cat:'NOTA',doc:(n.tipo||'NC')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',tipoTxt:esNC?'Nota de Crédito':'Nota de Débito',
                     detalle:(n.descripcion||'—')+(bs?' · Base Bs. '+ecbFmt(nv.baseBs)+(nv.fiscal?' · IVA Bs. '+ecbFmt(nv.ivaBs):' · no fiscal'):'')+(compartN?' · esta NE toma el '+ecbFmt(pn*100)+' % de la nota':''),
-                    tasa:null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null,aviso});
+                    tasa:ecbNum(n.tasaFactura)>1?ecbNum(n.tasaFactura):null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null,aviso});
                 });
                 // Retenciones (IVA y otras); el IGTF es informativo y nunca se descuenta
                 const rd=getRetsDetalleNEec(ne);
@@ -49497,7 +49509,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const totalDoc=bs?nv.totalBs:(n._sinTasa?null:R(n._montoUSD));
                 const saldoDoc=bs?(esNC?R(-nv.totalBs):R(Math.max(0,nv.totalBs-pagosMv.reduce((s,p)=>s+p.bs,0)))):(n._sinTasa?null:R(n._signedUSD));
                 rows.push({nivel:0,esDoc:false,tono:'nc',cat:'NOTA',doc:(n.tipo||'NC')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',vence:'',tipoTxt:esNC?'Nota de Crédito':'Nota de Débito',
-                  detalle:(n.descripcion||'Cliente directo · sin NE asociada'),tasa:null,cargo:esNC?null:totalDoc,ncret:esNC?totalDoc:null,abono:null,saldo:saldoDoc,saldoUsd:n._sinTasa?null:ecbNum(n._signedUSD),estado:'',aviso:(!bs&&n._sinTasa)?'⚠ Sin tasa':''});
+                  detalle:(n.descripcion||'Cliente directo · sin NE asociada'),tasa:ecbNum(n.tasaFactura)>1?ecbNum(n.tasaFactura):null,cargo:esNC?null:totalDoc,ncret:esNC?totalDoc:null,abono:null,saldo:saldoDoc,saldoUsd:n._sinTasa?null:ecbNum(n._signedUSD),estado:'',aviso:(!bs&&n._sinTasa)?'⚠ Sin tasa':''});
                 pagos.forEach((c,ci)=>{
                   const mv=pagosMv[ci];
                   rows.push({nivel:1,tono:'pago',cat:'COBRO',doc:'Pago'+(pagos.length>1?' '+(ci+1):''),fecha:c.fecha||'',tipoTxt:'Pago',detalle:detCobro(c,bs?ecbMoney('USD',num(c.monto)):''),
@@ -49524,7 +49536,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               return {key:cl.clientRif,nombre:cl.clientName,rif:cl.clientRif,vendedor:cl.nes[0]?.vendedor||cl.vendedor||'—',estado:ecbEstadoDe(saldoUsdCl),saldoUsd:saldoUsdCl,sinFactura:sinFacN?{n:sinFacN,usd:R(sinFacUsd)}:null,rows};
             });
             const filtros=['Moneda: '+(bs?'Bolívares (Bs.)':'Dólares (USD)')];
-            if(ecNeFiltro==='CON_FACTURA') filtros.push('Solo CxC fiscal (NE con factura · NC y ND fiscales)');
+            if(ecNeFiltro==='CON_FACTURA') filtros.push('Solo CxC fiscal (NE con factura · NC y ND fiscales y no fiscales)');
             if(ecNeFiltro==='SIN_FACTURA') filtros.push('Solo CxC sin factura (NE sin factura fiscal)');
             if(ecVendedor!=='TODOS') filtros.push('Vendedor: '+ecVendedor);
             if(ecEstado==='PENDIENTE') filtros.push('Solo clientes con saldo');
@@ -49547,7 +49559,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
             if(hayIgtf) notas.push('El IGTF se muestra como informativo: no se suma al cobrado ni se descuenta del saldo.');
             if(haySinTasa) notas.push('Las partidas marcadas «Sin tasa» no tienen monto en Bs. registrado ni tasa para calcularlo; no se suman.');
-            if(ecNeFiltro==='CON_FACTURA') notas.push('CxC fiscal: NE que ya tienen factura fiscal, con su factura, sus notas de crédito/débito, retenciones y cobros, más las notas de crédito/débito fiscales de clientes directos (sin NE). El rango de fechas se aplica a la fecha de la factura fiscal (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
+            if(ecNeFiltro==='CON_FACTURA') notas.push('CxC fiscal: NE que ya tienen factura fiscal, con su factura, sus notas de crédito/débito, retenciones y cobros, más las notas de crédito/débito (fiscales y no fiscales, cada una con su tasa) de clientes directos (sin NE). El rango de fechas se aplica a la fecha de la factura fiscal (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
             if(ecNeFiltro==='SIN_FACTURA') notas.push('CxC sin factura: NE que todavía no tienen factura fiscal (la NE es lo que genera la cuenta por cobrar), más las notas no fiscales de clientes directos. El rango de fechas se aplica a la fecha de la NE (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
             const modelo=ecbCerrarModelo({ent:'CXC',mon,titulo:'ESTADO DE CUENTA — CUENTAS POR COBRAR',subtitulo:'CUENTAS POR COBRAR · CLIENTES',terNombre:'Cliente',terPlural:'clientes',terVendedor:true,lblCargo:'Facturado',lblAbono:'Cobrado',lblSinBs:'NE sin factura',
               empresa:settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',rif:settings?.empresaRif||'J-41230937-4',direccion:settings?.empresaDireccion||'',
@@ -49586,7 +49598,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               let neRowsHtml='';
               cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne,ni)=>{
                 const sNE=getSaldoNE(ne);
-                const invV=invDeNEec(ne);
+                const invV=invAlCorteEc(ne);
                 const fiscalNum=localNroFiscal[invV?.id||'']||invV?.nroFiscal||'';
                 const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                 const totalCobNE=cobrosNE.reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -49776,7 +49788,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const header='<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">'
               +'<div><div style="font-size:15px;font-weight:900">'+emp+'</div><div style="font-size:8px;color:#64748b">RIF: '+rifEmp+(dirEmp?' · '+dirEmp:'')+'</div></div>'
               +'<div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">ESTADO DE CUENTA — CUENTAS POR COBRAR</div>'
-              +'<div style="font-size:8px;color:#64748b">Corte: '+(ecHasta||getTodayDate())+' · '+cliList.length+' clientes · '+cliList.reduce((s,cl)=>s+cl.nes.length,0)+' docs · Saldo total: $'+fmtN(totalSaldo)+(ecNeFiltro!=='TODAS'?' · '+(ecNeFiltro==='CON_FACTURA'?'Solo CxC fiscal (NE con factura · NC y ND fiscales)':'Solo CxC sin factura (NE sin factura fiscal)'):'')+'</div>'
+              +'<div style="font-size:8px;color:#64748b">Corte: '+(ecHasta||getTodayDate())+' · '+cliList.length+' clientes · '+cliList.reduce((s,cl)=>s+cl.nes.length,0)+' docs · Saldo total: $'+fmtN(totalSaldo)+(ecNeFiltro!=='TODAS'?' · '+(ecNeFiltro==='CON_FACTURA'?'Solo CxC fiscal (NE con factura · NC y ND fiscales y no fiscales)':'Solo CxC sin factura (NE sin factura fiscal)'):'')+'</div>'
               +'</div></div>';
             const html='<!DOCTYPE html><html><head><meta charset="utf-8"><style>'+css+'</style></head><body>'+header+bodyHtml+'<script>window.onload=function(){window.print();}<\/script></body></html>';
             try{
@@ -49817,7 +49829,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 bodyXls+='<tr style="background:#0f172a;color:#f97316;font-weight:bold;font-size:9pt"><td>Documento</td><td>Fecha</td><td>Tipo</td><td>Detalle</td><td>Cargo USD</td><td>Ret. IVA</td><td>Otra Ret.</td><td>Cobrado</td><td>Saldo</td></tr>';
                 cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
                   const sNEx=getSaldoNE(ne);
-                  const invVx=invDeNEec(ne);
+                  const invVx=invAlCorteEc(ne);
                   const fiscalNumX=localNroFiscal[invVx?.id||'']||invVx?.nroFiscal||'';
                   const cobrosNEx=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                   const totalCobNEx=cobrosNEx.reduce((s,c)=>s+parseNum(c.monto||0),0);
@@ -49885,9 +49897,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <option value="PENDIENTE">Con saldo</option>
                     <option value="SALDADO">Saldados</option>
                   </select>
-                  <select value={ecNeFiltro} onChange={e=>setEcNeFiltro(e.target.value)} data-testid="ec-ne-filtro" title="Filtrar las CxC: fiscales (con factura, NC y ND fiscales) o sin factura (solo NE)" className={'border rounded-xl px-3 py-2 text-[10px] font-bold outline-none '+(ecNeFiltro!=='TODAS'?'border-orange-400 bg-orange-50 text-orange-700':'border-gray-200')}>
+                  <select value={ecNeFiltro} onChange={e=>setEcNeFiltro(e.target.value)} data-testid="ec-ne-filtro" title="Filtrar las CxC: fiscales (con factura, NC y ND fiscales y no fiscales) o sin factura (solo NE)" className={'border rounded-xl px-3 py-2 text-[10px] font-bold outline-none '+(ecNeFiltro!=='TODAS'?'border-orange-400 bg-orange-50 text-orange-700':'border-gray-200')}>
                     <option value="TODAS">Todas las CxC</option>
-                    <option value="CON_FACTURA">CxC fiscal (con factura, NC y ND fiscales)</option>
+                    <option value="CON_FACTURA">CxC fiscal (con factura, NC y ND fiscales y no fiscales)</option>
                     <option value="SIN_FACTURA">CxC sin factura (solo NE)</option>
                   </select>
                   <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
@@ -49993,7 +50005,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                             const ncsNE2=getNCsNE(ne).filter(n=>(!ecHasta||(n.fecha||'')<=ecHasta)&&pesoNotaEc(ne,n)>0).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
-                            const invV2=invDeNEec(ne);
+                            const invV2=invAlCorteEc(ne);
                             const retDetalle2=getRetsDetalleNEec(ne);
                             const retsNE2=[...retDetalle2.iva,...retDetalle2.otras].sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
                             const enCredito2=sNE<-0.01;
